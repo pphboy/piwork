@@ -680,7 +680,8 @@ try {
   await expect(page.getByRole('heading', { name: 'Import Work', exact: true })).toBeVisible();
   await page.locator('#work-file-input').setInputFiles(exportedPath);
   await page.getByText('Package format and contents verified locally.', { exact: true }).waitFor({ timeout: 180_000 });
-  await expect(page.locator('.inspection-summary')).toContainText('Real Browser Work');
+  await expect(page.locator('.import-result')).toContainText('Real Browser Work');
+  await expect(page.locator('#import-name')).toBeFocused();
   await page.locator('#import-name').fill('Real Browser Work');
   const explicitConflictResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/work-imports' && response.request().method() === 'POST', { timeout: 180_000 });
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
@@ -689,8 +690,10 @@ try {
   assert.equal((await explicitConflict.json()).field, 'name');
   await expect(page.locator('#import-name-error')).toContainText('let Core choose one');
   await expect(page.locator('#import-name')).toHaveValue('Real Browser Work');
+  await expect(page.locator('#modal')).not.toContainText('Starting the import');
+  await expect(page.locator('#modal')).not.toContainText('submitting');
   await page.screenshot({ path: join(screenshotDir, '02-import-name-conflict.png'), fullPage: true });
-  await expect(page.locator('.inspection-summary')).toBeVisible();
+  await expect(page.locator('.import-result')).toBeVisible();
   await page.locator('#import-name').fill('');
   const importResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/work-imports' && response.request().method() === 'POST', { timeout: 180_000 });
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
@@ -699,6 +702,8 @@ try {
   const importAccepted = await importAcceptance.json(); assert.equal(importAccepted.name, 'Real Browser Work-2'); assert.ok(importAccepted.operationId);
   await expect(page.locator('.import-name-feedback')).toContainText('Real Browser Work-2');
   await expect(page.locator('.import-name-feedback')).toContainText('because the source name was unavailable');
+  await expect(page.locator('#modal')).not.toHaveClass(/inspector-drawer/);
+  await expect(page.locator('#modal')).not.toContainText('Operation ID');
   await page.screenshot({ path: join(screenshotDir, '03-import-automatic-name.png'), fullPage: true });
   const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work-2'), 'imported Work', 180_000);
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');

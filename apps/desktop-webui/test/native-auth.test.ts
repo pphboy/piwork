@@ -135,8 +135,8 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   await f.page.getByText('Package format and contents verified locally.', { exact: true }).waitFor();
   await f.page.locator('#import-name').fill('Expired import');
   await f.page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
-  await f.page.locator('.operation-technical > summary').click();
-  await expect(f.page.locator('dd code').filter({ hasText: recoveredImportID })).toBeVisible();
+  await expect(f.page.locator('.import-name-feedback')).toContainText('Expired import');
+  await expect.poll(() => f.page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); return adapter.inspectionContext?.operationId; })).toBe(recoveredImportID);
   await expect.poll(() => f.calls.includes(`GET /api/v1/operations/${recoveredImportID}`)).toBe(true);
   await f.page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkSession(); });
   await expect(f.page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();

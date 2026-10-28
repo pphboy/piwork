@@ -24,7 +24,7 @@ export interface LogExportState {
   warnings: Array<{ code: string; message: string }>; filename: string; size: number; digest: string; expiresAt: string;
   error: string; intent: boolean; restored: boolean; autoDelivered: boolean; delivered: boolean; polling: boolean;
 }
-interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string }
+interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string; observationSuspended?: boolean; observationGeneration?: number; autoPausedOperation?: boolean }
 interface UploadIntent { file: File; modified: string; absent: boolean }
 
 export class DesktopError extends Error {
@@ -314,6 +314,7 @@ export class DesktopAdapter {
   private invalidOperationTargets = new Set<string>();
   /** A dismissed terminal record remains recoverable until required object reads finish. */
   private pendingOperationHides = new Map<string, Operation>();
+  private closedImportOperations = new Set<string>();
   private streams = new Map<string, AbortController>();
   private reconnects = new Map<string, ReturnType<typeof setTimeout>>();
   private historyObservers = new Map<string, { controller: AbortController; run: NonNullable<Work['run']>; epoch: number; failures: number }>();
@@ -537,7 +538,7 @@ export class DesktopAdapter {
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.entryVersions.clear(); this.serviceDenials.clear(); this.entryServiceGrants.clear(); this.serviceLoads.clear(); this.serviceReads.clear(); this.worksRequests.clear(); this.worksRequestSequence++; this.worksReadSequence = 0; this.logs.clear(); this.logStates.clear(); this.logRequests.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
     for (const observer of this.historyObservers.values()) observer.controller.abort(); this.historyObservers.clear();
-    for (const stream of this.streams.values()) stream.abort(); this.streams.clear(); for (const timer of this.reconnects.values()) clearTimeout(timer); this.reconnects.clear(); this.reconnectAttempts.clear(); clearTimeout(this.pollTimer); this.pollTimer = undefined; this.pausedOperations.clear(); this.invalidOperationTargets.clear();
+    for (const stream of this.streams.values()) stream.abort(); this.streams.clear(); for (const timer of this.reconnects.values()) clearTimeout(timer); this.reconnects.clear(); this.reconnectAttempts.clear(); clearTimeout(this.pollTimer); this.pollTimer = undefined; this.pausedOperations.clear(); this.invalidOperationTargets.clear(); this.closedImportOperations.clear();
   }
   private request(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<Data> {
     const runPath=/^works\/([^/]+)\/runs(?:\/|$|\?)/.exec(path),lookup=/^works\/([^/]+)\/(?:runs|sessions)\/submissions\//.exec(path),target=runPath??lookup;
@@ -2206,11 +2207,16 @@ export class DesktopAdapter {
   }
   async checkInspectionImport() {
     const context = this.inspectionContext;
-    if (!context || context.importState === 'unsubmitted') return;
-    const value = await this.request(`work-packages/${part(context.id)}`);
-    if (this.inspectionContext !== context) return;
+    if (!context || !['unknown', 'accepted'].includes(context.importState)) return;
+    const state = context.importState;
+    const generation = context.observationGeneration = (context.observationGeneration || 0) + 1;
+    // A recovery read must start after the failed submission; an in-flight
+    // progress read may have observed ready before Core received the request.
+    // Explicit task-row checks remain available while dialog observation is paused.
+    const value = await this.requestOnce(`work-packages/${part(context.id)}`);
+    if (this.inspectionContext !== context || context.importState !== state || context.observationGeneration !== generation) return;
     if (value.transferId !== undefined && value.transferId !== context.id) throw failure('INVALID_RESPONSE','d.error.importTransferMismatch');
-    if (value.phase === 'ready') context.importState = 'unsubmitted';
+    if (value.phase === 'ready' && state === 'unknown') { context.importState = 'unsubmitted'; this.transferProgress = null; }
     else if (value.phase === 'accepted') {
       if (typeof value.operationId === 'string' && value.operationId) {
         if (context.operationId && context.operationId !== value.operationId) throw failure('INVALID_RESPONSE','d.error.operationMismatch');
@@ -2218,10 +2224,59 @@ export class DesktopAdapter {
         if (existing && value.workId && existing.workId && existing.workId !== value.workId) throw failure('INVALID_RESPONSE','d.error.operationOtherWork');
         if (!existing) this.accepted(value, '', 'Import Work'); // i18n-exempt: internal Operation kind
         context.operationId = value.operationId;
+        if (context.observationSuspended && !this.pausedOperations.has(value.operationId)) { context.autoPausedOperation = true; this.pauseOperation(value.operationId); this.scheduleOperationPoll(); }
       }
       context.importState = 'accepted';
     }
     this.emit();
+  }
+  suspendImportObservation() {
+    const context = this.inspectionContext;
+    if (!context || context.importState === 'unsubmitted') return;
+    context.observationSuspended = true;
+    context.observationGeneration = (context.observationGeneration || 0) + 1;
+    if (context.operationId && !this.pausedOperations.has(context.operationId)) {
+      context.autoPausedOperation = true; this.pauseOperation(context.operationId);
+    }
+    this.scheduleOperationPoll();
+  }
+  suspendImportOperation(id: string) {
+    if (this.inspectionContext?.operationId === id) { this.suspendImportObservation(); return; }
+    if (!this.pausedOperations.has(id)) { this.closedImportOperations.add(id); this.pauseOperation(id); this.scheduleOperationPoll(); }
+  }
+  resumeImportOperation(id: string) {
+    if (this.inspectionContext?.operationId === id) this.resumeImportObservation();
+    if (this.closedImportOperations.delete(id)) this.resumeOperation(id);
+  }
+  prepareNewImport() {
+    const context = this.inspectionContext;
+    const operation = context?.operationId ? this.getOperation(context.operationId) : undefined;
+    if (!context?.observationSuspended || !operation || !terminalOperation(operation.state)) return false;
+    if (context.autoPausedOperation) this.resumeOperation(operation.id);
+    this.inspectionContext = null; this.inspectionNonce++;
+    this.inspection = null; this.inspectionTransfer = ''; this.transferProgress = null;
+    return true;
+  }
+  resumeImportObservation() {
+    const context = this.inspectionContext;
+    if (!context?.observationSuspended) return;
+    context.observationSuspended = false;
+    if (context.operationId && context.autoPausedOperation) { context.autoPausedOperation = false; this.resumeOperation(context.operationId); }
+    if (context.importState === 'submitting') this.observeImportSubmission(context);
+    else if (context.importState === 'unknown') void this.checkInspectionImport().catch(() => undefined);
+  }
+  private observeImportSubmission(context: InspectionContext) {
+    const generation = context.observationGeneration = (context.observationGeneration || 0) + 1;
+    const current = () => this.inspectionContext === context && context.importState === 'submitting' && !context.observationSuspended && context.observationGeneration === generation;
+    const observe = async () => {
+      while (current()) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!current()) break;
+        try { const progress = await this.request(`work-packages/${part(context.id)}`); if (current()) { this.transferProgress = progress; this.emit(); } }
+        catch { /* Keep the last confirmed stage while the request is pending. */ }
+      }
+    };
+    void observe();
   }
   async importWork(name: string) {
     const context = this.inspectionContext;
@@ -2229,17 +2284,20 @@ export class DesktopAdapter {
     if (context.importState !== 'unsubmitted') throw new Error(t('d.error.importState', { state: context.importState, id: context.id }));
     if (context.core !== this.state.core.address || context.localSession !== this.csrf || !this.state.signedIn) throw new Error(t('d.error.signInBeforeImport'));
     const sourceName = !name && typeof this.inspection?.sourceName === 'string' ? this.inspection.sourceName : undefined;
-    context.importState = 'submitting'; this.emit();
+    context.importState = 'submitting'; this.transferProgress = null; this.emit();
+    this.observeImportSubmission(context);
     try {
       const value = await this.request('work-imports', 'POST', { transferId: context.id, ...(name ? { name } : {}) });
       if (this.inspectionContext !== context) throw failure('CONNECTION_CHANGED','d.error.importIdentity');
       // Missing acceptance identity is also unknown; never offer a second POST.
-      const operation = this.accepted(value, '', 'Import Work'); operation.importSourceName = sourceName; context.operationId = operation.id; context.importState = 'accepted'; this.emit(); return operation; // i18n-exempt: Operation kind 协议值
+      const operation = this.accepted(value, '', 'Import Work'); operation.importSourceName = sourceName; context.operationId = operation.id; context.importState = 'accepted'; // i18n-exempt: Operation kind 协议值
+      if (context.observationSuspended && !this.pausedOperations.has(operation.id)) { context.autoPausedOperation = true; this.pauseOperation(operation.id); this.scheduleOperationPoll(); }
+      this.emit(); return operation;
     } catch (error) {
       if (this.inspectionContext === context) { context.importState = 'unknown'; this.emit();
         // The CLI may have attempted Core Import even when a gateway returned an
         // HTTP error. Only confirmed local ready state permits a new explicit POST.
-        await this.checkInspectionImport().catch(() => undefined); }
+        if (!context.observationSuspended) await this.checkInspectionImport().catch(() => undefined); }
       throw error;
     }
   }

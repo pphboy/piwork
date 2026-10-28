@@ -248,18 +248,18 @@ test('R4 anonymous inspection survives failed login then same-Core first login, 
   let failLogin = true;
   const { page, requests } = await fixture(t, (r): Reply | undefined => {
     if (r.path === 'login' && failLogin) return { status: 401, json: { message: 'wrong password' } };
-    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'verified locally' } } };
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'verified locally', integrityVerified: true } } };
     if (r.path === 'work-imports') return { status: 202, json: { operationId: 'import-original', workId: 'imported' } };
   }, true);
   await button(page, 'import').click(); await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('local bytes') });
-  await expect(page.locator('.inspection-summary')).toContainText('verified locally'); const id = requests.find(r => r.path === 'work-packages')!.headers['x-piwork-transfer-id']; assert.equal(requests.filter(r => r.path === 'works').length, 0);
+  await expect(page.locator('.import-result')).toContainText('verified locally'); const id = requests.find(r => r.path === 'work-packages')!.headers['x-piwork-transfer-id']; assert.equal(requests.filter(r => r.path === 'works').length, 0);
   await button(page, 'import-sign-in').click(); await page.locator('#auth-account').fill('owner'); await page.locator('#auth-password').fill('password'); await button(page, 'sign-in').click(); assert.equal(await api(page, `return adapter.inspectionTransfer;`), id);
-  await api(page, `return adapter.checkConnection();`); assert.equal(await api(page, `return adapter.inspectionTransfer;`), id); failLogin = false; await button(page, 'sign-in').click(); await expect(page.locator('.inspection-summary')).toContainText('verified locally'); assert.equal(requests.filter(r => r.path === 'work-imports').length, 0);
+  await api(page, `return adapter.checkConnection();`); assert.equal(await api(page, `return adapter.inspectionTransfer;`), id); failLogin = false; await button(page, 'sign-in').click(); await expect(page.locator('.import-result')).toContainText('verified locally'); assert.equal(requests.filter(r => r.path === 'work-imports').length, 0);
   await button(page, 'confirm-import').click(); assert.equal(JSON.parse(requests.find(r => r.path === 'work-imports')!.body).transferId, id); assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 1); assert.equal(requests.filter(r => r.method === 'DELETE').length, 0); await button(page, 'close-modal').click(); assert.equal(requests.filter(r => r.path === 'work-imports').length, 1); assert.equal(requests.filter(r => r.method === 'DELETE').length, 0);
 });
 
 test('R4 Core/account/logout changes never preserve another identity inspection', async t => {
-  const { page } = await fixture(t, r => r.path === 'work-packages' ? { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'private summary' } } } : undefined, true);
+  const { page } = await fixture(t, r => r.path === 'work-packages' ? { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'private summary', integrityVerified: true } } } : undefined, true);
   await api(page, `await adapter.inspectWork(new File(['x'],'x.work')); await adapter.switchCore('http://other.test'); return adapter.inspection;`).then(value => assert.equal(value, null));
   await api(page, `await adapter.signIn('http://other.test','owner','pass'); await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signIn('http://other.test','other-account','pass');`); assert.equal(await api(page, `return adapter.inspection;`), null);
   await api(page, `await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signOut();`); assert.equal(await api(page, `return adapter.inspection;`), null);
@@ -268,23 +268,23 @@ test('R4 Core/account/logout changes never preserve another identity inspection'
 test('R5 replace/Cancel/Escape release exact IDs; failed DELETE retains independent retry record and 404 confirms cleanup', async t => {
   let cleanupStatus = 503;
   const { page, requests } = await fixture(t, (r): Reply | undefined => {
-    if (r.path === 'work-packages') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'local' } } };
+    if (r.path === 'work-packages') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'local', integrityVerified: true } } };
     if (r.method === 'DELETE') return { status: cleanupStatus, json: {} };
   });
   await page.goto(base + '/#/works'); await button(page, 'import').click(); const input = page.locator('#work-file-input');
-  await input.setInputFiles({ name: 'first.work', mimeType: 'application/octet-stream', buffer: Buffer.from('first') }); await expect(page.locator('.inspection-summary')).toBeVisible(); const first = await api(page, `return adapter.inspectionTransfer;`);
+  await input.setInputFiles({ name: 'first.work', mimeType: 'application/octet-stream', buffer: Buffer.from('first') }); await expect(page.locator('.import-result')).toBeVisible(); const first = await api(page, `return adapter.inspectionTransfer;`);
   await input.setInputFiles({ name: 'second.work', mimeType: 'application/octet-stream', buffer: Buffer.from('second') }); await expect.poll(() => api(page, `return adapter.inspectionTransfer;`)).not.toBe(first);
   assert(requests.some(r => r.method === 'DELETE' && r.path === 'work-packages/' + first)); assert.equal(await api(page, `return adapter.cleanupPending.has('${first}');`), true);
   const second = await api(page, `return adapter.inspectionTransfer;`); await page.keyboard.press('Escape'); await expect.poll(() => api(page, `return adapter.inspection;`)).toBe(null); assert(requests.some(r => r.method === 'DELETE' && r.path === 'work-packages/' + second));
   cleanupStatus = 404; await page.locator(`[data-action="retry-inspection-cleanup"][data-id="${first}"]`).click(); assert.equal(await api(page, `return adapter.cleanupPending.has('${first}');`), false);
   await api(page, `await adapter.cleanupInspection('${second}');`); assert.equal(await api(page, `return adapter.cleanupPending.size;`), 0);
-  await button(page, 'import').click(); await input.setInputFiles({ name: 'cancel.work', mimeType: 'application/octet-stream', buffer: Buffer.from('cancel') }); await expect(page.locator('.inspection-summary')).toBeVisible(); await button(page, 'close-modal').click(); await expect.poll(() => api(page, `return adapter.inspection;`)).toBe(null);
+  await button(page, 'import').click(); await input.setInputFiles({ name: 'cancel.work', mimeType: 'application/octet-stream', buffer: Buffer.from('cancel') }); await expect(page.locator('.import-result')).toBeVisible(); await button(page, 'close-modal').click(); await expect.poll(() => api(page, `return adapter.inspection;`)).toBe(null);
 });
 
 test('R5 upload cancellation and late callback cannot resurrect abandoned inspection; unknown/accepted imports cannot resubmit or delete', async t => {
   let uploadDelay = true, lostImport = true, lostDelete = true;
   const { page, requests } = await fixture(t, async r => {
-    if (r.path === 'work-packages' && r.method === 'POST') { if (uploadDelay) await new Promise(done => setTimeout(done, 500)); return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'local' } } }; }
+    if (r.path === 'work-packages' && r.method === 'POST') { if (uploadDelay) await new Promise(done => setTimeout(done, 500)); return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'local', integrityVerified: true } } }; }
     if (r.method === 'DELETE') return lostDelete ? { abort: true } : { status: 200, json: {} };
     if (r.path === 'work-imports') return lostImport ? { abort: true } : { status: 202, json: { operationId: 'original-operation' } };
   });
@@ -1970,7 +1970,7 @@ test('Work naming: delayed Import conflict preserves a cleared name until the us
   await expect(name).not.toHaveAttribute('aria-invalid', 'true');
   await expect(name).toHaveAttribute('aria-describedby', 'import-name-help');
   await expect(page.locator('#import-name-error')).toHaveCount(0);
-  await expect(page.locator('.inspection-summary')).toBeVisible();
+  await expect(page.locator('.import-result')).toBeVisible();
   await expect(page.locator('#modal .feedback.warning[role=status]')).toHaveCount(1);
   await expect(page.locator('[data-action-status]')).toHaveCount(0);
   assert.equal(imports, 1);
@@ -2029,7 +2029,7 @@ test('Work naming: explicit Import conflict keeps the inspected package and only
   await expect(page.locator('#import-name')).toHaveValue('Taken');
   await expect(page.locator('#import-name')).toHaveAttribute('aria-invalid', 'true');
   await expect(page.locator('#import-name')).toHaveAttribute('aria-describedby', /import-name-error/);
-  await expect(page.locator('.inspection-summary')).toBeVisible();
+  await expect(page.locator('.import-result')).toBeVisible();
   await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
   await expect(page.locator('[data-action-status]')).toHaveCount(0);
   assert.equal(imports, 1);
@@ -3474,4 +3474,276 @@ test('History pages: tool-only cancelled Run recovers its complete empty result 
  assert.equal(requests.filter(r=>r.path.endsWith('/events')).length,1);
  assert.equal(requests.some(r=>r.path.endsWith('/sessions/session-1')),false);
  assert.equal(requests.filter(r=>r.method==='POST').length,0);
+});
+
+test('Import dialog: verified facts replace the raw inspection JSON and focus the name once', async t => {
+  const { page } = await fixture(t, r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: '笔记项目', size: 1048576, counts: { entries: 12, packages: 1 }, bindingRequirements: { models: [{ provider: 'fixture', model: 'one' }], secrets: [{ key: 'token' }] }, integrityVerified: true } } };
+    if (r.path === 'work-packages/transfer-ready' && r.method === 'GET') return { json: { transferId: 'transfer-ready', phase: 'ready', transferred: 1048576, total: 1048576 } };
+    if (r.path === 'work-imports' && r.method === 'POST') return { status: 202, json: { operationId: 'operation-focus', workId: 'work-import' } };
+  });
+  await page.setViewportSize({ width: 360, height: 900 });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await expect(page.locator('.import-result')).toContainText('笔记项目');
+  // Readable facts only: no raw object, no foldable JSON and no original-task finder.
+  await expect(page.locator('#modal pre')).toHaveCount(0);
+  await expect(page.locator('#modal details')).toHaveCount(0);
+  await expect(page.locator('#modal')).not.toContainText('"integrityVerified"');
+  await expect(page.locator('#modal')).not.toContainText('Check original import');
+  await expect(page.locator('#modal')).not.toContainText('Find an original Import task');
+  await expect(page.locator('.import-facts')).toContainText('1 MB');
+  await expect(page.locator('.import-facts')).toContainText('Model bindings');
+  await expect(page.locator('.import-facts')).toContainText('External credentials');
+  // The name field appears with the verified result and takes focus once.
+  await expect(page.locator('#import-name')).toBeFocused();
+  await expect(page.getByRole('dialog', { name: 'Import Work' })).toBeVisible();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.locator('#import-name').fill('自定义');
+  // A later state update keeps the input, the caret and the user's own focus.
+  const cancel = page.locator('#modal [data-action="close-modal"]').last();
+  await cancel.focus();
+  await api(page, `adapter.inspection={sourceName:'笔记项目',size:1048576,counts:{entries:12,packages:1}};adapter['emit']();`);
+  await expect(page.locator('#import-name')).toHaveValue('自定义');
+  await expect(cancel).toBeFocused();
+  // Submitting is explicit and happens once for this transfer.
+  await button(page, 'confirm-import').click();
+  await expect(page.locator('#modal .import-name-feedback')).toBeVisible();
+  await expect(page.locator('[data-action="confirm-import"]')).toHaveCount(0);
+});
+
+test('Import dialog: pending handoff and the original operation remain in the same dialog', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  let succeeded = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase: 'uploading', transferred: 1000, total: 1000 } };
+    if (r.path === 'work-imports' && r.method === 'POST') { await gate; return { status: 202, json: { operationId: 'original-import', workId: 'imported', name: 'Chosen' } }; }
+    if (r.path === 'operations/original-import') return { json: { operationId: 'original-import', workId: 'imported', kind: 'import-work', state: succeeded ? 'succeeded' : 'running' } };
+    if (r.path === 'works/imported') return { json: { id: 'imported', name: 'Chosen', desiredState: 'stopped', observedState: 'stopped' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen');
+  await button(page, 'confirm-import').click();
+  await expect(page.locator('#modal')).toContainText('Sending the package to Core');
+  await expect(page.locator('#modal progress')).toHaveCount(0);
+  await expect(page.locator('#modal')).not.toContainText('Imported as');
+  release();
+  await expect(page.locator('.import-name-feedback')).toContainText('Chosen');
+  await expect(page.locator('#modal')).not.toContainText('Operation ID');
+  succeeded = true; await button(page, 'check-operation').click();
+  await expect(page.locator('#modal')).toContainText('Imported as');
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+});
+
+test('Import dialog: user focus during inspection is not taken on completion or later refresh', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') { await gate; return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } }; }
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.keyboard.press('Tab');
+  const close = page.locator('#modal [data-action="close-modal"]').first(); await close.focus();
+  release(); await expect(page.locator('#import-name')).toBeVisible(); await expect(close).toBeFocused();
+  await api(page, "adapter['emit']();"); await expect(close).toBeFocused();
+});
+
+test('Import dialog: a completed import does not prevent a later new package', async t => {
+  let submissions = 0;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'package' } } };
+    if (r.path === 'work-imports' && r.method === 'POST') return { status: 202, json: { operationId: `import-${++submissions}`, workId: 'imported', name: 'Chosen' } };
+    if (r.path === 'operations/import-1') return { json: { operationId: 'import-1', workId: 'imported', kind: 'import-work', state: 'succeeded' } };
+    if (r.path === 'works/imported') return { json: { id: 'imported', name: 'Chosen', desiredState: 'stopped', observedState: 'stopped' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'first.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('first') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click(); await button(page, 'check-operation').click();
+  await expect(page.locator('#modal')).toContainText('Imported as');
+  await button(page, 'close-modal').click(); await button(page, 'import').click();
+  await expect(button(page, 'choose-work-file')).toBeEnabled(); await expect(page.locator('#import-name')).toHaveCount(0);
+  await page.locator('#work-file-input').setInputFiles({ name: 'second.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('second') });
+  await expect(page.locator('#import-name')).toHaveValue('');
+  assert.equal(await api(page, "return adapter.getOperation('import-1')?.state;"), 'succeeded');
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.path.startsWith('work-packages/') && r.method === 'DELETE').length, 0);
+});
+
+test('Import dialog: closing stops original observation and reopening resumes without resubmission', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase: 'uploading' } };
+    if (r.path === 'work-imports' && r.method === 'POST') { await gate; return { status: 202, json: { operationId: 'import-paused', workId: 'imported', name: 'Chosen' } }; }
+    if (r.path === 'operations/import-paused') return { json: { operationId: 'import-paused', workId: 'imported', kind: 'import-work', state: 'running' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click();
+  await expect(page.locator('#modal')).toContainText('Sending the package to Core');
+  await button(page, 'close-modal').click();
+  const transferReads = requests.filter(r => r.path.startsWith('work-packages/') && r.method === 'GET').length;
+  await page.waitForTimeout(1200);
+  assert.equal(requests.filter(r => r.path.startsWith('work-packages/') && r.method === 'GET').length, transferReads);
+  release(); await expect.poll(() => api(page, "return adapter.inspectionContext?.operationId;")).toBe('import-paused');
+  await page.waitForTimeout(2500);
+  assert.equal(requests.filter(r => r.path === 'operations/import-paused').length, 0);
+  await button(page, 'import').click();
+  await expect.poll(() => requests.filter(r => r.path === 'operations/import-paused').length, { timeout: 8000 }).toBeGreaterThan(0);
+  // The task's recovery hint observes the same identity and must
+  // pause again when its own operation dialog is closed.
+  await button(page, 'close-modal').click();
+  await page.locator('.recovery-task[data-operation-id="import-paused"] [data-action="operation"]').click();
+  const beforeClose = requests.filter(r => r.path === 'operations/import-paused').length;
+  await expect.poll(() => requests.filter(r => r.path === 'operations/import-paused').length, { timeout: 8000 }).toBeGreaterThan(beforeClose);
+  await button(page, 'close-modal').click();
+  const afterClose = requests.filter(r => r.path === 'operations/import-paused').length;
+  await page.waitForTimeout(2500);
+  assert.equal(requests.filter(r => r.path === 'operations/import-paused').length, afterClose);
+  await page.locator('.recovery-task[data-operation-id="import-paused"] [data-action="operation"]').click();
+  await expect.poll(() => requests.filter(r => r.path === 'operations/import-paused').length, { timeout: 8000 }).toBeGreaterThan(afterClose);
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.path.startsWith('work-packages/') && r.method === 'DELETE').length, 0);
+});
+
+test('Import dialog: a confirmed name conflict clears the pending handoff stage', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  let pending = false;
+  const { page } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase: pending ? 'submitting' : 'ready' } };
+    if (r.path === 'work-imports' && r.method === 'POST') { pending = true; await gate; pending = false; return { status: 409, json: { code: 'NAME_CONFLICT', field: 'name', message: 'Name already in use' } }; }
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Taken'); await button(page, 'confirm-import').click();
+  await expect(page.locator('#modal')).toContainText('Starting the import');
+  release();
+  await expect(page.locator('#import-name')).toHaveValue('Taken');
+  await expect(button(page, 'confirm-import')).toBeVisible();
+  await expect(page.locator('#modal')).not.toContainText('Starting the import');
+});
+
+test('Import dialog: a lost response confirmed ready permits a new explicit submission', async t => {
+  let attempts = 0;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase: 'ready' } };
+    if (r.path === 'work-imports' && r.method === 'POST') return ++attempts === 1 ? { abort: true } : { status: 202, json: { operationId: 'retried-import', workId: 'imported', name: 'Chosen' } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click();
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('unsubmitted');
+  await expect(button(page, 'confirm-import')).toBeEnabled(); await button(page, 'confirm-import').click();
+  await expect(page.locator('.import-name-feedback')).toContainText('Chosen');
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 2);
+  assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 1);
+});
+
+test('Import dialog: reopening reviews the same lost response without submitting again', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: { phase: 'ready' } };
+    if (r.path === 'work-imports' && r.method === 'POST') { await gate; return { abort: true }; }
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click();
+  await expect.poll(() => requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length).toBe(1);
+  await button(page, 'close-modal').click(); release();
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('unknown');
+  await button(page, 'import').click();
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('unsubmitted');
+  await expect(button(page, 'confirm-import')).toBeEnabled();
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.path === 'work-packages' && r.method === 'POST').length, 1);
+});
+
+test('Import dialog: an old ready progress read cannot unlock an accepted lost response', async t => {
+  let releaseOld!: () => void, oldStarted!: () => void;
+  const oldGate = new Promise<void>(done => releaseOld = done), started = new Promise<void>(done => oldStarted = done);
+  t.after(async () => releaseOld()); let reads = 0;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') {
+      if (++reads === 1) { oldStarted(); await oldGate; return { json: { phase: 'ready' } }; }
+      return { json: { phase: 'accepted' } };
+    }
+    if (r.path === 'work-imports' && r.method === 'POST') { await started; return { abort: true }; }
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click();
+  await expect.poll(() => reads).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('accepted');
+  releaseOld(); await page.waitForTimeout(200);
+  await expect(button(page, 'confirm-import')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path === 'work-imports' && r.method === 'POST').length, 1);
+});
+
+test('Import dialog: stale recovery after reopening cannot unlock a newer submission', async t => {
+  let releaseFirst!: () => void, releaseOld!: () => void, releaseSecond!: () => void;
+  const firstGate = new Promise<void>(done => releaseFirst = done), oldGate = new Promise<void>(done => releaseOld = done), secondGate = new Promise<void>(done => releaseSecond = done);
+  t.after(async () => { releaseFirst(); releaseOld(); releaseSecond(); });
+  let reads = 0, attempts = 0;
+  const { page } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'example' } } };
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') {
+      if (++reads === 1) { await oldGate; return { json: { phase: 'ready' } }; }
+      return { json: { phase: 'ready' } };
+    }
+    if (r.path === 'work-imports' && r.method === 'POST') {
+      if (++attempts === 1) { await firstGate; return { abort: true }; }
+      await secondGate; return { status: 202, json: { operationId: 'new-import', workId: 'imported', name: 'Chosen' } };
+    }
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  await page.locator('#import-name').fill('Chosen'); await button(page, 'confirm-import').click();
+  await expect.poll(() => attempts).toBe(1); await button(page, 'close-modal').click(); releaseFirst();
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('unknown');
+  await button(page, 'import').click(); await expect.poll(() => reads).toBe(1);
+  await button(page, 'close-modal').click(); await button(page, 'import').click();
+  await expect.poll(() => api(page, "return adapter.inspectionContext?.importState;")).toBe('unsubmitted');
+  await button(page, 'confirm-import').click(); await expect.poll(() => attempts).toBe(2);
+  releaseOld(); await page.waitForTimeout(200);
+  assert.equal(await api(page, "return adapter.inspectionContext?.importState;"), 'submitting');
+  await expect(button(page, 'confirm-import')).toHaveCount(0);
+  releaseSecond(); await expect(page.locator('.import-name-feedback')).toContainText('Chosen');
+  assert.equal(attempts, 2);
+});
+
+test('Import dialog: only trustworthy receive progress is quantified, later stages are not', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done); t.after(async () => release());
+  let enabled = false;
+  const { page } = await fixture(t, async r => {
+    if (r.path === 'work-packages' && r.method === 'POST') { await gate; return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'package' } } }; }
+    if (r.path.startsWith('work-packages/') && r.method === 'GET') return { json: enabled
+      ? { transferId: r.path.split('/')[1], phase: 'validating', transferred: 900, total: 1000 }
+      : { transferId: r.path.split('/')[1], phase: 'receiving', transferred: 500, total: 1000 } };
+  });
+  await button(page, 'back-works').click(); await button(page, 'import').click();
+  await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('package') });
+  // A known completed/total pair is shown in readable units with a percentage.
+  await expect(page.locator('.import-transfer-bytes')).toContainText('500 B / 1 KB · 50%');
+  await expect(page.locator('#modal progress[aria-label="Transfer bytes"]')).toHaveAttribute('max', '1000');
+  // Checking has no trustworthy denominator, so no percentage is invented.
+  enabled = true;
+  await expect(page.locator('.import-transfer-bytes')).toHaveCount(0, { timeout: 8000 });
+  await expect(page.locator('#modal progress')).toHaveCount(0);
+  await expect(page.locator('#modal')).toContainText('Checking the package');
+  release();
+  await expect(page.locator('.import-result')).toContainText('package');
+  // A finished receive is never presented as a finished import.
+  await expect(page.locator('#modal')).not.toContainText('Import complete');
 });

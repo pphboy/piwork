@@ -173,7 +173,7 @@ for(const scenario of ['tab-Files','settings','tab-Services','new focus','new ta
  const el:any={dataset:{action},cloneNode:()=>({dataset:{action}})};c.document={activeElement:el,body};c.root={querySelector:()=>selected?button:null};
  const intent:any={kind:'read',work:'one',action,key:action};const record:any={...intent,pending:true};
  c.actions.conflict=()=>undefined;c.actions.begin=()=>{button.disabled=true;c.document.activeElement=body;return record;};c.actions.current=()=>currentRecord;c.actions.finish=()=>{record.pending=false;button.disabled=false;};c.actions.fail=c.actions.finish;
- vm.runInContext(extract(['dispatchAction']),c);const request=c.dispatchAction(el,async()=>{await pending.promise;if(scenario==='read failure')throw new Error('Read failed');},intent);
+ vm.runInContext(extract(['reviewReadyImport','dispatchAction']),c);const request=c.dispatchAction(el,async()=>{await pending.promise;if(scenario==='read failure')throw new Error('Read failed');},intent);
  if(scenario==='new focus')c.document.activeElement=otherInput;if(scenario==='new tab')selected=false;if(scenario==='new Work')c.current=()=>({id:'two'});if(scenario==='new identity')c.adapter.identityEpoch++;if(scenario==='new record')currentRecord=false;
  pending.resolve();if(scenario==='read failure')await assert.rejects(request,/Read failed/);else await request;
  assert.equal(focusCount,['new focus','new tab','new Work','new identity','new record'].includes(scenario)?0:1);if(scenario==='new focus')assert.equal(c.document.activeElement,otherInput);

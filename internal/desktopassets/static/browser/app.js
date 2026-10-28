@@ -18,7 +18,7 @@ import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates } from './action-state.js';
 import { adapter, DesktopError, fileVersion } from "./adapter.js";
 import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
-import { t, stateText, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatTime, formatDateTime, formatNumber } from './locale.js';
+import { t, stateText, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatTime, formatDateTime, formatNumber, formatBytes, formatPercent } from './locale.js';
 const root = document.querySelector("#app");
 onLocaleChange(render);
 const pendingAges = new WeakMap();
@@ -512,7 +512,7 @@ function actionIntent(el, action = el.dataset.action || '') {
         kind = 'transfer';
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
     const serviceId = el.dataset.id || view.data.serviceId || view.service;
-    const resource = ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const resource = action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
     return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || t('target.newWork') : chatAction ? w?.name || t('target.chat') : `${w?.name || adapter.state.core.address || (adapter.hosted ? t('target.server') : t('target.localCli'))}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
@@ -559,6 +559,7 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
             const unknown = record.blocked;
             actions.fail(record, error);
             record.blocked ||= unknown;
+            reviewReadyImport();
         }
         else
             actions.finish(record);
@@ -577,9 +578,77 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
         }
     }
 }
+function reviewReadyImport() {
+    const context = adapter.inspectionContext;
+    if (!context?.ready || context.importState !== 'unsubmitted' || adapter.inspectionTransfer !== context.id)
+        return;
+    for (const record of actions.records.values())
+        if (record.action === 'confirm-import' && record.resource === context.id && record.blocked)
+            actions.review(record);
+}
 function progressText(progress) {
     const total = typeof progress.total === 'number' && Number.isFinite(progress.total) && progress.total > 0 ? progress.total : undefined;
     return `${esc(progress.phase)}${progress.transferred !== undefined ? ` · ${esc(progress.transferred)}${total ? ` / ${total}` : ''} ${t('progress.bytes')}` : ''}${total ? `<progress value="${Math.min(progress.transferred || 0, total)}" max="${total}" aria-label="${esc(t('progress.transferBytes'))}"></progress>` : ''}`;
+}
+/** Transfer phases are protocol values; only the presentation is localized. */
+const importStageKeys = {
+    receiving: 'import.stage.receiving', validating: 'import.stage.validating', uploading: 'import.stage.forwarding', submitting: 'import.stage.submitting',
+};
+function importStage(phase) {
+    const key = importStageKeys[phase];
+    return key ? t(key) : esc(phase);
+}
+/**
+ * Only the browser's own receive phase has a trustworthy completed/total pair.
+ * Checking, forwarding to Core, submitting and observation stay unquantified so
+ * a finished transfer is never presented as a finished import.
+ */
+function importTransferMarkup() {
+    const progress = adapter.transferProgress;
+    if (!progress)
+        return '';
+    if (progress.error)
+        return feedback(esc(progress.error), 'warning');
+    const transferPhase = String(progress.phase || '');
+    // A verified package is reported by the result section, not as a pending stage.
+    if (transferPhase === 'ready' || transferPhase === 'accepted')
+        return '';
+    const total = typeof progress.total === 'number' && Number.isFinite(progress.total) && progress.total > 0 ? progress.total : undefined;
+    const known = typeof progress.transferred === 'number' && Number.isFinite(progress.transferred) && progress.transferred >= 0 ? progress.transferred : undefined;
+    const stage = pendingStatus(importStage(transferPhase), 'work-file-input');
+    if (transferPhase === 'receiving' && known !== undefined && total !== undefined) {
+        const completed = Math.min(known, total);
+        return feedback(`${stage}<span class="import-transfer-bytes">${formatBytes(completed)} / ${formatBytes(total)} · ${formatPercent(completed, total)}</span><progress value="${completed}" max="${total}" aria-label="${esc(t('progress.transferBytes'))}"></progress>`);
+    }
+    if (transferPhase === 'receiving' && known !== undefined)
+        return feedback(`${stage}<span class="import-transfer-bytes">${formatBytes(known)}</span>`);
+    return feedback(stage);
+}
+/** Concise verified-package facts. No raw inspection object is ever rendered. */
+function importResultMarkup() {
+    const inspection = adapter.inspection;
+    if (!inspection)
+        return '';
+    const counts = inspection.counts && typeof inspection.counts === 'object' ? inspection.counts : {};
+    const bindings = inspection.bindingRequirements && typeof inspection.bindingRequirements === 'object' ? inspection.bindingRequirements : {};
+    const models = Array.isArray(bindings.models) ? bindings.models.length : 0;
+    const secrets = Array.isArray(bindings.secrets) ? bindings.secrets.length : 0;
+    const rows = [];
+    const source = typeof inspection.sourceName === 'string' ? inspection.sourceName.trim() : '';
+    if (source)
+        rows.push(`<dt>${t('import.summaryName')}</dt><dd>${esc(source)}</dd>`);
+    if (typeof inspection.size === 'number' && Number.isFinite(inspection.size))
+        rows.push(`<dt>${t('import.summarySize')}</dt><dd>${formatBytes(inspection.size)}</dd>`);
+    if (typeof counts.entries === 'number' && Number.isFinite(counts.entries))
+        rows.push(`<dt>${t('import.summaryEntries')}</dt><dd>${formatNumber(counts.entries)}</dd>`);
+    if (typeof counts.packages === 'number' && Number.isFinite(counts.packages) && counts.packages > 0)
+        rows.push(`<dt>${t('import.summaryPackages')}</dt><dd>${formatNumber(counts.packages)}</dd>`);
+    // WSNAP-002: the offline summary states model and external credential needs.
+    if (models)
+        rows.push(`<dt>${t('import.summaryModels')}</dt><dd>${formatNumber(models)}</dd>`);
+    if (secrets)
+        rows.push(`<dt>${t('import.summarySecrets')}</dt><dd>${formatNumber(secrets)}</dd>`);
+    return `<section class="import-result">${feedback(adapter.hosted ? t('import.verifiedServer') : t('import.verifiedLocal'), "success")}${rows.length ? `<dl class="import-facts">${rows.join('')}</dl>` : ''}<p class="muted">${icon("lock", 14)} ${t('import.note')}</p></section>`;
 }
 function uploadProgressMarkup() {
     const work = current(), progress = work && adapter.uploadProgress.get(work.id);
@@ -767,6 +836,18 @@ let overlayOpening = false;
 let requestNavigation;
 function requestNavigationCurrent() { return requestNavigation?.epoch === adapter.identityEpoch && requestNavigation.workId === current()?.id; }
 function openModal(name, data = {}) {
+    if (name === 'import') {
+        if (adapter.prepareNewImport()) {
+            view.importName = '';
+            view.inspectFilename = '';
+            view.inspected = false;
+            view.inspectActual = false;
+        }
+        else
+            adapter.resumeImportObservation();
+    }
+    if (name === 'operation' && data.id)
+        adapter.resumeImportOperation(data.id);
     fileActionsContext = '';
     const sourceFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
     const existing = root.querySelector('#modal');
@@ -801,6 +882,10 @@ function openModal(name, data = {}) {
         panel?.querySelector('[data-action=close-modal]')?.focus({ preventScroll: true });
     else if (name === 'sessions')
         (panel?.querySelector('[role=option][aria-selected=true]') || panel?.querySelector('[role=option]') || panel?.querySelector('[data-action=new-session]:not([disabled])') || panel?.querySelector('[data-action=close-modal]'))?.focus();
+    // Reopening the import dialog (for example after signing in) must not leave
+    // focus on the page behind it; a name field that is already focused wins.
+    else if (name === 'import' && panel && !panel.contains(document.activeElement))
+        (panel.querySelector('#import-name') || panel.querySelector('[data-action=close-modal]'))?.focus({ preventScroll: true });
     else if (anchoredOverlay(name))
         panel?.querySelector('[aria-selected=true],button:not([disabled]),input:not([disabled]),summary')?.focus({ preventScroll: true });
 }
@@ -832,8 +917,16 @@ function closeModal(restoreFocus = true) {
         pendingWebCommand = undefined;
     if (view.modal === 'new-work' || view.modal === 'import')
         clearNameFieldError(false);
-    if (view.modal === "import")
+    if (view.modal === "import") {
+        adapter.suspendImportObservation();
         void adapter.abandonInspection();
+        importAwaitingName = false;
+    }
+    if (view.modal === 'operation') {
+        const op = adapter.getOperation(view.data.id);
+        if (op && ['import work', 'import-work', 'import_work'].includes(op.kind.toLowerCase()))
+            adapter.suspendImportOperation(op.id);
+    }
     // Invalidate before closing native presentation; no exit snapshot or delayed callback owns focus.
     modalChoice++;
     view.modal = "";
@@ -1992,14 +2085,45 @@ function modalMarkup() {
             footer = panel.footer;
             break;
         }
-        case "import":
+        case "import": {
             title = t('import.title');
-            body = `<p>${adapter.hosted ? t('import.hostedBody') : t('import.localBody', { package: '<code>.work</code>' })}</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || t('import.choosePackage'))}</strong>${btn(t('import.chooseFile'), "choose-work-file", "", adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? "disabled" : "")}</div>${adapter.transferProgress ? feedback(`${['receiving', 'uploading', 'validating', 'inspecting', 'verifying'].includes(adapter.transferProgress.phase) ? pendingStatus(t('import.transfer', { phase: adapter.transferProgress.phase }), 'work-file-input confirm-import') : ''}${progressText(adapter.transferProgress)}${adapter.transferProgress.error ? ` · ${esc(adapter.transferProgress.error)}` : ''}`) : ""}${adapter.inspection ? `${feedback(adapter.hosted ? t('import.verifiedServer') : t('import.verifiedLocal'), "success")}<div class="inspection-summary"><h3>${t('import.summary')}</h3><pre>${esc(JSON.stringify(adapter.inspection, null, 2))}</pre><p>${t('import.note')}</p></div><label class="field">${t('import.workName')} <span>${t('create.optional')}</span><input id="import-name" value="${esc(view.importName)}" aria-label="${t('import.workName')}" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="${t('import.namePlaceholder')}"><span id="import-name-help">${t('import.nameHelp')}</span>${nameFieldError("import-name-error", true)}</label>` : ""}`;
-            body += adapter.inspectionContext && adapter.inspectionContext.importState !== "unsubmitted" ? feedback(t('import.original', { state: esc(adapter.inspectionContext.importState) }), "warning", btn(t('import.checkOriginal'), "check-inspection-import", "small") + (adapter.inspectionContext.operationId ? btn(t('common.details'), 'operation', 'small', `data-id="${esc(adapter.inspectionContext.operationId)}"`) : '')) + `<details><summary>${t('runDetails.technical')}</summary><p><code>${esc(adapter.inspectionTransfer)}</code></p></details>` : "";
-            if (adapter.state.signedIn)
-                body += `<details class="original-task-lookup"><summary>${t('recovery.findImport')}</summary><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), 'lookup-import-operation')}</div></label></details>`;
-            footer = `${cancel()}${adapter.inspection && adapter.inspectionContext?.importState === "unsubmitted" ? btn(adapter.state.signedIn ? t('import.title') : t('import.signIn'), adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
+            const context = adapter.inspectionContext;
+            const importOp = context?.operationId ? adapter.getOperation(context.operationId) : undefined;
+            if (importOp) {
+                const imported = adapter.getWork(importOp.workId), start = importStarts.get(importOp.id);
+                const stopped = imported?.status === 'Stopped' && imported.desired === 'stopped' && !imported.statusError;
+                if (importOp.state === 'succeeded')
+                    title = start ? t('ops.importStartProgress') : stopped ? t('ops.importNotStarted') : t('ops.importedWork');
+                body = `${importOp.state === 'succeeded' ? `<p>${start ? t('ops.importStartBody') : stopped ? t('ops.importStoppedBody') : t('ops.importDoneBody')}</p>` : phase(importOp)}${importNameFeedback(importOp)}${start ? `<dl><dt>${t('ops.originalImport')}</dt><dd><code>${esc(importOp.id)}</code></dd><dt>${t('ops.originalStart')}</dt><dd>${start.startId ? `<code>${esc(start.startId)}</code>` : esc(start.phase)}</dd></dl>${controlMarkup(workControls.get(importOp.workId))}` : ''}${operationFailure(importOp)}${importOp.observationError ? feedback(t('ops.observationInterrupted', { error: esc(importOp.observationError) }), 'warning') : ''}${importOp.localRecordSaved === false ? feedback(t('ops.localSaveFailed'), 'warning') : ''}`;
+                footer = `${close()}${btn(t('common.details'), 'operation', '', `data-id="${esc(importOp.id)}"`)}${btn(t('quick.checkStatus'), 'check-operation', '', `data-id="${esc(importOp.id)}"`)}${!['succeeded', 'failed', 'superseded'].includes(importOp.state) ? btn(adapter.operationPaused(importOp.id) ? t('ops.resume') : t('ops.pause'), adapter.operationPaused(importOp.id) ? 'resume-operation' : 'pause-operation', '', `data-id="${esc(importOp.id)}"`) : ''}${importOp.state === 'succeeded' ? importExitButtons(importOp) : ''}`;
+                break;
+            }
+            const unsubmitted = !context || context.importState === 'unsubmitted';
+            const locked = !!context && context.importState !== 'unsubmitted';
+            // The name field keeps its value and stays editable through an in-flight
+            // request and a rejected name; only a new submission is gated.
+            const nameField = adapter.inspection
+                ? `<label class="field">${t('import.workName')} <span>${t('create.optional')}</span><input id="import-name" value="${esc(view.importName)}" aria-label="${t('import.workName')}" aria-describedby="import-name-help${currentNameError() ? ' import-name-error' : ''}" ${currentNameError() ? 'aria-invalid="true"' : ""} placeholder="${t('import.namePlaceholder')}"><span id="import-name-help">${t('import.nameHelp')}</span>${nameFieldError("import-name-error", true)}</label>`
+                : '';
+            // The submitted import keeps its own identity and recovery path: the
+            // dialog never offers a second submission or a package replacement, and
+            // never grows a searchable list of past imports. The known Operation ID
+            // is the only recovery entry, so it stays directly reachable.
+            const submitted = locked
+                ? context?.importState === 'submitting'
+                    ? (importTransferMarkup() || feedback(t('import.stage.submitting')))
+                    : context?.importState === 'unknown'
+                        ? feedback(context.operationId ? t('import.unknownWithId', { id: `<code>${esc(context.operationId)}</code>` }) : t('import.unknown'), 'warning', context.operationId ? btn(t('import.openOriginal'), 'operation', 'small', `data-id="${esc(context.operationId)}"`) : '')
+                        : feedback(context?.operationId ? t('import.submittedWithId', { id: `<code>${esc(context.operationId)}</code>` }) : t('import.submitted'), 'warning', context?.operationId ? btn(t('import.openOriginal'), 'operation', 'small', `data-id="${esc(context.operationId)}"`) : '')
+                : '';
+            // Cleanup of an abandoned local transfer must remain actionable from
+            // inside this dialog; the root banner sits behind the modal backdrop.
+            const cleanups = [...adapter.cleanupPending]
+                .map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join('');
+            body = `<p>${adapter.hosted ? t('import.hostedBody') : t('import.localBody', { package: '<code>.work</code>' })}</p><div class="file-drop">${icon("upload", 28)}<strong>${esc(view.inspectFilename || t('import.choosePackage'))}</strong>${btn(t('import.chooseFile'), "choose-work-file", "", locked ? "disabled" : "")}</div>${cleanups}${locked ? '' : importTransferMarkup()}${importResultMarkup()}${nameField}${submitted}`;
+            footer = `${cancel()}${adapter.inspection && unsubmitted ? btn(adapter.state.signedIn ? t('import.title') : t('import.signIn'), adapter.state.signedIn ? "confirm-import" : "import-sign-in", "primary") : ""}`;
             break;
+        }
         case "operations": {
             title = t('ops.related');
             const scope = `${adapter.state.core.address} · ${adapter.state.core.account}`;
@@ -3882,7 +4006,7 @@ async function handleAction(action, el, record) {
             await stay(adapter.cleanupInspection(el.dataset.id));
             break;
         case "confirm-import":
-            show(await stay(adapter.importWork(view.importName.trim())));
+            accept(await stay(adapter.importWork(view.importName.trim())));
             break;
         case "export-logs":
             adapter.recoverLogExport();
@@ -4023,6 +4147,35 @@ function focusNameField(start, end) {
         field.focus({ preventScroll: true });
         field.setSelectionRange(start, end);
     });
+}
+/**
+ * The Work name appears only after inspection succeeds. Focus it once for that
+ * transfer, and never again: a later progress render must not take focus back
+ * from a control the user moved to, and a replaced package owns its own focus.
+ * Focus still sitting on the dialog itself, its close button or the package
+ * picker is the dialog's own default, not a user decision.
+ */
+let importNameFocusedFor = '';
+let importAwaitingName = false;
+let importFocusInteracted = false;
+const importFocusDefaults = ['close-modal', 'choose-work-file'];
+function focusImportNameOnce() {
+    const transfer = adapter.inspectionTransfer;
+    if (!transfer || !adapter.inspection || importNameFocusedFor === transfer)
+        return;
+    const dialog = root.querySelector('#modal');
+    const field = dialog?.querySelector('#import-name');
+    if (!dialog || !field || !field.getClientRects().length || field.disabled)
+        return;
+    importNameFocusedFor = transfer;
+    importAwaitingName = false;
+    if (importFocusInteracted)
+        return;
+    const active = document.activeElement;
+    const defaultFocus = active instanceof HTMLElement && importFocusDefaults.includes(active.dataset.action || '');
+    if (active && active !== document.body && active !== root && active !== dialog && !defaultFocus)
+        return;
+    field.focus({ preventScroll: true });
 }
 function clearFileTarget() {
     view.file = "";
@@ -4260,7 +4413,10 @@ function render() {
         modalChoice++;
     }
     // Action status nodes are reconciled by their owner; retain them without moving iframe ancestors.
-    reconcileHTML(root, `${html}${[...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join("")}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+    // The Import dialog renders its own cleanup retries so they stay actionable
+    // above the modal backdrop; the page-level banner covers every other view.
+    const pageCleanup = view.modal === 'import' ? '' : [...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join('');
+    reconcileHTML(root, `${html}${pageCleanup}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
     observeServiceFrames();
     renderActionStates(root, actions, location.hash, el => actionIntent(el), visibleActionRecord);
     for (const el of root.querySelectorAll('[data-history-image]'))
@@ -4320,6 +4476,8 @@ function render() {
         (document.activeElement === document.body || document.activeElement === root || document.activeElement === active);
     if (dialog && view.modal === 'chat-response-settings' && (overlayOpening || settingsFocusLost))
         focusChatSettings(view.data.expanded || active?.dataset.kind);
+    if (dialog && view.modal === 'import')
+        focusImportNameOnce();
     const next = root.querySelector("#messages");
     if (next) {
         const position = chatReading.get(next.dataset.readingKey || '');
@@ -4483,8 +4641,14 @@ root.addEventListener('pointerup', event => {
     closeModal();
 });
 root.addEventListener('pointerdown', event => {
+    if (view.modal === 'import' && importAwaitingName && event.target.closest('#modal'))
+        importFocusInteracted = true;
     if (anchoredOverlay(view.modal) && !event.target.closest('#modal') && !event.target.closest(overlayAnchor || '#modal'))
         dismissAnchoredOverlay();
+});
+root.addEventListener('keydown', event => {
+    if (view.modal === 'import' && importAwaitingName && event.key === 'Tab')
+        importFocusInteracted = true;
 });
 root.addEventListener('focusin', event => {
     if (!overlayOpening && anchoredOverlay(view.modal) && !event.target.closest('#modal') && !event.target.closest(overlayAnchor || '#modal'))
@@ -4810,6 +4974,12 @@ async function handleFiles(input, record) {
     else if (input.id === "work-file-input") {
         if (!files[0].name.endsWith(".work"))
             throw Error(t('import.chooseWorkExtension'));
+        // A replacement package starts its own naming attempt; the previous name
+        // belongs to the transfer that is being abandoned.
+        view.importName = '';
+        view.modalNameError = null;
+        importAwaitingName = true;
+        importFocusInteracted = false;
         const transfer = await adapter.inspectWork(files[0]);
         if (!transfer || transfer !== adapter.inspectionTransfer)
             return;
@@ -5146,11 +5316,16 @@ adapter.subscribe(() => {
         runtimeAvailability.clear();
         fileSourceReturn = undefined;
         clearFileTarget();
+        // Name and file identity are cleared where a transfer is actually abandoned
+        // (closing the dialog or replacing the package). The adapter owns the
+        // exception that keeps an anonymous inspection across the same Core's first
+        // sign-in, so identity changes must not clear it here.
         if (!(view.modal === "import" && adapter.inspection)) {
             view.modal = "";
             view.modalError = "";
         }
     }
+    reviewReadyImport();
     const work = current();
     const restore = work && runtimeAvailability.get(work.id) === false && adapter.project(work).usable;
     for (const item of adapter.state.works)
