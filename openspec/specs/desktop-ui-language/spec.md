@@ -30,7 +30,7 @@
 
 **Identifier:** DUL-002
 
-Desktop SHALL 以独立 Work 列表为首层；打开 Work SHALL 进入该 Work 专属面板，常规布局顶部持续显示 Work 名称、真实状态、返回列表和生命周期操作，侧边 SHALL 不列其他 Work。同一有效身份重新进入时 SHALL 优先恢复上次明确选择且仍有效的 Services/Files/Chat 区域及对象；首次进入或没有有效区域记录时，若有可访问 Service，默认 SHALL 优先显示上次选中且仍可用的 Service，否则显示一个已就绪的默认 Web 入口；其真实可交互页面为主区域，Agent 当前 Session 对话为可输入的辅助栏。首次进入或无可恢复区域，且没有可访问 Service、Work 对话准入成功时，Agent 对话 SHALL 成为主区域并解释 Service 空态或不可用原因；Work 停止时 SHALL 显示启动与历史保留提示，不承诺读取 Session/Run。Desktop SHALL 不设置必须先经过的 Work 总览页。多个 Service SHALL 能在 Work 内切换并看到各自状态；聊天可聚焦为主区域，返回后恢复 Service/端口选择、当前 Session 及 Desktop 自己的阅读位置和非敏感草稿；任意 Service 网页内未保存表单、滚动和跨窗口同步 SHALL 不被外壳作通用保证。Service 可弹出独立窗口，Work 对话仍保留。Work 身份栏下 SHALL 有 Services / Files / Chat 同级入口及明确的 Settings，Workspace files 与设置 SHALL 在同一 Work 中打开；文件主区域可保持 Agent 辅助栏。Run、Operation 与日志按所属对象打开详情。
+Desktop SHALL 以独立 Work 列表为首层；打开 Work SHALL 进入该 Work 专属面板，常规布局顶部持续显示 Work 名称、真实状态、返回列表和生命周期操作，侧边 SHALL 不列其他 Work。同一有效身份重新进入时 SHALL 优先恢复上次明确选择且仍有效的 Services/Files/Chat 区域及对象；首次进入或没有有效区域记录时，若有可访问 Service，默认 SHALL 优先显示上次选中且仍可用的 Service，否则显示一个已就绪的默认 Web 入口；其真实可交互页面为主区域，Agent 当前 Session 对话为可输入的辅助栏。首次进入或无可恢复区域，且没有可访问 Service、Work 对话准入成功时，Agent 对话 SHALL 成为主区域，Chat 不常驻显示 Service 空态或无可访问 Service 的 Alert；Service 状态和原因在所属 Services 上下文可查；Work 停止时 SHALL 显示启动与历史保留提示，不承诺读取 Session/Run。Desktop SHALL 不设置必须先经过的 Work 总览页。多个 Service SHALL 能在 Work 内切换并看到各自状态；聊天可聚焦为主区域，返回后恢复 Service/端口选择、当前 Session 及 Desktop 自己的阅读位置和非敏感草稿；任意 Service 网页内未保存表单、滚动和跨窗口同步 SHALL 不被外壳作通用保证。Service 可弹出独立窗口，Work 对话仍保留。Work 身份栏下 SHALL 有 Services / Files / Chat 同级入口及明确的 Settings，Workspace files 与设置 SHALL 在同一 Work 中打开；文件主区域可保持 Agent 辅助栏。Run、Operation 与日志按所属对象打开详情。
 
 各容器 SHALL 遵守以下职责与返回规则：
 
@@ -67,7 +67,7 @@ Pi Requests SHALL 区分业务目标、一次 Run 和当前 Session：列表按�
 
 Service 选择器 SHALL 将名称、真实状态及选中标记按一致列表结构呈现；主Header与选择器不展示技术端口，声明端口与合法多入口选择归Service详情，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
 
-Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部静态骨架；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次信息或合法入口尚未取得时 SHALL 有局部占位；取得入口后直接显示iframe，不以等待导航load遮挡已可交互内容。导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
+Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部结构骨架，可使用低对比渐变，减少动态效果时为静态；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次信息或合法入口尚未取得时 SHALL 有局部占位；取得入口后直接显示iframe，不以等待导航load遮挡已可交互内容。导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
 
 #### Scenario: 缓存刷新与首次读取分开呈现
 - **WHEN** 用户刷新确认过的Works列表，或首次打开未读取的Service/Chat
@@ -79,7 +79,7 @@ Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时�
 
 #### Scenario: 空 Work 或 Service 不可用
 - **WHEN** 用户首次或没有可恢复区域时，打开没有可访问 Service、但 Work 对话准入成功的 Work
-- **THEN** 对话成为主区域，Service 的空、启动中、停止或无默认 Web 入口原因与下一步可辨，不出现空白或虚构预览
+- **THEN** 对话成为主区域，Chat 不插入 Service 空态或无可访问 Service 的常驻 Alert；Service 的空、启动中、停止或无默认 Web 入口原因及下一步在所属 Services 上下文可辨，不虚构预览
 
 #### Scenario: 从 Service 聚焦对话再返回
 - **WHEN** 用户聚焦当前 Session、继续输入，再返回 Service
@@ -156,6 +156,14 @@ Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时�
 #### Scenario: 切换不可用或多端口服务
 - **WHEN** 用户选择 Starting/Failed/Stopped Service 或更换合法声明端口
 - **THEN** 选择器保留名称/状态及当前选择，显示真实访问原因，旧响应不替换新对象，不自动 Start，不改变 Chat Session
+
+#### Scenario: 没有 Service 时直接使用 Chat
+- **WHEN** Work 已确认没有 Service，或没有可访问的 Service，且对话准入成功
+- **THEN** Chat 可直接使用，不在 Session 或消息区插入无 Service 的蓝色 Alert；Services 入口仍能说明真实状态
+
+#### Scenario: Work 控制等待保持工作区位置
+- **WHEN** 用户启动或控制 Work，提交及已接受任务仍在等待
+- **THEN** 提交反馈在原控件，实际阶段在原对象状态位置；标题、导航、其他交互目标及已打开的应用不因普通等待新增状态块而移位，实际失败和恢复仍可访问
 
 ### Requirement: 对象和状态按真实能力表达
 
@@ -888,7 +896,7 @@ Assistant 文件引用 SHALL 作为进入同 Work Files 的导航入口，以文
 
 **Identifier:** DUL-OPREC-001
 
-Desktop SHALL 将 Work、Service、Apply、Package 和导入导出的任务反馈安排在各自的列表行、面板或流程内；主要可见内容依次表达动作与对象、真实状态、必要原因与下一步，Check status 为就近只读动作，原 Operation 详情为次级入口。没有可见 Work 的创建、导入和已移除 Work 的任务 SHALL 在 Works 列表使用按需出现的紧凑提示，呈现必要状态与对应动作，不新增全局导航或全局操作中心。
+Desktop SHALL 将 Work、Service、Apply、Package 和导入导出的任务反馈安排在各自的列表行、面板或流程内；主要可见内容依次表达动作与对象、真实状态、必要原因与下一步，Check status 为就近只读动作，原 Operation 详情为次级入口。没有可见 Work 的创建、导入和已移除 Work 的任务 SHALL 在 Works 现有操作区使用固定几何入口和按需展开的所属任务提示，呈现必要状态与对应动作；不在搜索或列表前插入挤压内容的状态行，不新增全局导航或全局操作中心。
 
 任务进行中 SHALL 使用既有局部等待语义，明确失败、观察中断和未知结果 SHALL 停止误导性的进行中动效，显示可理解的原因与安全下一步；当前状态、已接受目标和最后确认事实不得混写。普通成功 SHALL 保持短暂、克制，同一任务的进度或错误不在行、通用条、详情和 toast 同时重复。技术 ID、阶段明细和相关标识 SHALL 在次级详情中按需展开、完整读取和复制，不挤占任务名称与主要动作。
 
@@ -919,3 +927,7 @@ Desktop SHALL 将 Work、Service、Apply、Package 和导入导出的任务反�
 #### Scenario: 多任务与窄屏访问
 - **WHEN** Works 存在多个无对象任务，使用 360px 界面、长名称和键盘查看并收起详情
 - **THEN** 可识别和展开每个需处理的任务，状态文字及操作可达；长值不覆盖按钮或造成整页横向滚动，收起不取消执行或丢失恢复入口
+
+#### Scenario: 原位反馈不改变列表几何
+- **WHEN** Work 或 Service 的原任务从待机进入提交、进行、确认完成或需要检查
+- **THEN** 相应对象的原状态位和动作表达事实，列表行、邻近对象与原导航不因普通等待或完成反馈增高、错位或移动；原任务详情与必要恢复仍可达
