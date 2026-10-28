@@ -60,6 +60,31 @@ export function formatTime(value, options) {
 export function formatNumber(value, options) {
     return Number.isFinite(value) ? value.toLocaleString(localeTag(), options) : String(value);
 }
+/**
+ * Readable B/KB/MB/GB for a known byte count, using decimal units so a package
+ * is described the same way it is talked about. Only call this with a finite,
+ * non-negative value; an unknown amount must render as an unquantified stage.
+ */
+export function formatBytes(value) {
+    if (!Number.isFinite(value) || value < 0)
+        return '';
+    const units = [
+        [1e9, 'GB'],
+        [1e6, 'MB'],
+        [1e3, 'KB'],
+    ];
+    for (const [factor, suffix] of units) {
+        if (value >= factor)
+            return `${formatNumber(value / factor, { maximumFractionDigits: 1, minimumFractionDigits: 0 })} ${suffix}`;
+    }
+    return `${formatNumber(Math.round(value))} B`;
+}
+/** Readable percentage for a known completed/total pair; 0 when not derivable. */
+export function formatPercent(completed, total) {
+    if (!Number.isFinite(completed) || !Number.isFinite(total) || total <= 0 || completed < 0)
+        return '';
+    return new Intl.NumberFormat(localeTag(), { style: 'percent', maximumFractionDigits: 0 }).format(Math.min(completed / total, 1));
+}
 /** Localized text for the current page title (also updates <html lang>). */
 export function applyDocumentTitle(title) {
     document.title = title;

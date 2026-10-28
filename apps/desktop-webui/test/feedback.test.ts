@@ -777,7 +777,7 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
   const gate=deferred(),read=deferred();t.after(async()=>{gate.resolve();read.resolve();});let armed=false,accepted=false,id='transfer-original';
   const {page,requests}=await fixture(t,async r=>{
     if(r.path==='works'||r.path==='works/work-1'){if(accepted)await read.promise;const raw={id:'work-1',name:'Recovery Work',observedState:'stopped',desiredState:'stopped'};return{json:r.path==='works'?{works:[raw]}:raw};}
-    if(r.path==='work-packages'&&r.method==='POST'){id=r.headers['x-piwork-transfer-id']!;await gate.promise;return{json:{transferId:id,summary:{name:'actual inspected'}}};}
+    if(r.path==='work-packages'&&r.method==='POST'){id=r.headers['x-piwork-transfer-id']!;await gate.promise;return{json:{transferId:id,summary:{sourceName:'actual inspected'}}};}
     if(r.path===`work-packages/${id}`){if(armed)await gate.promise;return{json:{transferId:id,phase:action==='query'?'accepted':'ready',transferred:4}};}
     if(r.path==='work-imports'||r.path==='works/work-1/exports'){await gate.promise;accepted=true;return{json:{operationId:'op-'+action,workId:'work-1',...(action==='export'?{snapshotId:'snapshot-original'}:{})}};}
     if(action==='export'&&r.path==='operations/op-export')return{json:{operationId:'op-export',workId:'work-1',type:'export_work',state:'running',result:{snapshotId:'snapshot-original'}}};
@@ -791,27 +791,42 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
     await button(page,'import').click();
     if(action==='inspect'){armed=true;await page.locator('#work-file-input').setInputFiles({name:'fixture.work',mimeType:'application/vnd.piwork.work-package',buffer:Buffer.from('byte')});}
     else{
-      await api(page,`adapter.inspection={name:'fixture'};adapter.inspectionTransfer='${id}';adapter.inspectionContext={id:'${id}',nonce:1,core:'http://core.test',localSession:'local-session-csrf',ready:true,anonymous:false,importState:'${action==='query'?'unknown':'unsubmitted'}'};`);
+      await api(page,`adapter.inspection={sourceName:'fixture'};adapter.inspectionTransfer='${id}';adapter.inspectionContext={id:'${id}',nonce:1,core:'http://core.test',localSession:'local-session-csrf',ready:true,anonymous:false,importState:'${action==='query'?'unknown':'unsubmitted'}'};`);
       await api(page,"adapter['emit']()");
-      armed=true;await button(page,action==='query'?'check-inspection-import':'confirm-import').click();
+      if(action==='import'){armed=true;await button(page,'confirm-import').click();}
+      else armed=true;
     }
   }
   if(action==='export'){await expect(page.locator('#modal')).toContainText('Starting export');await expect(button(page,'prepare-export')).toHaveCount(0);}
   else if(action==='inspect'){
     const transfer=page.locator('#modal [data-pending-action~="work-file-input"]');
     await expect(transfer).toHaveAttribute('aria-busy','true');await expect(transfer.locator('.pending-dots')).toHaveCount(1);
-    await expect(transfer).toContainText('Transfer: receiving');await expect(page.locator('#modal')).toContainText('0 / 4 bytes');
+    await expect(transfer).toContainText('Uploading the package');await expect(page.locator('#modal')).toContainText('0 B / 4 B');
     await expect(page.locator('#modal progress[aria-label="Transfer bytes"]')).toHaveAttribute('max','4');
     await expect(page.locator('#modal progress[aria-label="Transfer bytes"]')).toHaveAttribute('value','0');
     await expect.poll(()=>requests.filter(r=>r.path==='work-packages'&&r.method==='POST').length).toBe(1);
     assert.equal(await api(page,'return adapter.inspectionTransfer'),id);assert.equal(await api(page,'return adapter.inspectionContext.id'),id);
   }
+  else if(action==='query'){
+    // An unknown import keeps its identity and offers no second submission.
+    await expect(page.locator('#modal')).toContainText('not confirmed');
+    await expect(button(page,'confirm-import')).toHaveCount(0);
+    await expect(button(page,'check-inspection-import')).toHaveCount(0);
+    assert.equal(requests.filter(r=>r.path==='work-imports').length,0);
+    gate.resolve();
+  }
   else await expect(page.locator('[data-action-status][aria-busy="true"]').first()).toBeVisible();
   gate.resolve();
-  if(action==='export'||action==='import'){await expect(page.locator('#modal')).toContainText('op-'+action);assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();}
+  if(action==='export'||action==='import'){
+    if(action==='export') await expect(page.locator('#modal')).toContainText('op-export');
+    else { await expect(page.locator('#modal .import-name-feedback')).toBeVisible(); assert.equal(await api(page,"return adapter.inspectionContext.operationId"),'op-import'); }
+    assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();
+  }
   else if(action==='inspect'){
     await expect(page.locator('#modal')).toContainText('verified locally');await expect(page.locator('#modal [data-pending-action~="work-file-input"]')).toHaveCount(0);
-    await expect(page.locator('#modal')).toContainText('4 / 4 bytes');assert.equal(await api(page,'return adapter.inspectionTransfer'),id);
+    await expect(page.locator('.import-result')).toContainText('actual inspected');
+    await expect(page.locator('#modal progress')).toHaveCount(0);
+    assert.equal(await api(page,'return adapter.inspectionTransfer'),id);
     assert.equal(requests.filter(r=>r.path==='work-packages'&&r.method==='POST').length,1);
   }
 });
@@ -1134,7 +1149,7 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'works') return { json: { works: imported ? [original, restored()] : [original] } };
     if (r.path === 'works/imported') return { json: restored() };
-    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'sample package' } } };
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'sample package', integrityVerified: true } } };
     if (r.path === 'work-imports') { imported = true; return { json: { operationId: 'c03-import', workId: 'imported' } }; }
     if (r.path === 'operations/c03-import') return { json: { operationId: 'c03-import', workId: 'imported', kind: 'import-work', state: 'succeeded' } };
     if (r.path === 'works/imported/start') { started = true; return { json: { operationId: 'c03-start', workId: 'imported' } }; }
@@ -1142,7 +1157,7 @@ for (const exit of ['close', 'view', 'start'] as const) test(`C03 Import ${exit}
   });
   await button(page, 'back-works').click(); await button(page, 'import').click();
   await page.locator('#work-file-input').setInputFiles({ name: 'sample.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('synthetic inspected package') });
-  await expect(page.locator('.inspection-summary')).toContainText('sample package');
+  await expect(page.locator('.import-result')).toContainText('sample package');
   await button(page, 'confirm-import').click(); await button(page, 'check-operation').click();
   await expect(page.locator('#modal-title')).toHaveText('Imported · Not started');
   assert.equal(requests.filter(r => r.path.endsWith('/start') && r.method === 'POST').length, 0);
@@ -1167,7 +1182,7 @@ for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'works') return { json: { works: imported ? [original, restored()] : [original] } };
     if (r.path === 'works/imported') return { json: restored() };
-    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { name: 'recovery package' } } };
+    if (r.path === 'work-packages' && r.method === 'POST') return { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'recovery package', integrityVerified: true } } };
     if (r.path === 'work-imports' && r.method === 'POST') { imported = true; return { json: { operationId: importId, workId: 'imported' } }; }
     if (r.path === `operations/${importId}`) return { json: { operationId: importId, workId: 'imported', kind: 'import-work', state: 'succeeded' } };
     if (r.path === 'works/imported/start' && r.method === 'POST') { started = true; observed = 'starting'; return outcome === 'submission-unknown' ? { abort: true } : { json: { operationId: startId, workId: 'imported' } }; }
@@ -1176,7 +1191,7 @@ for (const outcome of ['failed', 'observation-unknown', 'submission-unknown'] as
   const submissions = () => requests.filter(r => r.method === 'POST' && ['work-imports', 'works/imported/start'].includes(r.path)).map(r => r.path);
   await button(page, 'back-works').click(); await button(page, 'import').click();
   await page.locator('#work-file-input').setInputFiles({ name: 'recovery.work', mimeType: 'application/vnd.piwork.work-package', buffer: Buffer.from('synthetic recovery package') });
-  await expect(page.locator('.inspection-summary')).toContainText('recovery package');
+  await expect(page.locator('.import-result')).toContainText('recovery package');
   await button(page, 'confirm-import').click(); await button(page, 'check-operation').click();
   await expect(page.locator('#modal-title')).toHaveText('Imported · Not started');
   assert.deepEqual(submissions(), ['work-imports']);
