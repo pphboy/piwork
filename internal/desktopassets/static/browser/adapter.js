@@ -529,6 +529,10 @@ export class DesktopAdapter {
     interactionScope = '';
     interactionVersion = 0;
     interactionTimer;
+    recoveryTimer;
+    recoveryObservation = 0;
+    recoveryReads = 0;
+    recoveryListVisible = false;
     capabilityReads = new Map();
     sessionTimer;
     authCheck;
@@ -817,7 +821,13 @@ export class DesktopAdapter {
             this.cleanupPending.clear();
         }
         this.epoch++;
+        this.status = {};
         this.connectionRequest = undefined;
+        clearTimeout(this.recoveryTimer);
+        this.recoveryTimer = undefined;
+        this.recoveryObservation++;
+        this.recoveryReads = 0;
+        this.recoveryListVisible = false;
         Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false });
         this.worksLoading = false;
         this.worksChecked = '';
@@ -1210,7 +1220,7 @@ export class DesktopAdapter {
     async switchCore(core) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
         await this.checkConnection(); this.emit(); }
     async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-    checkConnection() { return this.readConnection(true); }
+    checkConnection() { this.recoveryReads = 0; return this.readConnection(true); }
     readConnection(checkSession = false) {
         if (this.connectionRequest?.epoch === this.epoch)
             return this.connectionRequest.pending;
@@ -1240,7 +1250,7 @@ export class DesktopAdapter {
                         this.emit();
                     }
                 }
-                const status = await this.request('status');
+                const { value: status } = await this.readMetadata('status', true);
                 if (epoch !== this.epoch)
                     return;
                 this.status = status;
@@ -1255,7 +1265,7 @@ export class DesktopAdapter {
                 }
             }
             catch (error) {
-                if (epoch === this.epoch && this.connectionCheck.checking)
+                if (epoch === this.epoch && this.connectionCheck.checking && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))
                     this.connectionCheck.error = errorText(error);
                 throw error;
             }
@@ -1273,26 +1283,33 @@ export class DesktopAdapter {
         this.connectionRequest = { epoch, pending };
         return pending;
     }
-    listWorks(explicit = true) {
-        const key = `${this.epoch}:${this.mutationSequence}`, previous = this.worksRequests.get(key);
+    listWorks(explicit = true, guard) {
+        const direct = this.worksRequests.get(`${this.epoch}:${this.mutationSequence}:direct`);
+        if (guard && direct)
+            return direct;
+        const key = `${this.epoch}:${this.mutationSequence}:${guard ? `recovery-${this.recoveryObservation}` : 'direct'}`, previous = this.worksRequests.get(key);
         if (previous)
             return previous;
         const requestSequence = ++this.worksRequestSequence;
-        const pending = this.readWorks(explicit, requestSequence).finally(() => {
+        const pending = this.readWorks(explicit, requestSequence, guard).finally(() => {
             if (this.worksRequests.get(key) === pending)
                 this.worksRequests.delete(key);
         });
         this.worksRequests.set(key, pending);
         return pending;
     }
-    async readWorks(explicit, requestSequence) {
+    async readWorks(explicit, requestSequence, guard) {
         const epoch = this.epoch, mutations = new Map(this.workMutations);
-        this.worksLoading = true;
-        this.emit();
+        if (!guard) {
+            this.worksLoading = true;
+            this.emit();
+        }
         try {
             const { value, sequence } = await this.readMetadata('works', explicit);
             if (epoch !== this.epoch)
                 throw new ObservationStopped(t('d.error.identityChanged'));
+            if (guard && !guard())
+                return;
             if (sequence < this.worksReadSequence)
                 return;
             if (!Array.isArray(value.works))
@@ -1331,7 +1348,7 @@ export class DesktopAdapter {
             this.emit();
         }
         catch (error) {
-            if (epoch === this.epoch && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+            if (epoch === this.epoch && (!guard || guard()) && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
                 this.worksError = errorText(error);
                 if (!this.worksChecked)
                     this.state.scenario = 'list-error';
@@ -1340,7 +1357,7 @@ export class DesktopAdapter {
             throw error;
         }
         finally {
-            if (epoch === this.epoch && requestSequence === this.worksRequestSequence) {
+            if (!guard && epoch === this.epoch && requestSequence === this.worksRequestSequence) {
                 this.worksLoading = false;
                 this.emit();
             }
@@ -2661,7 +2678,19 @@ export class DesktopAdapter {
         this.scheduleOperationPoll();
         await Promise.allSettled(pending);
     }
-    observePage(workId, visible, includeChat = true, serviceName = '', requestId = '', requestList = false, listService = '') {
+    observePage(workId, visible, includeChat = true, serviceName = '', requestId = '', requestList = false, listService = '', worksList = false) {
+        const observeRecovery = visible && worksList && this.state.signedIn;
+        if (observeRecovery !== this.recoveryListVisible) {
+            this.recoveryListVisible = observeRecovery;
+            this.recoveryObservation++;
+            this.recoveryReads = 0;
+            clearTimeout(this.recoveryTimer);
+            this.recoveryTimer = undefined;
+            if (!observeRecovery)
+                this.metadata.cancelKey(this.metadataKey('status'));
+        }
+        if (observeRecovery && !this.recoveryTimer && !this.connectionCheck.error && this.needsRecoveryObservation())
+            this.scheduleRecoveryRead();
         const entering = this.visibleWorkId !== workId || !this.observationVisible && visible;
         this.visibleWorkId = workId;
         this.visibleChat = includeChat;
@@ -2719,6 +2748,52 @@ export class DesktopAdapter {
                 this.interactionTimer = setInterval(refresh, 5000);
             }
         }
+    }
+    needsRecoveryObservation() {
+        return !!this.status.health?.available && !!this.status.readiness?.available && (this.status.readiness.value?.state === 'RECOVERING' ||
+            this.state.works.some(work => ['Unknown', 'Preparing', 'Starting'].includes(work.status) || work.desired === 'running' && work.status === 'Stopped'));
+    }
+    scheduleRecoveryRead() {
+        // Bound automatic observation to ten minutes at the normal two-second cadence.
+        const limit = 300;
+        if (!this.recoveryListVisible || this.recoveryTimer || this.recoveryReads >= limit)
+            return;
+        const epoch = this.epoch, version = this.recoveryObservation;
+        this.recoveryTimer = setTimeout(async () => {
+            this.recoveryReads++;
+            // Keep the timer owned until both reads finish, including while rendering.
+            try {
+                const { value: status } = await this.readMetadata('status', false);
+                if (epoch !== this.epoch || version !== this.recoveryObservation)
+                    return;
+                this.status = status;
+                this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
+                this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
+                Object.assign(this.connectionCheck, { checkedAt: this.state.lastChecked, error: status.health?.available && !status.readiness?.available ? t('common.notConfirmed') : '' });
+                await this.listWorks(false, () => epoch === this.epoch && version === this.recoveryObservation);
+                if (epoch === this.epoch && version === this.recoveryObservation)
+                    this.emit();
+            }
+            catch (error) {
+                if (epoch === this.epoch && version === this.recoveryObservation) {
+                    this.connectionCheck.error = errorText(error);
+                    this.emit();
+                }
+            }
+            finally {
+                if (epoch === this.epoch && version === this.recoveryObservation) {
+                    this.recoveryTimer = undefined;
+                    if (this.recoveryListVisible && this.needsRecoveryObservation() && !this.connectionCheck.error) {
+                        if (this.recoveryReads >= limit) {
+                            this.connectionCheck.error = t('conn.observationPaused');
+                            this.emit();
+                        }
+                        else
+                            this.scheduleRecoveryRead();
+                    }
+                }
+            }
+        }, 2000);
     }
     async refreshVisibleWork(id) {
         const work = await this.refreshWorkStatus(id, false);

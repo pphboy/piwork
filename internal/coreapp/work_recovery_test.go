@@ -1,6 +1,8 @@
 package coreapp
 
 import (
+	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -23,5 +25,94 @@ func TestRecoveryRespectsPersistedRetryDeadlineAndExhaustion(t *testing.T) {
 	}
 	if runtimeRetryPermitted(failed, now.Add(10*time.Minute)) {
 		t.Fatal("Core restart after the old window bypassed explicit retry")
+	}
+}
+
+func TestRecoveryFailureObservationFollowsScheduledRetry(t *testing.T) {
+	ctx := context.Background()
+	a, err := New(ctx, Options{DataDirectory: t.TempDir(), Shutdown: func(context.Context, *Application) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close(ctx)
+	owner, err := a.Identity.Bootstrap(ctx, "owner", "development-fixture-pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		for _, id := range []string{"retry", "stopped", "newer", "no-generation"} {
+			if err := corestore.InsertWork(tx, corestore.WorkRecord{ID: id, OwnerUserID: string(owner.Id), Name: id, DesiredState: "running", ObservedState: "starting", DesiredRevision: 1, ControlVersion: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+				return err
+			}
+			if id != "no-generation" {
+				if _, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES(?,1,'fixture','starting',0,?,?)`, id, now, now); err != nil {
+					return err
+				}
+			}
+		}
+		_, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES('newer',2,'new-fixture','ready',0,?,?)`, now, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= 4; attempt++ {
+		if err := a.recordRecoveryFailure(ctx, "retry", 1); err != nil {
+			t.Fatal(err)
+		}
+		work, err := a.Store.Work(ctx, "retry", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		generation, err := a.Store.RuntimeGeneration(ctx, "retry", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt <= 3 {
+			if work.ObservedState != "unknown" || generation.State != "recovering" || generation.RetryCount != attempt || generation.NextRetryAt == nil {
+				t.Fatalf("attempt %d: work=%+v generation=%+v", attempt, work, generation)
+			}
+		} else if work.ObservedState != "failed" || generation.State != "failed" || generation.RetryCount != 3 || generation.NextRetryAt != nil {
+			t.Fatalf("exhausted: work=%+v generation=%+v", work, generation)
+		}
+	}
+	if err := a.recordRecoveryFailure(ctx, "newer", 1); err != nil {
+		t.Fatal(err)
+	}
+	work, err := a.Store.Work(ctx, "newer", false)
+	if err != nil || work.ObservedState != "starting" {
+		t.Fatalf("old generation overwrote new: %+v %v", work, err)
+	}
+	oldGeneration, err := a.Store.RuntimeGeneration(ctx, "newer", 1)
+	if err != nil || oldGeneration.State != "starting" || oldGeneration.RetryCount != 0 {
+		t.Fatalf("old generation was rescheduled: %+v %v", oldGeneration, err)
+	}
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE works SET desired_state='stopped',observed_state='stopping' WHERE id='stopped'`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recordRecoveryFailure(ctx, "stopped", 1); err != nil {
+		t.Fatal(err)
+	}
+	// The desired target may change after the caller's preflight read.
+	if _, err := a.Store.RecordRuntimeFailure(ctx, "stopped", 1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	work, err = a.Store.Work(ctx, "stopped", false)
+	if err != nil || work.ObservedState != "stopping" {
+		t.Fatalf("stop target overwritten: %+v %v", work, err)
+	}
+	stoppedGeneration, err := a.Store.RuntimeGeneration(ctx, "stopped", 1)
+	if err != nil || stoppedGeneration.State != "starting" || stoppedGeneration.RetryCount != 0 {
+		t.Fatalf("stop target was rescheduled: %+v %v", stoppedGeneration, err)
+	}
+	if err := a.recordRecoveryFailure(ctx, "no-generation", 1); err != nil {
+		t.Fatal(err)
+	}
+	work, err = a.Store.Work(ctx, "no-generation", false)
+	if err != nil || work.ObservedState != "failed" {
+		t.Fatalf("missing generation failure lost: %+v %v", work, err)
 	}
 }

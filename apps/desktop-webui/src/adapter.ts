@@ -328,6 +328,10 @@ export class DesktopAdapter {
   private interactionScope = '';
   private interactionVersion = 0;
   private interactionTimer?: ReturnType<typeof setInterval>;
+  private recoveryTimer?: ReturnType<typeof setTimeout>;
+  private recoveryObservation = 0;
+  private recoveryReads = 0;
+  private recoveryListVisible = false;
   private capabilityReads = new Map<string, Promise<void>>();
   private sessionTimer?: ReturnType<typeof setTimeout>;
   private authCheck?: { epoch: number; sequence: number; acceptedEpoch?: number; connectionOwned?: boolean; pending: Promise<Data>; controller: AbortController };
@@ -514,7 +518,7 @@ export class DesktopAdapter {
     if (this.hosted) { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith('piwork:web:')) sessionStorage.removeItem(key); } catch {} }
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
-    this.epoch++; this.connectionRequest = undefined; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.stopFileReads(); this.directoryLoads.clear(); this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
+    this.epoch++; this.status = {}; this.connectionRequest = undefined; clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined; this.recoveryObservation++; this.recoveryReads = 0; this.recoveryListVisible = false; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.stopFileReads(); this.directoryLoads.clear(); this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
     this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.temporaryCleanups.clear();this.temporaryCleanupRequests.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
@@ -720,7 +724,7 @@ export class DesktopAdapter {
   }
   async switchCore(core: string) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn) await this.checkConnection(); this.emit(); }
   async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-  checkConnection(): Promise<void> { return this.readConnection(true); }
+  checkConnection(): Promise<void> { this.recoveryReads = 0; return this.readConnection(true); }
   private readConnection(checkSession = false): Promise<void> {
     if (this.connectionRequest?.epoch === this.epoch) return this.connectionRequest.pending;
     let epoch = this.epoch;
@@ -741,14 +745,14 @@ export class DesktopAdapter {
             Object.assign(this.connectionCheck, { checking: true, error: '', waiting: false }); this.emit();
           }
         }
-        const status = await this.request('status');
+        const { value: status } = await this.readMetadata('status', true);
         if (epoch !== this.epoch) return;
         this.status = status; this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
         this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
         Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false }); this.emit();
         if (this.state.signedIn && this.state.scenario !== 'core-offline') { await this.listWorks(); await this.checkCatalog(); await this.recoverOperations(); }
       } catch (error) {
-        if (epoch === this.epoch && this.connectionCheck.checking) this.connectionCheck.error = errorText(error);
+        if (epoch === this.epoch && this.connectionCheck.checking && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) this.connectionCheck.error = errorText(error);
         throw error;
       } finally {
         clearTimeout(slow);
@@ -758,20 +762,24 @@ export class DesktopAdapter {
     })();
     this.connectionRequest = { epoch, pending }; return pending;
   }
-  listWorks(explicit = true): Promise<void> {
-    const key = `${this.epoch}:${this.mutationSequence}`, previous = this.worksRequests.get(key);
+  listWorks(explicit = true, guard?: () => boolean): Promise<void> {
+    const direct = this.worksRequests.get(`${this.epoch}:${this.mutationSequence}:direct`);
+    if (guard && direct) return direct;
+    const key = `${this.epoch}:${this.mutationSequence}:${guard ? `recovery-${this.recoveryObservation}` : 'direct'}`, previous = this.worksRequests.get(key);
     if (previous) return previous;
     const requestSequence = ++this.worksRequestSequence;
-    const pending = this.readWorks(explicit, requestSequence).finally(() => {
+    const pending = this.readWorks(explicit, requestSequence, guard).finally(() => {
       if (this.worksRequests.get(key) === pending) this.worksRequests.delete(key);
     });
     this.worksRequests.set(key, pending); return pending;
   }
-  private async readWorks(explicit: boolean, requestSequence: number) {
-    const epoch = this.epoch, mutations = new Map(this.workMutations); this.worksLoading = true; this.emit();
+  private async readWorks(explicit: boolean, requestSequence: number, guard?: () => boolean) {
+    const epoch = this.epoch, mutations = new Map(this.workMutations);
+    if (!guard) { this.worksLoading = true; this.emit(); }
     try {
       const { value, sequence } = await this.readMetadata('works', explicit);
       if (epoch !== this.epoch) throw new ObservationStopped(t('d.error.identityChanged'));
+      if (guard && !guard()) return;
       if (sequence < this.worksReadSequence) return;
       if (!Array.isArray(value.works)) throw failure('INVALID_RESPONSE','d.error.workListIncomplete');
       this.worksReadSequence = sequence;
@@ -795,11 +803,11 @@ export class DesktopAdapter {
       if (['loading', 'empty', 'list-error'].includes(this.state.scenario)) this.state.scenario = 'normal';
       if (!this.state.works.length && this.state.scenario === 'normal') this.state.scenario = 'empty'; this.emit();
     } catch (error) {
-      if (epoch === this.epoch && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+      if (epoch === this.epoch && (!guard || guard()) && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
         this.worksError = errorText(error); if (!this.worksChecked) this.state.scenario = 'list-error'; this.emit();
       }
       throw error;
-    } finally { if (epoch === this.epoch && requestSequence === this.worksRequestSequence) { this.worksLoading = false; this.emit(); } }
+    } finally { if (!guard && epoch === this.epoch && requestSequence === this.worksRequestSequence) { this.worksLoading = false; this.emit(); } }
   }
   private mapWork(raw: Data, old?: Work): Work {
     return { ...(old ?? { network: '', services: [], files: [], sessions: [], config: blankConfig() }),
@@ -1443,7 +1451,14 @@ export class DesktopAdapter {
     this.scheduleOperationPoll();
     await Promise.allSettled(pending);
   }
-  observePage(workId: string, visible: boolean, includeChat = true, serviceName='',requestId='',requestList=false,listService='') {
+  observePage(workId: string, visible: boolean, includeChat = true, serviceName='',requestId='',requestList=false,listService='', worksList=false) {
+    const observeRecovery = visible && worksList && this.state.signedIn;
+    if (observeRecovery !== this.recoveryListVisible) {
+      this.recoveryListVisible = observeRecovery; this.recoveryObservation++; this.recoveryReads = 0;
+      clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined;
+      if (!observeRecovery) this.metadata.cancelKey(this.metadataKey('status'));
+    }
+    if (observeRecovery && !this.recoveryTimer && !this.connectionCheck.error && this.needsRecoveryObservation()) this.scheduleRecoveryRead();
     const entering = this.visibleWorkId !== workId || !this.observationVisible && visible;
     this.visibleWorkId = workId;
     this.visibleChat = includeChat;
@@ -1478,6 +1493,39 @@ export class DesktopAdapter {
         queueMicrotask(()=>refresh(true));this.interactionTimer=setInterval(refresh,5000);
       }
     }
+  }
+  private needsRecoveryObservation() {
+    return !!this.status.health?.available && !!this.status.readiness?.available && (this.status.readiness.value?.state === 'RECOVERING' ||
+      this.state.works.some(work => ['Unknown', 'Preparing', 'Starting'].includes(work.status) || work.desired === 'running' && work.status === 'Stopped'));
+  }
+  private scheduleRecoveryRead() {
+    // Bound automatic observation to ten minutes at the normal two-second cadence.
+    const limit = 300;
+    if (!this.recoveryListVisible || this.recoveryTimer || this.recoveryReads >= limit) return;
+    const epoch = this.epoch, version = this.recoveryObservation;
+    this.recoveryTimer = setTimeout(async () => {
+      this.recoveryReads++;
+      // Keep the timer owned until both reads finish, including while rendering.
+      try {
+        const { value: status } = await this.readMetadata('status', false);
+        if (epoch !== this.epoch || version !== this.recoveryObservation) return;
+        this.status = status; this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
+        this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
+        Object.assign(this.connectionCheck, { checkedAt: this.state.lastChecked, error: status.health?.available && !status.readiness?.available ? t('common.notConfirmed') : '' });
+        await this.listWorks(false, () => epoch === this.epoch && version === this.recoveryObservation);
+        if (epoch === this.epoch && version === this.recoveryObservation) this.emit();
+      } catch (error) {
+        if (epoch === this.epoch && version === this.recoveryObservation) { this.connectionCheck.error = errorText(error); this.emit(); }
+      } finally {
+        if (epoch === this.epoch && version === this.recoveryObservation) {
+          this.recoveryTimer = undefined;
+          if (this.recoveryListVisible && this.needsRecoveryObservation() && !this.connectionCheck.error) {
+            if (this.recoveryReads >= limit) { this.connectionCheck.error = t('conn.observationPaused'); this.emit(); }
+            else this.scheduleRecoveryRead();
+          }
+        }
+      }
+    }, 2000);
   }
   async refreshVisibleWork(id: string) {
     const work = await this.refreshWorkStatus(id, false);

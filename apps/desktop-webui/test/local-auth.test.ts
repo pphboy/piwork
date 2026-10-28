@@ -81,7 +81,7 @@ for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hos
   await expect(page.locator('body')).toContainText('Still reading your Desktop session');
   await expect(button(page, 'retry-session')).toBeVisible();
   await button(page, 'retry-session').click();
-  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await expect(page.locator('.works-page')).toBeVisible();
   assert(reads >= 2, 'retry reused the original hung read');
   gate.resolve();
   await expect.poll(() => api(page, 'return adapter.state.core.account')).toBe('current-owner');
@@ -489,7 +489,7 @@ test('Works initial error has one cause and retry; retries stay local and confir
   const initialReads = records.filter(r => r.path === 'works').length;
   mode = 'retry-failure'; await page.getByRole('button', { name: 'Retry loading', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Reading Works…', exact: true })).toHaveAttribute('aria-busy', 'true');
-  await expect(page.locator('.page-heading .pending-dots')).toHaveCount(1); await expect(page.locator('.pending-dots')).toHaveCount(1);
+  await expect(page.locator('.works-toolbar .pending-dots')).toHaveCount(1); await expect(page.locator('.pending-dots')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Retry loading', exact: true })).toBeDisabled();
   await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.works-page > .feedback')).toHaveCount(0);
   await page.locator('[data-action="retry-works"]').evaluateAll(nodes => nodes.forEach(node => (node as HTMLButtonElement).click()));
@@ -503,7 +503,7 @@ test('Works initial error has one cause and retry; retries stay local and confir
   await page.setViewportSize({ width: 360, height: 900 });
   assert.equal(await page.locator('.works-error-cause').evaluate(node => node.scrollWidth <= node.clientWidth), true);
   mode = 'retry-success'; await page.getByRole('button', { name: 'Retry loading', exact: true }).click();
-  await expect(page.locator('.page-heading .pending-dots')).toHaveCount(1); successfulRetry.resolve();
+  await expect(page.locator('.works-toolbar .pending-dots')).toHaveCount(1); successfulRetry.resolve();
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
   await expect(page.locator('.works-error-cause')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
   await expect(page.locator('.works-footer')).toContainText('0 Works');

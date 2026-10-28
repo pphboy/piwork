@@ -192,11 +192,13 @@ func (a *Application) recordRecoveryFailure(ctx context.Context, workID string, 
 	if err != nil || work.DesiredState != "running" {
 		return err
 	}
-	_, err = a.Store.RuntimeGeneration(ctx, workID, generation)
-	if err == nil {
-		_, err = a.Store.RecordRuntimeFailure(ctx, workID, generation, time.Now().UTC())
-	} else if errors.Is(err, corestore.ErrNotFound) {
-		err = nil
+	_, err = a.Store.RecordRuntimeFailure(ctx, workID, generation, time.Now().UTC())
+	if errors.Is(err, corestore.ErrNotFound) {
+		// A failure before any runtime generation exists has no scheduled retry.
+		err = a.Store.Write(ctx, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM runtime_generations WHERE work_id=? AND generation>=?)`, time.Now().UTC().Format(time.RFC3339Nano), workID, workID, generation)
+			return err
+		})
 	}
 	if err != nil {
 		return err
@@ -206,10 +208,7 @@ func (a *Application) recordRecoveryFailure(ctx context.Context, workID string, 
 	} else {
 		log.Print("piwork: Work Agent recovery attempt failed")
 	}
-	return a.Store.Write(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running'`, time.Now().UTC().Format(time.RFC3339Nano), workID)
-		return err
-	})
+	return nil
 }
 
 func (a *Application) runtimeRecoveryLoop() {

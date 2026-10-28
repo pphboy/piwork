@@ -286,6 +286,27 @@ func New(ctx context.Context, options Options) (_ *Application, returned error) 
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	a := &Application{Store: store, Identity: id, Settings: settings, files: files, inspectionRoot: root, logs: logs, logsRoot: logsRoot, options: options, ctx: lifetime, cancel: cancel, state: "STORE_OPEN", refresh: make(chan struct{}, 1), serveDone: make(chan error, 2)}
+	// Observations from the preceding process are no longer current. Clear only
+	// nonterminal observations before any listener can serve them; recovery
+	// publishes starting/ready/stopped after checking the actual resources.
+	// This transaction also makes the confirmation boundary part of the same
+	// database snapshot as the Work state, including for concurrent readers.
+	if err := store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='unknown'
+			WHERE deleted_at IS NULL AND (
+				observed_state IN ('ready','degraded','stopped','starting','stopping','provisioning')
+				OR (observed_state='failed' AND desired_state='running' AND NOT EXISTS (
+					SELECT 1 FROM runtime_generations g WHERE g.work_id=works.id
+					AND g.generation=(SELECT MAX(newer.generation) FROM runtime_generations newer WHERE newer.work_id=works.id)
+					AND g.state='failed' AND g.retry_count>=3
+				))
+			)`)
+		return err
+	}); err != nil {
+		root.Close()
+		cancel()
+		return nil, err
+	}
 	a.serviceGateway = newServiceGateway(a)
 	a.packageSlots = make(chan struct{}, 2)
 	a.archiveSlots = make(chan struct{}, 2)

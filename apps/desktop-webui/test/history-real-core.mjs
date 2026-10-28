@@ -18,7 +18,7 @@ export async function historyAcceptance({page,coreUrl,uiUrl,token,api,waitFor,cl
  const inspect=async(target,label)=>{
   const reads=[],writes=[];target.on('request',request=>{const url=new URL(request.url());if(url.pathname.startsWith('/_desktop/api/works/'+work+'/')){if(request.method()==='GET')reads.push(url);else writes.push(url);}});
   await target.goto(new URL(`/#/work/${work}`,label==='hosted'?uiUrl:target.url()).href);
-  if(label==='hosted'){await target.getByRole('textbox',{name:'Account',exact:true}).fill('admin');await target.getByLabel('Password').fill('real-browser-admin-password');await target.getByRole('button',{name:'Sign in',exact:true}).click();await expect(target.getByRole('heading',{name:'Works',exact:true})).toBeVisible();await target.goto(new URL(`/#/work/${work}`,uiUrl).href);}
+  if(label==='hosted'){await target.getByRole('textbox',{name:'Account',exact:true}).fill('admin');await target.getByLabel('Password').fill('real-browser-admin-password');await target.getByRole('button',{name:'Sign in',exact:true}).click();await expect(target.locator('.works-page')).toBeVisible();await target.goto(new URL(`/#/work/${work}`,uiUrl).href);}
   await expect(target.getByRole('heading',{name:'Large history acceptance',exact:true})).toBeVisible({timeout:30000});
   await expect(target.locator('[data-action=load-earlier-history]')).toBeVisible();
   assert.ok(reads.some(url=>url.pathname.endsWith('/history')));assert.ok(!reads.some(url=>url.pathname.endsWith('/sessions/'+session)));assert.ok(!reads.some(url=>url.searchParams.has('cursor')));

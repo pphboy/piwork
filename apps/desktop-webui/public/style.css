@@ -3424,3 +3424,12 @@ a.button.primary { color:var(--on-accent,#fff); }
 
 .history-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-block: 8px; }
 .history-partial { display: block; color: var(--muted); margin-bottom: 6px; font: 12px/1.5 var(--font-sans, sans-serif); }
+
+/* Work list toolbar: search and Core status share one aligned row. */
+.works-toolbar { justify-content: flex-start; gap: 12px; }
+.works-toolbar .connection { margin-left: auto; }
+.works-toolbar .actions { display: flex; align-items: center; gap: 8px; }
+.connection > i.core-starting-spinner { width: 13px; height: 13px; background: transparent; border: 2px solid #bfd1e5; border-top-color: #5681b1; animation: core-starting-spin 1s linear infinite; }
+@keyframes core-starting-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .connection > i.core-starting-spinner { animation: none; } }
+@media (max-width: 650px) { .works-toolbar { flex-wrap: wrap; } .works-toolbar .search-box { flex: 1 1 180px; min-width: 0; } .works-toolbar .connection { order: 3; margin-left: 0; } .works-toolbar .actions { margin-left: auto; } }

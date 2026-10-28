@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"piwork/internal/releaseinfo"
 	"strings"
 	"time"
@@ -491,5 +493,34 @@ func (d *nativeDesktop) status(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	desktopJSON(w, 200, map[string]any{"coreUrl": coreURL, "health": check("/healthz"), "readiness": check("/readyz"), "service": service, "files": files, "checkedAt": time.Now().UTC().Format(time.RFC3339Nano)})
+	desktopJSON(w, 200, map[string]any{"coreUrl": coreURL, "health": check("/healthz"), "readiness": desktopReadiness(r.Context(), anonymous), "service": service, "files": files, "checkedAt": time.Now().UTC().Format(time.RFC3339Nano)})
+}
+
+// Readiness deliberately uses 503 for a valid not-ready snapshot. Preserve it
+// without treating unrelated HTTP errors or malformed responses as facts.
+func desktopReadiness(parent context.Context, core *client.Client) map[string]any {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, core.Base.ResolveReference(&url.URL{Path: "/readyz"}).String(), nil)
+	if err != nil {
+		return map[string]any{"available": false, "error": "Readiness is unconfirmed"}
+	}
+	response, err := core.HTTP.Do(request)
+	if err != nil {
+		return map[string]any{"available": false, "error": "Core is unavailable"}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusServiceUnavailable {
+		return map[string]any{"available": false, "error": "Readiness is unconfirmed"}
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	var value struct {
+		Ready  *bool  `json:"ready"`
+		State  string `json:"state"`
+		Status string `json:"status"`
+	}
+	if err != nil || len(raw) > 1<<20 || json.Unmarshal(raw, &value) != nil || value.Ready == nil || value.State == "" || (response.StatusCode == http.StatusServiceUnavailable && (*value.Ready || value.Status != "not_ready")) || (response.StatusCode == http.StatusOK && (!*value.Ready || value.Status != "ready")) {
+		return map[string]any{"available": false, "error": "Readiness is unconfirmed"}
+	}
+	return map[string]any{"available": true, "value": json.RawMessage(raw)}
 }

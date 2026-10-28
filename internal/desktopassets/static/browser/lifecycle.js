@@ -24,7 +24,10 @@ export function projectWork(work, operations) {
     let label = work.status;
     let action = 'check';
     let explanation = work.statusError ? t('d.lifecycle.statusUnconfirmed', { detail: String(work.statusError) }) : '';
-    if (stopping) {
+    if (work.status === 'Unknown' && !accepting) {
+        label = t('d.lifecycle.workUnconfirmed');
+    }
+    else if (stopping) {
         const failed = work.status === 'Failed' || original?.state === 'failed';
         const deleting = !failed && (work.desired === 'deleted' || intent?.action === 'delete');
         label = failed ? t('d.lifecycle.stopUnconfirmed') : deleting ? t('d.lifecycle.deleting') : work.status === 'Stopping' ? t('d.lifecycle.stopping') : t('d.lifecycle.stopAccepted');
@@ -37,6 +40,8 @@ export function projectWork(work, operations) {
     }
     else if (['Preparing', 'Starting'].includes(work.status) && work.desired === 'running')
         action = 'stop';
+    else if (work.status === 'Stopped' && work.desired === 'running')
+        explanation ||= t('d.lifecycle.runningTarget');
     else if (work.status === 'Stopped' && work.desired === 'stopped')
         action = 'start';
     else if (work.status === 'Failed' && work.desired === 'running')
