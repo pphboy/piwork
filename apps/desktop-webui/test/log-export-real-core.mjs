@@ -74,7 +74,7 @@ try {
   await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+  await page.locator('.works-page').waitFor();
   await page.screenshot({ path: join(output, '01-fault-work.png'), fullPage: true });
   // Lose only the creation response; the real Core still completes the task.
   let originalID, originalKey, postCount = 0, failDetail = false;

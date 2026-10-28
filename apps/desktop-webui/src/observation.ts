@@ -13,6 +13,7 @@ export class MetadataReads {
   states = new Map<string, ReadState>();
   private pending = new Map<string, Promise<unknown>>();
   private controllers = new Set<AbortController>();
+  private keyedControllers = new Map<string, AbortController>();
   private active = 0;
   private queue: Array<() => void> = [];
   constructor(private now = () => Date.now(), private timeoutMs = 10_000) {}
@@ -20,6 +21,7 @@ export class MetadataReads {
   paused(key: string) { return this.states.get(key)?.paused === true; }
   rearm() { for (const state of this.states.values()) { state.failures = 0; state.nextAt = 0; state.paused = false; } }
   cancel() { for (const controller of this.controllers) controller.abort(new ObservationStopped(t('d.error.observationEnded'))); }
+  cancelKey(key: string) { this.keyedControllers.get(key)?.abort(new ObservationStopped(t('d.error.observationEnded'))); }
   clear() { this.cancel(); this.states.clear(); this.pending.clear(); }
   nextDelay(defaultMs = 2000, keys?: string[]) {
     const waits = [...this.states].filter(([key]) => !keys || keys.includes(key)).map(([, state]) => state).filter(state => !state.paused && state.failures).map(state => state.nextAt > this.now() ? state.nextAt - this.now() : defaultMs);
@@ -31,7 +33,7 @@ export class MetadataReads {
     if (!state) { state = { failures: 0, nextAt: 0, paused: false }; this.states.set(key, state); }
     if (explicit) Object.assign(state, { failures: 0, nextAt: 0, paused: false });
     if (!this.canRead(key)) return Promise.reject(new ObservationDeferred(state.error || t('d.error.statusPaused')));
-    const owned = state, controller = new AbortController(); this.controllers.add(controller);
+    const owned = state, controller = new AbortController(); this.controllers.add(controller); this.keyedControllers.set(key, controller);
     const task = (async () => {
       let acquired = false, timer: ReturnType<typeof setTimeout> | undefined;
       try {
@@ -60,7 +62,7 @@ export class MetadataReads {
         }
         throw error;
       } finally {
-        clearTimeout(timer); this.controllers.delete(controller);
+        clearTimeout(timer); this.controllers.delete(controller); if (this.keyedControllers.get(key) === controller) this.keyedControllers.delete(key);
         if (acquired) { this.active--; this.queue.shift()?.(); }
       }
     })();

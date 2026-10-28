@@ -15,10 +15,10 @@ export async function measureBrowserCreates({ launchUrl, password, count, retire
     await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
     await page.getByLabel('Password').fill(password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await page.locator('.works-page').waitFor();
     for (let i = 0; i < count; i++) {
       // Navigation prepares the next independent sample and is outside timing.
-      if (i) { await page.goto(new URL(launchUrl).origin); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); }
+      if (i) { await page.goto(new URL(launchUrl).origin); await page.locator('.works-page').waitFor(); }
       const name = `Latency Browser ${i + 1}`;
       await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
       await page.locator('#create-name').fill(name);

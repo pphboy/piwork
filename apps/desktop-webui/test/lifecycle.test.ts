@@ -252,6 +252,7 @@ test('DWUI-016 runtime failure, stop failure, degraded and unknown use different
   const a = fixture(t, () => ({}));
   const failed = a.mapWork({ ...raw('failed'), lastError: { message: 'runtime readiness failed' } });
   assert.equal(a.project(failed).action, 'retry'); assert.match(a.project(failed).explanation, /readiness failed/);
+  const waiting = a.mapWork(raw('unknown', 'running')); assert.equal(a.project(waiting).action, 'check'); assert.equal(a.project(waiting).usable, false);
   const stopping = { ...failed, desired: 'stopped' }; assert.equal(a.project(stopping).action, 'check'); assert.equal(a.project(stopping).exportable, false);
   assert.equal(a.project(a.mapWork(raw('degraded'))).usable, true);
   const unknown = a.mapWork(raw('undocumented')); assert.equal(a.project(unknown).action, 'check'); assert.equal(a.project(unknown).usable, false);
@@ -483,4 +484,190 @@ test('DWUI-017 adapter failure backoff and five-second panel read preserve exhau
   assert.deepEqual(reads, [102000, 103000, 105000, 110000]);
   await assert.rejects(a.refreshVisibleWork('work-one'), ObservationDeferred);
   t.mock.timers.tick(20000); await flush(); assert.equal(reads.length, 4);
+});
+
+test('Core recovery observes status and list until ready without sending controls', async t => {
+  const calls: string[] = [];
+  const a = fixture(t, (path, method) => {
+    calls.push(`${method} ${path}`);
+    if (path === 'status') return { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } };
+    if (path === 'works') return { works: [raw('ready')] };
+    return {};
+  });
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.equal(a.state.works[0].status, 'Ready');
+  assert.equal(a.status.readiness.value.state, 'READY');
+  assert.deepEqual(calls.sort(), ['GET status', 'GET works']);
+  a.observePage('', false, false, '', '', false, '', true);
+});
+
+test('unknown stopped Work does not claim a Stop was accepted', async t => {
+  const a = fixture(t, () => raw('unknown', 'stopped'));
+  const work = await a.refreshWorkStatus('work-one');
+  assert.equal(a.project(work).label, 'Work status not confirmed');
+  assert.equal(a.project(work).action, 'check');
+  assert.equal(a.project(work).exportable, false);
+});
+
+test('operation 404 preserves a confirmed Work and its original operation identity', async t => {
+  const a = fixture(t, path => path.startsWith('operations/') ? { status: 404, body: { code: 'NOT_FOUND', message: 'resource was not found' } } : raw());
+  a.state.works = [a.mapWork(raw())];
+  a.state.operations = [{ id: 'missing-operation', workId: 'work-one', kind: 'Start Work', action: 'start', state: 'unknown' }];
+  await assert.rejects(a.checkOperation('missing-operation'));
+  assert.equal(a.getWork('work-one').status, 'Ready');
+  assert.equal(a.getOperation('missing-operation').state, 'unknown');
+  assert.match(String(a.getOperation('missing-operation').observationError), /404/);
+  assert.equal(a.project(a.getWork('work-one')).usable, true);
+});
+
+test('leaving Work list fences an in-flight recovery read', async t => {
+  let release: (value: any) => void = () => {};
+  let calls = 0;
+  const a = fixture(t, path => {
+    calls++;
+    if (path === 'status') return new Promise(resolve => { release = resolve; });
+    return { works: [raw()] };
+  });
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(calls, 1);
+  a.observePage('', false, false, '', '', false, '', true);
+  release({ health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(a.status.readiness.value.state, 'RECOVERING');
+  assert.equal(calls, 1);
+});
+
+test('identity change fences an in-flight recovery read', async t => {
+  let release: (value: any) => void = () => {};
+  const a = fixture(t, () => new Promise(resolve => { release = resolve; }));
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  a.clearIdentity();
+  release({ health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(a.status.readiness, undefined);
+  assert.equal(a.state.works.length, 0);
+});
+
+test('leaving the list ignores a late recovery Work list response', async t => {
+  let release: (value: any) => void = () => {};
+  const a = fixture(t, path => path === 'status' ? { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } } : new Promise(resolve => { release = resolve; }));
+  a.state.signedIn = true;
+  a.state.works = [a.mapWork(raw('starting'))];
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(a.worksLoading, false, 'background recovery must not flash the refresh control');
+  a.observePage('', false, false, '', '', false, '', true);
+  release({ works: [raw('ready')] });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(a.state.works[0].status, 'Starting');
+});
+
+test('recovery read failure remains unconfirmed without repeating a write', async t => {
+  let calls = 0;
+  const a = fixture(t, (path, method) => { calls++; assert.equal(method, 'GET'); return { status: 503, body: { message: 'offline' } }; });
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.ok(a.connectionCheck.error);
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2200));
+  assert.equal(calls, 1);
+});
+
+test('recovery polling budget pauses visibly and can be checked again', async t => {
+  const a = fixture(t, path => path === 'status' ? { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } } : { works: [raw('starting')] });
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  a.recoveryReads = 299;
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.match(String(a.connectionCheck.error), /paused/i);
+  assert.equal(a.recoveryTimer, undefined);
+});
+
+test('running target continues observation when Core is ready but Work remains stopped', async t => {
+  const a = fixture(t, path => path === 'status' ? { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } } : { works: [raw('ready')] });
+  a.state.signedIn = true;
+  a.state.works = [a.mapWork(raw('stopped', 'running'))];
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.equal(a.state.works[0].status, 'Ready');
+});
+
+test('an explicit Work refresh can share a background recovery read safely', async t => {
+  let release: (value: any) => void = () => {};
+  const a = fixture(t, path => path === 'status' ? { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } } : new Promise(resolve => { release = resolve; }));
+  a.state.signedIn = true;
+  a.state.works = [a.mapWork(raw('starting'))];
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  const explicit = a.listWorks();
+  assert.equal(a.worksLoading, true);
+  release({ works: [raw('ready')] });
+  await explicit;
+  assert.equal(a.worksLoading, false);
+  assert.equal(a.state.works[0].status, 'Ready');
+});
+
+test('hung recovery status times out, allows a fresh check, and ignores a late reply', async t => {
+  let release: (value: any) => void = () => {};
+  let hung = true, statusReads = 0;
+  const a = fixture(t, path => {
+    if (path === 'status') {
+      statusReads++;
+      if (hung) return new Promise(resolve => { release = resolve; });
+      return { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } };
+    }
+    if (path === 'works') return { works: [raw('ready')] };
+    if (path === 'skills') return { skills: [] };
+    if (path === 'packages') return { packages: [] };
+    if (path === 'known-operations') return { operations: [] };
+    return {};
+  });
+  a.metadata = new MetadataReads(() => Date.now(), 30);
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.ok(a.connectionCheck.error, 'timed out observation is not reported as unconfirmed');
+  assert.equal(a.recoveryTimer, undefined);
+  hung = false;
+  await a.readConnection(false);
+  assert.equal(statusReads, 2);
+  assert.equal(a.status.readiness.value.state, 'READY');
+  release({ health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(a.status.readiness.value.state, 'READY');
+});
+
+test('leaving recovery cancels its hung status read so reopening can recheck', async t => {
+  let hung = true, calls = 0;
+  const a = fixture(t, path => {
+    if (path === 'status') { calls++; return hung ? new Promise(() => {}) : { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } }; }
+    return { works: [] };
+  });
+  a.state.signedIn = true;
+  a.status = { health: { available: true }, readiness: { available: true, value: { state: 'RECOVERING', ready: false } } };
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  a.observePage('', false, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 30));
+  hung = false;
+  a.observePage('', true, false, '', '', false, '', true);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  assert.equal(calls, 2);
+  assert.equal(a.status.readiness.value.state, 'READY');
 });

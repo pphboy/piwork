@@ -95,7 +95,7 @@ test('pending Core: an external identity change after session acceptance is not 
 test('pending Core: a late old identity response cannot finish the new connection check', async t => {
   const old = gate(), newer = gate(); let statusReads = 0;
   const { adapter, requests } = fixture(t, path => path === 'status' ? (++statusReads === 1 ? old.promise : newer.promise) : fallback(path));
-  const first = adapter.checkConnection(); const rejected = assert.rejects(first, /changed|discarded/i);
+  const first = adapter.checkConnection(); const rejected = assert.rejects(first, /changed|discarded|observation ended/i);
   await tickUntil(() => requests.includes('status')); adapter.clearIdentity();
   const second = adapter.checkConnection(); await tickUntil(() => statusReads === 2);
   old.resolve(ready); await rejected; assert.equal(adapter.connectionCheck.checking, true); assert.equal(adapter.connectionCheck.checkedAt, '');

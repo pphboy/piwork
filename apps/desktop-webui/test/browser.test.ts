@@ -186,10 +186,10 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await page.getByLabel('Account', {exact:true}).fill('owner');
     await page.getByLabel('Password').fill('password');
     await page.getByRole('button', {name:'Sign in',exact:true}).click();
-    await page.getByRole('heading', {name:'Works',exact:true}).waitFor();
+    await page.locator('.works-page').waitFor();
     await checkBrand(page, 'works');
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
+    await expect(page.locator('.works-page')).toBeVisible();
     assert.doesNotMatch(await page.locator('body').innerText(), /browser-private-core-token/);
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     const create = async (name: string) => { await page.getByRole('button', {name:'New Work',exact:true}).first().click(); await page.locator('#create-name').fill(name); await page.getByRole('button',{name:'Create Work',exact:true}).click(); };
@@ -337,7 +337,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     browser = await chromium.launch(browserLaunchOptions);
     const page = await browser.newPage();
     await page.goto(launchUrl);
-    await page.getByRole('heading',{name:'Works',exact:true}).waitFor();
+    await page.locator('.works-page').waitFor();
     await page.locator('[data-action=open-work]').filter({hasText:'Lifecycle Work'}).click();
     await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
@@ -800,7 +800,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
         fullPage: name !== "06-mobile-services", timeout: 10_000 });
     };
     await page.goto(launchUrl);
-    await page.getByRole('heading',{name:'Works',exact:true}).waitFor();
+    await page.locator('.works-page').waitFor();
     await page.locator('[data-action=open-work]').filter({hasText:'笔记工作'}).click();
     await selectService(page, 'notes');
     await page.getByRole('button', {name: 'Service options', exact: true}).click();
@@ -888,7 +888,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }
     await page.getByRole('button',{name:'Back to Works',exact:true}).focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
+    await expect(page.locator('.works-page')).toBeVisible();
 
   } finally {
     releaseFinalRun();

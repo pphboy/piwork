@@ -420,7 +420,7 @@ test('在 Works 页切换语言不导航、不丢搜索输入', async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${app.base}/`);
-    await page.getByRole('heading', { name: text(en, 'term.works'), exact: true }).waitFor();
+    await page.locator('.works-page').waitFor();
     const search = page.locator('#search');
     await search.fill('alpha draft note');
     await expect(search).toHaveValue('alpha draft note');
@@ -433,7 +433,7 @@ test('在 Works 页切换语言不导航、不丢搜索输入', async () => {
     assert.equal(await page.evaluate(() => history.length), beforeHistory, '切换语言不得新增历史记录');
     await expect(page.locator('#search')).toHaveValue('alpha draft note');
     await expect(page.locator('#search')).toHaveAttribute('placeholder', text(zh, 'works.searchPlaceholder'));
-    await expect(page.getByText(text(zh, 'works.eyebrow'), { exact: true })).toBeVisible();
+    await expect(page.locator('#search')).toBeVisible();
   } finally {
     await browser.close();
     await app.close();
@@ -642,7 +642,7 @@ test('在途 Works 刷新完成后按当前语言呈现，且不重复请求或�
   const page = await context.newPage();
   try {
     await page.goto(`${app.base}/`);
-    await page.getByRole('heading', { name: text(en, 'term.works'), exact: true }).waitFor();
+    await page.locator('.works-page').waitFor();
     await page.locator('[data-action="open-work"]').filter({ hasText: 'Alpha Work' }).waitFor();
     // 引导/路由各可能读一次列表；等计数稳定后再记录基线，避免把迟到的首次读取计入刷新。
     let stable = -1;
@@ -661,7 +661,7 @@ test('在途 Works 刷新完成后按当前语言呈现，且不重复请求或�
 
     // 在途请求未完成时切换语言：呈现立即改用中文，但请求不重复。
     await switchLocale(page, 'zh-CN');
-    await expect(page.locator('.works-eyebrow')).toHaveText(text(zh, 'works.eyebrow'));
+    await expect(page.locator('#search')).toHaveAttribute('placeholder', text(zh, 'works.searchPlaceholder'));
     await expect(refresh).toHaveAttribute('title', text(zh, 'works.reading'));
     await expect(page.locator('.works-footer')).toContainText(text(zh, 'works.count').replace('{count}', '1'));
     assert.equal(worksReads, initialized + 1, '切换语言不得重复提交 Works 刷新');

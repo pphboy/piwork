@@ -77,7 +77,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, expireIm
     process.once('exit', status => resolve({ status, stdout, stderr }));
   });
   const reopen = () => { const result = spawnSync(binary, helperArgs('open'), { encoding: 'utf8', cwd: tmpdir(), env: helperEnv }); assert.equal(result.status, 0, result.stderr); return result.stdout.trim().replace('Piwork Desktop: ', ''); };
-  const login = async (target = page) => { await target.getByRole('heading', { name: 'Connect to your Core' }).waitFor(); await target.getByLabel('Account', { exact: true }).fill('owner'); await target.getByLabel('Password').fill('password'); await target.getByRole('button', { name: 'Sign in', exact: true }).click(); await target.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await target.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkConnection(); }); };
+  const login = async (target = page) => { await target.getByRole('heading', { name: 'Connect to your Core' }).waitFor(); await target.getByLabel('Account', { exact: true }).fill('owner'); await target.getByLabel('Password').fill('password'); await target.getByRole('button', { name: 'Sign in', exact: true }).click(); await target.locator('.works-page').waitFor(); await target.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkConnection(); }); };
   return { browser, context, page, launch, port, calls, tokens, importBodies, helper, reopen, login, start, child: () => child, setOffline: (value: boolean) => { offline = value; }, coreUrl };
 }
 
@@ -85,12 +85,12 @@ test('native auth: ordinary addresses reuse the CLI login across new browsers, r
   const f = await fixture(t); const pid = f.child().pid; let bootstraps = 0;
   f.page.on('request', r => { if (r.url().endsWith('/bootstrap')) bootstraps++; });
   await f.page.goto(f.launch); await f.login(); assert.equal(bootstraps, 0);
-  await f.page.goto(f.launch); await expect(f.page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible(); assert.equal(bootstraps, 0);
+  await f.page.goto(f.launch); await expect(f.page.locator('.works-page')).toBeVisible(); assert.equal(bootstraps, 0);
   const other = await f.browser.newContext(); const tab = await other.newPage(); await tab.goto(f.launch);
-  await expect(tab.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
-  await tab.goto(f.reopen()); await expect(tab.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await expect(tab.locator('.works-page')).toBeVisible();
+  await tab.goto(f.reopen()); await expect(tab.locator('.works-page')).toBeVisible();
   assert.equal(f.child().pid, pid); assert.equal(new URL(tab.url()).port, String(f.port));
-  await other.clearCookies(); await tab.reload(); await expect(tab.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await other.clearCookies(); await tab.reload(); await expect(tab.locator('.works-page')).toBeVisible();
   const result = await f.helper('logout'); assert.equal(result.status, 0, result.stderr); assert.equal(f.tokens.size, 0);
   await tab.goto(f.reopen()); await f.login(tab);
   assert.equal(f.calls.filter(call => call === 'POST /api/v1/login').length, 2);
@@ -99,7 +99,7 @@ test('native auth: ordinary addresses reuse the CLI login across new browsers, r
 test('native auth: normal sign-out clears the shared login with no browser reset',async t=>{
   const f=await fixture(t);await f.page.goto(f.launch);await f.login();
   const other=await f.browser.newContext();const tab=await other.newPage();
-  await tab.goto(f.launch);await expect(tab.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
+  await tab.goto(f.launch);await expect(tab.locator('.works-page')).toBeVisible();
   await f.page.locator('[data-action="account"]').click();
   await expect(f.page.locator('[data-action="reset-browser-access"]')).toHaveCount(0);
   await f.page.locator('#modal [data-action="sign-out"]').click();
@@ -112,8 +112,8 @@ test('native auth: daemon restart automatically restores the ordinary session, C
   const f = await fixture(t); let bootstraps = 0;
   f.page.on('request', r => { if (r.url().endsWith('/bootstrap')) bootstraps++; });
   await f.page.goto(f.launch); await f.login(); await stop(f.child());
-  const latest = await f.start(); assert.equal(latest, f.launch); await f.page.goto(f.launch); await expect(f.page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
-  await f.page.goto(latest); await expect(f.page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  const latest = await f.start(); assert.equal(latest, f.launch); await f.page.goto(f.launch); await expect(f.page.locator('.works-page')).toBeVisible();
+  await f.page.goto(latest); await expect(f.page.locator('.works-page')).toBeVisible();
   f.tokens.clear(); await f.page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkSession(); });
   await expect(f.page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible(); await f.login();
   f.setOffline(true); await f.page.reload(); await expect(f.page.locator('body')).toContainText('Core is unreachable');
@@ -204,6 +204,6 @@ test('native HTTP: offline default save/read/clear, connection switch and local 
   const anonymous=await f.browser.newContext();t.after(()=>anonymous.close());
   const tab=await anonymous.newPage();
   await tab.goto(`http://desktop.localhost:${f.port}/`);
-  await expect(tab.getByRole('heading',{name:'Works',exact:true})).toBeVisible();
+  await expect(tab.locator('.works-page')).toBeVisible();
   assert.equal(await tab.evaluate(async()=> (await fetch('/_desktop/api/preferences')).status),200);
 });

@@ -209,13 +209,15 @@ func (a *Application) recordRecoveryFailure(ctx context.Context, workID string, 
 		if err := tx.QueryRow(`SELECT COALESCE(MAX(generation),0) FROM runtime_generations WHERE work_id=?`, workID).Scan(&latest); err != nil {
 			return err
 		}
+		if latest == 0 {
+			_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running' AND control_version=? AND deleted_at IS NULL`, now.Format(time.RFC3339Nano), workID, control)
+			updated = err == nil
+			return err
+		}
 		if latest != generation {
 			return nil
 		}
 		if _, err := corestore.RecordRuntimeFailureTx(ctx, tx, workID, generation, now); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running' AND control_version=?`, now.Format(time.RFC3339Nano), workID, control); err != nil {
 			return err
 		}
 		updated = true

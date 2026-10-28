@@ -106,6 +106,10 @@ func TestRuntimeReplacementFailureUsesCurrentTarget(t *testing.T) {
 	if err != nil || target.State != "recovering" || target.RetryCount != 1 {
 		t.Fatal("failure was not charged to the current target", target, err)
 	}
+	current, err := a.Store.Work(ctx, workID, false)
+	if err != nil || current.ObservedState != "unknown" {
+		t.Fatal("scheduled target retry was presented as a final failure", current, err)
+	}
 }
 
 func TestRecoveryFailureDoesNotOverwriteNewerControl(t *testing.T) {

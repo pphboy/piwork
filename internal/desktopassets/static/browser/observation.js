@@ -14,6 +14,7 @@ export class MetadataReads {
     states = new Map();
     pending = new Map();
     controllers = new Set();
+    keyedControllers = new Map();
     active = 0;
     queue = [];
     constructor(now = () => Date.now(), timeoutMs = 10_000) {
@@ -29,6 +30,7 @@ export class MetadataReads {
     } }
     cancel() { for (const controller of this.controllers)
         controller.abort(new ObservationStopped(t('d.error.observationEnded'))); }
+    cancelKey(key) { this.keyedControllers.get(key)?.abort(new ObservationStopped(t('d.error.observationEnded'))); }
     clear() { this.cancel(); this.states.clear(); this.pending.clear(); }
     nextDelay(defaultMs = 2000, keys) {
         const waits = [...this.states].filter(([key]) => !keys || keys.includes(key)).map(([, state]) => state).filter(state => !state.paused && state.failures).map(state => state.nextAt > this.now() ? state.nextAt - this.now() : defaultMs);
@@ -49,6 +51,7 @@ export class MetadataReads {
             return Promise.reject(new ObservationDeferred(state.error || t('d.error.statusPaused')));
         const owned = state, controller = new AbortController();
         this.controllers.add(controller);
+        this.keyedControllers.set(key, controller);
         const task = (async () => {
             let acquired = false, timer;
             try {
@@ -94,6 +97,8 @@ export class MetadataReads {
             finally {
                 clearTimeout(timer);
                 this.controllers.delete(controller);
+                if (this.keyedControllers.get(key) === controller)
+                    this.keyedControllers.delete(key);
                 if (acquired) {
                     this.active--;
                     this.queue.shift()?.();

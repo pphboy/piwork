@@ -128,7 +128,7 @@ try {
   await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password').fill('real-browser-admin-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+  await page.locator('.works-page').waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
   const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
   if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
@@ -434,25 +434,25 @@ try {
     const loginAgain = async (target) => {
       await target.getByRole('heading', { name: 'Connect to your Core' }).waitFor();
       await target.getByLabel('Account', { exact: true }).fill('admin'); await target.getByLabel('Password').fill('real-browser-admin-password');
-      await target.getByRole('button', { name: 'Sign in', exact: true }).click(); await target.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await target.evaluate(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); await adapter.checkConnection(); });
+      await target.getByRole('button', { name: 'Sign in', exact: true }).click(); await target.locator('.works-page').waitFor(); await target.evaluate(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); await adapter.checkConnection(); });
     };
     const runBefore = await readAdapter('return adapter.getWork("' + workId + '")?.run?.id');
     const identityBefore = JSON.parse(await readFile(join(root, 'client.json'), 'utf8'));
     const fileBefore = await readFileThroughCore(); const pid = desktop.pid;
     let bootstrapPosts = 0, resetPosts = 0, businessWrites = 0;
     page.on('request', request => { if (request.url().endsWith('/bootstrap')) bootstrapPosts++; if (request.url().endsWith('/browser-access/reset')) resetPosts++; if (request.method() !== 'GET' && /\/(?:runs|work-imports|start|stop|retry|delete)(?:$|\?)/.test(new URL(request.url()).pathname)) businessWrites++; });
-    await page.goto(launchUrl); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); assert.equal(bootstrapPosts, 0);
-    await context.clearCookies(); await page.goto(localOrigin); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
-    await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor(); assert.equal(desktop.pid, pid);
-    const secondContext = await browser.newContext(); const second = await secondContext.newPage(); await second.goto(reopen()); await second.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await page.goto(launchUrl); await page.locator('.works-page').waitFor(); assert.equal(bootstrapPosts, 0);
+    await context.clearCookies(); await page.goto(localOrigin); await page.locator('.works-page').waitFor();
+    await page.goto(reopen()); await page.locator('.works-page').waitFor(); assert.equal(desktop.pid, pid);
+    const secondContext = await browser.newContext(); const second = await secondContext.newPage(); await second.goto(reopen()); await second.locator('.works-page').waitFor();
     assert.equal(reopen(), launchUrl);
     await page.locator('[data-action=account]').click();
     await expect(page.getByRole('menuitem', { name: 'Reset browser access', exact: true })).toHaveCount(0);
     await page.keyboard.press('Escape');
-    await secondContext.clearCookies(); await second.reload(); await second.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await secondContext.clearCookies(); await second.reload(); await second.locator('.works-page').waitFor();
     assert.equal(bootstrapPosts, 0); assert.equal(resetPosts, 0);
     assert.equal(JSON.parse(await readFile(join(root, 'client.json'), 'utf8')).token, identityBefore.token);
-    await page.goto(reopen()); await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await page.goto(reopen()); await page.locator('.works-page').waitFor();
     await page.locator('[data-action=account]').click(); await page.getByRole('menuitem', { name: 'Sign out', exact: true }).click(); await loginAgain(page);
     let result = helper('logout'); assert.equal(result.status, 0, result.stderr);
     await page.goto(reopen()); await loginAgain(page);
@@ -473,7 +473,7 @@ try {
     await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'original accepted Run history after auth recovery');
     await secondContext.close();
     // The existing application window also resumes through the ordinary address.
-    await app.goto(reopen()); await app.getByRole('heading', { name: 'Works', exact: true }).waitFor(); await app.getByRole('link', { name: /^Real Browser Work/ }).click();
+    await app.goto(reopen()); await app.locator('.works-page').waitFor(); await app.getByRole('link', { name: /^Real Browser Work/ }).click();
     await page.screenshot({ path: join(screenshotDir, '06-auth-recovered.png'), fullPage: true });
     console.log(JSON.stringify({ result: 'ordinary session recovery: real Core login/reuse/reopen/logout/revocation/offline, original PID/Work/Service/files/Run retained, no business replay', browserVersion: browser.version(), bootstrapPosts, resetPosts, businessWrites }));
   }
@@ -550,7 +550,7 @@ try {
     await hosted.getByLabel('Password').fill('real-browser-admin-password');
     await hosted.getByRole('button', { name: 'Sign in', exact: true }).click();
     await hosted.waitForURL(url => url.pathname !== '/login');
-    await hosted.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await hosted.locator('.works-page').waitFor();
     await hosted.getByRole('link', { name: /^Real Browser Work/ }).click();
     await hosted.getByRole('button', { name: 'Files', exact: true }).click();
     await hosted.locator('[data-action="open-file"][data-path="/output"]').click();
@@ -813,7 +813,7 @@ try {
       await pageB.getByLabel('Password').fill('real-browser-admin-password');
       await pageB.getByRole('button', { name: 'Sign in', exact: true }).click();
       await pageB.waitForURL(url => url.pathname !== '/login');
-      await pageB.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+      await pageB.locator('.works-page').waitFor();
       await pageB.getByRole('link', { name: /^Real Browser Work/ }).click();
       await pageB.getByRole('button', { name: 'Chat', exact: true }).click();
       await pageB.getByRole('button', { name: 'Sessions', exact: true }).click();

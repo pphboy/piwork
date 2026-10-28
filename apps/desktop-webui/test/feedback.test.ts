@@ -473,7 +473,7 @@ test('D19 close preserves one automatic original download and a manual same-tran
   assert.equal(download.url(), `${base}/_desktop/api/downloads/${id}/content`);
   assert.equal(await download.failure(), null); assert.deepEqual(await readFile((await download.path())!), bytes); assert.equal(createHash('sha256').update(await readFile((await download.path())!)).digest('hex'), digest); assert.equal(download.suggestedFilename(), 'original.work');
   await expect(page.locator('#modal')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await expect(page.locator('.works-page')).toBeVisible();
   assert.match(id, /^[0-9a-f-]{36}$/);
   assert.equal(downloadEvents, 1);
   assert.deepEqual(requests.filter(r => r.method === 'POST').map(r => r.path), ['work-snapshots/snap-1/downloads']);
@@ -703,7 +703,7 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   armed = true; const before = requests.filter(r=>r.path===endpoint[entry]).length;
   const catalogGeometry = entry === 'catalog' ? await button(page,trigger).boundingBox() : null;
   await button(page,trigger).click();
-  if (entry==='retry-works') { await expect(page.locator('.page-heading [data-action="retry-works"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.page-heading [data-action="retry-works"]')).toBeDisabled(); }
+  if (entry==='retry-works') { await expect(page.locator('.works-toolbar [data-action="retry-works"]')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.works-toolbar [data-action="retry-works"]')).toBeDisabled(); }
   else if (entry==='open-work') { await expect(page.locator('.work-header .work-read-feedback[role="status"][aria-busy="true"]')).toBeVisible(); await expect(page.getByRole('heading',{name:'Recovery Work',exact:true})).toBeVisible(); }
   else if (entry==='files') { await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true'); await expect(page.locator('.main-panel .read-placeholder[aria-busy="true"]')).toBeVisible(); }
   else if (entry==='sessions'||entry==='select-session') await expect(page.locator('.agent-header [data-action="sessions"]')).toHaveAttribute('aria-busy','true');
@@ -1143,6 +1143,10 @@ test('DWUI-016/017 Start to Ready, terminal readback failure and retry preserve 
   fail = false; observed = 'ready'; await api(page, "await adapter.refreshWorkStatus('work-1'); await adapter.listWorks()");
   await expect(page.locator('.work-header')).toContainText('Ready'); await expect(page.locator('#composer')).toBeVisible();
   await page.locator('#composer').fill('keep my task'); await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('#composer')).toHaveValue('keep my task');
+  await button(page, 'back-works').click();
+  await expect(page.locator('.work-row')).toContainText('Ready');
+  await expect(page.locator('.work-row')).not.toContainText('Start Work');
+  assert.equal(await api(page, "return adapter.getOperation('original-start')?.id"), 'original-start');
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/start')).length, 1);
 });
 
@@ -1694,7 +1698,7 @@ test('C01 Work reentry restores Files path and falls back only for a missing dir
 
 test('C02 list Start keeps original local progress and gates Open Work on real readiness', async t => {
   let started = false, terminal = false, ready = false;
-  const raw = () => ({ id: 'work-1', name: 'Recovery Work', observedState: !started ? 'stopped' : ready ? 'ready' : 'starting', desiredState: started ? 'running' : 'stopped', controlVersion: started ? 2 : 1 });
+  const raw = () => ({ id: 'work-1', name: 'Recovery Work', observedState: !started || terminal && !ready ? 'stopped' : ready ? 'ready' : 'starting', desiredState: started ? 'running' : 'stopped', controlVersion: started ? 2 : 1 });
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'works' || r.path === 'works/work-1') return { json: r.path === 'works' ? { works: [raw()] } : raw() };
     if (r.path === 'works/work-1/start') { started = true; return { json: { operationId: 'c02-start', workId: 'work-1' } }; }
@@ -1703,14 +1707,14 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
   await button(page, 'back-works').click(); await button(page, 'start-work').click();
   await expect(page.locator('.work-row .object-control-state')).toContainText('Start Work');
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
-  await expect(page.locator('#modal')).toHaveCount(0); await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('.works-page')).toBeVisible();
   // The read-only check lives in the Work's own menu, next to its original task.
   const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click(); await page.locator('#modal [data-action="check-work-progress"]').click(); await expect(page.locator('#modal')).toHaveCount(0); };
   terminal = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
   ready = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Works', exact: true })).toBeVisible();
+  await expect(page.locator('.works-page')).toBeVisible();
   await page.getByRole('link', { name: 'Open Work', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible();
   assert.equal(requests.filter(r => r.path === 'works/work-1/start' && r.method === 'POST').length, 1);
@@ -2337,4 +2341,66 @@ test('a revoked file session clears the preview and returns to sign-in', async t
   await expect(page.locator('#file-editor')).toHaveCount(0);
   await expect(page.locator('#app')).not.toContainText('secret file');
   assert.ok(requests.some(record => record.path === 'session'), 'file auth reuses the session readback');
+});
+
+test('Core recovery uses compact toolbar and refreshes Work without stale operation text', async t => {
+  let recovering = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: { available: true, value: { state: recovering ? 'RECOVERING' : 'READY', ready: !recovering } } } };
+    if (r.path === 'works') return { json: { works: [{ id: 'work-1', name: 'Recovery Work', desiredState: 'running', observedState: recovering ? 'starting' : 'ready' }] } };
+  });
+  await page.goto(base + '/#/works');
+  await page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkConnection(); });
+  await expect(page.locator('.works-toolbar')).toContainText('Starting');
+  await expect(page.locator('.works-toolbar .core-starting-spinner')).toBeVisible();
+  await expect(page.locator('.works-page h1')).toHaveCount(0);
+  await expect(page.locator('.works-page')).not.toContainText('The runtime is not ready');
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expect(page.locator('#search')).toBeVisible();
+  await expect(page.locator('.works-toolbar .connection')).toBeVisible();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.core-starting-spinner').evaluate(e => getComputedStyle(e).animationName), 'none');
+  await page.evaluate(async () => { const locale = await import('/desktop/browser/' + 'locale.js'); locale.chooseLocale('zh-CN'); });
+  await expect(page.locator('.works-toolbar .connection')).toContainText('启动中');
+  recovering = false;
+  await expect(page.locator('.work-row')).toContainText('就绪', { timeout: 8000 });
+  await expect(page.locator('.works-toolbar')).not.toContainText('启动中');
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('Core readiness failure is not shown as an animated startup', async t => {
+  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { state: 'RUNTIME_UNAVAILABLE', ready: false } } } } : undefined);
+  await button(page, 'back-works').click();
+  await expect(page.locator('.works-toolbar .connection')).toContainText('Runtime unavailable');
+  await expect(page.locator('.core-starting-spinner')).toHaveCount(0);
+  await expect(page.locator('.works-page')).toContainText('the runtime is unavailable');
+  await button(page, 'connection').click();
+  await expect(page.locator('.status-grid')).toContainText('Runtime unavailable');
+});
+
+test('automatic Work recovery stays observable after one failed attempt and becomes Ready', async t => {
+  let observed = 'unknown';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: { available: true, value: { state: 'READY', ready: true } } } };
+    if (r.path === 'works') return { json: { works: [{ id: 'work-1', name: 'Recovery Work', desiredState: 'running', observedState: observed }] } };
+  });
+  await page.goto(base + '/#/works');
+  await page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkConnection(); });
+  const row = page.locator('.work-row');
+  await expect(row).toContainText('Work status not confirmed');
+  await expect(row).not.toContainText('Retry Work');
+  const readsBefore = requests.filter(r => r.path === 'works').length;
+  observed = 'ready';
+  await expect(row).toContainText('Ready', { timeout: 8000 });
+  assert.ok(requests.filter(r => r.path === 'works').length > readsBefore);
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('unconfirmed readiness does not claim that the runtime failed', async t => {
+  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: false, error: 'invalid response' } } } : undefined);
+  await button(page, 'back-works').click();
+  await expect(page.locator('.works-page')).toContainText('runtime readiness could not be confirmed');
+  await expect(page.locator('.works-toolbar .connection')).toContainText('Not confirmed');
+  await expect(page.locator('.core-starting-spinner')).toHaveCount(0);
 });

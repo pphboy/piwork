@@ -14,6 +14,9 @@ func TestRuntimeFailureBudgetSurvivesReopenAndStableReset(t *testing.T) {
 	ctx := context.Background()
 	clock := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
 	if err := store.Write(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE works SET desired_state='running' WHERE id=?`, mutationWorkID); err != nil {
+			return err
+		}
 		_, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES(?,1,'agent-1','ready',0,?,?)`, mutationWorkID, clock.Format(time.RFC3339Nano), clock.Format(time.RFC3339Nano))
 		return err
 	}); err != nil {

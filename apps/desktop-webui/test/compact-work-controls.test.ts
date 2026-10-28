@@ -172,7 +172,7 @@ test('Packages aligns identity/status separately from commands and groups catalo
 });
 
 for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${hasRows?'rows':'empty list'} with only in-place busy`,()=>{
- const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControls=new Map();
+ const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workRowControl=()=>'';c.workControls=new Map();
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'now',worksError:'',state:{scenario:'loading',works:hasRows?[work]:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
  let html=c.works();assert.doesNotMatch(html,/loading-list|Loading your Works/);assert.match(html,/data-read-busy="true"/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
@@ -181,7 +181,7 @@ for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${has
 });
 
 test('Works first load owns a static labelled skeleton, first failure is never an empty list, and cached search is retained',()=>{
- const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControls=new Map();
+ const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workRowControl=()=>'';c.workControls=new Map();
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'',worksError:'',state:{scenario:'loading',works:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
  assert.match(c.works(),/loading-list/);
@@ -216,7 +216,7 @@ test('Works initial static shapes are immediately visible, scoped and distinguis
 });
 
 for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`Works unconfirmed idle ${scenario} never claims empty or search-empty`,()=>{
- const {c}=fixture();c.view.search='missing';c.topbar=()=>'';c.connection=()=>'';
+ const {c}=fixture();c.view.search='missing';c.topbar=()=>'';c.connection=()=>'';c.coreRecovering=()=>false;c.coreStarting=()=>false;
  Object.assign(c.adapter,{worksLoading:false,worksChecked:'',worksError:'',state:{scenario,works:[],core:{account:'user'},lastChecked:'not confirmed'}});
  vm.runInContext(extract('worksRefreshButton','works'),c);const html=c.works();
  assert.match(html,/Works have not been read/);assert.match(html,/>Read Works<\/button>/);assert.match(html,/Works not yet read/);
@@ -228,8 +228,9 @@ test('Works rows project one compact state; original details and checks live in 
  c.topbar=()=>'';c.connection=()=>'';c.worksRefreshButton=()=>'';c.workStatus=()=>'<span>Ready</span>';c.quickAction=()=>'';c.view.search='';
  c.controlMarkup=(control:any,compact?:boolean)=>control?`<span data-probe="${compact?'compact':'block'}"></span>`:'';
  c.workControl=()=>({workId:'work-a',action:'Create Work',phase:'accepted',operationId:'op-a'});
+ c.adapter.getOperation=()=>undefined;c.adapter.workSynchronizationPending=()=>false;
  Object.assign(c.adapter,{worksLoading:false,worksChecked:'now',worksError:'',state:{scenario:'normal',works:[work],core:{account:'user'}}});
- vm.runInContext(extract('works'),c);
+ vm.runInContext(extract('workRowControl','works'),c);
  const html=c.works();
  // The row keeps the object's own status slot and never adds a progress block.
  assert.match(html,/data-probe="compact"/);assert.doesNotMatch(html,/data-probe="block"/);
@@ -249,6 +250,7 @@ test('a task without a visible Work uses a fixed header entry, not a row above s
  assert.match(entry,/data-action="works-tasks"/);assert.match(entry,/aria-haspopup="dialog"/);
  assert.doesNotMatch(entry,/data-operation-id/);
  const html=c.works();
- assert.ok(html.indexOf('data-action="works-tasks"')<html.indexOf('class="list-controls"'),'entry sits in the header actions');
- assert.ok(html.indexOf('data-action="works-tasks"')<html.indexOf('id="search"'));
+ assert.ok(html.indexOf('class="list-controls works-toolbar"')<html.indexOf('id="search"'));
+ assert.ok(html.indexOf('id="search"')<html.indexOf('data-action="works-tasks"'),'entry sits in the toolbar actions');
+ assert.ok(html.indexOf('data-action="works-tasks"')<html.indexOf('data-action="import"'));
 });

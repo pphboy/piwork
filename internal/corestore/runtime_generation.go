@@ -46,8 +46,8 @@ func (s *Store) RuntimeGeneration(ctx context.Context, workID string, generation
 
 var retryBackoff = [...]time.Duration{time.Second, 5 * time.Second, 15 * time.Second}
 
-// RecordRuntimeFailure stores the retry count and deadline in the same
-// transaction. Process restart cannot grant a fresh retry budget.
+// RecordRuntimeFailure stores the retry count, deadline and current Work
+// observation together. Process restart cannot grant a fresh retry budget.
 func (s *Store) RecordRuntimeFailure(ctx context.Context, workID string, generation int64, at time.Time) (RuntimeGeneration, error) {
 	var output RuntimeGeneration
 	err := s.Write(ctx, func(tx *sql.Tx) error {
@@ -65,6 +65,13 @@ func RecordRuntimeFailureTx(ctx context.Context, tx *sql.Tx, workID string, gene
 	current, err := readRuntimeGeneration(tx, workID, generation)
 	if err != nil {
 		return output, err
+	}
+	var currentRunning bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM works WHERE id=? AND deleted_at IS NULL AND desired_state='running' AND ?=(SELECT MAX(generation) FROM runtime_generations WHERE work_id=?))`, workID, generation, workID).Scan(&currentRunning); err != nil {
+		return output, err
+	}
+	if !currentRunning {
+		return current, nil
 	}
 	windowStart := at.UTC()
 	count := current.RetryCount
@@ -92,6 +99,13 @@ func RecordRuntimeFailureTx(ctx context.Context, tx *sql.Tx, workID string, gene
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE runtime_generations SET state=?,retry_count=?,retry_window_started_at=?,next_retry_at=?,ready_since=NULL,updated_at=?
 		WHERE work_id=? AND generation=?`, state, count, windowStart.Format(time.RFC3339Nano), next, now, workID, generation); err != nil {
+		return output, err
+	}
+	observed := "failed"
+	if state == "recovering" {
+		observed = "unknown"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE works SET observed_state=?,updated_at=? WHERE id=? AND deleted_at IS NULL AND desired_state='running' AND ?=(SELECT MAX(generation) FROM runtime_generations WHERE work_id=?)`, observed, now, workID, generation, workID); err != nil {
 		return output, err
 	}
 	output, err = readRuntimeGeneration(tx, workID, generation)
