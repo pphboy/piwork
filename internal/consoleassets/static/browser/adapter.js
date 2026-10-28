@@ -215,6 +215,10 @@ export class ConsoleAdapter {
     }
     async connection() {
         const value = await this.request("availability");
+        if (typeof value.reachable !== 'boolean') {
+            this.availability = null;
+            throw new ConsoleError('INVALID_RESPONSE', new LocalizedMessage('adapter.error.invalidResponse'));
+        }
         this.availability = value;
         if (!value.reachable)
             throw new ConsoleError("CORE_UNREACHABLE", new LocalizedMessage('adapter.explain.CORE_UNREACHABLE'));

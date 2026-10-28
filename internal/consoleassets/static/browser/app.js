@@ -706,6 +706,8 @@ async function loadPage(preserve = false, automatic = false) {
     pageRead = task;
     task.promise = readPage(preserve, ticket).finally(() => { if (pageRead === task)
         pageRead = null; });
+    if (!preserve)
+        void readAvailability();
     return task.promise;
 }
 function schedulePageRetry(ticket, origin, identity) {
@@ -2578,11 +2580,17 @@ async function handleConsoleAction(button) {
         availabilitySequence++;
         clearTimeout(availabilityTimer);
         adapter.cancelReads(['availability']);
+        const sequence = availabilitySequence, ownsView = currentView(false);
+        const valid = () => sequence === availabilitySequence && ownsView();
         try {
             await adapter.connection();
+            if (!valid())
+                return;
             feedback = localizedFeedback(() => Feedback(t('login.coreReachable'), "success"));
         }
         catch (e) {
+            if (!valid())
+                return;
             feedback = localizedFeedback(() => Feedback(err(e), "error", Button(t('login.retryConnection'), "retry-connection", "secondary")));
         }
         renderPage();
@@ -2739,8 +2747,8 @@ async function readAvailability(automatic = false, attempt = 0) {
         clearTimeout(availabilityTimer);
         adapter.cancelReads(['availability']);
     }
-    const sequence = availabilitySequence, identity = adapter.identityEpoch, origin = path;
-    const valid = () => sequence === availabilitySequence && identity === adapter.identityEpoch && origin === path;
+    const sequence = availabilitySequence, ownsView = currentView(false);
+    const valid = () => sequence === availabilitySequence && ownsView();
     try {
         await adapter.connection();
         if (!valid())
@@ -2777,7 +2785,6 @@ async function startConsole(automatic = false, attempt = 0) {
         await adapter.initialize();
         if (!valid())
             return;
-        void readAvailability();
         await loadPage();
     }
     catch {

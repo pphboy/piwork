@@ -40,6 +40,148 @@ async function fixture(page, handler = () => undefined, path = '/') {
   await page.goto(base + path); await expect(page.locator('main')).not.toContainText('Loading'); return requests;
 }
 
+for (const scenario of [
+  { name: 'unreachable', value: { reachable: false }, message: 'Core could not be reached.' },
+  { name: 'missing state', value: {}, message: 'The server returned an invalid response.' },
+  { name: 'string state', value: { reachable: 'false' }, message: 'The server returned an invalid response.' },
+  { name: 'numeric state', value: { reachable: 1 }, message: 'The server returned an invalid response.' },
+  { name: 'null state', value: { reachable: null }, message: 'The server returned an invalid response.' },
+]) test(`availability ${scenario.name} stops automatic retries and recovers without writes or losing drafts`, async ({ page }) => {
+  await page.clock.install();
+  const first = deferred(), retry = deferred();
+  let reads = 0, value = scenario.value;
+  const requests = await fixture(page, async request => {
+    if (request.path !== 'availability') return;
+    reads++;
+    if (reads === 1) await first.promise;
+    if (reads === 4) await retry.promise;
+    return { json: value };
+  }, '/default-work');
+  await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
+  const field = page.locator('#agentsMd');
+  await field.fill('Keep this unsaved instruction');
+  first.resolve();
+  const notice = page.locator('#console-availability-notice');
+  await expect(notice).toContainText(scenario.message);
+  await expect(field).toHaveValue('Keep this unsaved instruction');
+  await page.clock.fastForward(1000);
+  await expect.poll(() => reads).toBe(2);
+  await page.clock.fastForward(3000);
+  await expect.poll(() => reads).toBe(3);
+  await page.clock.fastForward(60000);
+  expect(reads).toBe(3);
+  value = { reachable: true };
+  await notice.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect.poll(() => reads).toBe(4);
+  await field.focus();
+  await field.evaluate(node => node.setSelectionRange(5, 9));
+  retry.resolve();
+  await expect(notice).toHaveCount(0);
+  await expect(field).toHaveValue('Keep this unsaved instruction');
+  await expect(field).toBeFocused();
+  expect(await field.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([5, 9]);
+  await expect(page).toHaveURL(base + '/default-work');
+  expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+for (const navigation of ['links', 'history']) for (const oldOutcome of ['failure', 'success']) test(`availability late ${oldOutcome} cannot change a re-entered view via ${navigation}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.install();
+  let value = { reachable: false };
+  const requests = await fixture(page, request => request.path === 'availability' ? { json: value } : undefined, '/default-work');
+  const notice = page.locator('#console-availability-notice');
+  await expect(notice).toBeVisible();
+  await page.evaluate(async () => {
+    const { adapter } = await import('/browser/adapter.js');
+    const connection = adapter.connection.bind(adapter);
+    let held = false;
+    adapter.connection = async () => {
+      if (held) return connection();
+      held = true;
+      let value, failure;
+      try { value = await connection(); } catch (error) { failure = error; }
+      window.availabilityReadHeld = true;
+      // Delay after HTTP completion to exercise a callback which cancellation
+      // cannot stop. Other reads keep using the actual adapter.
+      await new Promise(resolve => { window.releaseAvailabilityRead = resolve; });
+      window.availabilityReadFinished = true;
+      if (failure) throw failure;
+      return value;
+    };
+  });
+  value = { reachable: oldOutcome === 'success' };
+  await notice.getByRole('button', { name: 'Retry', exact: true }).click();
+  await page.waitForFunction(() => window.availabilityReadHeld);
+  value = { reachable: oldOutcome === 'failure' };
+  await page.locator('a[data-nav][href="/users"]').first().click();
+  await expect(page.getByRole('heading', { name: 'Give people access', exact: true })).toBeVisible();
+  if (navigation === 'history') await page.goBack();
+  else await page.locator('a[data-nav][href="/default-work"]').first().click();
+  await expect(page.getByRole('heading', { name: 'Shape new Work', exact: true })).toBeVisible();
+  await expect.poll(() => requests.filter(request => request.path === 'availability').length).toBe(4);
+  if (value.reachable) await expect(notice).toHaveCount(0);
+  else await expect(notice).toContainText('Core could not be reached.');
+  await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
+  const field = page.locator('#agentsMd');
+  await field.fill('New view draft');
+  await field.evaluate(node => node.setSelectionRange(2, 6));
+  await page.evaluate(() => window.releaseAvailabilityRead());
+  await page.waitForFunction(() => window.availabilityReadFinished);
+  if (value.reachable) {
+    await expect(notice).toHaveCount(0);
+    await page.clock.fastForward(4000);
+    expect(requests.filter(request => request.path === 'availability')).toHaveLength(4);
+  } else await expect(notice).toContainText('Core could not be reached.');
+  await expect(field).toHaveValue('New view draft');
+  await expect(field).toBeFocused();
+  expect(await field.evaluate(node => [node.selectionStart, node.selectionEnd])).toEqual([2, 6]);
+  expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+test('availability cancels an old HTTP read without replacing a new view result', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const gate = deferred();
+  let reads = 0, oldReleased = false;
+  const requests = await fixture(page, async request => {
+    if (request.path !== 'availability') return;
+    if (++reads !== 1) return { json: { reachable: true } };
+    await gate.promise;
+    oldReleased = true;
+    return { json: { reachable: false } };
+  }, '/default-work');
+  try {
+    await page.locator('a[data-nav][href="/users"]').first().click();
+    await expect(page.getByRole('heading', { name: 'Give people access', exact: true })).toBeVisible();
+    await page.goBack();
+    await expect(page.getByRole('heading', { name: 'Shape new Work', exact: true })).toBeVisible();
+    await expect.poll(() => reads).toBe(3);
+    await expect.poll(() => page.evaluate(async () => (await import('/browser/adapter.js')).adapter.availability?.reachable)).toBe(true);
+    gate.resolve();
+    await expect.poll(() => oldReleased).toBe(true);
+    await expect(page.locator('#console-availability-notice')).toHaveCount(0);
+    expect(await page.evaluate(async () => (await import('/browser/adapter.js')).adapter.availability?.reachable)).toBe(true);
+    expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
+  } finally { gate.resolve(); }
+});
+
+test('availability abandons a prior view retry timer when navigation starts a new check', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.clock.install();
+  let value = { reachable: false };
+  const requests = await fixture(page, request => request.path === 'availability' ? { json: value } : undefined, '/default-work');
+  await expect(page.locator('#console-availability-notice')).toBeVisible();
+  value = { reachable: true };
+  await page.locator('a[data-nav][href="/users"]').first().click();
+  await expect(page.getByRole('heading', { name: 'Give people access', exact: true })).toBeVisible();
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Shape new Work', exact: true })).toBeVisible();
+  await expect.poll(() => requests.filter(request => request.path === 'availability').length).toBe(3);
+  await expect(page.locator('#console-availability-notice')).toHaveCount(0);
+  await page.clock.fastForward(60000);
+  expect(requests.filter(request => request.path === 'availability')).toHaveLength(3);
+  expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
 async function modelsFixture(page,intercept=()=>undefined){
  const models=[],writes=[],tests=[];let counter=1;const id=p=>p+'-'+String(counter++).padStart(16,'0'),now=()=>new Date().toISOString();
  const requests=await fixture(page,async r=>{const special=await intercept(r,{models,writes,tests});if(special)return special;const body=r.body?JSON.parse(r.body):{};

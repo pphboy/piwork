@@ -185,7 +185,12 @@ export class ConsoleAdapter {
     this.coreUrl = typeof value.coreUrl === 'string' ? value.coreUrl : "";
   }
   async connection() {
-    const value = await this.request("availability"); this.availability = value;
+    const value = await this.request("availability");
+    if (typeof value.reachable !== 'boolean') {
+      this.availability = null;
+      throw new ConsoleError('INVALID_RESPONSE', new LocalizedMessage('adapter.error.invalidResponse'));
+    }
+    this.availability = value;
     if (!value.reachable) throw new ConsoleError("CORE_UNREACHABLE", new LocalizedMessage('adapter.explain.CORE_UNREACHABLE'));
     return value;
   }

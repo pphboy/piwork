@@ -59,6 +59,45 @@ async function login(page) {
   await expect(page.getByRole('heading', { name: 'What’s next for your Core?' })).toBeVisible();
 }
 
+for (const locale of ['en', 'zh-CN']) test(`real Core availability works before Runtime configuration in ${locale}`, async ({ browser }) => {
+  const context = await browser.newContext({ locale });
+  const page = await context.newPage();
+  const messages = catalog[locale];
+  try {
+    await page.goto(origin + '/login');
+    await page.getByLabel(messages['onboarding.form.account'], { exact: true }).fill('admin');
+    await page.getByLabel(messages['onboarding.form.password'], { exact: true }).fill('correct horse battery');
+    await page.getByRole('button', { name: messages['onboarding.form.signIn'], exact: true }).click();
+    await page.waitForURL(url => url.pathname !== '/login');
+    const acceptedAvailability = () => page.evaluate(async () => (await import('/admin/browser/adapter.js')).adapter.availability?.reachable);
+    await expect.poll(acceptedAvailability).toBe(true);
+    const runtime = await context.request.get(origin + '/console/api/admin/runtime');
+    expect(runtime.status()).toBe(200);
+    expect((await runtime.json()).configured).toBe(false);
+    const writes = [];
+    page.on('request', request => {
+      if (request.method() !== 'GET') writes.push(request.method() + ' ' + new URL(request.url()).pathname);
+    });
+    for (const refresh of [false, true]) {
+      const availability = page.waitForResponse(response => new URL(response.url()).pathname === '/console/api/availability');
+      if (refresh) await page.reload();
+      else await page.goto(origin + '/admin');
+      const response = await availability;
+      await response.finished();
+      expect(response.request().method()).toBe('GET');
+      expect(response.status()).toBe(200);
+      expect(await response.json()).toEqual({ reachable: true });
+      // Wait for the actual application to accept the read before asserting
+      // absence of a banner; a response alone can precede its UI callback.
+      await expect.poll(acceptedAvailability).toBe(true);
+      await expect(page.getByRole('heading', { name: messages['status.heading'], exact: true })).toBeVisible();
+      await expect(page.locator('#console-availability-notice')).toHaveCount(0);
+      await expect(page.locator('html')).toHaveAttribute('lang', locale);
+    }
+    expect(writes).toEqual([]);
+  } finally { await context.close(); }
+});
+
 test('real Core login and administration retain identity across both languages', async ({ browser }) => {
   const context = await browser.newContext({ locale: 'zh-CN' });
   const page = await context.newPage();
