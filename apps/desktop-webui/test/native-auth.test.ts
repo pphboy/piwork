@@ -145,6 +145,9 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   assert.equal(localCookie(await f.context.cookies()), localCookie(cookies));
   const beforeLogin = f.calls.length;
   await f.login();
+  // The recovered import has no visible Work yet, so it lives behind the fixed
+  // Works entry rather than in front of the list.
+  await f.page.locator('[data-action="works-tasks"]').click();
   const task = f.page.locator(`.recovery-task[data-operation-id="${recoveredImportID}"]`);
   await expect(task).toBeVisible();
   await task.locator('[data-action="operation"]').click();

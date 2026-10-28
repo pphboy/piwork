@@ -107,6 +107,7 @@ export class ActionState {
         const error = record.errorText?.() ?? record.error;
         return `${record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
     }
+    slow(record) { return (record.pending || record.refresh === 'refreshing') && this.now() - record.started >= 10000; }
     clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
     tick() {
         if (this.timer)
@@ -120,6 +121,7 @@ export class ActionState {
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root, actions, view, intentFor, visibleRecord = () => true) {
     const retained = new Set();
+    const pendingOwners = new Set();
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let pageText = '';
     while (walker.nextNode())
@@ -146,7 +148,48 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
     for (const record of actions.records.values()) {
         if (record.view && record.view !== view || !visibleRecord(record))
             continue;
+        if (record.kind === 'read' && record.pending && !record.error && root.querySelector('.console-read-skeleton'))
+            continue;
         const anchor = record.anchor ? root.querySelector(record.anchor) : null;
+        const owner = anchor instanceof HTMLButtonElement ? anchor : anchor?.matches('form') ? anchor.querySelector('button[type="submit"], button:not([type])') : null;
+        const ordinaryPending = (record.pending || record.refresh === 'refreshing') && !record.error && !record.blocked && record.refresh !== 'failed';
+        if (ordinaryPending && owner && owner.getClientRects().length) {
+            pendingOwners.add(owner);
+            if (!owner.querySelector(':scope > .action-pending-content')) {
+                owner.dataset.pendingOriginalTitle = owner.getAttribute('title') ?? '';
+                if (!owner.hasAttribute('aria-label')) {
+                    owner.dataset.pendingGeneratedLabel = 'true';
+                    owner.setAttribute('aria-label', (owner.textContent || '').trim());
+                }
+                const content = document.createElement('span');
+                content.className = 'action-pending-content';
+                const label = document.createElement('span');
+                label.className = 'action-pending-label';
+                while (owner.firstChild)
+                    label.append(owner.firstChild);
+                const indicator = document.createElement('span');
+                indicator.className = 'action-pending-indicator';
+                indicator.innerHTML = pendingDots();
+                content.append(label, indicator);
+                owner.append(content);
+            }
+            owner.setAttribute('aria-busy', 'true');
+            let announcement = owner.querySelector(':scope > .action-pending-content > [role="status"]');
+            if (!announcement) {
+                announcement = document.createElement('span');
+                announcement.className = 'sr-only';
+                announcement.setAttribute('role', 'status');
+                owner.querySelector('.action-pending-content')?.append(announcement);
+            }
+            const slow = actions.slow(record);
+            announcement.className = slow ? 'action-slow-status' : 'sr-only';
+            announcement.textContent = actions.message(record) + (slow ? ` · ${t('action.waitingHint')}` : '');
+            if (slow)
+                positionSlowStatus(announcement, owner);
+            owner.title = actions.message(record);
+            // The button owns ordinary feedback; persistent failures and unknowns still use the region below.
+            continue;
+        }
         const region = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ??
             root.querySelector('main, .main-panel, .agent-panel') ?? root;
         if (!region)
@@ -189,8 +232,71 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
                 region.prepend(node);
         }
     }
+    for (const button of root.querySelectorAll('button:has(> .action-pending-content)')) {
+        if (pendingOwners.has(button))
+            continue;
+        const content = button.querySelector(':scope > .action-pending-content');
+        const label = content?.querySelector(':scope > .action-pending-label');
+        if (content && label)
+            content.replaceWith(...label.childNodes);
+        if (button.dataset.pendingGeneratedLabel) {
+            button.removeAttribute('aria-label');
+            delete button.dataset.pendingGeneratedLabel;
+        }
+        if (button.dataset.pendingOriginalTitle)
+            button.title = button.dataset.pendingOriginalTitle;
+        else
+            button.removeAttribute('title');
+        delete button.dataset.pendingOriginalTitle;
+        if (!button.dataset.actionLocked)
+            button.removeAttribute('aria-busy');
+    }
+    // Some module-specific controls replace their button contents on completion.
+    // Remove generated metadata even when that replacement removed our wrapper.
+    for (const button of root.querySelectorAll('button[data-pending-generated-label]')) {
+        if (pendingOwners.has(button) || button.querySelector(':scope > .action-pending-content'))
+            continue;
+        button.removeAttribute('aria-label');
+        delete button.dataset.pendingGeneratedLabel;
+        if (button.dataset.pendingOriginalTitle)
+            button.title = button.dataset.pendingOriginalTitle;
+        else
+            button.removeAttribute('title');
+        delete button.dataset.pendingOriginalTitle;
+    }
     for (const node of root.querySelectorAll('[data-action-status]'))
         if (!retained.has(node))
             node.remove();
+    repositionSlowStatuses();
+}
+const slowStatuses = new Map();
+function repositionSlowStatuses() {
+    if (!slowStatuses.size)
+        return;
+    for (const [status, owner] of slowStatuses) {
+        if (!status.isConnected || !owner.isConnected || !status.classList.contains('action-slow-status')) {
+            slowStatuses.delete(status);
+            continue;
+        }
+        placeSlowStatus(status, owner);
+    }
+    if (!slowStatuses.size) {
+        window.removeEventListener('scroll', repositionSlowStatuses, true);
+        window.removeEventListener('resize', repositionSlowStatuses);
+    }
+}
+function positionSlowStatus(status, owner) {
+    if (!slowStatuses.size) {
+        window.addEventListener('scroll', repositionSlowStatuses, true);
+        window.addEventListener('resize', repositionSlowStatuses);
+    }
+    slowStatuses.set(status, owner);
+    placeSlowStatus(status, owner);
+}
+function placeSlowStatus(status, owner) {
+    const anchor = owner.getBoundingClientRect(), box = status.getBoundingClientRect();
+    status.style.visibility = anchor.bottom <= 0 || anchor.top >= window.innerHeight || anchor.right <= 0 || anchor.left >= window.innerWidth ? 'hidden' : '';
+    status.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8))}px`;
+    status.style.top = `${Math.max(8, anchor.top >= box.height + 8 ? anchor.top - box.height - 6 : Math.min(anchor.bottom + 6, window.innerHeight - box.height - 8))}px`;
 }
 //# sourceMappingURL=action-state.js.map

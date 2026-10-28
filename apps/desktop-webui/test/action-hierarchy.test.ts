@@ -23,16 +23,16 @@ function fixture() {
   ...localeSandbox,
     pendingDots,
     view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
-    adapter: { connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [] },
+    adapter: { connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [], operations: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
-    document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(),
+    document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(), workControl: () => undefined, controlMarkup: () => '', operationAction: (op: any) => op.kind,
     exportFlows: { forWork: () => undefined, get: () => undefined }, exportSnapshotAvailable: () => true,
-    filesRestoreNotice: '', uploadProgressMarkup: () => '', transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
+    filesRestoreNotice: '', uploadProgressMarkup: () => '', filesUploadState: () => undefined, transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     downloadProgressMarkup: () => '', actions: { records: new Map() },
   };
   c.fileActionsContext="";c.overlayRole=overlayRole;vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport'), c);
+  vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport', 'workMenuTasks'), c);
   return { c, work };
 }
 

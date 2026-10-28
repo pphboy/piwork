@@ -967,9 +967,16 @@ export class DesktopAdapter {
             return { value, sequence };
         }, explicit);
     }
-    requireWorkSync(id) {
-        if (id)
-            this.workSync.set(id, { generation: this.workMutations.get(id) || 0, after: this.statusSequence, work: true, list: true });
+    requireWorkSync(id, rearm = false) {
+        // Ordinarily idempotent within a generation: rearming on every observation
+        // prevents convergence. A Delete's first successful transition explicitly
+        // creates a new post-terminal readback obligation.
+        if (!id)
+            return;
+        const generation = this.workMutations.get(id) || 0;
+        if (!rearm && this.workSync.get(id)?.generation === generation)
+            return;
+        this.workSync.set(id, { generation, after: this.statusSequence, work: true, list: true });
     }
     associateOperations(work) {
         const related = this.coordinationOperations().filter(op => op.workId === work.id && op.action);
@@ -1414,11 +1421,22 @@ export class DesktopAdapter {
             for (const [id, sync] of this.workSync) {
                 if (sync.generation !== (mutations.get(id) || 0) || sequence <= sync.after)
                     continue;
-                sync.list = false;
                 const raw = value.works.find((item) => item.id === id), work = this.getWork(id);
+                const intent = work?.lifecycleIntent;
+                const deleted = this.coordinationOperations().some(op => op.workId === id && op.action === 'delete' && op.state === 'succeeded' && (!intent || intent.operationId === op.id));
+                // A missing list entry is not confirmed while a newer Work read or a
+                // newer mutation kept the row. Keep the list obligation armed so the
+                // next read can reconcile it instead of marking contradictory facts as
+                // a completed deletion. A list still containing a successfully
+                // deleted Work is likewise not a confirmation of that deletion.
+                if ((!ids.has(id) && work) || (ids.has(id) && deleted)) {
+                    sync.list = true;
+                    continue;
+                }
+                sync.list = false;
                 if (ids.has(id) && work?.checkedAt && sequence >= (this.workReads.get(id) || 0) && (typeof raw?.controlVersion !== 'number' || raw.controlVersion >= (work.controlVersion || 0)))
                     sync.work = false;
-                if (!ids.has(id) && this.coordinationOperations().some(op => op.workId === id && op.action === 'delete' && op.state === 'succeeded')) {
+                if (!ids.has(id) && deleted) {
                     sync.work = false;
                     this.deletedWorks.add(id);
                 }
@@ -2688,8 +2706,14 @@ export class DesktopAdapter {
         operation.action = lifecycleAction(value.kind || value.type || operation.kind);
         this.retainTerminal(operation);
         const importingUnpublished = operationKind(operation.checkedKind || operation.kind) === 'transfer:import' && operation.state !== 'succeeded';
-        if (operation.workId && !importingUnpublished && (previousState !== operation.state || explicit))
-            this.requireWorkSync(operation.workId);
+        if (operation.workId && !importingUnpublished && (previousState !== operation.state || explicit)) {
+            const intent = this.getWork(operation.workId)?.lifecycleIntent;
+            // A pre-terminal list read cannot confirm a successful Delete. Rearm
+            // exactly on the current Delete's transition to success, never on each
+            // later poll or an older operation superseded by a newer intent.
+            const terminalDelete = operation.action === 'delete' && operation.state === 'succeeded' && previousState !== 'succeeded' && (!intent || intent.operationId === operation.id);
+            this.requireWorkSync(operation.workId, terminalDelete);
+        }
         const work = this.getWork(operation.workId);
         if (work)
             this.associateOperations(work);
@@ -3881,7 +3905,7 @@ export class DesktopAdapter {
                     publish();
                     continue;
                 }
-                this.uploadProgress.set(id, { workId: id, path, phase: t('d.action.checkingTarget'), index: index + 1, count: files.length });
+                this.uploadProgress.set(id, { workId: id, scope: 'files', path, phase: t('d.action.checkingTarget'), index: index + 1, count: files.length });
                 this.emit();
                 // Emitting progress may itself reveal a newer accepted control. Check at dispatch.
                 reason = admission();
@@ -3960,7 +3984,7 @@ export class DesktopAdapter {
             for (const file of files)
                 form.append(kind === 'ZIP' ? 'zip' : 'files', file, file.webkitRelativePath || file.name);
             const epoch = this.epoch;
-            this.uploadProgress.set(id, { workId: id, path: name, phase: t('d.action.uploadingPackage') });
+            this.uploadProgress.set(id, { workId: id, scope: 'package', path: name, phase: t('d.action.uploadingPackage') });
             this.emit();
             const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/package-uploads`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => { const progress = this.uploadProgress.get(id); if (epoch === this.epoch && progress) {
                 Object.assign(progress, sentAll ? { phase: t('d.action.validatingForwarding') } : { phase: t('d.action.uploadingPackage'), transferred: sent, total });

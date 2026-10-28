@@ -37,7 +37,7 @@ async function fixture(page, handler = () => undefined, path = '/') {
     if(request.path==='admin/models'&&reply.json?.models?.length===1&&reply.json.models[0].modelRef==='model-test-00000001')reply={...reply,json:{models:[...reply.json.models,{...reply.json.models[0],id:'managed-test-00002',modelRef:'model-test-00000002',name:'Second model',model:'second'}]}};
     await route.fulfill({ status: reply.status || 200, contentType: 'application/json', body: JSON.stringify(reply.json || {}) });
   });
-  await page.goto(base + path); await expect(page.locator('main')).not.toContainText('Loading'); return requests;
+  await page.goto(base + path); await expect(page.locator('main')).toBeVisible(); await expect(page.locator('.console-read-skeleton')).toHaveCount(0); return requests;
 }
 
 for (const scenario of [
@@ -317,7 +317,7 @@ test('AI provider late save cannot erase a re-entered Key or release the new vie
     await page.getByLabel('Display name (optional)',{exact:true}).fill('Old model');await page.getByLabel('Model ID',{exact:true}).fill('old-id');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-old-view');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect.poll(()=>writes).toBe(1);
     await page.getByRole('link',{name:'User access',exact:true}).click();await page.getByRole('button',{name:'Discard changes',exact:true}).click();await expect(page).toHaveURL(base+'/users');
     await page.getByRole('link',{name:'AI models',exact:true}).click();await page.getByLabel('Display name (optional)',{exact:true}).fill('Fresh provider');await page.getByLabel('Model ID',{exact:true}).fill('fresh-id');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-fresh-view');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect.poll(()=>writes).toBe(2);
-    old.resolve();await page.waitForTimeout(100);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-fresh-view');await expect(page.getByRole('button',{name:'Saving model',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Saving model',exact:true}).locator('.pending-dots')).toHaveCount(1);expect(writes).toBe(2);
+    old.resolve();await page.waitForTimeout(100);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-fresh-view');await expect(page.getByRole('button',{name:'Add model',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Add model',exact:true}).locator('.pending-dots')).toHaveCount(1);expect(writes).toBe(2);
     fresh.resolve();await expect(page.getByRole('link',{name:'Fresh provider',exact:true})).toBeVisible();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
   }finally{old.resolve();fresh.resolve();}
 });
@@ -342,7 +342,7 @@ for (const [action, path, endpoint] of [
     const button = page.locator(`[data-action="${action}"]`).first();
     if (action === 'retry-connection') await expect(button).toBeVisible();
     armed = true; const before = requests.filter(r => r.path === endpoint).length;
-    await button.click(); await expect(page.locator('[data-action-status]').filter({ hasText: action === 'sign-out' ? 'Signing out' : action === 'verify-runtime' ? 'Verifying' : action === 'resume-observation' ? 'Resuming' : 'Checking' })).toBeVisible();
+    await button.scrollIntoViewIfNeeded();const geometry=await button.boundingBox();await button.click(); await expect(button.locator('.pending-dots')).toHaveCount(1);expect(await button.boundingBox()).toEqual(geometry);
     await expect(button).toBeDisabled(); await page.evaluate(action => document.querySelector(`[data-action="${action}"]`)?.click(), action);
     if(action === 'refresh-operation') await page.waitForTimeout(2200);
     expect(requests.filter(r => r.path === endpoint).length - before).toBe(1); gate.resolve();
@@ -390,7 +390,7 @@ test('S03 user confirmation survives slow and failed Users refresh without anoth
     }, '/users');
     await page.getByRole('button', { name: 'Create user', exact: true }).click();
     await page.locator('#new-account').fill('new-user'); await page.locator('#new-password').fill('test-password-only'); await page.locator('#confirm-password').fill('test-password-only');
-    await page.locator('#dialog-submit').click(); await expect(page.locator('#dialog-submit')).toContainText('Creating');
+    await page.locator('#dialog-submit').click(); await expect(page.locator('#dialog-submit .pending-dots')).toHaveCount(1);
     mutation.resolve(); await expect(page.locator('main')).toContainText('Account new-user created'); await expect(page.locator('[data-action-status]')).toContainText('Refreshing');
     refresh.resolve(); await expect(page.locator('main')).toContainText('not confirmed'); await expect(page.locator('[data-action="readback"]')).toBeVisible();
     const translated = await page.evaluate(async () => {
@@ -414,7 +414,7 @@ for (const action of ['disable','enable','reset']) test(`S03 ${action} confirms 
     },'/users');
     await page.locator(`[data-action="${action==='reset'?'user-reset':'user-toggle'}"]`).click();
     if(action==='reset'){await page.locator('#reset-password').fill('test-credential');await page.locator('#reset-confirm').fill('test-credential');}
-    await page.locator('#dialog-submit').click();await expect(page.locator('[data-action-status]')).toContainText('other');post.resolve();
+    await page.locator('#dialog-submit').click();await expect(page.locator('#dialog-submit [role="status"]')).toContainText('other');post.resolve();
     await expect(page.locator('main')).toContainText(action==='reset'?'password reset':`account ${action==='enable'?'enabled':'disabled'}`);await expect(page.locator('dialog')).toHaveCount(0);await expect(page.locator('input[type="password"]')).toHaveCount(0);
     expect(requests.filter(r=>r.method==='POST').length).toBe(1);get.resolve();
   }finally{post.resolve();get.resolve();}
@@ -429,7 +429,7 @@ for(const kind of ['skills','packages'])for(const action of ['disable','enable',
       if(r.path===`admin/packages/item`&&r.method==='GET')return{json:{name:'item',enabled:action!=='enable',source:{kind:'npm',spec:'item'},state:'installed'}};
     },'/'+kind+'/item');
     await page.locator(`[data-action="${action==='remove'?'catalog-remove':'catalog-toggle'}"]`).click();if(action==='remove')await page.locator('#confirm-name').fill('item');
-    await page.locator('#dialog-submit').click();await expect(page.locator('[data-action-status]')).toContainText('item');post.resolve();
+    await page.locator('#dialog-submit').click();await expect(page.locator('#dialog-submit [role="status"]')).toContainText('item');post.resolve();
     await expect(page.locator('main')).toContainText(`item ${action==='remove'?'removed':action==='enable'?'enabled':'disabled'}`);await expect(page.locator('dialog')).toHaveCount(0);get.resolve();await expect(page.locator('main')).toContainText('not confirmed');expect(requests.filter(r=>r.method!=='GET').length).toBe(1);
   }finally{post.resolve();get.resolve();}
 });
@@ -493,7 +493,7 @@ test('S05 runtime saved confirmation precedes readiness; newer non-sensitive edi
       if(accepted&&r.path==='admin/status'){await health.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}
     },'/runtime');
     await page.locator('[data-action="edit-runtime"]').first().click();await page.locator('#modelRef').selectOption('model-test-00000001');await page.locator('#runtime-form button[type="submit"]').click();
-    await expect(page.locator('[data-action-status]')).toContainText('Saving');await page.locator('#modelRef').selectOption('model-test-00000002');post.resolve();
+    await expect(page.locator('#runtime-form button[type="submit"] .pending-dots')).toHaveCount(1);await page.locator('#modelRef').selectOption('model-test-00000002');post.resolve();
     await expect(page.locator('main')).toContainText('Runtime saved');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');await expect(page.locator('#apiKey')).toHaveCount(0);health.resolve();await expect(page.locator('main')).toContainText('readiness could not be confirmed');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');expect(requests.filter(r=>r.method==='PUT').length).toBe(1);
   }finally{post.resolve();health.resolve();}
 });
@@ -512,7 +512,7 @@ for(const pagePath of ['/runtime','/default-work'])test(`S01 ${pagePath} explici
       await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();await page.locator('#agentsMd').fill('submitted');
       await page.route('**/console/api/admin/default-work',route=>route.request().method()==='PATCH'?route.abort('failed'):route.fallback());await page.locator('[data-action="save-defaults"]').click();await expect(page.locator('[data-action="readback"]')).toBeVisible();
     }
-    armed=true;await page.locator('[data-action="readback"]').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toBeVisible();
+    armed=true;await page.locator('[data-action="readback"]').click();await expect(page.locator('[data-action="readback"] .pending-dots')).toHaveCount(1);
     const field=pagePath==='/runtime'?'#modelRef':'#agentsMd',draft=pagePath==='/runtime'?'model-test-00000002':'newer draft';if(pagePath==='/runtime')await page.locator(field).selectOption(draft);else await page.locator(field).fill(draft);gate.resolve();await expect(page.locator(field)).toHaveValue(draft);await expect(page.locator('[data-action-status]').filter({hasText:'Checked'}).first()).toContainText(/\d{4}-\d{2}-\d{2}T/);expect(requests.filter(r=>r.path===endpoint).length).toBeGreaterThan(1);
   }finally{gate.resolve();}
 });
@@ -554,7 +554,7 @@ for (const update of [false, true]) test(`S04 Skill ${update ? 'update' : 'add'}
       if(accepted&&r.method==='GET'&&(r.path==='admin/skills'||r.path==='admin/default-work')){await reads.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}
     },update?'/skills/skill':'/skills');
     await page.locator(`[data-action="${update?'update-skill':'add-skill'}"]`).click();await page.locator('#upload-files').setInputFiles(dir);await page.locator('#dialog-submit').click();
-    await expect(page.locator('#dialog-submit')).toContainText('Uploading');post.resolve();await expect(page.locator('main')).toContainText('Skill skill confirmed');await expect(page.locator('dialog')).toHaveCount(0);reads.resolve();await expect(page.locator('main')).toContainText('not confirmed');
+    await expect(page.locator('#dialog-submit .pending-dots')).toHaveCount(1);post.resolve();await expect(page.locator('main')).toContainText('Skill skill confirmed');await expect(page.locator('dialog')).toHaveCount(0);reads.resolve();await expect(page.locator('main')).toContainText('not confirmed');
     const request=requests.find(r=>r.method===(update?'PUT':'POST'));expect(request.body).toContain('filename="SKILL.md"');expect(requests.filter(r=>r.method===(update?'PUT':'POST')).length).toBe(1);
   }finally{post.resolve();reads.resolve();await rm(root,{recursive:true,force:true});}
 });
@@ -576,7 +576,21 @@ test('S05 Login request is visible and keyboard repeat never sends a second cred
       if(r.path==='session')return{json:{authenticated,csrfToken:'test-csrf',user:{id:'admin-1',account:'admin',role:'admin',enabled:true}}};
       if(r.path==='login'){await gate.promise;authenticated=true;return{json:{}};}
     },'/login');
-    await page.locator('#account').fill('admin');await page.locator('#password').fill('test-password');await page.locator('#login-form button[type="submit"]').click();await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Signing in');await page.locator('#password').press('Enter');expect(requests.filter(r=>r.path==='login').length).toBe(1);gate.resolve();await expect(page.locator('main')).not.toContainText('Signing in');
+    await page.locator('#account').fill('admin');await page.locator('#password').fill('test-password');const submit=page.locator('#login-form button[type="submit"]');const geometry=await submit.boundingBox();await submit.click();await expect(submit).toHaveAttribute('aria-busy','true');await expect(submit.locator('.pending-dots')).toHaveCount(1);expect(await submit.boundingBox()).toEqual(geometry);await page.locator('#password').press('Enter');expect(requests.filter(r=>r.path==='login').length).toBe(1);gate.resolve();await expect(page.locator('main')).not.toContainText('Signing in');
+  }finally{gate.resolve();}
+});
+
+for(const width of [1440,360])for(const locale of ['en','zh-CN'])for(const reducedMotion of ['no-preference','reduce'])test(`login pending keeps geometry at ${width}px ${locale} ${reducedMotion}`,async({page})=>{
+  const gate=deferred();let authenticated=false;
+  try{
+    await page.setViewportSize({width,height:900});await page.emulateMedia({reducedMotion});
+    await fixture(page,async r=>{if(r.path==='session')return{json:{authenticated,csrfToken:'test-csrf',user:{id:'admin-1',account:'admin',role:'admin',enabled:true}}};if(r.path==='login'){await gate.promise;authenticated=true;return{json:{}};}},'/login');
+    await page.evaluate(locale=>import('/browser/locale.js').then(m=>m.chooseLocale(locale)),locale);
+    await page.locator('#account').fill('admin');await page.locator('#password').fill('synthetic-password');
+    const submit=page.locator('#login-form button[type="submit"]'),field=page.locator('#account');const before=await submit.boundingBox(),neighbor=await field.boundingBox();await submit.click();
+    await expect(submit.locator('.pending-dots')).toHaveCount(1);expect(await submit.boundingBox()).toEqual(before);expect(await field.boundingBox()).toEqual(neighbor);
+    if(reducedMotion==='reduce')expect(await submit.locator('.pending-dots i').first().evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+    gate.resolve();await expect(submit.locator('.pending-dots')).toHaveCount(0);
   }finally{gate.resolve();}
 });
 
@@ -586,7 +600,7 @@ test('S05 Defaults save confirms the submitted draft while newer edits remain un
   try{
     const requests=await fixture(page,async r=>{if(r.path==='admin/default-work'&&r.method==='PATCH'){await gate.promise;return{json:{baseImage:'agent:test',configuration:{skills:[],packages:[],agentsMd:'submitted'}}};}},'/default-work');
     await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();await page.locator('#agentsMd').fill('submitted');await page.locator('[data-action="save-defaults"]').click();
-    await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Saving defaults');await page.locator('#agentsMd').fill('newer unsaved draft');await expect(page.locator('[data-action="save-defaults"]')).toBeDisabled();
+    await expect(page.locator('[data-action="save-defaults"] .pending-dots')).toHaveCount(1);await page.locator('#agentsMd').fill('newer unsaved draft');await expect(page.locator('[data-action="save-defaults"]')).toBeDisabled();
     gate.resolve();await expect(page.locator('main')).toContainText('Defaults saved');await expect(page.locator('#agentsMd')).toHaveValue('newer unsaved draft');await expect(page.locator('#dirty-label')).toContainText('fields changed');expect(requests.filter(r=>r.method==='PATCH').length).toBe(1);
   }finally{gate.resolve();}
 });
@@ -596,7 +610,10 @@ test('S01 long waiting and diagnostics wrap on desktop and narrow screens with l
   try{
     const requests=await fixture(page,async r=>{if(armed&&r.path==='admin/operations/op-1'){await gate.promise;return{json:{operationId:'op-1',name:'pkg',state:'failed',packagePhase:'validate',error:{message:'A bounded diagnostic detail. '.repeat(12)}}};}},'/operations/op-1');
     armed=true;const before=requests.filter(r=>r.path==='admin/operations/op-1').length;await page.locator('[data-action="refresh-operation"]').click();
-    await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('role','status');await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveAttribute('aria-live','polite');await expect(page.locator('[data-action-status]')).toContainText('Still waiting',{timeout:12000});expect(requests.filter(r=>r.path==='admin/operations/op-1').length-before).toBe(1);
+    const status=page.locator('[data-action="refresh-operation"] [role="status"]');await expect(status).toContainText('Still waiting',{timeout:12000});await expect(status).toBeVisible();await expect(status).toContainText('check the result');expect(requests.filter(r=>r.path==='admin/operations/op-1').length-before).toBe(1);
+    const tracking=await page.evaluate(async()=>{document.body.style.minHeight='2000px';const owner=document.querySelector('[data-action="refresh-operation"]'),notice=owner.querySelector('[role="status"]');const before=[owner.getBoundingClientRect().top,notice.getBoundingClientRect().top];window.scrollBy(0,30);await new Promise(resolve=>requestAnimationFrame(resolve));return {before,after:[owner.getBoundingClientRect().top,notice.getBoundingClientRect().top]};});
+    expect(tracking.before[0]-tracking.after[0]).toBeGreaterThan(0);expect(Math.abs((tracking.before[0]-tracking.before[1])-(tracking.after[0]-tracking.after[1]))).toBeLessThan(2);
+    await page.setViewportSize({width:360,height:900});await expect(status).toBeVisible();const box=await status.boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(360);
     gate.resolve();await expect(page.locator('main')).toContainText('A bounded diagnostic detail.');
     const screenshots='/tmp/piwork-feedback-screens';await mkdir(screenshots,{recursive:true});for(const width of [1440,390]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:join(screenshots,`serve-long-status-${width}.png`),fullPage:true});}
   }finally{gate.resolve();}

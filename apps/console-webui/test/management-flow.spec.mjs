@@ -20,7 +20,7 @@ const evidenceRoot=fileURLToPath(new URL('../../../dist/server-ui-core-flow/mana
 async function evidence(page,name,fullPage=true){if(process.env.PIWORK_UI_EVIDENCE==='1'){await mkdir(evidenceRoot,{recursive:true});await page.screenshot({path:evidenceRoot+name+'.png',fullPage});}}
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const model = { id:'model-one', modelRef:'ref-one', name:'Saved model', model:'synthetic-model', api:'anthropic-messages', baseUrl:'https://fixture.invalid/anthropic', credentialAvailable:true, enabled:true, updatedAt:'2026-10-20T00:00:00Z' };
-async function fixture(page, path = '/runtime', handler = () => undefined, state = {}) {
+async function fixture(page, path = '/runtime', handler = () => undefined, state = {}, duringInitial) {
   const requests = [];
   const user = {id:'admin-one', account:'admin', role:'admin', enabled:true};
   const values = {
@@ -41,10 +41,23 @@ async function fixture(page, path = '/runtime', handler = () => undefined, state
   });
   await page.route('**/_web/api/onboarding', route => route.fulfill({contentType:'application/json',body:JSON.stringify({administrator:true,status:values['admin/status'],runtime:values['admin/runtime'],preparation:values.preparation || {ready:true,components:{agent:{state:'ready'}}}})}));
   await page.goto(base+path);
+  if(duringInitial)await duringInitial();
   await expect(page.locator('main')).toBeVisible();
+  await expect(page.locator('.console-read-skeleton')).toHaveCount(0);
   await expect(page.locator('#page-read-status [aria-busy="true"]')).toHaveCount(0);
   return {requests,values};
 }
+
+test('first management read shows one stable skeleton and replaces it when data arrives', async ({page}) => {
+  const gate=deferred();
+  try {
+    await fixture(page,'/runtime',async r=>{if(r.path==='admin/runtime')await gate.promise;}, {}, async()=>{
+      const skeleton=page.locator('.console-read-skeleton');await expect(skeleton).toBeVisible();await expect(skeleton).toHaveAttribute('aria-busy','true');
+      await expect(page.locator('main .pending-dots')).toHaveCount(0);const before=await skeleton.boundingBox();await page.waitForTimeout(250);expect(await skeleton.boundingBox()).toEqual(before);gate.resolve();
+    });
+    await expect(page.locator('.console-read-skeleton')).toHaveCount(0);await expect(page.getByRole('heading',{name:'Runtime',exact:true})).toBeVisible();
+  } finally { gate.resolve(); }
+});
 
 for (const scenario of ['missing','preparing','failed','unknown','ready']) test(`S08 Overview ${scenario} has one contextual main action and one Quick setup entry`, async ({page}) => {
   const ready = scenario === 'ready';
@@ -174,11 +187,11 @@ test('S09 same-page refresh retains Runtime select node, draft, open diagnostics
     await page.locator('#modelRef').evaluate(el=>{el.focus();window.retainedSelect=el;});
     delayed=true;const before=requests.filter(r=>r.path==='admin/runtime').length;
     await page.locator('[data-action="refresh"]').evaluate(el=>el.click());
-    await expect(page.locator('#page-read-status .pending-dots')).toHaveCount(1);await expect(page.locator('dialog')).toHaveCount(0);
+    await expect(page.locator('[data-action="refresh"] .pending-dots')).toHaveCount(1);await expect(page.locator('dialog')).toHaveCount(0);
     await page.locator('[data-action="refresh"]').evaluate(el=>el.click());
     await evidence(page,'runtime-refresh-retained-synthetic');
     expect(requests.filter(r=>r.path==='admin/runtime').length-before).toBe(1);
-    gate.resolve();await expect(page.locator('#page-read-status .pending-dots')).toHaveCount(0);
+    gate.resolve();await expect(page.locator('[data-action="refresh"] .pending-dots')).toHaveCount(0);
     await expect(page.locator('#modelRef')).toHaveValue('ref-two');await expect(page.locator('#modelRef')).toBeFocused();
     expect(await page.evaluate(()=>window.retainedSelect===document.querySelector('#modelRef')&&window.retainedDetails.isConnected&&window.retainedDetails.open)).toBe(true);
   }finally{gate.resolve();}
@@ -191,8 +204,8 @@ test('S11 Default Work refresh retains text node, selection, draft, expanded det
     await page.getByRole('button',{name:'Edit instructions',exact:true}).click();await page.locator('#agentsMd').fill('unsaved instructions\n'.repeat(90));
     await page.locator('details').last().evaluate(el=>{el.open=true;window.retainedDetails=el;});
     await page.locator('#agentsMd').evaluate(el=>{el.focus();el.setSelectionRange(5,17);el.scrollTop=80;window.retainedText=el;});
-    delayed=true;await page.locator('[data-action="refresh"]').evaluate(el=>el.click());await expect(page.locator('#page-read-status .pending-dots')).toHaveCount(1);
-    gate.resolve();await expect(page.locator('#page-read-status .pending-dots')).toHaveCount(0);
+    delayed=true;await page.locator('[data-action="refresh"]').evaluate(el=>el.click());await expect(page.locator('[data-action="refresh"] .pending-dots')).toHaveCount(1);
+    gate.resolve();await expect(page.locator('[data-action="refresh"] .pending-dots')).toHaveCount(0);
     expect(await page.evaluate(()=>({same:window.retainedText===document.querySelector('#agentsMd'),start:window.retainedText.selectionStart,end:window.retainedText.selectionEnd,scroll:window.retainedText.scrollTop,open:window.retainedDetails.open}))).toEqual({same:true,start:5,end:17,scroll:80,open:true});
     await expect(page.locator('#agentsMd')).toBeFocused();await expect(page.locator('#dirty-label')).toContainText('fields changed');
   }finally{gate.resolve();}
@@ -205,10 +218,12 @@ test('S10 Read current data owns its pending state, deduplicates, and retains mo
     await expect(page.locator('.setup-api-guidance')).toHaveCount(0);
     await page.locator('#model-id').fill('unsaved-model');await page.locator('#model-key').fill('synthetic-secret-only');
     await page.locator('#model-id').evaluate(el=>{el.focus();el.setSelectionRange(1,4);window.retainedInput=el;});
+    const read=page.locator('[data-model-action="read"]');const beforeBox=await read.boundingBox();const neighborBox=await page.getByRole('link',{name:'Configure runtime',exact:true}).boundingBox();
     delayed=true;const before=requests.filter(r=>r.path==='admin/models').length;
     await page.locator('[data-model-action="read"]').evaluate(el=>el.click());await expect(page.locator('[data-model-action="read"] .pending-dots')).toHaveCount(1);await expect(page.locator('[data-model-form] button[type="submit"] .pending-dots')).toHaveCount(0);
+    expect(await read.boundingBox()).toEqual(beforeBox);expect(await page.getByRole('link',{name:'Configure runtime',exact:true}).boundingBox()).toEqual(neighborBox);await expect(read).toHaveAccessibleName('Read current data');
     await page.locator('[data-model-action="read"]').evaluate(el=>el.click());expect(requests.filter(r=>r.path==='admin/models').length-before).toBe(1);
-    gate.resolve();await expect(page.locator('[data-model-action="read"] .pending-dots')).toHaveCount(0);await expect(page.locator('#model-id')).toHaveValue('unsaved-model');await expect(page.locator('#model-key')).toHaveValue('synthetic-secret-only');
+    gate.resolve();await expect(page.locator('[data-model-action="read"] .pending-dots')).toHaveCount(0);expect(await read.boundingBox()).toEqual(beforeBox);await expect(page.locator('#model-id')).toHaveValue('unsaved-model');await expect(page.locator('#model-key')).toHaveValue('synthetic-secret-only');
     expect(await page.evaluate(()=>window.retainedInput===document.querySelector('#model-id')&&window.retainedInput.selectionStart===1&&window.retainedInput.selectionEnd===4)).toBe(true);
   }finally{gate.resolve();}
 });
@@ -242,7 +257,7 @@ test('S14 About refresh has one aggregate pending slot and retains confirmed ver
   const gate=deferred();let delayed=false;
   try{
     await fixture(page,'/about',async r=>{if(delayed&&r.path==='about'){await gate.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}});
-    delayed=true;await page.locator('[data-action="refresh"]').click();await expect(page.locator('#page-read-status .pending-dots')).toHaveCount(1);await expect(page.locator('main')).toContainText('fixture-version');
+    delayed=true;await page.locator('[data-action="refresh"]').click();await expect(page.locator('[data-action="refresh"] .pending-dots')).toHaveCount(1);await expect(page.locator('main')).toContainText('fixture-version');
     gate.resolve();await expect(page.locator('main .pending-dots')).toHaveCount(0);await expect(page.locator('main')).toContainText('fixture-version');await expect(page.locator('main')).toContainText('last confirmed content');
   }finally{gate.resolve();}
 });
@@ -251,7 +266,7 @@ test('S10 a model save keeps newer edits dirty and preserves the current input n
   const gate=deferred();
   try{
     await fixture(page,'/models/model-one',async r=>{if(r.method==='PATCH'){await gate.promise;return{json:{...model,name:'Submitted name'}};}});
-    await page.locator('#model-name').fill('Submitted name');await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByRole('button',{name:'Saving model',exact:true})).toBeDisabled();
+    await page.locator('#model-name').fill('Submitted name');await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByRole('button',{name:'Save model',exact:true})).toBeDisabled();
     await page.locator('#model-name').fill('Newer unsaved name');await page.locator('#model-name').evaluate(el=>{window.retainedModelName=el;});
     gate.resolve();await expect(page.getByRole('button',{name:'Save model',exact:true})).toBeEnabled();await expect(page.locator('#model-name')).toHaveValue('Newer unsaved name');expect(await page.evaluate(()=>window.retainedModelName===document.querySelector('#model-name'))).toBe(true);
     await page.getByRole('link',{name:'Configure runtime',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes');

@@ -268,6 +268,78 @@ test('DWUI-017 empty list needs a successful response and completed Delete 404 r
   await a.listWorks(); assert.equal(a.workSync.size, 0); assert.equal(a.state.operations[0].id, 'delete-original');
 });
 
+test('DWUI-OPREC-002 stale empty list cannot finish Delete while a newer Work read retains the row', async t => {
+  let releaseList!: () => void, listStarted!: () => void, reads = 0;
+  const gate = new Promise<void>(resolve => { releaseList = resolve; });
+  const started = new Promise<void>(resolve => { listStarted = resolve; });
+  t.after(() => releaseList());
+  const a = fixture(t, async path => {
+    if (path === 'works') { if (++reads === 1) { listStarted(); await gate; } return { works: [] }; }
+    if (path === 'works/work-one') return raw('stopped', 'stopped', 2);
+    return {};
+  });
+  a.state.signedIn = true; a.observePage('', false); a.state.works = [a.mapWork(raw('stopped', 'stopped', 2))];
+  a.state.operations = [{ id:'delete-original', workId:'work-one', kind:'Delete Work', action:'delete', state:'succeeded' }];
+  a.requireWorkSync('work-one');
+  const olderList = a.listWorks(); await started;
+  await a.refreshWorkStatus('work-one'); releaseList(); await olderList;
+  assert.ok(a.getWork('work-one')); assert.equal(a.workSynchronizationPending('work-one'), true);
+  assert.equal(a.deletedWorks.has('work-one'), false); assert.equal(a.getOperation('delete-original').id, 'delete-original');
+  await a.listWorks();
+  assert.equal(a.getWork('work-one'), undefined); assert.equal(a.workSynchronizationPending('work-one'), false);
+  assert.equal(a.getOperation('delete-original').id, 'delete-original');
+  await a.refreshWorkStatus('work-one'); assert.equal(a.getWork('work-one'), undefined);
+});
+
+test('DWUI-OPREC-002 a pre-terminal empty list cannot satisfy the final Delete readback', async t => {
+  const a = fixture(t, path => {
+    if (path === 'works') return { works: [] };
+    if (path === 'operations/delete-original') return { operationId:'delete-original', workId:'work-one', kind:'delete-work', state:'succeeded' };
+    return raw('stopped', 'stopped', 2);
+  });
+  a.state.signedIn = true; a.observePage('', false); a.state.works = [a.mapWork(raw('stopped', 'stopped', 2))];
+  a.state.operations = [{ id:'delete-original',workId:'work-one',kind:'Delete Work',action:'delete',state:'accepted' }];
+  a.requireWorkSync('work-one'); await a.listWorks();
+  assert.equal(a.workSync.get('work-one').list, false);
+  await a.checkOperation('delete-original');
+  assert.equal(a.workSync.get('work-one').list, true);
+  await a.refreshWorkStatus('work-one');
+  assert.equal(a.workSynchronizationPending('work-one'), true);
+  const obligation = a.workSync.get('work-one'), after = obligation.after;
+  await a.checkOperation('delete-original');
+  assert.equal(a.workSync.get('work-one'), obligation); assert.equal(obligation.after, after);
+  await a.listWorks();
+  assert.equal(a.getWork('work-one'), undefined); assert.equal(a.workSynchronizationPending('work-one'), false);
+  assert.equal(a.getOperation('delete-original').id, 'delete-original');
+});
+
+test('DWUI-OPREC-002 a successful Delete remains unconfirmed while a fresh list still includes the Work', async t => {
+  let missing = false, listFails = false;
+  const a = fixture(t, path => path === 'works' ? listFails ? { status:503, body:{ message:'list offline' } } : { works: missing ? [] : [raw('stopped', 'stopped', 2)] } : raw('stopped', 'stopped', 2));
+  a.state.signedIn = true; a.observePage('', false); a.state.works = [a.mapWork(raw('stopped', 'stopped', 2))];
+  a.state.operations = [{ id:'delete-original', workId:'work-one', kind:'Delete Work', action:'delete', state:'succeeded' }];
+  a.requireWorkSync('work-one'); await a.refreshWorkStatus('work-one'); await a.listWorks();
+  assert.ok(a.getWork('work-one')); assert.equal(a.workSynchronizationPending('work-one'), true);
+  assert.equal(a.deletedWorks.has('work-one'), false);
+  listFails = true; await assert.rejects(a.listWorks());
+  assert.ok(a.getWork('work-one')); assert.equal(a.workSynchronizationPending('work-one'), true);
+  assert.equal(a.getOperation('delete-original').id, 'delete-original');
+  listFails = false; missing = true; await a.listWorks();
+  assert.equal(a.getWork('work-one'), undefined); assert.equal(a.workSynchronizationPending('work-one'), false);
+  assert.equal(a.getOperation('delete-original').id, 'delete-original');
+});
+
+test('DWUI-OPREC-002 an older Delete cannot keep a newer Start intent unsynchronized', async t => {
+  const a = fixture(t, path => path === 'works' ? { works:[raw('ready', 'running', 3)] } : raw('ready', 'running', 3));
+  a.state.signedIn = true; a.observePage('', false); a.state.works = [a.mapWork(raw('ready', 'running', 3))];
+  a.state.works[0].lifecycleIntent = { action:'start', operationId:'new-start', sequence:1, baseVersion:2 };
+  a.workMutations.set('work-one',1);
+  a.state.operations = [{ id:'old-delete',workId:'work-one',kind:'Delete Work',action:'delete',state:'succeeded' }, { id:'new-start',workId:'work-one',kind:'Start Work',action:'start',state:'succeeded' }];
+  a.requireWorkSync('work-one'); await a.refreshWorkStatus('work-one'); await a.listWorks();
+  assert.ok(a.getWork('work-one')); assert.equal(a.workSynchronizationPending('work-one'), false);
+  assert.equal(a.deletedWorks.has('work-one'), false);
+});
+
 test('DWUI-018 an old missing-members list cannot remove a newly accepted and read Create', async t => {
   let release!: (value: any) => void;
   const a = fixture(t, () => new Promise(done => { release = done; }));

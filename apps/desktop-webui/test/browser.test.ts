@@ -341,7 +341,12 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await page.locator('[data-action=open-work]').filter({hasText:'Lifecycle Work'}).click();
     await page.getByRole('heading', {name: 'Lifecycle Work', exact: true}).waitFor();
     await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
-    await page.locator('.object-control-progress [data-action=operation]').click();
+    // The accepted task shows in the Work header's status slot; its original
+    // Operation details and read-only check are on demand from the Work menu.
+    await expect(page.locator('.object-control-state')).toContainText('Start Work');
+    await expect(page.locator('.object-control-progress')).toHaveCount(0);
+    await page.getByRole('button',{name:'Work options'}).click();
+    await page.locator('#modal [data-action=operation]').click();
     await expect(page.locator('#modal .phase-track')).toContainText('pending');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
@@ -369,6 +374,8 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     assert.deepEqual(submitted, ['start','stop','delete']);
     await page.getByRole('button',{name:'Close dialog'}).click();
     if (await page.locator('[data-action=back-works]').count()) await page.locator('[data-action=back-works]').click();
+    // A task whose Work left the list lives behind the Works header entry.
+    await page.locator('[data-action="works-tasks"]').click();
     const deletedTask = page.locator('.recovery-task[data-operation-id="delete-succeeded-1234"]');
     await expect(deletedTask).toBeVisible(); await deletedTask.locator('[data-action="operation"]').click();
     await page.locator('.operation-technical > summary').click();

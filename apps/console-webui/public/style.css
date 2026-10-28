@@ -1083,6 +1083,12 @@ progress {
   font-size: 12px;
   max-width: calc(100vw - 30px);
 }
+.console-read-skeleton { max-width: 1100px; }
+.console-read-skeleton-heading { width: min(280px, 65%); height: 28px; border-radius: 5px; margin-bottom: 24px; }
+.console-read-skeleton-panel { padding: 24px; border: 1px solid var(--border); border-radius: 8px; }
+.console-read-skeleton-panel > div { height: 14px; border-radius: 4px; margin-bottom: 16px; }
+.console-read-skeleton-panel > div:nth-child(2) { width: 72%; }
+.console-read-skeleton-panel > div:last-child { width: 48%; margin-bottom: 0; }
 .skeleton {
   height: 180px;
   display: grid;
@@ -2842,9 +2848,9 @@ dialog::backdrop {
 .setup-local-actions { display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:24px 0; }
 .setup-local-actions > a { font-size:12px; }
 .setup-mode { display:flex;gap:8px;flex-wrap:wrap;margin:0 0 22px; }
-.setup-status { color:var(--muted);font-size:12px; }
-.setup-status:empty { display:none; }
-.setup-status:not(:empty) { margin:12px 0; }
+/* The status line always reserves its own row, so an ordinary wait appearing or
+   ending never moves the form, the buttons or the section below it. */
+.setup-status { color:var(--muted);font-size:12px;min-height:1.6em;margin:12px 0; }
 .setup-diagnostics { margin-top:24px; }
 .setup-main code, .setup-main pre { overflow-wrap:anywhere;white-space:pre-wrap;word-break:break-word; }
 .setup-main .summary-list { grid-template-columns:minmax(110px, 1fr) minmax(0, 2fr); }

@@ -26,6 +26,11 @@ export class ActionState {
                 this.records.delete(key);
         const record = { ...intent, token: ++this.sequence, generation: this.generation,
             started: this.now(), pending: true, phase: intent.label, refresh: '' };
+        if (intent.owner?.isConnected) {
+            const box = intent.owner.getBoundingClientRect();
+            record.ownerPosition = { left: box.left, top: box.top, bottom: box.bottom, scrollX: window.scrollX, scrollY: window.scrollY };
+            record.ownerDialog = intent.owner.closest('dialog') ?? undefined;
+        }
         this.records.set(record.key, record);
         this.tick();
         this.changed();
@@ -113,6 +118,7 @@ export class ActionState {
         const elapsed = Math.floor((this.now() - record.started) / 1000);
         return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? t('d.action.waitingSuffix', { seconds: elapsed }) : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? t('d.action.refreshing') : record.refresh === 'failed' ? ` · ${record.result ? t('d.action.retainedPrefix') : ''}${record.refreshError ? t('d.action.refreshNotConfirmedDetail', { detail: record.refreshError }) : t('d.action.refreshNotConfirmed')}` : ''}`;
     }
+    slow(record) { return record.pending && this.now() - record.started >= 10000; }
     visible(record) { return record.pending || !!record.error || !!record.blocked || record.refresh !== '' || (record.visibleUntil || 0) > this.now(); }
     clear() { this.generation++; this.records.clear(); this.announced.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
     tick() {
@@ -146,6 +152,7 @@ export class ActionState {
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root, actions, view, intentFor, visibleRecord = () => true) {
     const previous = new Map([...root.querySelectorAll('[data-action-status]')].map(node => [node.dataset.actionStatus, node]));
+    const pendingOwners = new Set();
     // Only independently rendered page content can suppress duplicate feedback.
     // Retained status text must not make its own error/result disappear on the next render.
     let pageText = root.textContent || '';
@@ -190,29 +197,97 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         // A confirmed file batch has a short toast; pending, unknown and readback failures remain local.
         if (record.kind === 'files' && record.successFeedback === 'toast' && !record.pending && !record.error && !record.blocked && record.refresh !== 'failed')
             continue;
+        if (record.action === 'check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh === '')
+            continue;
         if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record))
             continue;
+        const matches = record.anchor ? [...root.querySelectorAll(record.anchor)] : [];
+        // A position in a selector result is not an identity: siblings can be
+        // inserted or removed while the request is pending. Never transfer a
+        // captured control's request to another matching element.
+        const equivalent = record.owner && !root.contains(record.owner) ? matches.filter(node => intentFor(node)?.key === record.key) : [];
+        const candidate = record.owner ? (root.contains(record.owner) ? record.owner : equivalent.length === 1 ? equivalent[0] : null) : matches.length === 1 ? matches[0] : null;
+        const owner = shown(candidate ?? null) ? candidate : null;
+        if (owner) {
+            const box = owner.getBoundingClientRect();
+            record.ownerPosition = { left: box.left, top: box.top, bottom: box.bottom, scrollX: window.scrollX, scrollY: window.scrollY };
+            record.ownerDialog = owner.closest('dialog') ?? undefined;
+        }
+        // A shared container or dialog is not proof that a slot belongs to this
+        // request. A slot must be the trigger itself, or explicitly identify it.
+        const ownsSlot = (slot) => !!owner && (slot === owner || owner.contains(slot) || slot.dataset.pendingKey === record.key);
+        if (record.pending && !record.error && !record.blocked && record.refresh !== 'failed' && record.action &&
+            [...root.querySelectorAll('[data-pending-action][aria-busy="true"]')].some(slot => shown(slot) && (slot.dataset.pendingAction || '').split(/\s+/).includes(record.action) &&
+                ownsSlot(slot)))
+            continue;
+        if (record.pending && !record.error && !record.blocked && record.refresh !== 'failed' && owner?.tagName === 'BUTTON' && owner.querySelector('.pending-dots') && !owner.querySelector(':scope > .action-pending-content'))
+            continue;
+        if (record.pending && !record.error && !record.blocked && record.refresh !== 'failed' && owner?.tagName === 'BUTTON' && (!owner.querySelector('.pending-dots') || owner.querySelector(':scope > .action-pending-content'))) {
+            pendingOwners.add(owner);
+            if (!owner.querySelector(':scope > .action-pending-content')) {
+                owner.dataset.pendingOriginalTitle = owner.getAttribute('title') ?? '';
+                if (!owner.hasAttribute('aria-label')) {
+                    owner.dataset.pendingGeneratedLabel = 'true';
+                    owner.setAttribute('aria-label', (owner.textContent || '').trim());
+                }
+                const content = document.createElement('span'), label = document.createElement('span'), indicator = document.createElement('span'), status = document.createElement('span');
+                content.className = 'action-pending-content';
+                label.className = 'action-pending-label';
+                indicator.className = 'action-pending-indicator';
+                status.className = 'sr-only';
+                status.setAttribute('role', 'status');
+                while (owner.firstChild)
+                    label.append(owner.firstChild);
+                indicator.innerHTML = pendingDots();
+                content.append(label, indicator, status);
+                owner.append(content);
+            }
+            const status = owner.querySelector(':scope > .action-pending-content > [role="status"]');
+            if (status) {
+                const slow = actions.slow(record);
+                status.className = slow ? 'action-slow-status' : 'sr-only';
+                status.textContent = actions.message(record) + (slow ? ` · ${t('d.action.waitingHint')}` : '');
+                if (slow)
+                    positionSlowStatus(status, owner);
+            }
+            owner.title = actions.message(record);
+            owner.setAttribute('aria-busy', 'true');
+            continue;
+        }
+        // The originating control or the object's own state slot already shows this
+        // request. Only the ordinary wait is suppressed: a real error, an unknown
+        // write, or a failed readback must still surface in the local region, and a
+        // vanished anchor (searched away, navigated) must fall back rather than lose
+        // the feedback silently.
+        if (record.projected && !record.error && !record.blocked && record.refresh !== 'failed') {
+            if (owner)
+                continue;
+        }
         if (!record.pending && record.error && pageText.includes(record.error) && !record.blocked && record.refresh !== 'failed')
             continue;
         if (!record.pending && record.result && pageText.includes(record.result) && !record.error && !record.blocked && record.refresh === '')
             continue;
-        const anchor = record.anchor ? [...root.querySelectorAll(record.anchor)].find(shown) : null;
+        const anchor = owner;
         const anchored = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
         const dialog = anchor?.closest('dialog');
         const dialogSlot = dialog && (dialog.classList.contains('modal-create') || anchored?.matches('.modal-footer,.dialog-footer')) ? dialog.querySelector('[data-action-status-slot]') : null;
-        const region = dialogSlot || (shown(anchored) ? anchored : regions.find(shown) ?? root);
+        const originalDialog = !anchor && record.ownerDialog && root.contains(record.ownerDialog) && shown(record.ownerDialog) ? record.ownerDialog : null;
+        const region = dialogSlot || originalDialog?.querySelector('[data-action-status-slot]') || originalDialog || (shown(anchored) ? anchored : regions.find(shown) ?? root);
         if (!region)
             continue;
         // A module may already show this request in its own fixed slot. Other objects and
         // error/unknown feedback still retain their own local region.
         if (record.pending && !record.error && !record.blocked && record.refresh !== 'failed' && record.action &&
             [...root.querySelectorAll('[data-pending-action][aria-busy="true"]')].some(slot => shown(slot) && (slot.dataset.pendingAction || '').split(/\s+/).includes(record.action) &&
-                (!anchored || anchored.contains(slot) || dialog?.contains(slot))))
+                ownsSlot(slot)))
             continue;
         const node = previous.get(record.key) || document.createElement('div');
         previous.delete(record.key);
         node.dataset.actionStatus = record.key;
         node.className = record.kind === 'read' && !record.error && record.refresh !== 'failed' ? 'local-read-status' : `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+        const floating = !anchor && record.pending && !record.error && !record.blocked && record.refresh !== 'failed';
+        if (floating)
+            node.className += ' action-orphan-status';
         node.setAttribute('role', 'status');
         node.setAttribute('aria-live', 'polite');
         node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
@@ -261,7 +336,82 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             else
                 region.prepend(node);
         }
+        if (floating) {
+            const position = record.ownerPosition;
+            const box = node.getBoundingClientRect();
+            const left = position ? position.left + position.scrollX - window.scrollX : region.getBoundingClientRect().left;
+            const top = position ? position.bottom + position.scrollY - window.scrollY + 6 : region.getBoundingClientRect().top + 6;
+            node.style.left = `${Math.max(8, Math.min(left, window.innerWidth - box.width - 8))}px`;
+            node.style.top = `${Math.max(8, Math.min(top, window.innerHeight - box.height - 8))}px`;
+            node.dataset.actionFloating = 'true';
+        }
+        else if (node.dataset.actionFloating) {
+            node.style.removeProperty('left');
+            node.style.removeProperty('top');
+            delete node.dataset.actionFloating;
+        }
+    }
+    for (const owner of root.querySelectorAll('button:has(> .action-pending-content)')) {
+        if (pendingOwners.has(owner))
+            continue;
+        const content = owner.querySelector(':scope > .action-pending-content'), label = content?.querySelector(':scope > .action-pending-label');
+        if (content && label)
+            content.replaceWith(...label.childNodes);
+        if (owner.dataset.pendingGeneratedLabel) {
+            owner.removeAttribute('aria-label');
+            delete owner.dataset.pendingGeneratedLabel;
+        }
+        if (owner.dataset.pendingOriginalTitle)
+            owner.title = owner.dataset.pendingOriginalTitle;
+        else
+            owner.removeAttribute('title');
+        delete owner.dataset.pendingOriginalTitle;
+        if (!owner.dataset.actionLocked && !owner.dataset.readBusy)
+            owner.removeAttribute('aria-busy');
+    }
+    for (const owner of root.querySelectorAll('button[data-pending-generated-label]')) {
+        if (pendingOwners.has(owner) || owner.querySelector(':scope > .action-pending-content'))
+            continue;
+        owner.removeAttribute('aria-label');
+        delete owner.dataset.pendingGeneratedLabel;
+        if (owner.dataset.pendingOriginalTitle)
+            owner.title = owner.dataset.pendingOriginalTitle;
+        else
+            owner.removeAttribute('title');
+        delete owner.dataset.pendingOriginalTitle;
     }
     previous.forEach(node => node.remove());
+    pruneSlowStatuses();
+}
+const slowStatuses = new Map();
+function repositionSlowStatuses() {
+    if (!slowStatuses.size)
+        return;
+    for (const [status, owner] of slowStatuses) {
+        if (!status.isConnected || !owner.isConnected || !status.classList.contains('action-slow-status')) {
+            slowStatuses.delete(status);
+            continue;
+        }
+        placeSlowStatus(status, owner);
+    }
+    if (!slowStatuses.size) {
+        window.removeEventListener('scroll', repositionSlowStatuses, true);
+        window.removeEventListener('resize', repositionSlowStatuses);
+    }
+}
+export function pruneSlowStatuses() { repositionSlowStatuses(); }
+export function positionSlowStatus(status, owner) {
+    if (!slowStatuses.size) {
+        window.addEventListener('scroll', repositionSlowStatuses, true);
+        window.addEventListener('resize', repositionSlowStatuses);
+    }
+    slowStatuses.set(status, owner);
+    placeSlowStatus(status, owner);
+}
+function placeSlowStatus(status, owner) {
+    const anchor = owner.getBoundingClientRect(), box = status.getBoundingClientRect();
+    status.style.visibility = anchor.bottom <= 0 || anchor.top >= window.innerHeight || anchor.right <= 0 || anchor.left >= window.innerWidth ? 'hidden' : '';
+    status.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8))}px`;
+    status.style.top = `${Math.max(8, anchor.top >= box.height + 8 ? anchor.top - box.height - 6 : Math.min(anchor.bottom + 6, window.innerHeight - box.height - 8))}px`;
 }
 //# sourceMappingURL=action-state.js.map

@@ -1,6 +1,5 @@
 const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
-const { unavailableServicesReason } = await import(new URL('../browser/work-navigation.js',import.meta.url).href);
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -39,7 +38,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,unavailableServicesReason,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={...localeSandbox,pendingDots,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceUnavailableReason','serviceCatalogConfirmed','serviceFacts','serviceNotice','serviceFailureTitle','serviceFailureReason','serviceStartupConfirmed','serviceStartupPlaceholder','serviceStatePlaceholder','serviceFallbackHeader','serviceViewport','services','conversationHistoryControls','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -167,25 +166,31 @@ test('first Chat read uses neutral Session/model labels while real errors and un
  c.adapter.models.set('a',{loading:true,confirmed:false,error:'',models:[]});c.adapter.modelSelection=()=>({ref:null,thinking:null,phase:'unknown'});settings=c.chatSettings(work,'');assert.equal(settings.recovery.action,'check-session-model');
 });
 
-test('first reads own labelled decorative dots while Chat fields and input keep their controls',()=>{
+test('first reads render one labelled skeleton shape, never dots plus text plus shape',()=>{
  const {c,work}=rendererFixture();
  for(const shape of ['rows','conversation','service']) {
   const html=vm.runInContext(`readPlaceholder('Loading content…', '${shape}')`,c);
-  assert.match(html,/role="status" aria-label="Loading content…" aria-busy="true"/);
-  assert.equal(html.replace(/<[^>]*>/g,''),'Loading content…');
-  assert.equal((html.match(/class="pending-dots"/g)||[]).length,1);assert.ok(html.includes(pendingDots()));
-  assert.equal((html.match(/class="read-placeholder-line" aria-hidden="true"/g)||[]).length,3);
+  assert.match(html,/role="status" aria-busy="true" aria-label="Loading content…"/);
+  // The region name and busy state are attributes; no ordinary loading line enters the layout.
+  assert.equal(html.replace(/<[^>]*>/g,''),'');
+  // One task renders one wait: the shape is the only loading indicator.
+  assert.equal((html.match(/class="pending-dots"/g)||[]).length,0);assert.ok(!html.includes(pendingDots()));
+  assert.equal((html.match(/class="read-placeholder-line skeleton-fill" aria-hidden="true"/g)||[]).length,3);
  }
  delete work.resourceChecked.agent;
  const html=c.agent(work,false);
  assert.match(html,/data-action="sessions" aria-label="Loading conversations" aria-busy="true"/);
- assert.match(html,/class="pending-dots"/);assert.doesNotMatch(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
+ // One task, one main wait: the conversation skeleton carries it, so the
+ // trigger names the read and its busy state instead of stacking another animation.
+ assert.doesNotMatch(html,/class="pending-dots"/);assert.doesNotMatch(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
  assert.match(html.replace(/<[^>]*>/g,''),/Loading conversations…/);assert.doesNotMatch(html,/No Session yet|chat-welcome/);
  vm.runInContext(extract('modelComposer'),c);vm.runInContext(extract('modelFeedback'),c);
  c.chatSettings=()=>({name:'Loading models…',thinking:'Loading…',state:{ref:null},initialLoading:true,status:'Loading models…'});
+ // The trigger keeps one glyph-sized box while the catalog is read; the name is
+ // in the accessible label instead of a text node that would change its width.
  assert.match(c.modelComposer(work,''),/aria-label="Loading response settings" aria-busy="true"/);
- assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'Loading response settings…');assert.ok(c.modelComposer(work,'').includes(pendingDots()));assert.doesNotMatch(c.modelComposer(work,''),/read-placeholder-field/);assert.equal(c.modelFeedback(work,''),'');
- c.view.modal='chat-response-settings';assert.doesNotMatch(c.modelComposer(work,''),/pending-dots/);assert.match(c.modelComposer(work,''),/Loading response settings…/);c.view.modal='';
+ assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'');assert.ok(c.modelComposer(work,'').includes(pendingDots()));assert.match(c.modelComposer(work,''),/pending-icon-slot/);assert.doesNotMatch(c.modelComposer(work,''),/read-placeholder-field/);assert.equal(c.modelFeedback(work,''),'');
+ c.view.modal='chat-response-settings';assert.doesNotMatch(c.modelComposer(work,''),/pending-dots/);assert.match(c.modelComposer(work,''),/aria-label="Loading response settings"/);c.view.modal='';
  c.chatSettings=()=>({name:'Saved model',thinking:'Off',state:{ref:null},status:'Models unavailable',recovery:{label:'Retry models',action:'load-models'}});
  assert.match(c.modelComposer(work,''),/Saved model/);assert.match(c.modelFeedback(work,''),/Models unavailable/);assert.match(c.modelFeedback(work,''),/Retry models/);
 });
@@ -194,7 +199,13 @@ test('first-read reveal is CSS-only, static, and does not reintroduce modal anim
  const css=readFileSync(new URL('../public/style.css',import.meta.url),'utf8');
  assert.match(css,/animation:read-placeholder-reveal 0s 150ms both/);
  assert.match(css,/@keyframes read-placeholder-reveal \{ from \{ opacity:0; \} to \{ opacity:1; \} \}/);
- assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-|animation:[^;]*(?:shimmer|pulse)/);
+ // UIL-PENDING-001 allows one low-contrast skeleton gradient that only changes
+ // brightness. Modal presentation stays immediate and no page adds its own
+ // spinner/pulse of its own.
+ assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-/);
+ assert.doesNotMatch(css,/animation:[^;]*(?:pulse|spin)/);
+ const shimmer=(css.match(/animation:[^;]*skeleton-shimmer[^;]*/g)||[]);
+ assert.ok(shimmer.length<=1);assert.ok((css.match(/@keyframes skeleton-shimmer/g)||[]).length<=1);
 });
 
 
@@ -241,9 +252,13 @@ test('independent cold bootstrap errors are scoped to the original identity and 
  c.reportInitializationFailure(new Error('Metadata unavailable'),2,c.location.hash);assert.equal(c.workReadErrors.get('a').message,'Metadata unavailable');c.workReadErrors.clear();c.reportInitializationFailure(new Error('Stale'),1,c.location.hash);c.reportInitializationFailure(new Error('Stale'),2,'#/app/a/s/81');assert.equal(c.workReadErrors.size,0);
 });
 
-for(const width of [1440,360])test(`default Chat retains Service explanation at ${width}px`,()=>{
+for(const width of [1440,360])test(`default Chat keeps its own area without a Service Alert at ${width}px`,()=>{
  const {c,work}=rendererFixture();c.innerWidth=width;c.view.tab='Chat';c.workspacePanels=new Map([['a',{collapsed:false}]]);c.workControls=new Map();c.workControl=()=>undefined;c.controlMarkup=()=>'';c.workHeader=()=>'';c.adapter.project=()=>({usable:true,retainWorkspace:true});vm.runInContext(extract('workPage'),c);
- const html=c.workPage(work);assert.match(html,/chat-main/);assert.match(html,/This Work has no Services/);assert.match(html,/data-action="manage-services"/);assert.doesNotMatch(html,/chat-hidden|service-workspace/);
+ const html=c.workPage(work);assert.match(html,/chat-main/);
+ // DWUI-011/DUL-002: the Chat main area no longer carries a Service Alert; the
+ // real state and reason stay in the Services context, which is still reachable.
+ assert.doesNotMatch(html,/This Work has no Services/);assert.doesNotMatch(html,/data-action="manage-services"/);
+ assert.doesNotMatch(html,/chat-hidden|service-workspace/);
 });
 
 test('Sessions offers one New session before the scoped list',()=>{
@@ -263,5 +278,5 @@ test('Sessions retains distinct loading, empty, error and retained-list refresh 
  const {c,work}=rendererFixture();c.view.modal='sessions';let html=c.modalMarkup();assert.match(html,/No Sessions yet/);assert.doesNotMatch(html,/Loading conversations|Conversations could not be read/);
  work.resourceLoading={agent:true};html=c.modalMarkup();assert.match(html,/Loading conversations/);assert.doesNotMatch(html,/No Sessions yet/);
  work.resourceLoading.agent=false;work.resourceErrors.agent='<Read failed>';html=c.modalMarkup();assert.match(html,/Conversations could not be read/);assert.match(html,/&lt;Read failed&gt;/);assert.match(html,/retry-conversation/);assert.doesNotMatch(html,/No Sessions yet|Loading conversations/);
- work.sessions=[{id:'kept',messages:[]}];work.resourceLoading.agent=true;html=c.modalMarkup();assert.match(html,/Reading conversations/);assert.match(html,/data-id="kept"/);assert.match(html,/Conversations could not be read/);
+ work.sessions=[{id:'kept',messages:[]}];work.resourceLoading.agent=true;html=c.modalMarkup();assert.match(html,/class="session-list" role="listbox"[^>]*aria-busy="true"/);assert.doesNotMatch(html,/Reading conversations/);assert.match(html,/data-id="kept"/);assert.match(html,/Conversations could not be read/);
 });

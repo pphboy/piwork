@@ -749,7 +749,7 @@ async function readPage(preserve, ticket) {
     };
     const initial = !preserve || shellView !== `${identity}:${ticket}:${path}`;
     if (initial)
-        shell(PageHeader(moduleTitle(path, t('title.details')), t('read.loadingTitle')) + `<section class="section"><div class="section-body">${t('read.loadingDetail')}</div></section>`);
+        shell(`<section class="console-read-skeleton" role="status" aria-busy="true" aria-label="${esc(t('read.loadingTitle'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>`);
     const existingRead = [...actions.records.values()].find(record => record.pending && record.kind === 'read' && record.view === path);
     const record = existingRead || actions.begin({ key: `read:${path}`, kind: 'read', label: t('intent.readingPage'), target: moduleTitle(path, t('term.core')), anchor: '#page-read-status', view: path });
     renderConsoleActions();
@@ -1474,7 +1474,7 @@ function dialogBusy(busy, label = t('common.saving')) {
     });
     const submit = document.querySelector("#dialog-submit");
     if (submit && busy)
-        submit.textContent = label;
+        submit.title = label;
 }
 function createUserDialog() {
     openDialog(t('users.createUser'), t('dialog.createDetail'), `<div class="form-grid">${Field("new-account", t('login.account'), Input("new-account", "", `required maxlength="128" autocomplete="off" placeholder="${esc(t('dialog.accountPlaceholder'))}"`), t('dialog.accountHelp'))}${Field("new-password", t('login.password'), Input("new-password", "", 'type="password" required minlength="12" maxlength="1024" autocomplete="new-password"'), t('dialog.passwordHelp'))}${Field("confirm-password", t('field.confirmPassword'), Input("confirm-password", "", 'type="password" required minlength="12" autocomplete="new-password"'))}${Field("new-role", t('users.colRole'), '<select id="new-role" name="new-role"><option>User</option><option>Administrator</option></select>', t('dialog.roleHelp'))}</div>`, t('users.createUser'), async (form) => {

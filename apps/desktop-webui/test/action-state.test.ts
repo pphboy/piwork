@@ -127,10 +127,10 @@ test('generic lock cleanup preserves module-owned read busy and still restores o
 
 test('confirmed file toast presentation never hides pending, unknown, failed or failed readback', async () => {
   const { renderActionStates } = await import(moduleURL);
-  const oldDocument=globalThis.document,oldStyle=globalThis.getComputedStyle,nodes:any[]=[];
-  const region:any={getClientRects:()=>[{}],querySelector:()=>null,prepend:(node:any)=>nodes.push(node),append:(node:any)=>nodes.push(node)};
+  const oldDocument=globalThis.document,oldStyle=globalThis.getComputedStyle,oldWindow=globalThis.window,nodes:any[]=[];
+  const region:any={getClientRects:()=>[{}],getBoundingClientRect:()=>({left:0,top:0}),querySelector:()=>null,prepend:(node:any)=>nodes.push(node),append:(node:any)=>nodes.push(node)};
   const root:any={textContent:'',querySelectorAll:(selector:string)=>selector==='main, .main-panel, .agent-panel'?[region]:[]};
-  Object.assign(globalThis,{document:{createElement:()=>({dataset:{},setAttribute:()=>{},append:()=>{}})},getComputedStyle:()=>({visibility:'visible'})});
+  Object.assign(globalThis,{window:{innerWidth:800,innerHeight:600},document:{createElement:()=>({dataset:{},style:{removeProperty:()=>{}},getBoundingClientRect:()=>({width:100,height:20}),setAttribute:()=>{},append:()=>{}})},getComputedStyle:()=>({visibility:'visible'})});
   const actions=new ActionState();
   try {
     const record=actions.begin({...intent('mkdir','files'),action:'confirm-folder'});
@@ -142,7 +142,7 @@ test('confirmed file toast presentation never hides pending, unknown, failed or 
     record.refresh='';record.blocked=true;renderActionStates(root,actions,'',()=>undefined);assert.equal(nodes.length,1);nodes.length=0;
     assert.ok(actions.conflict(intent('mkdir','files')));
     record.blocked=false;record.error='Write failed';renderActionStates(root,actions,'',()=>undefined);assert.match(nodes.pop().textContent,/Write failed/);
-  } finally {actions.clear();Object.assign(globalThis,{document:oldDocument,getComputedStyle:oldStyle});}
+  } finally {actions.clear();Object.assign(globalThis,{document:oldDocument,getComputedStyle:oldStyle,window:oldWindow});}
 });
 
 test('only aria-disabled read refresh avoids native disabling while the action lock remains',async()=>{

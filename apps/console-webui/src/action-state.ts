@@ -72,6 +72,7 @@ export class ActionState {
     const error = record.errorText?.() ?? record.error;
     return `${record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
   }
+  slow(record: ActionRecord) { return (record.pending || record.refresh === 'refreshing') && this.now() - record.started >= 10000; }
   clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
   private tick() {
     if (this.timer) return;
@@ -82,6 +83,7 @@ export class ActionState {
 /** Safe DOM text and local status regions, without replacing input/iframe nodes. */
 export function renderActionStates(root: HTMLElement, actions: ActionState, view: string, intentFor: (element: HTMLElement) => ActionIntent | undefined, visibleRecord: (record: ActionRecord) => boolean = () => true) {
   const retained = new Set<HTMLElement>();
+  const pendingOwners = new Set<HTMLButtonElement>();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let pageText = ''; while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest('[data-action-status]')) pageText += walker.currentNode.textContent || '';
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
@@ -91,7 +93,32 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   }
   for (const record of actions.records.values()) {
     if (record.view && record.view !== view || !visibleRecord(record)) continue;
+    if (record.kind === 'read' && record.pending && !record.error && root.querySelector('.console-read-skeleton')) continue;
     const anchor = record.anchor ? root.querySelector<HTMLElement>(record.anchor) : null;
+    const owner = anchor instanceof HTMLButtonElement ? anchor : anchor?.matches('form') ? anchor.querySelector<HTMLButtonElement>('button[type="submit"], button:not([type])') : null;
+    const ordinaryPending = (record.pending || record.refresh === 'refreshing') && !record.error && !record.blocked && record.refresh !== 'failed';
+    if (ordinaryPending && owner && owner.getClientRects().length) {
+      pendingOwners.add(owner);
+      if (!owner.querySelector(':scope > .action-pending-content')) {
+        owner.dataset.pendingOriginalTitle = owner.getAttribute('title') ?? '';
+        if (!owner.hasAttribute('aria-label')) { owner.dataset.pendingGeneratedLabel = 'true'; owner.setAttribute('aria-label', (owner.textContent || '').trim()); }
+        const content = document.createElement('span'); content.className = 'action-pending-content';
+        const label = document.createElement('span'); label.className = 'action-pending-label';
+        while (owner.firstChild) label.append(owner.firstChild);
+        const indicator = document.createElement('span'); indicator.className = 'action-pending-indicator'; indicator.innerHTML = pendingDots();
+        content.append(label, indicator); owner.append(content);
+      }
+      owner.setAttribute('aria-busy', 'true');
+      let announcement = owner.querySelector<HTMLElement>(':scope > .action-pending-content > [role="status"]');
+      if (!announcement) { announcement = document.createElement('span'); announcement.className = 'sr-only'; announcement.setAttribute('role', 'status'); owner.querySelector('.action-pending-content')?.append(announcement); }
+      const slow = actions.slow(record);
+      announcement.className = slow ? 'action-slow-status' : 'sr-only';
+      announcement.textContent = actions.message(record) + (slow ? ` · ${t('action.waitingHint')}` : '');
+      if (slow) positionSlowStatus(announcement, owner);
+      owner.title = actions.message(record);
+      // The button owns ordinary feedback; persistent failures and unknowns still use the region below.
+      continue;
+    }
     const region = anchor?.closest<HTMLElement>('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ??
       root.querySelector<HTMLElement>('main, .main-panel, .agent-panel') ?? root;
     if (!region) continue;
@@ -113,5 +140,44 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
       else if (region.querySelector('iframe')) region.append(node); else region.prepend(node);
     }
   }
+  for (const button of root.querySelectorAll<HTMLButtonElement>('button:has(> .action-pending-content)')) {
+    if (pendingOwners.has(button)) continue;
+    const content = button.querySelector<HTMLElement>(':scope > .action-pending-content');
+    const label = content?.querySelector<HTMLElement>(':scope > .action-pending-label');
+    if (content && label) content.replaceWith(...label.childNodes);
+    if (button.dataset.pendingGeneratedLabel) { button.removeAttribute('aria-label'); delete button.dataset.pendingGeneratedLabel; }
+    if (button.dataset.pendingOriginalTitle) button.title = button.dataset.pendingOriginalTitle; else button.removeAttribute('title');
+    delete button.dataset.pendingOriginalTitle;
+    if (!button.dataset.actionLocked) button.removeAttribute('aria-busy');
+  }
+  // Some module-specific controls replace their button contents on completion.
+  // Remove generated metadata even when that replacement removed our wrapper.
+  for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-pending-generated-label]')) {
+    if (pendingOwners.has(button) || button.querySelector(':scope > .action-pending-content')) continue;
+    button.removeAttribute('aria-label'); delete button.dataset.pendingGeneratedLabel;
+    if (button.dataset.pendingOriginalTitle) button.title = button.dataset.pendingOriginalTitle; else button.removeAttribute('title');
+    delete button.dataset.pendingOriginalTitle;
+  }
   for (const node of root.querySelectorAll<HTMLElement>('[data-action-status]')) if (!retained.has(node)) node.remove();
+  repositionSlowStatuses();
+}
+
+const slowStatuses = new Map<HTMLElement, HTMLElement>();
+function repositionSlowStatuses() {
+  if (!slowStatuses.size) return;
+  for (const [status, owner] of slowStatuses) {
+    if (!status.isConnected || !owner.isConnected || !status.classList.contains('action-slow-status')) { slowStatuses.delete(status); continue; }
+    placeSlowStatus(status, owner);
+  }
+  if (!slowStatuses.size) { window.removeEventListener('scroll', repositionSlowStatuses, true); window.removeEventListener('resize', repositionSlowStatuses); }
+}
+function positionSlowStatus(status: HTMLElement, owner: HTMLElement) {
+  if (!slowStatuses.size) { window.addEventListener('scroll', repositionSlowStatuses, true); window.addEventListener('resize', repositionSlowStatuses); }
+  slowStatuses.set(status, owner); placeSlowStatus(status, owner);
+}
+function placeSlowStatus(status: HTMLElement, owner: HTMLElement) {
+  const anchor = owner.getBoundingClientRect(), box = status.getBoundingClientRect();
+  status.style.visibility = anchor.bottom <= 0 || anchor.top >= window.innerHeight || anchor.right <= 0 || anchor.left >= window.innerWidth ? 'hidden' : '';
+  status.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8))}px`;
+  status.style.top = `${Math.max(8, anchor.top >= box.height + 8 ? anchor.top - box.height - 6 : Math.min(anchor.bottom + 6, window.innerHeight - box.height - 8))}px`;
 }
