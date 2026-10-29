@@ -131,7 +131,9 @@ try {
   await page.locator('.works-page').waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
   const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
-  if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
+  if(process.env.PIWORK_TEST_CHAT_LEGACY_RECOVERY==='only'){const {chatLegacyRecoveryAcceptance}=await import('./chat-recovery-real-core.mjs');await chatLegacyRecoveryAcceptance({page,coreUrl,token,api,waitFor,dataDir});}
+  else if(process.env.PIWORK_TEST_CHAT_RECOVERY==='only'){const {chatRecoveryAcceptance}=await import('./chat-recovery-real-core.mjs');await chatRecoveryAcceptance({page,coreUrl,token,api,waitFor,dataDir});}
+  else if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
   else if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();
   else {
   const lifecycleRequests = [];

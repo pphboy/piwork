@@ -3125,7 +3125,7 @@ dd > .button {
 
 .field > .name-field-error { color:var(--danger, #a33b32); font-size:12px; overflow-wrap:anywhere; }
 .import-name-feedback { overflow-wrap:anywhere; }
-.button.send-button.stop-and-send { width:auto; padding:0 9px; white-space:nowrap; font-size:11px; }
+.button.send-button.stop-and-send { display:inline-flex; align-items:center; justify-content:center; padding:0; }
 .request-text { white-space:pre-wrap; overflow-wrap:anywhere; }
 .request-text.chat-markdown { white-space:normal; }
 @media (max-width:600px) {
@@ -3542,3 +3542,8 @@ a.button.primary { color:var(--on-accent,#fff); }
 .history-record-meta { display: block; grid-column: 1 / -1; color: #71839b; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
 @media(prefers-reduced-motion: reduce) { .core-startup-wait .core-starting-spinner, .core-startup-blocks i { animation: none; } .core-startup-blocks i:nth-child(2) { transform: translate(19px,0); } .core-startup-blocks i:nth-child(3) { transform: translate(19px,19px); } .core-startup-blocks i:nth-child(4) { transform: translate(0,19px); } }
 @media(max-width: 650px) { .core-startup-page { margin-top: 54px; } .core-recovery-banner { flex-wrap: wrap; } .core-recovery-banner > span { flex-basis: 100%; } .core-startup-state h1 { font-size: 22px; } }
+
+.message-submission { display:flex; align-items:center; justify-content:flex-end; gap:6px; min-height:16px; margin-top:6px; font-size:12px; line-height:16px; color:var(--muted); overflow-wrap:anywhere; }
+.message-submission.failed,.message-submission.unknown { color:var(--warning); }
+.message-submission .button { flex:none; }
+.pending-chat-image { width:56px; height:48px; object-fit:cover; border-radius:6px; }

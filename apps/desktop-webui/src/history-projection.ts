@@ -12,12 +12,13 @@ const invalid = (): never => { throw new Error(t('d.history.invalidRange')); };
  * is validated by bytes, never inferred from equal messages or tool names. */
 export class HistoryProjection {
   private entries = new Map<string, Entry>();
+  private snapshotOrders = new Map<string, Map<string, number>>();
   private suppressed = new Set<string>();
   private resultTargets = new Map<string,string>();
   private visibleResults = new Map<string,string>();
   suppress(runId: string) { this.suppressed.add(runId); }
   reveal(runId: string) { this.suppressed.delete(runId); }
-  clear() { this.entries.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
+  clear() { this.entries.clear(); this.snapshotOrders.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
   covers(part: Data) {
     const block = this.entries.get(part.entryId)?.blocks.get(part.blockId);
     if (!block) return false;
@@ -42,7 +43,8 @@ export class HistoryProjection {
     }
     for (const part of page.segments) {
       const raw = encoder.encode(part.text);
-      if (!part.entryId || !part.blockId || !Number.isSafeInteger(part.byteOffset) || !Number.isSafeInteger(part.totalBytes) || part.byteOffset < 0 || part.totalBytes < part.byteOffset + raw.length || raw.length > 32768 || part.complete !== (part.byteOffset+raw.length===part.totalBytes) || !Number.isSafeInteger(part.blockIndex) || part.blockIndex<0 || part.blockIndex>=part.blockCount) invalid();
+      if (!part.entryId || !part.blockId || !Number.isSafeInteger(part.entryOrder) || part.entryOrder<0 || !Number.isSafeInteger(part.byteOffset) || !Number.isSafeInteger(part.totalBytes) || part.byteOffset < 0 || part.totalBytes < part.byteOffset + raw.length || raw.length > 32768 || part.complete !== (part.byteOffset+raw.length===part.totalBytes) || !Number.isSafeInteger(part.blockIndex) || part.blockIndex<0 || part.blockIndex>=part.blockCount) invalid();
+      if((part.streamId===undefined)!==(part.streamOffset===undefined) || part.streamId!==undefined && (part.type!=='text'||typeof part.streamId!=='string'||!part.streamId||!Number.isSafeInteger(part.streamOffset)||part.streamOffset<0||!Number.isSafeInteger(part.streamOffset+part.totalBytes)))invalid();
       let entry = this.entries.get(part.entryId);
       if (!entry) { entry={id:part.entryId,order:part.entryOrder,role:part.role,runId:part.runId,count:part.blockCount,blocks:new Map()};this.entries.set(entry.id,entry); }
       if (entry.role!==part.role || entry.runId!==part.runId) invalid();
@@ -59,7 +61,37 @@ export class HistoryProjection {
         if(old.offset<=part.byteOffset&&old.offset+old.bytes.length>=part.byteOffset+raw.length)covered=true;
       }
       if(!covered) {block.ranges=block.ranges.filter(old=>!(part.byteOffset<=old.offset&&part.byteOffset+raw.length>=old.offset+old.bytes.length));block.ranges.push({offset:part.byteOffset,bytes:raw});}
+      if(typeof page.snapshotId==='string'&&page.snapshotId){
+        let order=this.snapshotOrders.get(page.snapshotId);
+        if(!order){order=new Map();this.snapshotOrders.set(page.snapshotId,order);}
+        const existing=order.get(part.entryId);
+        if(existing!==undefined&&existing!==part.entryOrder)invalid();
+        order.set(part.entryId,part.entryOrder);
+      }
     }
+    while(this.snapshotOrders.size>16)this.snapshotOrders.delete(this.snapshotOrders.keys().next().value!);
+  }
+  private orderedEntries() {
+    // entryOrder is a coordinate inside one frozen snapshot, never a global
+    // sequence. Combine the ordering facts of each snapshot by entry identity.
+    const values=[...this.entries.values()],rank=new Map(values.map((entry,index)=>[entry.id,index]));
+    const edges=new Map(values.map(entry=>[entry.id,new Set<string>()])),indegree=new Map(values.map(entry=>[entry.id,0]));
+    for(const order of this.snapshotOrders.values()){
+      const ids=[...order].filter(([id])=>rank.has(id)).sort((a,b)=>a[1]-b[1]).map(([id])=>id);
+      for(let i=1;i<ids.length;i++){const from=ids[i-1]!,to=ids[i]!,links=edges.get(from)!;if(from!==to&&!links.has(to)){links.add(to);indegree.set(to,indegree.get(to)!+1);}}
+    }
+    const pending=new Set(values.map(entry=>entry.id)),result:Entry[]=[],uncertain=new Set<string>(),ready:string[]=[];
+    const push=(id:string)=>{ready.push(id);let i=ready.length-1;while(i>0){const p=Math.floor((i-1)/2);if(rank.get(ready[p]!)!<=rank.get(id)!)break;ready[i]=ready[p]!;i=p;}ready[i]=id;};
+    const pop=()=>{const first=ready[0]!,last=ready.pop()!;if(ready.length){let i=0;while(i*2+1<ready.length){let child=i*2+1;if(child+1<ready.length&&rank.get(ready[child+1]!)!<rank.get(ready[child]!)!)child++;if(rank.get(last)!<=rank.get(ready[child]!)!)break;ready[i]=ready[child]!;i=child;}ready[i]=last;}return first;};
+    for(const entry of values)if(indegree.get(entry.id)===0)push(entry.id);
+    while(pending.size){
+      if(ready.length>1){uncertain.add(ready[0]!);uncertain.add(ready[1]!);}
+      if(!ready.length){for(const id of pending)uncertain.add(id);push(pending.values().next().value!);}
+      const id=pop();
+      pending.delete(id);result.push(this.entries.get(id)!);
+      for(const to of edges.get(id)!){const next=indegree.get(to)!-1;indegree.set(to,next);if(next===0&&pending.has(to))push(to);}
+    }
+    return {result,uncertain};
   }
   private text(block: Block) {
     const ranges=[...block.ranges].sort((a,b)=>a.offset-b.offset);
@@ -81,11 +113,13 @@ export class HistoryProjection {
       this.visibleResults.set(runId,visible);
       hiddenResultText.add(visible===target.id?fallback.id:target.id);
     }
-    for(const entry of [...this.entries.values()].sort((a,b)=>a.order-b.order||a.id.localeCompare(b.id))){
+    const ordered=this.orderedEntries(),uncertainBlocks=new Set<string>(),recoveryUnconfirmed=new Set<string>();
+    for(const entry of ordered.result){
       if(this.suppressed.has(entry.runId)&&entry.role!=='user')continue;
       const blocks:Data[]=[];let complete=entry.blocks.size===entry.count;
       for(const block of [...entry.blocks.values()].sort((a,b)=>a.value.blockIndex-b.value.blockIndex)){
         const part=block.value,value=this.text(block);complete=complete&&value.complete;
+        if(part.recoveryUnconfirmed){recoveryUnconfirmed.add(entry.id);recoveryUnconfirmed.add(part.blockId);if(part.toolCallId&&entry.runId)recoveryUnconfirmed.add(`${entry.runId}-tool-${part.toolCallId}`);}
         if(hiddenResultText.has(entry.id)&&(part.type==='text'||part.type==='run-result'))continue;
         if(part.type==='text'||part.type==='run-result')blocks.push({blockId:part.blockId,type:'text',text:value.text});
         else if(part.type==='image')blocks.push({blockId:part.blockId,type:'image',image:part.image});
@@ -94,6 +128,7 @@ export class HistoryProjection {
       }
       if(hiddenResultText.has(entry.id)&&!blocks.length)continue;
       if(!complete) {incomplete.add(entry.id);for(const block of blocks){incomplete.add(block.blockId);if(block.toolCallId&&entry.runId)incomplete.add(`${entry.runId}-tool-${block.toolCallId}`);}}
+      if(ordered.uncertain.has(entry.id)){uncertainBlocks.add(entry.id);for(const block of blocks){uncertainBlocks.add(block.blockId);if(block.toolCallId&&entry.runId)uncertainBlocks.add(`${entry.runId}-tool-${block.toolCallId}`);}}
       raw.push({entryId:entry.id,runId:entry.runId,role:entry.role,blocks,text:''});
     }
     // A user turn keeps its accepted identity when text blocks become durable,
@@ -102,15 +137,121 @@ export class HistoryProjection {
     const saved:Message[]=[],users=new Map<string,Message>();
     for(const message of historyMessages(raw)){
       const id=message.role==='user'?userIds.get(message.id??'')??message.id:message.id;
-      const value={...message,id,historyStored:true,historyIncomplete:incomplete.has(id??'')||incomplete.has(message.id??'')};
+      const value={...message,id,historyStored:true,historyIncomplete:incomplete.has(id??'')||incomplete.has(message.id??''),historyOrderUnconfirmed:uncertainBlocks.has(id??'')||uncertainBlocks.has(message.id??'')||!!message.tool&&recoveryUnconfirmed.has(id??''),historyRecoveryUnconfirmed:recoveryUnconfirmed.has(id??'')||recoveryUnconfirmed.has(message.id??'')};
       const previous=message.role==='user'&&id?users.get(id):undefined;
       if(previous){previous.text+=value.text;previous.historyIncomplete ||= value.historyIncomplete;}
       else{saved.push(value);if(message.role==='user'&&id)users.set(id,value);}
     }
-    const ids=new Set(saved.map(m=>m.id)),tools=new Set(saved.filter(m=>m.tool&&m.runId).map(m=>`${m.runId}:${m.tool!.id}`));
-    const anchors=new Map<string,number>();
-    previous.forEach((message,index)=>{if(message.runId&&(ids.has(message.id)||message.tool&&tools.has(`${message.runId}:${message.tool.id}`)))anchors.set(message.runId,index);});
-    const live=previous.filter((message,index)=>!message.historyStored&&!ids.has(message.id)&&!(message.runId&&replaceRuns.has(message.runId))&&!(message.runId&&index<=(anchors.get(message.runId)??-1)));
-    return [...saved,...live];
+    // A recovered `-remaining-N` block is emitted only after the Agent has
+    // verified N bytes against the SDK prefix for this exact Run. When the
+    // complete final result matches that prefix plus the checkpoint tail,
+    // the independent result entry is the same output, not another answer.
+    const redundantResults=new Set<string>(),compositeCoverage=new Map<string,string>();
+    for(let index=0;index<saved.length;index++){
+      const tail=saved[index];if(!tail?.runId||!tail.id||tail.historyRecoveryUnconfirmed||tail.tool)continue;
+      const prefix=`${tail.runId}-text-`;if(!tail.id.startsWith(prefix))continue;
+      const match=/^\d+-remaining-(\d+)$/.exec(tail.id.slice(prefix.length));if(!match)continue;
+      const prefixBytes=Number(match[1]);if(!Number.isSafeInteger(prefixBytes)||prefixBytes<=0)continue;
+      const fallback=this.entries.get(`${tail.runId}-final`);
+      const resultBlock=fallback&&[...fallback.blocks.values()].find(block=>block.value.type==='run-result');
+      const result=resultBlock&&saved.find(message=>message.id===resultBlock.value.blockId&&message.runId===tail.runId&&!message.historyIncomplete);
+      const parts:string[]=[],prefixIds:string[]=[];let count=0;
+      for(let at=index-1;at>=0&&count<prefixBytes;at--){const previous=saved[at]!;
+        if(previous.runId!==tail.runId||previous.role!=='assistant'||previous.tool||previous.historyIncomplete||previous.historyRecoveryUnconfirmed)break;
+        parts.unshift(previous.text);if(previous.id)prefixIds.push(previous.id);count+=encoder.encode(previous.text).length;
+      }
+      if(count!==prefixBytes)continue;
+      if(!tail.historyIncomplete){
+        const combined=parts.join('')+tail.text;
+        compositeCoverage.set(tail.id.slice(0,tail.id.lastIndexOf('-remaining-')),combined);
+        if(result&&combined===result.text)redundantResults.add(result.id!);
+      } else if(result) {
+        const entry=[...this.entries.values()].find(entry=>entry.runId===tail.runId&&entry.blocks.has(tail.id!));
+        const block=entry?.blocks.get(tail.id),whole=encoder.encode(result.text),prefixData=encoder.encode(parts.join(''));
+        if(!block||whole.length!==prefixBytes+block.value.totalBytes||prefixData.some((byte,i)=>whole[i]!==byte))continue;
+        if(block.ranges.some(range=>range.bytes.some((byte,i)=>whole[prefixBytes+range.offset+i]!==byte)))continue;
+        redundantResults.add(tail.id);for(const id of prefixIds)redundantResults.add(id);
+        compositeCoverage.set(tail.id.slice(0,tail.id.lastIndexOf('-remaining-')),result.text);
+      }
+    }
+    if(redundantResults.size)for(let index=saved.length-1;index>=0;index--)if(redundantResults.has(saved[index]!.id!))saved.splice(index,1);
+    const identity=(message:Message)=>JSON.stringify([message.runId??'',message.id??'']);
+    const ids=new Set(saved.map(identity)),tools=new Set(saved.filter(m=>m.tool&&m.runId).map(m=>`${m.runId}:${m.tool!.id}`));
+    const coveredLive=new Set<number>(),unresolvedIdentity=new Set<number>();
+    // SDK blocks can use different IDs from streamed events. The Agent only
+    // emits these coordinates after checking their bytes and tool boundaries
+    // against the durable event stream. Require complete byte coverage here:
+    // a partially loaded history must never erase a longer live response.
+    const streamRanges=new Map<string,Range[]>(),streamAnchors=new Map<string,string>();
+    for(const entry of this.entries.values())for(const block of entry.blocks.values()){
+      const part=block.value;if(!entry.runId||!part.streamId||part.recoveryUnconfirmed)continue;
+      const key=JSON.stringify([entry.runId,part.streamId]),ranges=streamRanges.get(key)??[];
+      for(const range of block.ranges)ranges.push({offset:part.streamOffset+range.offset,bytes:range.bytes});
+      streamRanges.set(key,ranges);if(!streamAnchors.has(key))streamAnchors.set(key,part.blockId);
+    }
+    previous.forEach((message,index)=>{
+      if(message.historyStored||message.role!=='assistant'||message.tool||!message.id||!message.runId||!message.text)return;
+      const ranges=streamRanges.get(JSON.stringify([message.runId,message.id]));if(!ranges)return;
+      const live=encoder.encode(message.text);let end=0;
+      for(const range of [...ranges].sort((a,b)=>a.offset-b.offset)){
+        if(range.offset>end)break;
+        const limit=Math.min(live.length,range.offset+range.bytes.length);
+        for(let at=range.offset;at<limit;at++)if(range.bytes[at-range.offset]!==live[at])return;
+        end=Math.max(end,limit);
+      }
+      if(end===live.length)coveredLive.add(index);
+    });
+    previous.forEach((message,index)=>{
+      if(message.historyStored||message.role!=='assistant'||message.tool||!message.id)return;
+      const complete=compositeCoverage.get(message.id);
+      if(complete!==undefined&&complete.startsWith(message.text))coveredLive.add(index);
+    });
+    // A checkpoint block can have the same event identity as the live stream
+    // while only part of its byte range has been read. Merge verified ranges;
+    // identity alone is not proof that the saved text covers the live text.
+    previous.forEach((message,index)=>{
+      if(message.historyStored||message.role!=='assistant'||message.tool||!message.id||!message.runId||!ids.has(identity(message)))return;
+      const target=saved.find(item=>item.id===message.id&&item.runId===message.runId&&!item.tool);
+      const entry=[...this.entries.values()].find(item=>item.runId===message.runId&&item.blocks.has(message.id!));
+      const block=entry?.blocks.get(message.id);if(!target||!block||block.value.type!=='text')return;
+      const live=encoder.encode(message.text),ranges=[{offset:0,bytes:live},...block.ranges].sort((a,b)=>a.offset-b.offset);
+      let end=0;const pieces:Uint8Array[]=[];
+      for(const range of ranges){
+        if(range.offset>end){unresolvedIdentity.add(index);return;}
+        const overlap=Math.min(end-range.offset,range.bytes.length);
+        for(let at=0;at<overlap;at++){
+          const pos=range.offset+at;
+          if(pos<live.length&&range.bytes[at]!==live[pos]){unresolvedIdentity.add(index);return;}
+        }
+        const skip=Math.max(0,end-range.offset);if(skip<range.bytes.length){pieces.push(range.bytes.subarray(skip));end=range.offset+range.bytes.length;}
+      }
+      const bytes=new Uint8Array(end);let at=0;for(const piece of pieces){bytes.set(piece,at);at+=piece.length;}
+      try {target.text=decoder.decode(bytes);}catch{unresolvedIdentity.add(index);return;}
+      const liveUnconfirmed=!!target.historyIncomplete||end>block.value.totalBytes;
+      target.historyRecoveryUnconfirmed=!!target.historyRecoveryUnconfirmed||liveUnconfirmed;
+      if(liveUnconfirmed)target.historyStored=false;
+      coveredLive.add(index);
+    });
+    const savedPositions=new Map<string,number>(saved.flatMap((message,index)=>[
+      ...(message.id?[[`id:${identity(message)}`,index] as const]:[]),
+      ...(message.runId&&message.tool?.id?[[`tool:${message.runId}:${message.tool.id}`,index] as const]:[]),
+    ]));
+    for(const [key,blockId] of streamAnchors){const [runId,streamId]=JSON.parse(key) as string[];const at=savedPositions.get(`id:${JSON.stringify([runId,blockId])}`),alias=`id:${JSON.stringify([runId,streamId])}`;if(at!==undefined&&!savedPositions.has(alias))savedPositions.set(alias,at);}
+    const position=(message:Message)=>savedPositions.get(message.id?`id:${identity(message)}`:'') ??
+      (message.runId&&message.tool?.id?savedPositions.get(`tool:${message.runId}:${message.tool.id}`):undefined);
+    const following=new Array<number|undefined>(previous.length);let next:number|undefined;
+    for(let i=previous.length-1;i>=0;i--){following[i]=next;const found=position(previous[i]);if(found!==undefined)next=found;}
+    const before=new Map<number,Message[]>();const tail:Message[]=[];let prior:number|undefined;
+    previous.forEach((message,index)=>{
+      const current=position(message);if(current!==undefined)prior=current;
+      if(message.historyStored||ids.has(identity(message))&&!unresolvedIdentity.has(index)||coveredLive.has(index)||(message.runId&&message.tool?.id&&tools.has(`${message.runId}:${message.tool.id}`)))return;
+      const target=following[index];
+      const lower=prior??-1,upper=target??saved.length;
+      const unconfirmed=!!message.runId&&replaceRuns.has(message.runId)&&message.role==='assistant'&&!message.tool&&!!message.text;
+      const placed=upper-lower>1||unconfirmed||unresolvedIdentity.has(index)?{...message,...(unresolvedIdentity.has(index)?{id:`${message.id}-live-unconfirmed`}:{}),...(upper-lower>1?{historyOrderUnconfirmed:true}:{}),...(unconfirmed||unresolvedIdentity.has(index)?{historyRecoveryUnconfirmed:true}:{})}:message;
+      if(target===undefined)tail.push(placed);
+      else {const bucket=before.get(target)??[];bucket.push(placed);before.set(target,bucket);}
+    });
+    return [...saved.flatMap((message,index)=>[...(before.get(index)??[]),message]),...tail];
   }
 }

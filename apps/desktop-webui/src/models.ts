@@ -72,7 +72,14 @@ export interface WorkspaceFile {
 }
 export interface Message {
   historyStored?: boolean;
+  historyLegacySnapshot?: string;
+  historyLegacyIndex?: number;
+  historyLegacyReplay?: boolean;
   historyIncomplete?: boolean;
+  historyOrderUnconfirmed?: boolean;
+  historyRecoveryUnconfirmed?: boolean;
+  submission?: { key: string; phase: 'sending' | 'unknown' | 'failed' | 'accepted'; error?: string; stopping?: boolean };
+  pendingImages?: import('./images.js').ImageInput[];
   images?: import('./images.js').HistoryImage[];
   id?: string;
   runId?: string;

@@ -293,6 +293,8 @@ for(const nextCaption of ['new caption','original caption'])test(`image acceptan
  const gate=deferred();t.after(()=>gate.resolve());const png=await readFile(new URL('../../../../fixtures/chat-images/png.png',import.meta.url)),jpg=await readFile(new URL('../../../../fixtures/chat-images/jpeg.jpg',import.meta.url));let submitted:any;
  const {page,requests}=await fixture(t,async r=>{if(r.path.endsWith('/chat-image-capabilities'))return {json:{profile:'chat-images-v1',defaultModel:{modelRef:null,availability:'supported'},models:[]}};if(r.path==='works/work-1/runs'&&r.method==='POST'){submitted=JSON.parse(r.body);await gate.promise;return {json:{run:{runId:'run-snapshot',workId:'work-1',sessionId:'session-1',submissionKey:submitted.submissionKey,state:4}}};}});
  await page.locator('#chat-image-input').setInputFiles({name:'first.png',mimeType:'image/png',buffer:png});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await page.locator('#composer').fill('original caption');await button(page,'send-message').click();await expect.poll(()=>submitted?.images?.length).toBe(1);
+ await expect(page.locator('.message.user').filter({hasText:'original caption'}).locator('.pending-chat-image')).toHaveCount(1);
+ await expect(page.locator('.message.user').filter({hasText:'original caption'}).locator('.message-submission')).toContainText('Sending');
  await page.locator('#composer').fill('');await page.locator('#composer').fill(nextCaption);await page.locator('#chat-image-input').setInputFiles({name:'next.jpg',mimeType:'image/jpeg',buffer:jpg});await expect(page.locator('.chat-image-draft')).toHaveCount(2);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');gate.resolve();
  await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-draft')).toContainText('next.jpg');await expect(page.locator('#composer')).toHaveValue(nextCaption);assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);assert.equal(submitted.images[0].data,png.toString('base64'));
 });
@@ -309,6 +311,8 @@ test('unknown image acceptance is recovered by the original key and history retr
   if(r.path.endsWith('/images/0'))return failImage?{status:503,json:{code:'RUNTIME_UNAVAILABLE',message:'Image temporarily unavailable'}}:{body:bytes,headers:{'Content-Type':'image/png','Content-Length':String(bytes.length)}};
  });
  await page.locator('#chat-image-input').setInputFiles({name:'original.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await expect(page.locator('.chat-image-draft')).toHaveCount(1);
+ await expect(page.locator('.message.user .message-submission')).toContainText('Message status unconfirmed');
+ await expect(page.locator('.message.user .pending-chat-image')).toHaveCount(1);
  await button(page,'check-chat-submission').click();await expect(page.locator('.chat-image-draft')).toHaveCount(0);await expect(button(page,'retry-chat-image')).toBeVisible();failImage=false;await button(page,'retry-chat-image').click();await expect(page.locator('.chat-history-image img')).toBeVisible();await button(page,'preview-chat-image').click();await expect(page.getByRole('heading',{name:'Image preview',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
 });
 
@@ -896,8 +900,23 @@ for(const method of ['mouse','keyboard'] as const)test(`D07 Send ${method} confi
     if(r.path.endsWith('/events')){await events.promise;return{status:503};}
   });
   await page.locator('#composer').fill('submitted prompt');if(method==='mouse')await button(page,'send-message').click();else await page.locator('#composer').press('Enter');
+  const original=page.locator('.message.user').filter({hasText:'submitted prompt'});
+  await expect(original).toHaveCount(1);await expect(original.locator('.message-submission')).toContainText('Sending');await expect(original.locator('.message-submission .pending-dots')).toHaveCount(1);
+  const alignment=await original.locator('.message-submission').evaluate(el=>{const label=el.children[0]!.getBoundingClientRect(),dots=el.children[1]!.getBoundingClientRect();return Math.abs(label.y+label.height/2-dots.y-dots.height/2)});assert.ok(alignment<1);
   await expect(button(page,'send-message').locator('[role="status"]')).toContainText('Submitting message');await page.locator('#composer').fill('newer draft');await page.locator('#composer').press('Enter');assert.equal(requests.filter(r=>r.method==='POST').length,1);
-  gate.resolve();const accepted=page.locator('[data-action-status]').filter({hasText:'run-original'});await expect(accepted).toBeVisible();await expect(accepted).toContainText('Message accepted');await expect(accepted.locator('code')).toBeHidden();await accepted.locator('summary').click();await expect(accepted.locator('code')).toBeVisible();await expect(page.locator('#composer')).toHaveValue('newer draft');events.resolve();
+  gate.resolve();const accepted=page.locator('[data-action-status]').filter({hasText:'run-original'});await expect(accepted).toBeVisible();await expect(accepted).toContainText('Message accepted');await expect(accepted.locator('code')).toBeHidden();await accepted.locator('summary').click();await expect(accepted.locator('code')).toBeVisible();await expect(page.locator('#composer')).toHaveValue('newer draft');await expect(original).toHaveCount(1);await expect(original.locator('.message-submission')).toHaveCount(0);events.resolve();
+});
+
+test('pending Chat submission cannot reappear after identity is cleared',async t=>{
+  const gate=deferred();t.after(()=>gate.resolve());let posted=false;
+  const {page}=await fixture(t,async r=>{
+    if(r.path==='works/work-1/runs'&&r.method==='POST'){posted=true;await gate.promise;return{json:{run:{runId:'old-identity-run',sessionId:'session-1',state:1}}};}
+  });
+  await page.locator('#composer').fill('Private pending message');await button(page,'send-message').click();
+  await expect.poll(()=>posted).toBe(true);await expect(page.locator('.message-submission.sending')).toBeVisible();
+  await api(page,'adapter.clearIdentity();');gate.resolve();
+  await expect.poll(()=>api(page,'return adapter.state.works.length')).toBe(0);
+  await expect(page.locator('#app')).not.toContainText('Private pending message');
 });
 
 for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Run has visible request and never resends the prompt`,async t=>{
@@ -1872,7 +1891,8 @@ test('pending independent: Activity has one indicator only for the observed live
     w.run = { id: 'run-active', sessionId: session.id, status: 'running', cursor: 1 };
     session.messages.push({ id: 'tool-current', role: 'tool', text: '', runId: 'run-active', tool: { id: 'tool-current', name: 'read', status: 'Running', content: 'Keep this output' } });
     adapter.emit();`);
-  await expect(page.locator('.activity .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.reply-slot .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.activity .pending-dots')).toHaveCount(0);
   await page.locator('.activity > summary').click(); await page.locator('.tool-event > summary').click();
   await page.locator('.tool-event pre').evaluate(el => { (window as any).originalToolOutput = el; });
   await api(page, "adapter.getWork('work-1').run.status = 'interrupted'; adapter.emit();");
@@ -1948,6 +1968,32 @@ test('Run wait renders at the assistant reply position and real content replaces
   await expect(page.locator('#messages .reply-slot')).toHaveCount(0);
   await expect(page.locator('#messages')).toContainText('The real answer');
   await expect(page.locator('#composer')).toHaveValue('');
+});
+
+test('Agent status follows the actual reply, uses shared aligned dots, and stops on unknown or terminal state', async t => {
+  const { page } = await fixture(t, () => undefined);
+  await page.setViewportSize({width:360,height:800});
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await api(page, `const w=adapter.getWork('work-1'),session=w.sessions.find(s=>s.id==='session-1');
+    w.run={id:'run-live-status',sessionId:session.id,status:'running',cursor:0,created:''};
+    session.messages.push({id:'status-user',role:'user',text:'Hello',runId:w.run.id});adapter.emit();`);
+  const status=page.locator('.reply-slot[data-run-id="run-live-status"]');
+  await expect(status).toContainText('Agent is preparing a reply');
+  await api(page, `const w=adapter.getWork('work-1'),session=w.sessions.find(s=>s.id==='session-1');
+    session.messages.push({id:'status-tool',role:'assistant',text:'',runId:w.run.id,tool:{id:'call',name:'read',status:'Running',content:''}});adapter.emit();`);
+  await expect(status).toContainText('Agent is working');
+  await expect(page.locator('#messages .pending-dots')).toHaveCount(1);
+  await api(page, `const w=adapter.getWork('work-1'),session=w.sessions.find(s=>s.id==='session-1');
+    session.messages.at(-1).tool.status='Completed';session.messages.push({id:'status-reply',role:'assistant',text:'Partial answer',runId:w.run.id});adapter.emit();`);
+  await expect(status).toContainText('Agent is replying');
+  const order=await status.evaluate(el=>[...el.children].map(node=>node.className));assert.deepEqual(order,['','pending-dots']);
+  const alignment=await status.evaluate(el=>{const label=el.children[0]!.getBoundingClientRect(),dots=el.children[1]!.getBoundingClientRect();return Math.abs(label.y+label.height/2-dots.y-dots.height/2)});assert.ok(alignment<1);
+  await page.evaluate("import('/desktop/browser/locale.js').then(locale => locale.chooseLocale('zh-CN'))");
+  await expect(status).toContainText('Agent 正在回复');
+  await expect(status.locator('.pending-dots i').first()).toHaveCSS('animation-name','none');
+  await api(page,"adapter.getWork('work-1').run.error='Observation unavailable';adapter.emit();");await expect(status).toHaveCount(0);
+  await api(page,"const run=adapter.getWork('work-1').run;run.error=undefined;run.status='cancelling';adapter.emit();");await expect(status).toContainText('取消');
+  await api(page,"adapter.getWork('work-1').run.status='cancelled';adapter.emit();");await expect(status).toHaveCount(0);
 });
 
 test('pending independent: About aggregates version reads and keeps the known version during refresh', async t => {
@@ -2317,7 +2363,9 @@ test('a streamed reply only becomes a link when complete and opens the current f
   });
   await page.locator('#composer').fill('produce a file');
   await button(page, 'send-message').click();
-  const link = page.locator('a.chat-file-link[data-path="/note.txt"]');
+  // Legacy history and the live stream lack a shared event identity. They can
+  // both remain visible while their relationship is explicitly unconfirmed.
+  const link = page.locator('a.chat-file-link[data-path="/note.txt"]').first();
   await expect(link).toBeVisible();
   assert.equal(requests.filter(record => record.path.startsWith('/_desktop/files/')).length, 0, 'rendering a reply must not read the workspace');
   await link.click();
