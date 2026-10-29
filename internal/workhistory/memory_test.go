@@ -229,3 +229,66 @@ func TestMemoryHistoryRebuildRemapsOnlyManagedOwnerAndStore(t *testing.T) {
 		t.Fatal(disposition)
 	}
 }
+
+func TestSchema6CheckpointSnapshotAndRebuild(t *testing.T) {
+	private, scope := memoryFixture(t)
+	db := openMemoryFixture(t, private)
+	definition := schemaV6SQL[strings.Index(schemaV6SQL, "CREATE TABLE run_output_chunks"):]
+	for _, query := range []string{
+		definition,
+		"UPDATE schema_migrations SET version=6",
+		"UPDATE runs SET latest_sequence=1",
+		`INSERT INTO run_events VALUES('run',1,'text','{}','2026-10-08T00:00:00Z')`,
+		`INSERT INTO run_output_chunks VALUES('run',1,0,'text','{"data":"partial"}')`,
+	} {
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	ctx := context.Background()
+	snapshot, err := Open(ctx, private, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	target := filepath.Join(t.TempDir(), "private")
+	if err := os.MkdirAll(filepath.Join(target, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"work.sqlite", "memory.sqlite", "sessions/one.jsonl"} {
+		data, err := os.ReadFile(filepath.Join(private, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	work, contextID := "work-memory-target-2222", "context-memory-target"
+	if err := snapshot.Rebuild(ctx, target, work, map[string]string{"context-memory-source": contextID}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := Open(ctx, target, Scope{SourceWorkID: work, ContextIDs: map[string]bool{contextID: true}, ScratchDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored.Close()
+	db = openMemoryFixture(t, target)
+	var payload string
+	if err := db.QueryRow("SELECT payload_json FROM run_output_chunks WHERE run_id='run'").Scan(&payload); err != nil || payload != `{"data":"partial"}` {
+		t.Fatal(payload, err)
+	}
+	db.Close()
+	for _, query := range []string{"UPDATE run_output_chunks SET part=1", `UPDATE run_output_chunks SET part=0,payload_json='{"data":null}'`, `UPDATE run_output_chunks SET payload_json='{"data":"ok","extra":1}'`} {
+		db = openMemoryFixture(t, target)
+		if _, err := db.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+		db.Close()
+		if bad, err := Open(ctx, target, Scope{SourceWorkID: work, ContextIDs: map[string]bool{contextID: true}, ScratchDirectory: t.TempDir()}); err == nil {
+			bad.Close()
+			t.Fatalf("accepted invalid chunk: %s", query)
+		}
+	}
+}

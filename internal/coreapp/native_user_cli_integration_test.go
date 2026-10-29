@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	userclient "piwork/internal/client"
+	"piwork/internal/contracts"
 )
 
 func TestNativeUserCLIWorkAndConversationThroughGoCore(t *testing.T) {
@@ -229,7 +230,26 @@ func TestNativeUserCLIWorkAndConversationThroughGoCore(t *testing.T) {
 }
 
 func TestNativeUserCLIExportsInspectsAndImportsWorkThroughGoCore(t *testing.T) {
-	_, base, authorization, workID, _ := nativeApplyFixture(t)
+	a, base, authorization, workID, ctx := nativeApplyFixture(t)
+	f := brainAcceptance{t: t, a: a, base: base, auth: authorization, work: workID, path: "/api/v1/works/" + workID, ctx: ctx}
+	f.chat("Synthetic conversation preserved by import", "snapshot-conversation")
+	checkpointProgram := `import {DatabaseSync} from 'node:sqlite';import {createHash} from 'node:crypto';const d=new DatabaseSync('/var/data/work.sqlite');const rows=d.prepare('SELECT run_id,sequence,part,kind,payload_json FROM run_output_chunks ORDER BY run_id,sequence,part').all();console.log(JSON.stringify({count:rows.length,digest:createHash('sha256').update(JSON.stringify(rows)).digest('hex')}));d.close();`
+	checkpointBefore := strings.TrimSpace(f.agentEval(checkpointProgram))
+	var checkpointSummary struct {
+		Count int `json:"count"`
+	}
+	if json.Unmarshal([]byte(checkpointBefore), &checkpointSummary) != nil || checkpointSummary.Count == 0 {
+		t.Fatal("missing source checkpoints", checkpointBefore)
+	}
+	api, err := userclient.New(base, strings.TrimPrefix(authorization, "Bearer "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := contracts.HistoryQuery{Direction: contracts.Supplied("newer")}
+	before, err := api.HistoryPage(ctx, workID, f.session, query)
+	if err != nil || len(before.Segments) < 2 {
+		t.Fatal("source history", err)
+	}
 	credential := filepath.Join(t.TempDir(), "credentials", "client.json")
 	if err := (userclient.CredentialStore{Path: credential}).Save(userclient.Credential{Version: 1, CoreURL: base,
 		Token: strings.TrimPrefix(authorization, "Bearer "), ExpiresAt: "2099-01-01T00:00:00Z",
@@ -278,5 +298,18 @@ func TestNativeUserCLIExportsInspectsAndImportsWorkThroughGoCore(t *testing.T) {
 	}
 	if show := call(credential, "work", "show", importID); show["id"] != importID {
 		t.Fatal("imported Work cannot be read through CLI", show)
+	}
+	importedFixture := brainAcceptance{t: t, a: a, base: base, auth: authorization, work: importID, path: "/api/v1/works/" + importID, ctx: ctx}
+	if after := strings.TrimSpace(importedFixture.agentEval(checkpointProgram)); after != checkpointBefore {
+		t.Fatal("import changed checkpoint bytes", checkpointBefore, after)
+	}
+	after, err := api.HistoryPage(ctx, importID, f.session, query)
+	if err != nil || len(after.Segments) != len(before.Segments) {
+		t.Fatal("imported history", err)
+	}
+	for i, segment := range before.Segments {
+		if after.Segments[i].Text != segment.Text || after.Segments[i].Type != segment.Type {
+			t.Fatal("import changed conversation")
+		}
 	}
 }

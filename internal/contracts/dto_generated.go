@@ -666,24 +666,27 @@ type HistoryRunSummary struct {
 }
 
 type HistorySegment struct {
-	EntryId    Identifier        `json:"entryId"`
-	EntryOrder WorkByteSize      `json:"entryOrder"`
-	Role       string            `json:"role"`
-	RunId      string            `json:"runId"`
-	BlockId    Identifier        `json:"blockId"`
-	BlockIndex WorkByteSize      `json:"blockIndex"`
-	BlockCount WorkByteSize      `json:"blockCount"`
-	Type       string            `json:"type"`
-	ByteOffset WorkByteSize      `json:"byteOffset"`
-	TotalBytes WorkByteSize      `json:"totalBytes"`
-	Complete   bool              `json:"complete"`
-	Text       string            `json:"text"`
-	ToolCallId Field[Identifier] `json:"toolCallId,omitzero"`
-	ToolName   Field[string]     `json:"toolName,omitzero"`
-	ResultKind Field[string]     `json:"resultKind,omitzero"`
-	Truncated  Field[bool]       `json:"truncated,omitzero"`
-	IsError    Field[bool]       `json:"isError,omitzero"`
-	Image      Field[struct {
+	EntryId             Identifier          `json:"entryId"`
+	EntryOrder          WorkByteSize        `json:"entryOrder"`
+	Role                string              `json:"role"`
+	RunId               string              `json:"runId"`
+	BlockId             Identifier          `json:"blockId"`
+	BlockIndex          WorkByteSize        `json:"blockIndex"`
+	BlockCount          WorkByteSize        `json:"blockCount"`
+	Type                string              `json:"type"`
+	ByteOffset          WorkByteSize        `json:"byteOffset"`
+	TotalBytes          WorkByteSize        `json:"totalBytes"`
+	Complete            bool                `json:"complete"`
+	Text                string              `json:"text"`
+	ToolCallId          Field[Identifier]   `json:"toolCallId,omitzero"`
+	ToolName            Field[string]       `json:"toolName,omitzero"`
+	ResultKind          Field[string]       `json:"resultKind,omitzero"`
+	Truncated           Field[bool]         `json:"truncated,omitzero"`
+	IsError             Field[bool]         `json:"isError,omitzero"`
+	RecoveryUnconfirmed Field[bool]         `json:"recoveryUnconfirmed,omitzero"`
+	StreamId            Field[Identifier]   `json:"streamId,omitzero"`
+	StreamOffset        Field[WorkByteSize] `json:"streamOffset,omitzero"`
+	Image               Field[struct {
 		MimeType   ChatImageMime  `json:"mimeType"`
 		ByteSize   int64          `json:"byteSize"`
 		Sha256     WorkBlobDigest `json:"sha256"`

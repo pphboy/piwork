@@ -20,6 +20,12 @@ var currentSchemaSQL string
 //go:embed schema-objects.json
 var currentSchemaObjects []byte
 
+//go:embed schema-v6.sql
+var schemaV6SQL string
+
+//go:embed schema-v6-objects.json
+var schemaV6Objects []byte
+
 //go:embed memory-schema.sql
 var memorySchemaSQL string
 
@@ -40,7 +46,11 @@ func historyTables(version int64) []string {
 		return tables
 	}
 	result := append([]string{}, tables[:len(tables)-2]...)
-	return append(result, "work_memory_binding")
+	result = append(result, "work_memory_binding")
+	if version == 6 {
+		result = append(result, "run_output_chunks")
+	}
+	return result
 }
 
 func validateMemorySchema(ctx context.Context, db *sql.DB) error {

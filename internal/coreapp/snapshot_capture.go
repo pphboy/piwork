@@ -106,7 +106,7 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 			_ = json.Unmarshal(raw, &history.SchemaVersion)
 		}
 	}
-	if history.HistoryPresent && history.SchemaVersion != 4 && history.SchemaVersion != 5 {
+	if history.HistoryPresent && history.SchemaVersion != 4 && history.SchemaVersion != 5 && history.SchemaVersion != 6 {
 		return workpackage.Verified{}, snapshotInvalid("history.schema")
 	}
 	if string(metadata.ActiveContext) != "null" && !history.HistoryPresent {
@@ -244,7 +244,9 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 				spec.Compatibility.WorkHistorySchema = float64(history.SchemaVersion)
 			} else {
 				// For an uninitialized aggregate, derive its captured image contract, never installation defaults.
-				if actual.Labels["io.piwork.work-history.schema"] == "5" {
+				if actual.Labels["io.piwork.work-history.schema"] == "6" {
+					spec.Compatibility.WorkHistorySchema = 6
+				} else if actual.Labels["io.piwork.work-history.schema"] == "5" {
 					spec.Compatibility.WorkHistorySchema = 5
 				} else {
 					spec.Compatibility.WorkHistorySchema = 4

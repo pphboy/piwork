@@ -87,6 +87,22 @@ func TestApplyAcceptanceDurablyCapturesContextAndReplaysAfterSave(t *testing.T) 
 	}
 }
 
+func TestMigrationGrantUsesRecordedSchemasAndRejectsInvalidPairs(t *testing.T) {
+	for _, test := range []struct {
+		from, to int64
+		want     bool
+	}{{0, 0, true}, {4, 5, true}, {4, 6, true}, {5, 6, true}, {5, 5, false}, {6, 5, false}, {6, 6, false}} {
+		plan := workApplyPlan{WorkID: "work-test", HistoryBackup: &applyHistoryBackup{BackupKey: "backup-test", State: "saved", SourceSchema: test.from, TargetSchema: test.to, ManifestDigest: strings.Repeat("a", 64)}}
+		grant := migrationGrant("operation-test", plan)
+		if (grant != nil) != test.want {
+			t.Fatalf("%d -> %d: %#v", test.from, test.to, grant)
+		}
+		if grant != nil && test.from != 0 && (grant.FromSchema != float64(test.from) || grant.ToSchema != float64(test.to)) {
+			t.Fatal(grant)
+		}
+	}
+}
+
 func TestHistoryMigrationAuthorityIsBoundToSavedApplyAndInitializationGeneration(t *testing.T) {
 	a, _, _ := appFixture(t, Options{Initialization: Initialization{Administrator: &struct{ Account, Password string }{"admin", "development-fixture-pass"}}})
 	ctx := context.Background()

@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { WorkStore } from "./store.js";
 import { WorkHistorySnapshot, WorkHistoryValidationError } from "./snapshot.js";
-import { migrateWorkDatabase } from "./migrations.js";
+import { migrateWorkDatabase, upgradeWorkDatabaseToV6 } from "./migrations.js";
 import { FeedbackError } from "./feedback.js";
 import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
 
@@ -31,6 +31,9 @@ function fixture() {
   const sdk = Buffer.from('{"type":"session","version":3,"id":"session-local","cwd":"/var/data/workspace"}\n{"type":"message","text":"work-source context-source exact original bytes"}\n');
   writeFileSync(join(volume, "sessions", "one.jsonl"), sdk);
   const business = new DatabaseSync(join(volume, "business.sqlite")); business.exec("CREATE TABLE user_data(value TEXT); INSERT INTO user_data VALUES ('work-source')"); business.close();
+  const initialized=WorkStore.open(join(volume, "work.sqlite"),{workId:SOURCE});initialized.close();
+  // This fixture exercises the existing schema-5 import contract.
+  const schema5=new DatabaseSync(join(volume,"work.sqlite"));schema5.exec('DROP TABLE run_output_chunks; UPDATE schema_migrations SET version=5');schema5.close();
   const store = WorkStore.open(join(volume, "work.sqlite"));
   store.createSessionIdempotent({ workId: SOURCE, sessionId: "session-local", sdkHistoryPath: "/var/data/sessions/one.jsonl", createdAt: NOW, updatedAt: NOW, contextIdentity: CONTEXT }, "session-key");
   const accepted = store.acceptRun({ workId: SOURCE, sessionId: "session-local", submissionKey: "submit-key", requestDigest: "request-digest", promptDigest: "prompt-digest", contextIdentity: CONTEXT, now: NOW });
@@ -44,6 +47,28 @@ function fingerprint(volume: string): Map<string, string> {
 function edit(volume: string, sql: string): void {
   const database = new DatabaseSync(join(volume, "work.sqlite")); try { database.prepare("ATTACH DATABASE ? AS memory").run(join(volume,"memory.sqlite")); database.exec(sql); } finally { database.close(); }
 }
+
+test("schema 6 snapshots rebuild checkpoint bytes and reject broken chunk ranges", () => {
+  const f = fixture();
+  try {
+    f.store.close();
+    const db = new DatabaseSync(join(f.volume, "work.sqlite"), {enableForeignKeyConstraints:true});
+    upgradeWorkDatabaseToV6(db, NOW);
+    db.prepare("INSERT INTO run_output_chunks VALUES(?,1,0,'text',?)").run(f.runId, JSON.stringify({data:"正文"}));
+    db.close();
+    const snapshot = WorkHistorySnapshot.open(f.volume, f.scope); assert.ok(snapshot); assert.equal(snapshot.schemaVersion, 6);
+    const target = join(f.root, "target6"); cpSync(f.volume, target, {recursive:true});
+    try { snapshot.rebuild(target, "work-target", new Map([[CONTEXT,"context-target"]])); } finally { snapshot.close(); }
+    const restored = WorkHistorySnapshot.open(target, {sourceWorkId:"work-target",contextIds:new Set(["context-target"]),scratchDirectory:f.root}); assert.ok(restored); restored.close();
+    const targetDb = new DatabaseSync(join(target, "work.sqlite"));
+    assert.deepEqual(targetDb.prepare("SELECT payload_json FROM run_output_chunks").get()?.payload_json, JSON.stringify({data:"正文"}));
+    targetDb.close();
+    for (const sql of ["UPDATE run_output_chunks SET part=1", `UPDATE run_output_chunks SET part=0,payload_json='{"data":null}'`, `UPDATE run_output_chunks SET payload_json='{"data":"ok","extra":1}'`]) {
+      edit(target, sql);
+      assert.throws(() => WorkHistorySnapshot.open(target, {sourceWorkId:"work-target",contextIds:new Set(["context-target"]),scratchDirectory:f.root}), WorkHistoryValidationError);
+    }
+  } finally { f.close(); }
+});
 
 test("schema4 snapshot reads committed WAL without migration or source mutation", () => {
   const f = legacyFixture();

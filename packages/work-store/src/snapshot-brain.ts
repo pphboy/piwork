@@ -32,7 +32,7 @@ function model(value: unknown): boolean {
 
 /** Validate platform relationships on a read-only scratch DB. Never interpret user databases or execute source SQL. */
 export function validateBrainHistory(database: DatabaseSync, workId: string, contextIds: ReadonlySet<string>): void {
-  const current = database.prepare("SELECT version FROM schema_migrations").get()?.version === 5;
+  const current = Number(database.prepare("SELECT version FROM schema_migrations").get()?.version) >= 5;
   const feedback = new FeedbackStore(database, current ? new MemoryStore(database) : undefined);
   const candidateFor = (id: string): Record<string, unknown> | null => {
     const row = database.prepare("SELECT package_submission_json FROM agent_requests WHERE request_id=? AND work_id=?").get(id, workId);

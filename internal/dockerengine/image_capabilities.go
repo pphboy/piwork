@@ -45,7 +45,7 @@ func validStoredCapabilities(value imagestatic.Capabilities, identity imagestati
 	}
 	switch kind {
 	case "agent":
-		return (value.WorkHistorySchema == 4 || value.WorkHistorySchema == 5) && value.PackageHelper && value.ServiceMCP && validDigest(value.PackageHelperSHA256) && validDigest(value.ServiceMCPSHA256)
+		return (value.WorkHistorySchema == 4 || value.WorkHistorySchema == 5 || value.WorkHistorySchema == 6) && value.PackageHelper && value.ServiceMCP && validDigest(value.PackageHelperSHA256) && validDigest(value.ServiceMCPSHA256)
 	case "file":
 		return value.FileHelper && validDigest(value.FileHelperSHA256)
 	case "snapshot":

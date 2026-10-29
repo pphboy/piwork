@@ -264,7 +264,7 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, op
 		_, wal := tree.Paths["work.sqlite-wal"]
 		_, shm := tree.Paths["work.sqlite-shm"]
 		_, memory := tree.Paths["memory.sqlite"]
-		if wal || shm || memory && spec.Compatibility.WorkHistorySchema == 5 || string(spec.ActiveContext) != "null" {
+		if wal || shm || memory && spec.Compatibility.WorkHistorySchema >= 5 || string(spec.ActiveContext) != "null" {
 			return workhistory.ErrInvalid
 		}
 	}
@@ -279,7 +279,7 @@ func verifyPackageHistory(ctx context.Context, verified workpackage.Verified, op
 	}
 	defer os.RemoveAll(temporary)
 	managedFiles := []string{"work.sqlite", "work.sqlite-wal", "work.sqlite-shm"}
-	if spec.Compatibility.WorkHistorySchema == 5 {
+	if spec.Compatibility.WorkHistorySchema >= 5 {
 		managedFiles = append(managedFiles, "memory.sqlite")
 		for _, name := range []string{"work.sqlite-journal", "memory.sqlite-journal"} {
 			if _, exists := tree.Paths[name]; exists {

@@ -35,6 +35,10 @@ type cachedImageFixture struct {
 }
 
 func cacheImage(t *testing.T, marker string) *cachedImageFixture {
+	return cacheImageWithHistory(t, marker, "4")
+}
+
+func cacheImageWithHistory(t *testing.T, marker, history string) *cachedImageFixture {
 	t.Helper()
 	elf := make([]byte, 128)
 	copy(elf, "\x7fELF")
@@ -72,7 +76,7 @@ func cacheImage(t *testing.T, marker string) *cachedImageFixture {
 		"usr/local/include/node/node_version.h":                               []byte("#define NODE_MODULE_VERSION 137\n"),
 		"workspace/node_modules/@earendil-works/pi-coding-agent/package.json": []byte(`{"version":"0.86.1"}`)})
 	labels := nativeLabels()
-	labels["io.piwork.work-history.schema"], labels["io.piwork.run-model.contract"], labels["io.piwork.work-feedback.contract"], labels["fixture.marker"] = "4", "1", "1", marker
+	labels["io.piwork.work-history.schema"], labels["io.piwork.run-model.contract"], labels["io.piwork.work-feedback.contract"], labels["fixture.marker"] = history, "1", "1", marker
 	config, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "config": map[string]any{"Labels": labels, "User": "10001:10001", "Entrypoint": []string{"node", "/workspace/apps/agentd/dist/main.js"}}, "rootfs": map[string]any{"type": "layers", "diff_ids": []string{fmt.Sprintf("sha256:%x", sha256.Sum256(layer))}}})
 	manifest, _ := json.Marshal([]map[string]any{{"Config": "config.json", "Layers": []string{"layer.tar"}}})
 	return &cachedImageFixture{id: fmt.Sprintf("sha256:%x", sha256.Sum256(config)), archive: archive(map[string][]byte{"config.json": config, "manifest.json": manifest, "layer.tar": layer}), labels: labels}
@@ -386,10 +390,17 @@ func TestStoredCapabilitiesRequireCompleteValidatedFacts(t *testing.T) {
 		t.Fatal("missing executable accepted")
 	}
 	modified = capability
-	modified.WorkHistorySchema = 5
-	if !validStoredCapabilities(modified, capability.Identity, "agent") {
-		t.Fatal("supported history version rejected")
+	for _, schema := range []int64{4, 5, 6} {
+		modified.WorkHistorySchema = schema
+		if !validStoredCapabilities(modified, capability.Identity, "agent") {
+			t.Fatal("supported history version rejected", schema)
+		}
 	}
+	modified.WorkHistorySchema = 7
+	if validStoredCapabilities(modified, capability.Identity, "agent") {
+		t.Fatal("unknown history version accepted")
+	}
+	modified = capability
 	modified.PackageHelperSHA256 = "sha256:broken"
 	if validStoredCapabilities(modified, capability.Identity, "agent") {
 		t.Fatal("bad digest accepted")
@@ -402,25 +413,29 @@ func TestStoredCapabilitiesRequireCompleteValidatedFacts(t *testing.T) {
 }
 
 func TestImageCachePersistsAcrossInspectorRestart(t *testing.T) {
-	image := cacheImage(t, "persisted")
-	first, engine := cachedInspector(t, []*cachedImageFixture{image}, nil, nil)
-	if _, err := first.InspectNativeAgent(context.Background(), image.id); err != nil {
-		t.Fatal(err)
-	}
-	if image.saves.Load() != 1 {
-		t.Fatal("first verification missing")
-	}
-	if err := first.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	second, err := NewImageInspector(context.Background(), engine, first.root, first.registry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer second.Close(context.Background())
-	capability, err := second.InspectNativeAgent(context.Background(), image.id)
-	if err != nil || !validStoredCapabilities(capability, capability.Identity, "agent") || image.saves.Load() != 1 {
-		t.Fatal("durable result not reused", err, image.saves.Load())
+	for _, history := range []string{"4", "5", "6"} {
+		t.Run("schema-"+history, func(t *testing.T) {
+			image := cacheImageWithHistory(t, "persisted", history)
+			first, engine := cachedInspector(t, []*cachedImageFixture{image}, nil, nil)
+			if _, err := first.InspectNativeAgent(context.Background(), image.id); err != nil {
+				t.Fatal(err)
+			}
+			if image.saves.Load() != 1 {
+				t.Fatal("first verification missing")
+			}
+			if err := first.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			second, err := NewImageInspector(context.Background(), engine, first.root, first.registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer second.Close(context.Background())
+			capability, err := second.InspectNativeAgent(context.Background(), image.id)
+			if err != nil || !validStoredCapabilities(capability, capability.Identity, "agent") || image.saves.Load() != 1 {
+				t.Fatal("durable result not reused", err, image.saves.Load())
+			}
+		})
 	}
 }
 

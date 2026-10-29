@@ -6,6 +6,168 @@ const metadata={sessionId:'session-1',workId:'work-1',modelPreference:null,think
 const text=(id:string,order:number,value:string,offset=0,total?:number)=>({entryId:id,entryOrder:order,role:'assistant',runId:'',blockId:`${id}-0`,blockIndex:0,blockCount:1,type:'text',byteOffset:offset,totalBytes:total??new TextEncoder().encode(value).length,text:value,complete:offset+new TextEncoder().encode(value).length===(total??new TextEncoder().encode(value).length)});
 const page=(segments:any[],nextCursor:string|null=null)=>({contractVersion:1,session:metadata,snapshotId:'snapshot',segments,runs:[],nextCursor,hasMore:!!nextCursor});
 
+test('older live cancelled turn remains before newly loaded later turns',()=>{
+ const projection=new HistoryProjection();
+ const user=(runId:string,order:number,value:string)=>({...text(`${runId}-user`,order,value),role:'user',runId,blockId:`${runId}-user-0`});
+ const previous=[{id:'old-user',runId:'old',role:'user',text:'Earlier'},
+   {id:'old-tool',runId:'old',role:'assistant',text:'',tool:{id:'old-tool',name:'read',status:'Completed'}},
+   {id:'one-user',runId:'one',role:'user',text:'1'},
+   {id:'four-user',runId:'four',role:'user',text:'4'}];
+ projection.merge(page([user('one',5,'1'),user('four',6,'4')]));
+ assert.deepEqual(projection.project(previous).map((m:any)=>m.runId),['old','old','one','four']);
+});
+
+test('snapshot-local positions are aligned by shared entry identity',()=>{
+ const projection=new HistoryProjection();
+ projection.merge({...page([text('old',90,'old'),text('shared',91,'shared')]),snapshotId:'older'});
+ projection.merge({...page([text('shared',2,'shared'),text('new',3,'new')]),snapshotId:'newer'});
+ const messages=projection.project([]);
+ assert.deepEqual(messages.map((message:any)=>message.text),['old','shared','new']);
+ assert.ok(messages.every((message:any)=>!message.historyOrderUnconfirmed));
+});
+
+test('unrelated snapshots retain content and mark uncertain relative order',()=>{
+ const projection=new HistoryProjection();
+ projection.merge({...page([text('one',100,'same')]),snapshotId:'first'});
+ projection.merge({...page([text('two',0,'same')]),snapshotId:'second'});
+ const messages=projection.project([]);
+ assert.equal(messages.length,2);assert.ok(messages.every((message:any)=>message.historyOrderUnconfirmed));
+});
+
+test('terminal readback without a complete saved reply keeps live output',()=>{
+ for(const segments of [[],[{...text('partial',2,'later',5,10),runId:'run-1'}]]){
+  const projection=new HistoryProjection();projection.merge(page(segments));
+  const result=projection.project([{id:'run-1-text-3',runId:'run-1',role:'assistant',text:'Already visible'}],new Set(['run-1']));
+  assert.ok(result.some((message:any)=>message.text==='Already visible'));
+ }
+});
+
+test('matching checkpoint identity merges verified live and saved byte ranges without losing content',()=>{
+ const id='run-1-text-3';
+ for(const scenario of [
+  {saved:'你好',offset:0,total:12,live:'你好世界',expected:'你好世界'},
+  {saved:'世界',offset:6,total:12,live:'你好',expected:'你好世界'},
+  {saved:'你好世界',offset:0,total:12,live:'你好',expected:'你好世界'},
+  {saved:'你好',offset:0,total:6,live:'你好世界',expected:'你好世界'},
+ ]){
+  const projection=new HistoryProjection();
+  projection.merge(page([{...text('checkpoint',0,scenario.saved,scenario.offset,scenario.total),runId:'run-1',blockId:id}]));
+  const messages=projection.project([{id,runId:'run-1',role:'assistant',text:scenario.live}],new Set(['run-1']));
+  assert.equal(messages.length,1);assert.equal(messages[0].text,scenario.expected);
+  const reread=projection.project(messages,new Set(['run-1']));assert.equal(reread.length,1);assert.equal(reread[0].text,scenario.expected);
+ }
+});
+
+test('conflicting or separated ranges with the same event identity keep both pieces explicit',()=>{
+ const id='run-1-text-3';
+ for(const scenario of [{saved:'其他',offset:0,total:6,live:'你好'}, {saved:'世界',offset:6,total:12,live:'你'}]){
+  const projection=new HistoryProjection();projection.merge(page([{...text('checkpoint',0,scenario.saved,scenario.offset,scenario.total),runId:'run-1',blockId:id}]));
+  const messages=projection.project([{id,runId:'run-1',role:'assistant',text:scenario.live}],new Set(['run-1']));
+  assert.equal(messages.length,2);assert.ok(messages.some((message:any)=>message.text===scenario.live&&message.historyRecoveryUnconfirmed));
+  assert.ok(messages.some((message:any)=>message.text===scenario.saved));assert.equal(new Set(messages.map((message:any)=>message.id)).size,2);
+ }
+});
+
+test('terminal readback does not discard unmatched text just because a Run has another saved answer',()=>{
+ const projection=new HistoryProjection();projection.merge(page([{...text('saved',2,'Different saved answer'),runId:'run-1'}]));
+ const result=projection.project([{id:'run-1-text-3',runId:'run-1',role:'assistant',text:'Already visible'}],new Set(['run-1']));
+ assert.equal(result.find((message:any)=>message.text==='Already visible')?.historyRecoveryUnconfirmed,true);
+ assert.ok(result.some((message:any)=>message.text==='Different saved answer'));
+});
+
+test('equal text in an old history without event identity is retained as unconfirmed',()=>{
+ const projection=new HistoryProjection();projection.merge(page([{...text('saved',0,'Same'),runId:'run-1'}]));
+ const result=projection.project([{id:'run-1-text-3',runId:'run-1',role:'assistant',text:'Same'}],new Set(['run-1']));
+ assert.equal(result.length,2);assert.ok(result.some((message:any)=>message.historyRecoveryUnconfirmed));
+});
+
+test('the same message identifier in another Run cannot suppress live output',()=>{
+ const projection=new HistoryProjection();projection.merge(page([{...text('saved',0,'saved'),blockId:'shared',runId:'run-1'}]));
+ const result=projection.project([{id:'shared',runId:'run-2',role:'assistant',text:'live'}],new Set(['run-2']));
+ assert.equal(result.length,2);assert.ok(result.some((message:any)=>message.runId==='run-2'&&message.text==='live'));
+});
+
+test('server marks unmatched checkpoint content as unconfirmed in the message',()=>{
+ const projection=new HistoryProjection();
+ projection.merge(page([{...text('saved',0,'已有历史'),runId:'run-1'},{...text('checkpoint',1,'已输出内容'),runId:'run-1',recoveryUnconfirmed:true}]));
+ const messages=projection.project([]);
+ assert.equal(messages.length,2);assert.equal(messages[0].historyRecoveryUnconfirmed,false);assert.equal(messages[1].historyRecoveryUnconfirmed,true);
+});
+
+test('verified SDK prefix and checkpoint tail do not repeat the same final result',()=>{
+ const runId='run-1',projection=new HistoryProjection();
+ const sdk={...text('sdk',0,'开头'),runId};
+ const tail={...text('tail',1,'后续'),runId,blockId:`${runId}-text-4-remaining-6`};
+ const final={...text(`${runId}-final`,2,'开头后续'),runId,type:'run-result'};
+ projection.merge(page([sdk,tail,final]));
+ const messages=projection.project([]);assert.deepEqual(messages.map((message:any)=>message.text),['开头','后续']);
+ assert.deepEqual(projection.project(messages).map((message:any)=>message.text),['开头','后续']);
+ const live=projection.project([{id:`${runId}-text-4`,runId,role:'assistant',text:'开头后续'}],new Set([runId]));
+ assert.deepEqual(live.map((message:any)=>message.text),['开头','后续']);
+});
+
+test('equal prose without a verified checkpoint boundary keeps distinct results',()=>{
+ const runId='run-1',projection=new HistoryProjection();
+ projection.merge(page([{...text('sdk',0,'开头'),runId},{...text('tail',1,'后续'),runId},{...text(`${runId}-final`,2,'开头后续'),runId,type:'run-result'}]));
+ assert.equal(projection.project([]).length,3);
+});
+
+test('a verified SDK prefix and checkpoint tail replace their live stream even without a final result',()=>{
+ const runId='run-1',projection=new HistoryProjection();
+ projection.merge(page([{...text('sdk',0,'开头'),runId},{...text('tail',1,'后续'),runId,blockId:`${runId}-text-4-remaining-6`} ]));
+ const live=[{id:`${runId}-text-4`,runId,role:'assistant',text:'开头后续'}];
+ assert.deepEqual(projection.project(live,new Set([runId])).map((message:any)=>message.text),['开头','后续']);
+});
+
+test('a complete result avoids duplicating an incomplete verified checkpoint and switches when it is complete',()=>{
+ const runId='run-1',projection=new HistoryProjection(),blockId=`${runId}-text-4-remaining-6`;
+ const sdk={...text('sdk',0,'开头'),runId},tail={...text('tail',1,'续',3,6),runId,blockId};
+ const final={...text(`${runId}-final`,2,'开头后续'),runId,type:'run-result'};
+ projection.merge(page([sdk,tail,final]));
+ const partial=projection.project([]);assert.deepEqual(partial.map((message:any)=>message.text),['开头后续']);
+ projection.merge(page([{...text('tail',1,'后',0,6),runId,blockId}]));
+ assert.deepEqual(projection.project(partial).map((message:any)=>message.text),['开头','后续']);
+});
+
+test('same Run with tools never drops a repeated live text merely because another turn matches',()=>{
+ const projection=new HistoryProjection();
+ projection.merge(page([{...text('saved',0,'Same'),runId:'run-1'}, {...text('tool',1,''),runId:'run-1',type:'tool-call',toolCallId:'call-1',toolName:'read'}]));
+ const live=[{id:'run-1-text-5',runId:'run-1',role:'assistant',text:'Same'}, {id:'run-1-tool-call-1',runId:'run-1',role:'assistant',text:'',tool:{id:'call-1',name:'read',status:'Running'}}];
+ const result=projection.project(live,new Set(['run-1']));
+ assert.equal(result.filter((message:any)=>message.text==='Same').length,2);
+ assert.equal(result.filter((message:any)=>message.tool).length,1);
+});
+
+test('verified event coordinates deduplicate repeated SDK text around a tool by identity',()=>{
+ const runId='run-1',projection=new HistoryProjection();
+ projection.merge(page([
+  {...text('first',0,'相同'),runId,streamId:`${runId}-text-1`,streamOffset:0},
+  {...text('tool',1,''),runId,type:'tool-call',toolCallId:'call-1',toolName:'read'},
+  {...text('second',2,'相同'),runId,streamId:`${runId}-text-5`,streamOffset:0},
+ ]));
+ const live=[{id:`${runId}-text-1`,runId,role:'assistant',text:'相同'},
+  {id:`${runId}-tool-call-1`,runId,role:'assistant',text:'',tool:{id:'call-1',name:'read',status:'Running'}},
+  {id:`${runId}-text-5`,runId,role:'assistant',text:'相同'}];
+ const result=projection.project(live,new Set([runId]));
+ assert.deepEqual(result.map((message:any)=>message.tool?'tool':message.text),['相同','tool','相同']);
+});
+
+test('verified stream coordinates require complete matching byte coverage and the same Run',()=>{
+ const runId='run-1',id=`${runId}-text-1`;
+ for(const scenario of [
+  {segments:[{...text('saved',0,'前',0,6),runId,streamId:id,streamOffset:0}],live:'前后'},
+  {segments:[{...text('saved',0,'不同'),runId,streamId:id,streamOffset:0}],live:'前后'},
+  {segments:[{...text('saved',0,'前后'),runId:'other',streamId:id,streamOffset:0}],live:'前后'},
+ ]){
+  const projection=new HistoryProjection();projection.merge(page(scenario.segments));
+  const result=projection.project([{id,runId,role:'assistant',text:scenario.live}],new Set([runId]));
+  assert.ok(result.some((message:any)=>message.text===scenario.live&&message.runId===runId&&!message.historyStored));
+ }
+ const projection=new HistoryProjection();
+ projection.merge(page([{...text('prefix',0,'前'),runId,streamId:id,streamOffset:0},{...text('tail',1,'后'),runId,streamId:id,streamOffset:3}]));
+ assert.deepEqual(projection.project([{id,runId,role:'assistant',text:'前后'}],new Set([runId])).map((message:any)=>message.text),['前','后']);
+});
+
 test('history fragments merge byte overlaps, preserve distinct equal prose, and mark gaps',()=>{
  const projection=new HistoryProjection();
  projection.merge(page([text('one',0,'后半',6,12),text('two',1,'Same'),text('three',2,'Same')]));
@@ -61,31 +223,173 @@ test('late history after identity reset never enters the next account',async t=>
  assert.equal(adapter.state.works.length,0);
 });
 
-test('modern 410 recovery reads original Run ranges and stops with one final answer',async t=>{
+test('Core 416 cursor recovery reads original Run ranges and stops with one final answer',async t=>{
  const requests:string[]=[];
  const ref={workId:'work-1',sessionId:'session-1',runId:'run-1',content:'result'};
  const raw={workId:'work-1',sessionId:'session-1',runId:'run-1',state:4,resultRef:ref};
  t.mock.method(globalThis,'fetch',async(input:any)=>{
   const url=new URL(String(input),'http://desktop.test');requests.push(url.pathname+url.search);
   if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
-  if(url.pathname.endsWith('/events')){assert.equal(url.searchParams.get('responseProfile'),'history-v1');return Response.json({code:'CURSOR_EXPIRED'},{status:410});}
+  if(url.pathname.endsWith('/events')){assert.equal(url.searchParams.get('responseProfile'),'history-v1');return Response.json({code:'CURSOR_EXPIRED'},{status:416});}
   if(url.pathname.endsWith('/runs/run-1')){assert.equal(url.searchParams.get('responseProfile'),'history-v1');return Response.json(raw);}
-  if(url.pathname.endsWith('/history')){assert.equal(url.searchParams.get('runId'),'run-1');return Response.json(page([{...text('saved',0,'Saved final answer'),runId:'run-1'}]));}
+  if(url.pathname.endsWith('/history')){assert.equal(url.searchParams.get('runId'),'run-1');return Response.json(page([{...text('saved',0,'Saved final answer'),runId:'run-1',streamId:'run-1-text-1',streamOffset:0}]));}
   throw new Error(`Unexpected ${url}`);
  });
  const adapter=new DesktopAdapter();adapter.state.signedIn=true;
  const run={id:'run-1',sessionId:'session-1',status:'running',cursor:1,created:''};
- adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{runId:'run-1',role:'assistant',text:'live partial'}]}],services:[],run}];
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{id:'run-1-text-1',runId:'run-1',role:'assistant',text:'Saved final'}]}],services:[],run}];
  t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
  const session=adapter.getWork('work-1').sessions[0];assert.deepEqual(session.messages.map((m:any)=>m.text),['Saved final answer']);assert.equal(run.status,'succeeded');
  assert.equal(adapter.historyObservers.size,0);assert.equal(adapter.reconnects.size,0);assert.ok(requests.every(path=>!path.endsWith('/sessions/session-1')));
  assert.ok(requests[0]!.endsWith('/history-capabilities'));
 });
 
+test('an unrelated 416 event error does not start cursor recovery',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ const run:any={id:'run-1',sessionId:'session-1',status:'running',cursor:1,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[],run}];
+ let historyReads=0;t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const url=new URL(String(input),'http://desktop.test');
+  if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
+  if(url.pathname.endsWith('/events'))return Response.json({code:'OTHER_RANGE',message:'Different range error'},{status:416});
+  if(url.pathname.endsWith('/history'))historyReads++;
+  throw new Error(`Unexpected ${url}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ assert.equal(run.historyRecovery,undefined);assert.equal(historyReads,0);assert.match(String(run.error),/Different range error/);
+});
+
+test('410 recovery with an empty saved result keeps the already observed reply',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ const run={id:'run-1',sessionId:'session-1',status:'running',cursor:1,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{id:'run-1-text-1',runId:'run-1',role:'assistant',text:'Already seen'}]}],services:[],run}];
+ const requests:string[]=[];
+ t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const url=new URL(String(input),'http://desktop.test');requests.push(url.pathname);
+  if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
+  if(url.pathname.endsWith('/events'))return Response.json({code:'CURSOR_EXPIRED'},{status:410});
+  if(url.pathname.endsWith('/runs/run-1'))return Response.json({workId:'work-1',sessionId:'session-1',runId:'run-1',state:6,resultRef:null});
+  if(url.pathname.endsWith('/history'))return Response.json(page([]));
+  throw new Error(`Unexpected ${url}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ const messages=adapter.getWork('work-1').sessions[0].messages;
+ assert.equal(messages.length,1);assert.equal(messages[0].text,'Already seen');assert.equal(messages[0].historyRecoveryUnconfirmed,true);
+ assert.equal(run.status,'cancelled');assert.equal(requests.filter(path=>path.endsWith('/events')).length,1);
+});
+
+test('legacy Agent 410 recovery retains already visible text and its original Run when history is empty',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.historySupport.set('work-1',false);
+ const run:any={id:'run-1',sessionId:'session-1',status:'running',cursor:7,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{id:'run-1-text-1',runId:'run-1',role:'assistant',text:'Already seen'}]}],services:[],run}];
+ const methods:string[]=[];
+ t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{
+  const path=new URL(String(input),'http://desktop.test').pathname;methods.push(init?.method??'GET');
+  if(path.endsWith('/events'))return Response.json({code:'CURSOR_EXPIRED'},{status:410});
+  if(path.endsWith('/runs/run-1'))return Response.json({workId:'work-1',sessionId:'session-1',runId:'run-1',state:6,finalText:''});
+  if(path.endsWith('/sessions/session-1'))return Response.json({messages:[]});
+  throw new Error(`Unexpected ${path}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ const messages=adapter.getWork('work-1').sessions[0].messages;
+ assert.equal(run.status,'cancelled');assert.equal(messages.length,1);assert.equal(messages[0].text,'Already seen');
+ assert.equal(messages[0].runId,'run-1');assert.equal(messages[0].historyRecoveryUnconfirmed,true);
+ assert.ok(methods.every(method=>method==='GET'));
+});
+
+test('legacy final result retains the actual Run identity even when another Run has equal text',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.historySupport.set('work-1',false);
+ const run:any={id:'run-1',sessionId:'session-1',status:'running',cursor:7,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[],run}];
+ t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const path=new URL(String(input),'http://desktop.test').pathname;
+  if(path.endsWith('/events'))return Response.json({code:'CURSOR_EXPIRED'},{status:410});
+  if(path.endsWith('/runs/run-1'))return Response.json({workId:'work-1',sessionId:'session-1',runId:'run-1',state:6,finalText:'Equal'});
+  if(path.endsWith('/sessions/session-1'))return Response.json({messages:[{entryId:'old',runId:'old',role:'assistant',blocks:[{blockId:'old-0',type:'text',text:'Equal'}]}]});
+  throw new Error(`Unexpected ${path}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ const messages=adapter.getWork('work-1').sessions[0].messages;
+ assert.deepEqual(messages.map((message:any)=>[message.runId,message.text]),[['old','Equal'],['run-1','Equal']]);
+ assert.equal(messages[1].id,'run-1-final');
+});
+
+test('legacy active Run restoration keeps saved output when replay and history read fail',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[]}];
+ let historyReads=0;
+ t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const path=new URL(String(input),'http://desktop.test').pathname;
+  if(path.endsWith('/history-capabilities'))return Response.json({code:'HISTORY_UNSUPPORTED'},{status:501});
+  if(path.endsWith('/chat-image-capabilities'))return Response.json({code:'UNSUPPORTED'},{status:501});
+  if(path.endsWith('/sessions/session-1')){historyReads++;return historyReads===1?Response.json({session:metadata,messages:[{entryId:'saved',runId:'run-1',role:'assistant',blocks:[{blockId:'saved-0',type:'text',text:'Already saved'}]}],runs:[{runId:'run-1',sessionId:'session-1',state:2}]}):Response.json({code:'CORE_UNAVAILABLE'},{status:503});}
+  if(path.endsWith('/events'))return Response.json({code:'CURSOR_EXPIRED'},{status:410});
+  if(path.endsWith('/runs/run-1'))return Response.json({runId:'run-1',sessionId:'session-1',state:2});
+  throw new Error(`Unexpected ${path}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.loadSession('work-1','session-1');
+ for(let i=0;i<50&&historyReads<2;i++)await new Promise<void>(resolve=>setImmediate(resolve));
+ assert.equal(historyReads,2);assert.ok(adapter.getWork('work-1').sessions[0].messages.some((message:any)=>message.text==='Already saved'));
+});
+
+test('legacy replay never appends new deltas into already saved assistant text',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.historySupport.set('work-1',false);
+ const run:any={id:'run-1',sessionId:'session-1',status:'running',cursor:0,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{id:'sdk-text',runId:'run-1',role:'assistant',text:'Saved text',historyStored:true}]}],services:[],run}];
+ const events=[{sequence:1,kind:{$case:'text',text:{delta:'New '}}},{sequence:2,kind:{$case:'text',text:{delta:'text'}}}].map(event=>JSON.stringify(event)).join('\n')+'\n';
+ t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const path=new URL(String(input),'http://desktop.test').pathname;
+  if(path.endsWith('/events'))return new Response(events);
+  if(path.endsWith('/runs/run-1'))return Response.json({runId:'run-1',sessionId:'session-1',state:2});
+  throw new Error(`Unexpected ${path}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ const messages=adapter.getWork('work-1').sessions[0].messages;
+ assert.deepEqual(messages.map((message:any)=>message.text),['Saved text','New text']);
+ assert.equal(messages[1].historyRecoveryUnconfirmed,true);
+});
+
+test('410 recovery failure preserves the original text and exposes the read failure',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ const run={id:'run-1',sessionId:'session-1',status:'running',cursor:1,created:''};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[{id:'run-1-text-1',runId:'run-1',role:'assistant',text:'Already seen'}]}],services:[],run}];
+ t.mock.method(globalThis,'fetch',async(input:any)=>{
+  const url=new URL(String(input),'http://desktop.test');
+  if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
+  if(url.pathname.endsWith('/events'))return Response.json({code:'CURSOR_EXPIRED'},{status:410});
+  if(url.pathname.endsWith('/runs/run-1'))return Response.json({workId:'work-1',sessionId:'session-1',runId:'run-1',state:6,resultRef:null});
+  if(url.pathname.endsWith('/history'))return Response.json({code:'RUNTIME_UNAVAILABLE',message:'History unavailable'},{status:503});
+  throw new Error(`Unexpected ${url}`);
+ });
+ t.after(()=>adapter.clearIdentity());await adapter.resumeRun('work-1');
+ assert.equal(adapter.getWork('work-1').sessions[0].messages[0].text,'Already seen');
+ assert.match((run as any).error,/History unavailable/);assert.equal(run.status,'cancelled');
+});
+
 test('accepted user identity survives durable text blocks without duplicating a live prompt',()=>{
  const projection=new HistoryProjection();projection.merge(page([{...text('run-1-user',0,'First'),role:'user',runId:'run-1',blockId:'run-1-user-0',blockCount:2},{...text('run-1-user',0,' second'),role:'user',runId:'run-1',blockId:'run-1-user-1',blockIndex:1,blockCount:2}]));
  const saved=projection.project([{id:'run-1-user',runId:'run-1',role:'user',text:'First second'}]);
  assert.equal(saved.length,1);assert.equal(saved[0].id,'run-1-user');assert.equal(saved[0].text,'First second');assert.equal(saved[0].historyIncomplete,false);
+});
+
+test('submission snapshot is anchored before acceptance and retains its original identity after lost response',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[]}];
+ t.after(()=>adapter.clearIdentity());
+ t.mock.method(adapter,'assertCoreReady',()=>{});t.mock.method(adapter,'modelReady',()=>true);t.mock.method(adapter,'supportsHistory',async()=>true);t.mock.method(adapter,'resumeRun',async()=>{});
+ let rejectPost!:(error:Error)=>void,originalKey='';const post=new Promise((_,reject)=>{rejectPost=reject;});
+ t.mock.method(adapter,'request',async(path:string,method:string,body:any)=>{
+  if(method==='POST'){originalKey=body.submissionKey;return post;}
+  if(path.includes('/submissions/'))return {kind:'run',status:'accepted',key:originalKey,run:{workId:'work-1',sessionId:'session-1',runId:'run-original',submissionKey:originalKey,state:4}};
+  throw new Error(`Unexpected request ${path}`);
+ });
+ t.mock.method(adapter,'loadSession',async()=>{});
+ const sending=adapter.send('work-1','session-1','Original',false,'text');
+ const message=adapter.getWork('work-1').sessions[0].messages[0];assert.equal(message.text,'Original');assert.equal(message.submission.phase,'sending');
+ await Promise.resolve();rejectPost(Object.assign(new Error('response lost'),{code:'RESULT_UNKNOWN'}));await assert.rejects(sending);
+ assert.equal(message.submission.phase,'unknown');assert.equal(message.submission.key,originalKey);
+ await adapter.recoverChatSubmission('work-1');
+ assert.equal(message.runId,'run-original');assert.equal(message.submission.phase,'accepted');assert.equal(adapter.getWork('work-1').sessions[0].messages.length,1);assert.equal(adapter.chatSubmissions.size,0);
 });
 
 test('original-key recovery negotiates a cleared history capability before reading acceptance',async t=>{

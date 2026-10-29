@@ -14,7 +14,7 @@ export const names = { core: 'piwork-core', agent: 'piwork-agentd', fileHelper: 
 export const binaries = { core: ['piwork-core'], agent: ['piwork-package-helper', 'piwork-service-mcp'], fileHelper: ['piwork-file-helper'], snapshotHelper: ['piwork-snapshot-helper'] };
 export const protocols = {
   core: {},
-  agent: { 'io.piwork.agent.protocol': 'v2', 'io.piwork.package-helper.contract': '2', 'io.piwork.service-mcp.contract': '1', 'io.piwork.work-history.schema': '5', 'io.piwork.run-model.contract': '1', 'io.piwork.work-feedback.contract': '1' },
+  agent: { 'io.piwork.agent.protocol': 'v2', 'io.piwork.package-helper.contract': '2', 'io.piwork.service-mcp.contract': '1', 'io.piwork.work-history.schema': '6', 'io.piwork.run-model.contract': '1', 'io.piwork.work-feedback.contract': '1' },
   fileHelper: { 'piwork.file_protocol': '1' }, snapshotHelper: { 'piwork.snapshot_protocol': '1' },
 };
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');

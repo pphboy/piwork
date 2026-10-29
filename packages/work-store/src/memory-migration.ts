@@ -6,7 +6,7 @@ import { validateLegacyWorkDatabase, migrateWorkDatabase } from "./migrations.js
 import { validateBrainHistory } from "./snapshot-brain.js";
 
 export interface HistoryMigration {
-  readonly operationId: string; readonly workId: string; readonly fromSchema: 4; readonly toSchema: 5;
+  readonly operationId: string; readonly workId: string; readonly fromSchema: 4 | 5; readonly toSchema: 5 | 6;
   readonly storeId: string; readonly backupManifestDigest: string;
 }
 

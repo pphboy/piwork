@@ -214,11 +214,27 @@ test('R3 expired cursor terminal readback replaces history exactly once and neve
   const { page, requests } = await fixture(t, (r): Reply | undefined => {
     if (r.path.endsWith('/events')) return { status: 410 };
     if (r.path.endsWith('/runs/original-run')) return { json: { run: { state: 4, finalText: 'final answer' } } };
-    if (r.path.endsWith('/sessions/session-1')) return { json: { messages: [{ role: 'user', text: 'original prompt' }, { role: 'assistant', text: 'final answer' }] } };
+    if (r.path.endsWith('/sessions/session-1')) return { json: { messages: [{ entryId:'original-user',runId:'original-run',role:'user',text:'original prompt' }, { entryId:'original-answer',runId:'original-run',role:'assistant',blocks:[{blockId:'original-run-final',type:'text',text:'final answer'}] }] } };
   });
   await beginExpiredRun(page); await page.waitForTimeout(2200);
   const value = await api(page, `return adapter.getWork('work-1');`); assert.equal(value.run.status, 'succeeded'); assert.equal(value.run.error, undefined); assert.equal(value.sessions[0].messages.filter((m: any) => m.text === 'final answer').length, 1);
   assert.equal(requests.filter(r => r.path.endsWith('/events')).length, 1); assert.equal(requests.filter(r => r.method === 'POST').length, 0); assert(requests.some(r => r.path.endsWith('/sessions/session-1')));
+});
+
+test('legacy 410 recovery keeps visible partial reply with its cancelled Run and does not submit', async t => {
+  const { page, requests } = await fixture(t, (r): Reply | undefined => {
+    if (r.path.endsWith('/history-capabilities')) return { status:501,json:{code:'HISTORY_UNSUPPORTED'} };
+    if (r.path.endsWith('/events')) return { status:410,json:{code:'CURSOR_EXPIRED'} };
+    if (r.path.endsWith('/runs/original-run')) return { json:{run:{state:6,finalText:''}} };
+    if (r.path.endsWith('/sessions/session-1')) return { json:{messages:[]} };
+  });
+  await api(page, `const session=adapter.getWork('work-1').sessions.find(s=>s.id==='session-1');session.messages=[{id:'original-user',runId:'original-run',role:'user',text:'Question'},{id:'original-run-text-1',runId:'original-run',role:'assistant',text:'Partial reply'}];adapter.emit();`);
+  await beginExpiredRun(page);
+  await expect(page.locator('#messages')).toContainText('Partial reply');
+  await expect(page.locator('#messages')).toContainText('Run cancelled');
+  const messages=await api(page, `return adapter.getWork('work-1').sessions[0].messages;`);
+  const answer=messages.find((message:any)=>message.text==='Partial reply');assert.equal(answer.runId,'original-run');assert.equal(answer.historyRecoveryUnconfirmed,true);
+  assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
 
 test('R3 active history recovery polls serially with backoff, recovers network errors and stops at terminal', async t => {
@@ -2230,7 +2246,7 @@ for(const target of [{session:'session-1',source:{kind:'chat'}},{session:'sessio
  });
  await button(page,'tab-Chat').click();await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
  await page.locator('#composer').fill('First message');await page.locator('#composer').press('Shift+Enter');assert.equal(chatWrites(requests).length,0);await page.locator('#composer').fill('First message');
- await button(page,'send-message').click();await expect.poll(()=>submitted).toBe(true);await expect(page.locator('#app')).toContainText('Stopping the previous Run');
+ if(target.session==='session-1')await page.locator('#composer').press('Enter');else await button(page,'send-message').click();await expect.poll(()=>submitted).toBe(true);await expect(page.locator('#app')).toContainText('Stopping the previous Run');
  await page.locator('#composer').fill('Later edit');release();await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('new-run');await expect(page.locator('#composer')).toHaveValue('Later edit');
  const posts=requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST');assert.equal(posts.length,1);assert.equal(JSON.parse(posts[0]!.body).cancelRunId,'old-run');assert.equal(JSON.parse(posts[0]!.body).sessionId,'session-1');assert.equal(JSON.parse(posts[0]!.body).prompt,'First message');assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
  assert.equal(requests.filter(r=>r.path.endsWith(`/sessions/${target.session}`)&&target.session!=='session-1').length,0);
@@ -2246,9 +2262,9 @@ test('Controls timeout preserves draft and late old completion cannot send; unkn
   if(r.path.endsWith('/runs/recovered-run'))return{json:controlRun('recovered-run',4,'session-1',{kind:'chat'})};
   return controlFixture(r);
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('Keep original');await button(page,'send-message').click();await expect(page.locator('#app')).toContainText('your message was not sent');await expect(page.locator('#composer')).toHaveValue('Keep original');
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('Keep original');await button(page,'send-message').click();await expect(page.locator('#app')).toContainText('your message was not sent');await expect(page.locator('#composer')).toHaveValue('Keep original');await expect(page.locator('.message.user').filter({hasText:'Keep original'}).locator('.message-submission.failed')).toContainText('Message not sent');
  active=null;await api(page,"await adapter.loadActiveRun('work-1',true)");assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,1);await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');
- mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await page.locator('#composer').fill('Next draft');await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
+ mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await expect(page.locator('.message-submission.unknown')).toContainText('Message status unconfirmed');await page.locator('#composer').fill('Next draft');await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
  await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('recovered-run');
  assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,2);assert.equal(requests.filter(r=>r.path.includes('/runs/submissions/')).length,1);assert.ok(requests.some(r=>r.path.endsWith(`/runs/submissions/${originalKey}`)));
 });
@@ -2298,6 +2314,18 @@ test('Controls active read failure stays unconfirmed; empty, unknown commands an
  await page.locator('#composer').fill('');await button(page,'send-message').click();await page.locator('#composer').fill('/unknown');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
  await page.locator('#composer').fill('A valid message');await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});assert.equal(chatWrites(requests).length,0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
  for(const command of ['model','thinking','resume','settings']){await page.locator('#composer').fill('/'+command);await page.locator('#composer').press('Escape');await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');}
+});
+
+test('older Agent keeps ordinary Send and does not offer Stop and send',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();
+ await api(page,"adapter.getWork('work-1').run={id:'old-run',sessionId:'session-1',status:'running',cursor:0,created:''};await adapter.loadModels('work-1');");
+ await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');
+ await expect(button(page,'send-message')).toBeDisabled();
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')||r.path.endsWith('/runs')&&r.method==='POST').length,0);
 });
 
 test('Controls request pagination, filter and exact list reading position survive details and cancellation',async t=>{
@@ -2996,6 +3024,11 @@ test('Chat composer keeps a long model name and Stop and send reachable at 360px
   await page.setViewportSize({ width: 360, height: 800 });
   await button(page, 'tab-Chat').click();
   await expect(page.getByRole('button', { name: 'Stop and send', exact: true })).toBeEnabled();
+  const stopSend = page.getByRole('button', { name: 'Stop and send', exact: true });
+  await expect(stopSend).toHaveAttribute('title', 'Stop and send');
+  await expect(stopSend.locator('svg rect[fill="currentColor"]')).toHaveCount(1);
+  const alignment = await stopSend.evaluate(node => { const b=node.getBoundingClientRect(), i=node.querySelector('svg')!.getBoundingClientRect();return {x:i.left+i.width/2-b.left-b.width/2,y:i.top+i.height/2-b.top-b.height/2}; });
+  assert.ok(Math.abs(alignment.x)<1 && Math.abs(alignment.y)<1);
   await expect(page.locator('#response-settings-trigger')).toContainText(label);
   const boxes = await page.locator('#composer, #response-settings-trigger, [data-action="chat-input-options"], [data-action="send-message"]').evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect(); return { left: rect.left, right: rect.right, height: rect.height }; }));
   assert.equal(boxes.length, 4);
@@ -3374,6 +3407,28 @@ test('Focused Chat stays visible during the narrow breakpoint before resize reco
  await expect(page.locator('.work-layout')).not.toHaveClass(/narrow-chat/);
  await page.locator('main').evaluate(node=>node.dataset.layout='service-only');
  await expect(page.locator('.agent-side')).toHaveCSS('display','none');
+});
+
+test('Chat reload keeps a cancelled older turn before successful numeric messages',async t=>{
+ const segment=(runId:string,order:number,text:string)=>({entryId:`${runId}-user`,entryOrder:order,role:'user',runId,blockId:`${runId}-user-0`,blockIndex:0,blockCount:1,type:'text',text,byteOffset:0,totalBytes:new TextEncoder().encode(text).length,complete:true});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off',source:{kind:'chat'}},snapshotId:'snapshot-new',segments:[segment('one',10,'1'),segment('four',11,'4')],runs:[controlRun('one',4,'session-1',{kind:'chat'}),controlRun('four',4,'session-1',{kind:'chat'})],nextCursor:null,hasMore:false}};
+  return controlFixture(r);
+ });
+ await button(page,'tab-Chat').click();
+ await api(page,`const w=adapter.getWork('work-1'),session=w.sessions.find(s=>s.id==='session-1');
+  session.runs.push({id:'old',sessionId:session.id,status:'cancelled',cursor:0,created:''});
+  session.messages=[{id:'old-user',runId:'old',role:'user',text:'Earlier request'},
+   {id:'old-tool',runId:'old',role:'assistant',text:'',tool:{id:'old-tool',name:'read',status:'Completed',content:'Old result'}},
+   {id:'one-user',runId:'one',role:'user',text:'1'},{id:'four-user',runId:'four',role:'user',text:'4'}];
+  await adapter.loadEarlierHistory(w.id,session.id,true);`);
+ const order=await page.locator('#messages .message.user .message-text').allTextContents();
+ assert.deepEqual(order,['Earlier request','1','4']);
+ const cancelled=page.locator('.message-execution').filter({hasText:'Run cancelled'});
+ await expect(cancelled).toHaveCount(1);
+ assert.equal(await cancelled.evaluate(el=>!!(el.compareDocumentPosition(document.querySelectorAll('#messages .message.user')[1]!)&Node.DOCUMENT_POSITION_FOLLOWING)),true);
+ assert.equal(chatWrites(requests).length,0);
 });
 
 test('History pages: recent-only opening, earlier anchor, draft and partial Markdown remain safe',async t=>{

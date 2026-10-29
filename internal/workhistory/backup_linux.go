@@ -27,6 +27,7 @@ type BackupRequest struct {
 	BackupKey              string   `json:"backupKey"`
 	ContextIDs             []string `json:"contextIds"`
 	ExpectedManifestDigest string   `json:"expectedManifestDigest,omitempty"`
+	TargetSchema           int64    `json:"targetSchema,omitempty"`
 }
 type BackupFile struct {
 	Name    string `json:"name"`
@@ -88,7 +89,7 @@ func backupManifest(spool int) (BackupManifest, string, error) {
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&manifest) != nil || manifest.Version != 1 {
+	if decoder.Decode(&manifest) != nil || (manifest.Version != 1 && manifest.Version != 2) {
 		return manifest, "", ErrInvalid
 	}
 	hash := sha256.Sum256(raw)
@@ -153,6 +154,12 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 		if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
 			return BackupResult{}, err
 		}
+		if manifest.Version == 2 {
+			if request.TargetSchema != 6 || verifyExistingMemory(root, manifest) != nil {
+				return BackupResult{}, ErrInvalid
+			}
+			return BackupResult{5, digest, "saved"}, nil
+		}
 		if manifest.MemoryInitialized {
 			if err := verifyBackupMemory(root, manifest); err != nil {
 				return BackupResult{}, err
@@ -176,8 +183,11 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 	}
 	version := snapshot.SchemaVersion
 	snapshot.Close()
-	if version == 5 {
-		return BackupResult{5, "", "not-required"}, nil
+	if version == 5 && request.TargetSchema == 6 {
+		return checkpointSchema5(ctx, root, spool, request)
+	}
+	if version >= 5 && version <= 6 {
+		return BackupResult{version, "", "not-required"}, nil
 	}
 	if version != 4 {
 		return BackupResult{}, ErrUnsupported
@@ -246,11 +256,18 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 }
 
 func verifyBackupFiles(ctx context.Context, spool int, manifest BackupManifest) error {
-	if len(manifest.Files) != len(files) {
+	expected := files
+	if manifest.Version == 2 {
+		expected = append(append([]string{}, files...), "memory.sqlite")
+	}
+	if len(manifest.Files) != len(expected) {
 		return ErrInvalid
 	}
 	for i, entry := range manifest.Files {
-		if entry.Name != files[i] {
+		if entry.Name != expected[i] {
+			return ErrInvalid
+		}
+		if manifest.Version == 2 && (entry.Name == "work.sqlite" || entry.Name == "memory.sqlite") && !entry.Present {
 			return ErrInvalid
 		}
 		if !entry.Present {
@@ -268,6 +285,214 @@ func verifyBackupFiles(ctx context.Context, spool int, manifest BackupManifest) 
 		}
 	}
 	return nil
+}
+
+// Schema 5 already owns a Memory database. Back up both databases before a
+// schema 6 candidate can start, and never treat that Memory file as newly
+// created by the migration. Version 2 manifests are distinct from the legacy
+// schema 4 recovery protocol.
+func checkpointSchema5(ctx context.Context, root, spool int, request BackupRequest) (BackupResult, error) {
+	var attrs unix.Stat_t
+	if unix.Fstat(root, &attrs) != nil {
+		return BackupResult{}, ErrInvalid
+	}
+	manifest := BackupManifest{Version: 2, OperationID: request.OperationID, WorkID: request.WorkID, BackupKey: request.BackupKey, RootDev: uint64(attrs.Dev), RootIno: attrs.Ino, Files: []BackupFile{}}
+	names := append(append([]string{}, files...), "memory.sqlite")
+	for _, name := range names {
+		entry := BackupFile{Name: name}
+		source, err := Regular(root, name)
+		if os.IsNotExist(err) && name != "work.sqlite" && name != "memory.sqlite" {
+			manifest.Files = append(manifest.Files, entry)
+			continue
+		}
+		if err != nil {
+			return BackupResult{}, err
+		}
+		var stat unix.Stat_t
+		if unix.Fstat(int(source.Fd()), &stat) != nil {
+			source.Close()
+			return BackupResult{}, ErrInvalid
+		}
+		if name == "memory.sqlite" {
+			manifest.MemoryDev, manifest.MemoryIno = uint64(stat.Dev), stat.Ino
+		}
+		temp := "backup-" + name + "-" + uuid.NewString() + ".tmp"
+		defer unix.Unlinkat(spool, temp, 0)
+		if err := copyFile(ctx, source, fmt.Sprintf("/proc/self/fd/%d/%s", spool, temp)); err != nil {
+			source.Close()
+			return BackupResult{}, err
+		}
+		digest, err := digestFile(ctx, source)
+		source.Close()
+		if err != nil {
+			return BackupResult{}, err
+		}
+		var owner unix.Stat_t
+		if unix.Fstat(spool, &owner) != nil || unix.Fchownat(spool, temp, int(owner.Uid), int(owner.Gid), unix.AT_SYMLINK_NOFOLLOW) != nil || unix.Renameat(spool, temp, spool, "backup-"+name) != nil {
+			return BackupResult{}, ErrInvalid
+		}
+		entry.Present, entry.Digest, entry.Size, entry.UID, entry.GID, entry.Mode = true, digest, stat.Size, stat.Uid, stat.Gid, stat.Mode&07777
+		manifest.Files = append(manifest.Files, entry)
+	}
+	if err := verifyExistingMemory(root, manifest); err != nil {
+		return BackupResult{}, err
+	}
+	digest, err := writeBackupManifest(spool, manifest)
+	if err != nil {
+		return BackupResult{}, err
+	}
+	return BackupResult{5, digest, "saved"}, nil
+}
+
+func verifyExistingMemory(root int, manifest BackupManifest) error {
+	var attrs, stat unix.Stat_t
+	if unix.Fstat(root, &attrs) != nil || manifest.RootDev != uint64(attrs.Dev) || manifest.RootIno != attrs.Ino {
+		return ErrInvalid
+	}
+	file, err := Regular(root, "memory.sqlite")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if unix.Fstat(int(file.Fd()), &stat) != nil || manifest.MemoryDev != uint64(stat.Dev) || manifest.MemoryIno != stat.Ino {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func restoreSchema5(ctx context.Context, privateDirectory string, root, spool int, manifest BackupManifest, digest string) (BackupResult, error) {
+	if manifest.Version != 2 || manifest.MemoryCreated || len(manifest.Files) != len(files)+1 {
+		return BackupResult{}, ErrInvalid
+	}
+	marker, err := Regular(spool, "history-restored.json")
+	if err == nil {
+		raw, readErr := io.ReadAll(io.LimitReader(marker, 128))
+		marker.Close()
+		if readErr != nil || string(raw) != digest || verifyRestoredFiles(ctx, root, manifest) != nil {
+			return BackupResult{}, ErrInvalid
+		}
+		return BackupResult{5, digest, "restored"}, nil
+	}
+	if !os.IsNotExist(err) {
+		return BackupResult{}, err
+	}
+	if verifyExistingMemory(root, manifest) != nil {
+		// A previous attempt may already have atomically restored Memory.
+		memory, err := Regular(root, "memory.sqlite")
+		if err != nil {
+			return BackupResult{}, err
+		}
+		got, hashErr := digestFile(ctx, memory)
+		memory.Close()
+		if hashErr != nil || got != manifest.Files[len(manifest.Files)-1].Digest {
+			return BackupResult{}, ErrInvalid
+		}
+	}
+	// Open the stopped pair before replacement so SQLite resolves any hot
+	// journals; confirm the Memory file is still owned by this Work.
+	db, err := database(filepath.Join(privateDirectory, "work.sqlite"), false)
+	if err != nil {
+		return BackupResult{}, err
+	}
+	if _, err = db.ExecContext(ctx, "ATTACH DATABASE ? AS memory", filepath.Join(privateDirectory, "memory.sqlite")); err == nil {
+		var owner, store string
+		err = db.QueryRowContext(ctx, "SELECT work_id,store_id FROM memory.memory_meta").Scan(&owner, &store)
+		if err == nil && (owner != manifest.WorkID || store == "") {
+			err = ErrInvalid
+		}
+	}
+	closeErr := db.Close()
+	if err != nil {
+		return BackupResult{}, err
+	}
+	if closeErr != nil {
+		return BackupResult{}, closeErr
+	}
+	for _, name := range []string{"memory.sqlite-journal", "work.sqlite-journal"} {
+		file, err := Regular(root, name)
+		if err == nil {
+			file.Close()
+			return BackupResult{}, ErrBusy
+		}
+		if !os.IsNotExist(err) {
+			return BackupResult{}, err
+		}
+	}
+	for _, entry := range manifest.Files {
+		if !entry.Present {
+			file, err := Regular(root, entry.Name)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return BackupResult{}, err
+			}
+			file.Close()
+			if unix.Unlinkat(root, entry.Name, 0) != nil {
+				return BackupResult{}, ErrInvalid
+			}
+			continue
+		}
+		source, err := Regular(spool, "backup-"+entry.Name)
+		if err != nil {
+			return BackupResult{}, err
+		}
+		temp := "restore-" + manifest.BackupKey + "-" + uuid.NewString() + "-" + entry.Name
+		defer unix.Unlinkat(root, temp, 0)
+		err = copyFile(ctx, source, fmt.Sprintf("/proc/self/fd/%d/%s", root, temp))
+		source.Close()
+		if err != nil {
+			return BackupResult{}, err
+		}
+		fd, err := unix.Openat(root, temp, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return BackupResult{}, err
+		}
+		err = unix.Fchown(fd, int(entry.UID), int(entry.GID))
+		if err == nil {
+			err = unix.Fchmod(fd, entry.Mode)
+		}
+		if err == nil {
+			err = unix.Fsync(fd)
+		}
+		unix.Close(fd)
+		if err != nil {
+			return BackupResult{}, err
+		}
+		original, err := Regular(root, entry.Name)
+		if err == nil {
+			original.Close()
+		} else if !os.IsNotExist(err) {
+			return BackupResult{}, err
+		}
+		if err := unix.Renameat(root, temp, root, entry.Name); err != nil {
+			return BackupResult{}, err
+		}
+	}
+	if unix.Fsync(root) != nil || verifyRestoredFiles(ctx, root, manifest) != nil {
+		return BackupResult{}, ErrInvalid
+	}
+	markerName := "history-restored-" + uuid.NewString() + ".tmp"
+	defer unix.Unlinkat(spool, markerName, 0)
+	fd, err := unix.Openat(spool, markerName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	if err != nil {
+		return BackupResult{}, err
+	}
+	file := os.NewFile(uintptr(fd), markerName)
+	var owner unix.Stat_t
+	if unix.Fstat(spool, &owner) != nil || unix.Fchown(fd, int(owner.Uid), int(owner.Gid)) != nil {
+		file.Close()
+		return BackupResult{}, ErrInvalid
+	}
+	_, err = file.WriteString(digest)
+	if err == nil {
+		err = file.Sync()
+	}
+	closeErr = file.Close()
+	if err != nil || closeErr != nil || unix.Renameat(spool, markerName, spool, "history-restored.json") != nil || unix.Fsync(spool) != nil {
+		return BackupResult{}, ErrInvalid
+	}
+	return BackupResult{5, digest, "restored"}, nil
 }
 func verifyBackupMemory(root int, manifest BackupManifest) error {
 	var attrs unix.Stat_t
@@ -391,11 +616,17 @@ func RestoreHistoryBackup(ctx context.Context, privateDirectory, spoolDirectory 
 		return BackupResult{}, ErrInvalid
 	}
 	if digest != request.ExpectedManifestDigest || manifest.WorkID != request.WorkID || manifest.OperationID != request.OperationID || manifest.BackupKey != request.BackupKey ||
-		manifest.RootDev != uint64(attributes.Dev) || manifest.RootIno != attributes.Ino || !manifest.MemoryCreated || len(manifest.Files) != len(files) {
+		manifest.RootDev != uint64(attributes.Dev) || manifest.RootIno != attributes.Ino {
 		return BackupResult{}, ErrInvalid
 	}
 	if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
 		return BackupResult{}, err
+	}
+	if manifest.Version == 2 {
+		return restoreSchema5(ctx, privateDirectory, root, spool, manifest, digest)
+	}
+	if !manifest.MemoryCreated || len(manifest.Files) != len(files) {
+		return BackupResult{}, ErrInvalid
 	}
 	marker, markerErr := Regular(spool, "history-restored.json")
 	if markerErr == nil {

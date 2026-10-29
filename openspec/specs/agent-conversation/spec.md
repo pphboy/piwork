@@ -145,7 +145,7 @@ daemon 启动恢复时 SHALL 将旧进程未终结的 accepted/running/cancellin
 
 所有者 SHALL 能通过 import-provenance 查询导入包 digest、import Operation ID 和源到目标历史 Operation ID 映射，再用既有 operation show 读取映射后的终态安全投影。此历史查询不触发执行，非所有者管理员也不得读取该 provenance；源用户/平台 secret 信息不在响应中。
 
-系统 SHALL 完整保留 schema 4 的现有模型选择、实际模型、安全执行来源、反馈关联与采用经验版本；新 harness 使用 history schema 5，并额外保存独立 Memory 绑定与新 Run 实际提供的 entryId/截断信息。已知 schema 4 的导入按原格式静态校验并保留固定运行镜像，不在导入时升级；采用新 harness 的受控迁移遵守 WMEM-005。新增反馈图及导入历史的执行边界遵守 PWORK-BRAIN-001。平台派生身份不从源环境恢复为 live 权限。
+系统 SHALL 完整保留 schema 4 的现有模型选择、实际模型、安全执行来源、反馈关联与采用经验版本；新 harness 使用 history schema 6，保留 schema 5 的独立 Memory 绑定与新 Run 实际提供的 entryId/截断信息，并保存部分回复检查点。已知 schema 4 和 5 的导入按原格式静态校验并保留固定运行镜像，不在导入时升级；采用新 harness 的受控迁移遵守 WMEM-005。新增反馈图及导入历史的执行边界遵守 PWORK-BRAIN-001。平台派生身份不从源环境恢复为 live 权限。
 
 #### Scenario: Continue a copied Session
 - **WHEN** 同一个包被导入两份，分别启动并继续其匹配 active context 的同一局部 Session ID
@@ -348,7 +348,7 @@ Session 历史 SHALL 在保留原文本接口的基础上提供稳定消息身�
 
 **Identifier:** CONV-CHAT-HISTORY-001
 
-新增 Session Thinking、Run 实际 Thinking 和输入解释模式 SHALL 随原模型选择、实际模型、幂等记录及 SDK history 持久保存，daemon 重启和完整包导出导入后保持同一含义。系统 SHALL 沿用 CONV-SNAPSHOT-001 的现行 history schema 5 并静态兼容已知 schema 4、storage layout 2 和 .work formatVersion 1，不为图片新增 SQL schema、存储卷、导入迁移、自动回放或 SQL 执行入口；可选结构化字段缺省按前述旧行为解释，未知字段和非法值仍拒绝。
+新增 Session Thinking、Run 实际 Thinking 和输入解释模式 SHALL 随原模型选择、实际模型、幂等记录及 SDK history 持久保存，daemon 重启和完整包导出导入后保持同一含义。系统 SHALL 使用 CONV-SNAPSHOT-001 的现行 history schema 6 并静态兼容已知 schema 4 和 5、storage layout 2 和 .work formatVersion 1，不为图片新增 SQL schema、存储卷、导入迁移、自动回放或 SQL 执行入口；可选结构化字段缺省按前述旧行为解释，未知字段和非法值仍拒绝。
 
 导入后保持原 Session/Run 局部身份、工具历史和终态，按原 Work/context 映射恢复，只在接收方权限与原继续约束下接受新执行。已有 SQL/schema/path/外键、非终态历史拒绝、空历史及历史控制操作只读归档规则继续适用；新字段不能扩大 live 权限或作为隐式创建、调用模型和工具的依据。
 
@@ -691,3 +691,25 @@ Run SHALL 将正常完成、失败、明确取消及已确认的 daemon 中断�
 #### Scenario: 用户仅断开观察
 - **WHEN** Run 仍在执行但浏览器或 CLI 停止观察
 - **THEN** 不因观察断开取消 Run 或提前结束其仍被使用的临时 Service
+
+### Requirement: 保留取消和失败前已输出的 Agent 正文
+
+系统 SHALL 为新 Run 持久保留已经向观察者发出的 Agent 正文，使显式取消、执行失败、进程中断及事件游标过期后，获准用户仍可通过原 Session/Run 历史读取已保存部分，并区分部分内容和完整成功结果。正文、工具活动及终态 SHALL 保持原有身份与顺序，不能因空最终结果或事件压缩抹去已输出正文；同一内容不得因历史恢复重复。记录只有此前已经保存的数据时 SHALL 如实展示，不承诺恢复未保存或未生成的历史内容。
+
+对旧 Agent 或旧记录 SHALL 保持原能力兼容，不隐式升级、重发 prompt 或重放工具。新保存和读取沿用现有 Work 授权、私有数据与历史传输预算，Run 成功和取消竞争仍遵循现行终态约束。
+
+#### Scenario: 输出正文后取消
+- **WHEN** Agent 已输出正文增量，随后 Run 被显式取消且执行收尾发生异常
+- **THEN** 原 Run 为其真实终态，已输出并持久保存的正文仍可通过历史读取一次，并标明它是部分内容
+
+#### Scenario: 事件压缩后重连
+- **WHEN** 长 Run 的文字事件已被压缩或客户端游标过期，随后客户端读取原 Run 历史
+- **THEN** 已保存正文仍能按原顺序恢复，不依赖已删除的事件，不重复生成或执行
+
+#### Scenario: 历史没有保存正文
+- **WHEN** 旧 Run 的可用历史和事件均没有正文
+- **THEN** 表达没有可恢复正文，不虚构内容或覆盖其他轮次
+
+#### Scenario: 失败和重启
+- **WHEN** Run 输出部分正文后模型失败或 daemon 中断并恢复
+- **THEN** 对应失败或 interrupted 状态及已持久正文可被原 Session 授权读取，不自动重执行

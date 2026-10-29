@@ -1,6 +1,6 @@
 //go:build linux
 
-// Package workhistory validates the exact managed schema-4/5 history and Memory databases in
+// Package workhistory validates the exact managed schema-4/5/6 history and Memory databases in
 // isolated snapshot helpers. SDK JSONL and business databases remain opaque.
 package workhistory
 
@@ -234,7 +234,7 @@ func Open(ctx context.Context, privateDirectory string, scope Scope) (returned *
 		return nil, err
 	}
 	snapshot.SchemaVersion = historyVersion(ctx, snapshot.database)
-	if snapshot.SchemaVersion == 5 {
+	if snapshot.SchemaVersion >= 5 {
 		for _, name := range []string{"work.sqlite-journal", "memory.sqlite-journal"} {
 			file, err := Regular(root, name)
 			if err == nil {
@@ -320,7 +320,7 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 		return ErrInvalid
 	}
 	normalizeSchema(actual)
-	for index, raw := range [][]byte{schemaObjects, currentSchemaObjects} {
+	for index, raw := range [][]byte{schemaObjects, currentSchemaObjects, schemaV6Objects} {
 		var expected []schemaObject
 		if json.Unmarshal(raw, &expected) != nil {
 			return ErrUnsupported
@@ -470,7 +470,18 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			return Summary{}, ErrInvalid
 		}
 	}
-	if historyVersion(ctx, db) == 5 {
+	if historyVersion(ctx, db) == 6 {
+		for _, query := range []string{
+			`SELECT 1 FROM run_output_chunks c JOIN runs r ON r.run_id=c.run_id WHERE c.sequence>r.latest_sequence LIMIT 1`,
+			`SELECT 1 FROM run_output_chunks GROUP BY run_id,sequence HAVING MIN(part)!=0 OR MAX(part)!=COUNT(*)-1 OR COUNT(DISTINCT kind)!=1 LIMIT 1`,
+		} {
+			var value int
+			if err := db.QueryRowContext(ctx, query).Scan(&value); !errors.Is(err, sql.ErrNoRows) {
+				return Summary{}, ErrInvalid
+			}
+		}
+	}
+	if historyVersion(ctx, db) >= 5 {
 		if err := validateMemoryHistory(ctx, db, scope); err != nil {
 			return Summary{}, err
 		}
@@ -483,7 +494,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 func validateRow(table string, row map[string]any, root int, scope Scope) error {
 	switch table {
 	case "schema_migrations":
-		if row["version"] != int64(4) && row["version"] != int64(5) {
+		if row["version"] != int64(4) && row["version"] != int64(5) && row["version"] != int64(6) {
 			return ErrUnsupported
 		}
 	case "sessions":
@@ -519,6 +530,22 @@ func validateRow(table string, row map[string]any, root int, scope Scope) error 
 			return ErrInvalid
 		}
 		if _, ok := row["payload_json"].(string); !ok {
+			return ErrInvalid
+		}
+	case "run_output_chunks":
+		raw, ok := row["payload_json"].(string)
+		if !nonempty(row["run_id"]) || !integer(row["sequence"], 1) || !integer(row["part"], 0) || !ok || len(raw) > 65536 {
+			return ErrInvalid
+		}
+		var payload map[string]json.RawMessage
+		if json.Unmarshal([]byte(raw), &payload) != nil || len(payload) != 1 {
+			return ErrInvalid
+		}
+		var data any
+		if json.Unmarshal(payload["data"], &data) != nil {
+			return ErrInvalid
+		}
+		if text, ok := data.(string); !ok || len(text) > 8192 {
 			return ErrInvalid
 		}
 	case "submit_idempotency":

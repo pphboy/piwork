@@ -73,7 +73,9 @@ http.createServer((req,res)=>{
   const answeredRun=await call('GET',path+'/runs/'+answered.runIds.at(-1));assert.ok(answeredRun.finalText);
   await page.locator('[data-action=service-requests]').click();await page.locator(`[data-action=pi-request-detail][data-id="${answered.requestId}"]`).click();
   await expect(page.locator('#modal')).toContainText(answeredRun.finalText);
-  const replyPath=`**/_desktop/api/works/${id}/runs/${answeredRun.runId}`;
+  // Modern history adds a responseProfile query; match the resource identity
+  // independently of its negotiated representation.
+  const replyPath=url=>url.pathname===`/_desktop/api/works/${id}/runs/${answeredRun.runId}`;
   await page.route(replyPath,route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({code:'RUNTIME_UNAVAILABLE',message:'Acceptance refresh unavailable'})}));
   await page.locator('#modal .modal-footer [data-action=pi-request-detail]').click();
   await expect(page.locator('#modal')).toContainText('reply refresh failed');await expect(page.locator('#modal')).toContainText(answeredRun.finalText);await expect(page.locator('#modal')).toContainText('Last confirmed');
@@ -126,15 +128,16 @@ http.createServer((req,res)=>{
   // Expire only the browser event read. Original Run/Session data still comes
   // from the real Core/Agentd, including the actual execution failure.
   const expiredEvents=`**/_desktop/api/works/${id}/runs/${failedManual.runId}/events?*`;
-  let expiredReads=0,historyWrites=0,originalRunReads=0,originalSessionReads=0;
+  let expiredReads=0,historyWrites=0,originalRunReads=0,originalHistoryReads=0,wholeSessionReads=0;
   const observeWrites=request=>{
-    const pathname=new URL(request.url()).pathname;
+    const url=new URL(request.url()),pathname=url.pathname;
     if(request.method()==='POST'&&pathname.startsWith(`/_desktop/api/works/${id}/`))historyWrites++;
     if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/runs/${failedManual.runId}`)originalRunReads++;
-    if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/sessions/${main}`)originalSessionReads++;
+    if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/sessions/${main}/history`&&url.searchParams.get('runId')===failedManual.runId)originalHistoryReads++;
+    if(request.method()==='GET'&&pathname===`/_desktop/api/works/${id}/sessions/${main}`)wholeSessionReads++;
   };
   page.on('request',observeWrites);
-  await page.route(expiredEvents,route=>{expiredReads++;return route.fulfill({status:410,contentType:'application/json',body:JSON.stringify({code:'EVENT_CURSOR_EXPIRED'})});});
+  await page.route(expiredEvents,route=>{expiredReads++;return route.fulfill({status:416,contentType:'application/json',body:JSON.stringify({code:'CURSOR_EXPIRED'})});});
   try {
     const recovered=await page.evaluate(async({id,runId})=>{
       const {adapter}=await import('/desktop/browser/adapter.js');
@@ -152,12 +155,13 @@ http.createServer((req,res)=>{
     await expect(page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)).toHaveAttribute('data-run-id',failedManual.runId);
     await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',background.runIds.at(-1));
     assert.equal(expiredReads,1);assert.equal(historyWrites,0);
-    assert.ok(originalRunReads>=2,'Original Run was not read again after 410');
-    assert.ok(originalSessionReads>=1,'Original Session history was not read after 410');
+    assert.ok(originalRunReads>=2,'Original Run was not read again after cursor expiration');
+    assert.ok(originalHistoryReads>=1,'Original Run history was not read after cursor expiration');
+    assert.equal(wholeSessionReads,0,'Modern recovery unexpectedly loaded the whole Session');
   } finally {
     page.off('request',observeWrites);await page.unroute(expiredEvents);
   }
-  console.log('Chat controls recovery: real failed Run retains execution error after readonly 410 history recovery');
+  console.log('Chat controls recovery: real failed Run retains execution error after readonly cursor recovery');
   await call('POST',path+'/agent-requests/'+background.requestId+'/cancel',{});
   await waitFor(async()=>(await call('GET',path+'/agent-requests/'+background.requestId)).request.state==='cancelled','background cancelled');
   assert.equal(await page.evaluate(()=>window.controlsFrame===document.querySelector('iframe') && window.controlsLoads===0),true);

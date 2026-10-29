@@ -5,8 +5,59 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import test from "node:test";
 import { CursorExpiredError, DEFAULT_MAX_RUN_EVENTS, SubmitConflictError, WorkBusyError, WORK_SCHEMA_VERSION, WorkStore } from "./store.js";
+import { upgradeWorkDatabaseToV6 } from './migrations.js';
 
 const NOW = "2026-09-20T00:00:00Z";
+
+test('schema 5 upgrades to 6 only with a scoped migration grant',async()=>{
+ const fixture=await createFixture();
+ try {
+  let store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());store.close();makeSchema5(fixture.databasePath);
+  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:6 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1'});assert.equal(store.schemaVersion,5);store.close();
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:{...grant,workId:'foreign'}}),/MIGRATION_REQUIRED/);
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,6);store.close();
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,6);store.close();
+ } finally {await fixture.cleanup();}
+});
+
+test('schema 6 upgrade refuses active Runs without changing history',async()=>{
+ const fixture=await createFixture();
+ try {
+  const store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());const run=store.acceptRun(submit({submissionKey:'active-upgrade'})).run;store.close();makeSchema5(fixture.databasePath);
+  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:6 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant}),/WORK_HISTORY_BUSY/);
+  const reopened=WorkStore.open(fixture.databasePath,{workId:'work-1'});assert.equal(reopened.schemaVersion,5);assert.equal(reopened.getRun(run.runId)?.state,'accepted');reopened.close();
+ } finally {await fixture.cleanup();}
+});
+
+test('schema 6 event checkpoints survive compaction and reopen',async()=>{
+ const fixture=await createFixture();
+ try {
+  let store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());store.close();
+  const db=new DatabaseSync(fixture.databasePath,{enableForeignKeyConstraints:true});upgradeWorkDatabaseToV6(db,NOW);db.close();
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1'});
+  const run=store.acceptRun(submit({submissionKey:'checkpoint'})).run;
+  store.appendEvent(run.runId,'text',JSON.stringify({delta:'可恢复的正文'}),NOW);
+  store.appendEvent(run.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'call'}),NOW);
+  store.appendEvent(run.runId,'tool-end',JSON.stringify({toolName:'read',toolCallId:'call',isError:false,result:{kind:'text',text:'done'}}),NOW);
+  store.appendEvent(run.runId,'text',JSON.stringify({delta:'后续正文'}),NOW);
+  store.compactRunEvents(run.runId,2);store.close();
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1'});
+  const chunks=store.historyOutputChunks('work-1','session-1',run.runId,4);
+  assert.deepEqual(chunks.map(chunk=>chunk.kind),['text','tool-start','tool-end','text']);
+  assert.equal(chunks[0]!.data,'可恢复的正文');
+  assert.equal(chunks[3]!.data,'后续正文');
+  const indexed=store.historyOutputEventIndex('work-1','session-1',run.runId,4);
+  assert.deepEqual(indexed.map(event=>[event.sequence,event.kind]),[[1,'text'],[2,'tool-start'],[3,'tool-end'],[4,'text']]);
+  assert.equal(indexed[0]!.bytes,Buffer.byteLength('可恢复的正文'));
+  assert.deepEqual(store.historyOutputEventIndex('work-1','session-1',run.runId,2).map(event=>event.sequence),[1,2]);
+  assert.throws(()=>store.historyOutputEventIndex('work-1','wrong',run.runId,4),/Run not found/);
+  assert.equal(store.historyOutputTextRange('work-1','session-1',run.runId,1,0,100).toString(),'可恢复的正文');
+  assert.throws(()=>store.historyOutputTextRange('work-1','wrong',run.runId,1,0,100),/Run not found/);
+  assert.throws(()=>store.readEvents(run.runId,0),CursorExpiredError);store.close();
+ } finally {await fixture.cleanup();}
+});
 
 test("Session locator, Run, event sequence, and activity survive database reopen", async () => {
   const fixture = await createFixture();
@@ -17,6 +68,8 @@ test("Session locator, Run, event sequence, and activity survive database reopen
     const accepted = store.acceptRun(submit({ submissionKey: "submit-1" }));
     assert.equal(accepted.reused, false);
     assert.equal(store.appendEvent(accepted.run.runId, "text", '{"delta":"hello"}', NOW), 1);
+    assert.equal(store.historyOutputChunks('work-1','session-1',accepted.run.runId,1)[0]?.data,'hello');
+    assert.throws(()=>store.historyOutputChunks('other','session-1',accepted.run.runId,1),/Run not found/);
     store.close();
 
     store = WorkStore.open(fixture.databasePath);
@@ -186,3 +239,6 @@ async function createFixture(): Promise<{ readonly databasePath: string; cleanup
     cleanup: () => rm(root, { recursive: true, force: true }),
   };
 }
+
+// Build an isolated schema-5 input for the migration tests.
+function makeSchema5(path:string) {const db=new DatabaseSync(path);try{db.exec('DROP TABLE run_output_chunks; UPDATE schema_migrations SET version=5');}finally{db.close();}}

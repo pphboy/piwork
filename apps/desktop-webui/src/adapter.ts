@@ -1,7 +1,7 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
-import { historyMessages, resultText, upsertTool } from './chat-projection.js';
+import { mergeLegacyMessages, resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
@@ -1364,14 +1364,13 @@ export class DesktopAdapter {
     let value:Data;try{value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}${profile}`);}catch(error){if(target)target.error=errorText(error);throw error;}finally{if(target){target.loading=false;this.emit();}} const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
     if (session) { this.confirmSessionModel(id,session,value.session,version); session.runs=(value.runs ?? []).map((run: Data)=>this.runRecord(run,sessionId)); }
     if (session) {
-      session.messages=historyMessages(value.messages ?? [],session.messages);session.checkedAt=new Date().toISOString();session.imageProfile=!!profile;
+      session.messages=mergeLegacyMessages(value.messages ?? [],session.messages);session.checkedAt=new Date().toISOString();session.imageProfile=!!profile;
       const active=(value.runs ?? []).find((run:Data)=>[1,2,3].includes(run.state));
       const restore=active && work && (!work.run || !['accepted','running','cancelling'].includes(work.run.status));
       if(restore){
         work.run=this.runRecord(active,sessionId);
-        // Replay the active Run's retained events once; completed SDK turns of
-        // that Run may already be in history. Keep its original user message.
-        session.messages=session.messages.filter(m=>m.runId!==work.run!.id || m.role==='user');
+        // Keep saved and live output while observation reconnects. Older
+        // Agents cannot prove that an SDK block and a replayed event match.
         this.emit();void this.resumeRun(id);
       }
       await this.readSessionOptions(id,sessionId);
@@ -1772,6 +1771,16 @@ export class DesktopAdapter {
     const sessionId=value.sessionId ?? value.session?.sessionId;if(typeof sessionId!=='string'||!sessionId)throw failure('INVALID_RESPONSE','d.error.sessionAcceptanceNoId');
     this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);const work=this.getWork(id)!;if(!work.sessions.some(s=>s.id===sessionId))work.sessions.unshift({id:sessionId,title:t('d.session.defaultTitle', { id: sessionId }),messages:[],modelPreference:value.modelPreference ?? null,thinkingLevel:value.thinkingLevel === undefined ? 'off' : value.thinkingLevel,source:value.source,runs:[]});this.emit();return sessionId;
   }
+  private submissionMessage(id:string,sessionId:string|undefined,key:string) {
+    return this.getWork(id)?.sessions.find(session=>session.id===sessionId)?.messages.find(message=>message.submission?.key===key);
+  }
+  private acceptSubmissionMessage(id:string,sessionId:string,key:string,runId:string,images?:import('./images.js').HistoryImage[]) {
+    const message=this.submissionMessage(id,sessionId,key);
+    if(!message)return;
+    message.id=`${runId}-user`;message.runId=runId;
+    message.submission!.phase='accepted';delete message.submission!.error;delete message.pendingImages;
+    if(images?.length)message.images=images;
+  }
   async newSession(id:string) {
     if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
     const draft={...this.modelSelection(id,'')},intent={kind:'session' as const,key:randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
@@ -1787,13 +1796,13 @@ export class DesktopAdapter {
     const value=await this.request(`works/${part(id)}/${intent.kind==='session'?'sessions':'runs'}/submissions/${part(intent.key)}`);
     if(this.chatSubmissions.get(id)!==intent)return;
     if(value.kind!==intent.kind || value.key!==intent.key)throw failure('INVALID_RESPONSE','d.error.submissionUnconfirmed');
-    if(value.status!=='accepted'){intent.error=localizedText('d.error.submissionNotFound');this.emit();return;}
+    if(value.status!=='accepted'){intent.error=localizedText('d.error.submissionNotFound');const message=this.submissionMessage(id,intent.sessionId,intent.key);if(message?.submission)message.submission.error=intent.error;this.emit();return;}
     if(intent.kind==='session'){
       if(value.session?.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionOwnership');
       const sessionId=this.acceptChatSession(id,value.session);
       const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:t('d.error.selectedSettingsKept')});
     }
-    else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw failure('INVALID_RESPONSE','d.error.runIdentity');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
+    else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw failure('INVALID_RESPONSE','d.error.runIdentity');const work=this.getWork(id)!;const pending=this.submissionMessage(id,intent.sessionId,intent.key);const descriptors=await Promise.all((pending?.pendingImages??[]).map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256:await sha256Hex(bytes)};}));if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)return;work.run=this.runRecord(value.run,value.run.sessionId);this.acceptSubmissionMessage(id,value.run.sessionId,intent.key,value.run.runId,descriptors);await this.loadSession(id,value.run.sessionId).catch(()=>undefined);if(epoch===this.epoch)void this.resumeRun(id);}
     if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;
   }
   async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[],cancelRunId?:string) {
@@ -1803,7 +1812,9 @@ export class DesktopAdapter {
     if(!this.modelReady(id,sessionId))throw failure('MODEL_NOT_CONFIRMED','d.error.confirmModelBeforeSend');
     const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
     if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw failure('CANCEL_AND_SEND_UNSUPPORTED','d.error.stopAndSendUnavailable');
-    const epoch=this.epoch;const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);this.emit();
+    const epoch=this.epoch;const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);
+    const session=work.sessions.find(item=>item.id===sessionId)!;
+    session.messages.push({id:`submission-${intent.key}`,role:'user',text,submission:{key:intent.key,phase:'sending',stopping:!!cancelRunId},...(images.length?{pendingImages:images.map(image=>({...image}))}:{})});this.emit();
     try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=await sha256Hex(bytes);return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
       if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw failure('CONNECTION_CHANGED','d.error.imageSubmissionIdentity');
       const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{}),...(cancelRunId?{cancelRunId}:{})});const raw=value.run;
@@ -1812,8 +1823,8 @@ export class DesktopAdapter {
       const acceptedWork=this.getWork(id) ?? work;const acceptedSession=acceptedWork.sessions.find(s=>s.id===sessionId) ?? work.sessions.find(s=>s.id===sessionId)!;if(!acceptedWork.sessions.includes(acceptedSession))acceptedWork.sessions.push(acceptedSession);acceptedWork.run=this.runRecord(raw,sessionId);(acceptedSession.runs ??=[]).push(acceptedWork.run);
       this.activeRevisions.set(id,(this.activeRevisions.get(id) || 0)+1);
       if(this.cancelAndSendCapabilities.get(id)===1)this.activeRuns.set(id,{confirmed:true,loading:false,run:acceptedWork.run,error:''});
-      acceptedSession.messages.push({id:`${raw.runId}-user`,runId:raw.runId,role:'user',text,...(descriptors.length?{images:descriptors}:{})});if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
-    }catch(error){const code=(error as DesktopError).code;if(this.chatSubmissions.get(id)===intent&&!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'d.error.runAlreadyActiveStopAndSend':'d.error.runAlreadyActive');}intent.error=errorText(error);throw error;}finally{this.emit();}
+      this.acceptSubmissionMessage(id,sessionId,intent.key,raw.runId,descriptors);if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
+    }catch(error){const code=(error as DesktopError).code;const unknown=['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code);if(this.chatSubmissions.get(id)===intent&&!unknown)this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'d.error.runAlreadyActiveStopAndSend':'d.error.runAlreadyActive');}intent.error=errorText(error);const pending=epoch===this.epoch?this.submissionMessage(id,sessionId,intent.key):undefined;if(pending?.submission){pending.submission.phase=unknown?'unknown':'failed';pending.submission.error=intent.error;}throw error;}finally{this.emit();}
   }
   selectedService = '';
   async cancelRun(id: string,runId=this.getWork(id)?.run?.id) {
@@ -1854,9 +1865,10 @@ export class DesktopAdapter {
       if (!Array.isArray(history.messages)) throw new Error(t('d.error.savedHistoryIncomplete'));
       const session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
       if (session) {
-        session.messages = historyMessages(history.messages,session.messages);
+        const final=!['accepted','running','cancelling'].includes(run.status)&&raw.finalText
+          ? {id:`${run.id}-final`,runId:run.id,role:'assistant' as const,text:raw.finalText} : undefined;
+        session.messages = mergeLegacyMessages(history.messages,session.messages,final);
         session.imageProfile=!!profile;
-        if (!['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText && !session.messages.some(m => m.role === 'assistant' && !m.tool && m.text === raw.finalText)) session.messages.push({ role: 'assistant', text: raw.finalText });
       }
       observer.failures = 0;
       retry = ['accepted', 'running', 'cancelling'].includes(run.status);
@@ -1897,8 +1909,8 @@ export class DesktopAdapter {
       const response = await fetch(`/_desktop/api/works/${part(id)}/runs/${part(run.id)}/events?after=${run.cursor}${this.historySupport.get(id)?'&responseProfile=history-v1':''}`, { credentials: 'same-origin', signal: controller.signal });
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
       if (!response.ok) {
-        if (response.status === 410) { run.historyRecovery = true; const observer = { controller, run, epoch, failures: 0 }; this.historyObservers.set(id, observer); await this.recoverRunHistory(id, observer); if (!observer.failures) connected?.(); return; }
         const descriptor=await response.json().catch(()=>null);
+        if (response.status === 410 || response.status === 416 && descriptor?.code === 'CURSOR_EXPIRED') { run.historyRecovery = true; const observer = { controller, run, epoch, failures: 0 }; this.historyObservers.set(id, observer); await this.recoverRunHistory(id, observer); if (!observer.failures) connected?.(); return; }
         throw failure(typeof descriptor?.code==='string'?descriptor.code:'RUN_STREAM_UNAVAILABLE','d.error.runStreamFailed', { status: response.status }, response.status, undefined, typeof descriptor?.message==='string'&&descriptor.message?descriptor.message:undefined);
       }
       connected?.();
@@ -1913,7 +1925,7 @@ export class DesktopAdapter {
           if(offset!==pending.offset)throw new Error(t('d.error.runEventIncomplete'));pending.parts.set(offset,frame.delta??'');pending.offset+=bytes;if(frame.complete)run.cursor=sequence;
         }else run.cursor = sequence;
         const session = work.sessions.find(s => s.id === run.sessionId); if (!session) return;
-        const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.role !== 'assistant' || message.tool) { message = { id:`${run.id}-text-${sequence}`,runId:run.id,role: 'assistant', text: '' }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
+        const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.runId!==run.id || message.role !== 'assistant' || message.tool || message.historyStored || message.historyRecoveryUnconfirmed && !message.historyLegacyReplay) { const id=`${run.id}-text-${sequence}`,duplicate=session.messages.some(item=>item.runId===run.id&&item.id===id),uncertain=duplicate || !!message && message.runId===run.id && !!(message.historyStored || message.historyRecoveryUnconfirmed);message = { id:duplicate?`${id}-replay-unconfirmed`:id,runId:run.id,role: 'assistant', text: '',...(uncertain?{historyRecoveryUnconfirmed:true,historyLegacyReplay:true}:{}) }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
         else if (kind?.$case === 'tool') { const tool = kind.tool; upsertTool(session.messages,{id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant',text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}}); }
         else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
         this.emit(); };
