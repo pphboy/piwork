@@ -2,6 +2,37 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.16",
+      "component": "core",
+      "title": "Piwork 0.0.16 Preview",
+      "publishedAt": "2026-10-29",
+      "sections": [
+        {
+          "title": "Reliable recovery and Work status",
+          "items": [
+            "Resume Work after credential rotation while keeping verified terminal operation results.",
+            "Recover Console connections against the current Core and Work view, preserving sessions and preventing stale failures from blocking the page."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.16",
+      "component": "desktop",
+      "title": "Piwork 0.0.16 Preview",
+      "publishedAt": "2026-10-29",
+      "sections": [
+        {
+          "title": "Startup, recovery and loading",
+          "items": [
+            "Gate Work actions while Core starts, with a stepping block indicator and focused recovery controls.",
+            "Show the current operation separately from operation history instead of repeating failed Retry Work entries.",
+            "Improve Work import feedback and keep loading indicators in their current view."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.15",
       "component": "core",
       "title": "Piwork 0.0.15 Preview",
