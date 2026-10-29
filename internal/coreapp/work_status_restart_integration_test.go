@@ -5,7 +5,10 @@ package coreapp
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -74,6 +77,17 @@ func TestNativeWorkObservationDuringSlowRestartRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := "Bearer " + login.Token
+	if err := next.Store.Write(ctx, func(tx *sql.Tx) error {
+		for i := 0; i < 5; i++ {
+			_, err := tx.ExecContext(ctx, `INSERT INTO operations(id,work_id,kind,state,target_version,request_json,error_json,created_at,updated_at) VALUES(?,?,'retry-work','failed',1,'{}','{"code":"WORK_OPERATION_FAILED","message":"synthetic previous retry failure"}',?,?)`, fmt.Sprintf("operation-history-%d", i), workID, packageNow(), packageNow())
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -130,6 +144,20 @@ func TestNativeWorkObservationDuringSlowRestartRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 		origin := "http://" + listener.Addr().String()
+		userHash := sha256.Sum256([]byte(login.User.ID))
+		recordHash := sha256.Sum256([]byte(address.URL() + "/\x00" + login.User.ID))
+		recordDir := filepath.Join(opts.DataDirectory, "runtime", "browser-users", hex.EncodeToString(userHash[:]), "desktop-operations-go")
+		if err := os.MkdirAll(recordDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		records := []map[string]any{}
+		for i := 0; i < 5; i++ {
+			records = append(records, map[string]any{"operationId": fmt.Sprintf("operation-history-%d", i), "workId": workID, "type": "retry-work", "recordedAt": packageNow(), "terminal": true, "terminalState": "failed", "terminalCheckedAt": packageNow()})
+		}
+		raw, _ := json.Marshal(records)
+		if err := os.WriteFile(filepath.Join(recordDir, hex.EncodeToString(recordHash[:])+".json"), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
 		web, err := webapp.New(ctx, webapp.Options{Origin: origin, CoreURL: address.URL(), DataDirectory: opts.DataDirectory})
 		if err != nil {
 			t.Fatal(err)
@@ -143,8 +171,8 @@ func TestNativeWorkObservationDuringSlowRestartRecovery(t *testing.T) {
 		script := `const {createRequire}=require('module'); const {chromium}=createRequire(process.argv[1])('@playwright/test');
 (async()=>{ const browser=await chromium.launch({headless:true,channel:'chromium'}); try { const page=await browser.newPage();
 await page.goto(process.argv[2]+'/login'); await page.getByLabel('Account',{exact:true}).fill('admin'); await page.getByLabel('Password').fill('development-fixture-pass'); await page.getByRole('button',{name:'Sign in',exact:true}).click();
-const row=page.locator('.work-row').filter({hasText:process.argv[3]}); await row.waitFor(); await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===2 && [...document.querySelectorAll('.work-row')].every(r=>r.innerText.includes('Work status not confirmed')));
-console.log('WAITING'); await new Promise(resolve=>process.stdin.once('data',resolve)); await page.waitForFunction(id=>document.querySelector('.works-toolbar .connection')?.innerText.includes('Connected') && [...document.querySelectorAll('.work-row')].some(r=>r.innerText.includes(id) && r.innerText.includes('Work status not confirmed') && !r.innerText.includes('Retry Work')),process.argv[3],{timeout:20000}); await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===2 && [...document.querySelectorAll('.work-row')].every(r=>r.innerText.includes('Ready')),null,{timeout:90000}); console.log('READY');
+await page.locator('.core-startup-page').waitFor(); if(await page.locator('.work-row,[data-action=\"new-work\"],[data-action=\"import\"]').count())throw new Error('business UI visible during recovery'); const writes=[];page.on('request',r=>{if(r.method()!=='GET'&&/\/works(?:\/|$)/.test(new URL(r.url()).pathname))writes.push(r.url())});
+console.log('WAITING'); await new Promise(resolve=>process.stdin.once('data',resolve)); await page.waitForFunction(id=>document.querySelector('.works-toolbar .connection')?.innerText.includes('Connected') && [...document.querySelectorAll('.work-row')].some(r=>r.innerText.includes(id) && r.innerText.includes('Work status not confirmed') && !r.innerText.includes('Retry Work')),process.argv[3],{timeout:20000}); await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===2 && [...document.querySelectorAll('.work-row')].every(r=>r.innerText.includes('Ready')),null,{timeout:90000}); const row=page.locator('.work-row').filter({hasText:process.argv[3]});await row.locator('[data-action=work-menu]').click();if(await page.locator('.work-menu-task').count())throw new Error('old retries stayed in command menu');await page.locator('[data-action=work-history]').click();await page.locator('.operation-list > button').nth(4).waitFor();await page.locator('[data-action=operation][data-id=operation-history-0]').click();await page.waitForFunction(()=>document.querySelector('.phase-track')?.innerText.includes('failed'));if(writes.length)throw new Error('recovery resubmitted a Work mutation'); console.log('READY');
 } finally {await browser.close()} })().catch(e=>{console.error(e.message);process.exitCode=1});`
 		browser = exec.CommandContext(ctx, nodePath, "-e", script, packageFile, origin, workID)
 		browser.Stderr = os.Stderr
@@ -167,7 +195,7 @@ console.log('WAITING'); await new Promise(resolve=>process.stdin.once('data',res
 		lines := bufio.NewReader(browserOutput)
 		line, err := lines.ReadString('\n')
 		if err != nil || strings.TrimSpace(line) != "WAITING" {
-			t.Fatal("browser did not show unconfirmed Work", line, err)
+			t.Fatal("browser did not show Core recovery gate", line, err)
 		}
 		defer func() {
 			if browserInput != nil {
@@ -213,6 +241,18 @@ console.log('WAITING'); await new Promise(resolve=>process.stdin.once('data',res
 			t.Fatal(ctx.Err())
 		case <-time.After(200 * time.Millisecond):
 		}
+	}
+	if err := next.Store.Read(ctx, func(tx *sql.Tx) error {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM operations WHERE work_id=? AND kind='retry-work'`, workID).Scan(&count); err != nil {
+			return err
+		}
+		if count != 5 {
+			return fmt.Errorf("automatic recovery created Retry operations: %d", count)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if attempts.Load() < 2 {
 		t.Fatal("failure did not retry")

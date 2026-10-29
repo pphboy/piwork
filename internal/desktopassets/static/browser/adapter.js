@@ -10,6 +10,7 @@ import { lifecycleAction, projectWork, terminalOperation, workState } from './li
 import { operationKind, operationKindMatches } from './operation-recovery.js';
 import { legacyOperationError, operationCorrelationId, operationDiagnostic, operationDiagnostics } from './operation-diagnostics.js';
 import { MetadataReads, ObservationDeferred, ObservationStopped } from './observation.js';
+import { coreAdmission } from './core-admission.js';
 export function fileVersion(value) {
     const time = value ? Date.parse(value) : NaN;
     return Number.isFinite(time) ? new Date(time).toUTCString() : '';
@@ -472,6 +473,25 @@ export class DesktopAdapter {
     activateChat(id, sessionId) { const key = `${id}:${sessionId}`; if (this.chatSelection && this.chatSelection !== key)
         this.cancelHistoryReads(); this.chatSelection = key; }
     status = {};
+    coreAdmitted = false;
+    coreHeld = false;
+    corePaused = false;
+    recoveryStartedAt = 0;
+    get coreGate() {
+        const gate = coreAdmission(this.status, this.coreAdmitted, this.coreHeld, this.connectionCheck.checking, this.connectionCheck.error, this.corePaused);
+        return { ...gate, blocked: this.state.signedIn && this.state.sessionState === 'ready' && gate.blocked };
+    }
+    assertCoreReady() { if (this.coreGate.blocked)
+        throw failure('CORE_NOT_READY', 'd.error.coreNotReady', undefined, 409); }
+    acceptCoreStatus(status) {
+        this.status = status;
+        if (status.health?.available && status.readiness?.available && status.readiness.value?.ready === true) {
+            this.coreAdmitted = true;
+            this.coreHeld = false;
+        }
+        else if (status.readiness?.available && status.readiness.value?.ready === false)
+            this.coreHeld = true;
+    }
     inspection = null;
     inspectionTransfer = '';
     transferProgress = null;
@@ -660,8 +680,45 @@ export class DesktopAdapter {
         listener(); }
     getWork(id) { return this.state.works.find(work => work.id === id); }
     coordinationOperations() {
-        const visible = new Set(this.state.operations.map(op => op.id));
-        return [...this.state.operations, ...[...this.terminalEvidence.values()].map(e => e.operation).filter(op => !visible.has(op.id))];
+        const operations = this.state.operations.filter(op => !op.terminalHint || !!op.checkedKind);
+        const visible = new Set(operations.map(op => op.id));
+        return [...operations, ...[...this.terminalEvidence.values()].map(e => e.operation).filter(op => !visible.has(op.id))];
+    }
+    operationNeedsAttention(op) {
+        const work = this.getWork(op.workId);
+        if (op.localRecordSaved === false || this.workSync.has(op.workId) || work?.lifecycleIntent?.operationId === op.id)
+            return true;
+        if (op.observationError && !op.terminalHint && !terminalOperation(op.state))
+            return true;
+        if (!terminalOperation(op.state) && !op.terminalHint)
+            return true;
+        if (!work)
+            return !op.terminalHint && op.state !== 'succeeded' && op.state !== 'superseded';
+        if (work.statusError || !this.worksChecked || !work.checkedAt)
+            return true;
+        if (op.state === 'failed' || op.terminalHint?.state === 'failed') {
+            const kind = operationKind(op.checkedKind || op.kind);
+            if (kind.startsWith('service:')) {
+                const serviceId = op.checkedServiceId || (op.terminalHint ? op.serviceId : undefined);
+                if (!serviceId || !work.resourceChecked?.services || work.resourceErrors?.services)
+                    return true;
+                const service = work.services.find(item => item.id === serviceId);
+                const cleanup = this.temporaryCleanups.get(`${work.id}:service:${serviceId}`);
+                if (kind === 'service:cleanup temporary' && (!cleanup || cleanup.loading || !cleanup.items.some(item => item.operationId === op.id)))
+                    return true;
+                if (cleanup?.error || cleanup?.items.some(item => item.operationId === op.id && item.state !== 'completed'))
+                    return true;
+                if (service?.temporary?.cleanupState && ['requested', 'running', 'pending', 'failed', 'unknown'].includes(service.temporary.cleanupState))
+                    return true;
+                if (!service || service.observed === 'Removed')
+                    return false;
+                return service.enabled ? !['Ready', 'Running', 'Completed'].includes(service.observed) : service.observed !== 'Stopped';
+            }
+            return work.status === 'Failed' || work.status === 'Unknown' || work.desired === 'stopped' && work.status !== 'Stopped' || work.desired === 'deleted';
+        }
+        if (work.desired === 'running' && ['Unknown', 'Preparing', 'Starting', 'Stopped'].includes(work.status) && ['create', 'start', 'retry'].includes(op.action || lifecycleAction(op.kind) || ''))
+            return true;
+        return false;
     }
     getOperation(id) { return this.state.operations.find(op => op.id === id) ?? this.terminalEvidence.get(id)?.operation; }
     project(work) { return projectWork(work, this.coordinationOperations()); }
@@ -832,6 +889,10 @@ export class DesktopAdapter {
             this.cleanupPending.clear();
         }
         this.epoch++;
+        this.coreAdmitted = false;
+        this.coreHeld = false;
+        this.corePaused = false;
+        this.recoveryStartedAt = 0;
         this.status = {};
         this.connectionRequest = undefined;
         clearTimeout(this.recoveryTimer);
@@ -1041,6 +1102,8 @@ export class DesktopAdapter {
             throw failure('READ_TIMEOUT', 'd.error.readTimeout'); throw error; });
     }
     async requestRaw(path, method = 'GET', body, signal, headers = {}) {
+        if (method !== 'GET' && /^(works(?:\/|$)|work-imports$|service-entries$)/.test(path))
+            this.assertCoreReady();
         const epoch = this.epoch, authSequence = this.authSequence;
         let response;
         try {
@@ -1321,7 +1384,7 @@ export class DesktopAdapter {
     async switchCore(core) { this.authSequence++; this.acceptSession(await this.request('connection', 'PUT', { coreUrl: core })); if (this.state.signedIn)
         await this.checkConnection(); this.emit(); }
     async signOut() { this.authSequence++; const value = await this.request('logout', 'POST'); this.clearIdentity(); this.acceptSession(value.view); this.emit(); return value; }
-    checkConnection() { this.recoveryReads = 0; return this.readConnection(true); }
+    checkConnection() { this.recoveryReads = 0; this.recoveryStartedAt = Date.now(); this.corePaused = false; return this.readConnection(true); }
     readConnection(checkSession = false) {
         if (this.connectionRequest?.epoch === this.epoch)
             return this.connectionRequest.pending;
@@ -1354,7 +1417,7 @@ export class DesktopAdapter {
                 const { value: status } = await this.readMetadata('status', true);
                 if (epoch !== this.epoch)
                     return;
-                this.status = status;
+                this.acceptCoreStatus(status);
                 this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
                 this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
                 Object.assign(this.connectionCheck, { checking: false, checkedAt: this.state.lastChecked, waiting: false });
@@ -1373,7 +1436,7 @@ export class DesktopAdapter {
                 }
             }
             catch (error) {
-                if (epoch === this.epoch && this.connectionCheck.checking && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+                if (epoch === this.epoch && (this.connectionCheck.checking || !this.coreAdmitted) && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
                     this.connectionCheck.error = errorText(error);
                     if (this.state.scenario === 'loading')
                         this.state.scenario = 'list-error';
@@ -1944,6 +2007,7 @@ export class DesktopAdapter {
     }
     requestCancellation(id, requestId) { return this.requestCancellations.get(`${id}:${requestId}`); }
     async cancelRequest(id, requestId) {
+        this.assertCoreReady();
         const key = `${id}:${requestId}`, epoch = this.epoch;
         if (this.requestCancellations.has(key))
             throw failure('REQUEST_CANCEL_SUBMITTED', 'd.error.cancellationSubmitted');
@@ -1990,6 +2054,7 @@ export class DesktopAdapter {
         return value;
     }
     async retryRequest(id, requestId) {
+        this.assertCoreReady();
         const original = await this.loadRequest(id, requestId);
         if (!original)
             throw failure('CONNECTION_CHANGED', 'd.error.originalRequestPreviousView');
@@ -2201,6 +2266,7 @@ export class DesktopAdapter {
         catch { /* The original Session snapshot and any unknown mutation remain authoritative until explicit readback. */ }
     }
     async saveModel(id, sessionId) {
+        this.assertCoreReady();
         const key = `${id}:${sessionId}`, pending = this.pairSaves.get(key);
         if (pending)
             return pending;
@@ -2452,6 +2518,11 @@ export class DesktopAdapter {
         const work = this.getWork(workId);
         return work && this.project(work).retainWorkspace && !this.serviceEntryError(workId, serviceId, port) ? this.entries.get(`${workId}:${serviceId}:${port}`)?.entryUrl ?? null : null;
     }
+    canRetainServiceFrame(workId, serviceId, port) {
+        const service = this.getWork(workId)?.services.find(item => item.id === serviceId);
+        return !!service?.enabled && ['Ready', 'Starting'].includes(service.observed) && service.ports.includes(port)
+            && !!this.serviceEntryUrl(workId, serviceId, port) && this.serviceEmbed(workId, serviceId, port) !== 'denied';
+    }
     serviceEntryError(workId, serviceId, port) {
         const key = `${workId}:${serviceId}:${port}`, denial = this.serviceDenials.get(workId);
         return this.entryErrors.get(key) || (denial && this.entryServiceGrants.get(key) !== denial.version ? denial.reason : '');
@@ -2654,6 +2725,7 @@ export class DesktopAdapter {
         return operation;
     }
     async createWork(name, config, image) {
+        this.assertCoreReady();
         const payload = { name };
         if (image)
             payload.baseImage = image;
@@ -2671,6 +2743,7 @@ export class DesktopAdapter {
     async operateService(id, serviceId, action) { return this.accepted(await this.request(`works/${part(id)}/services/${part(serviceId)}/${action}`, 'POST'), id, `${action} Service`, serviceId); }
     async checkOperation(id, explicit = true, expectedWorkId, expectedKind) {
         let operation = this.getOperation(id);
+        const historical = !!operation && !this.operationNeedsAttention(operation);
         let value;
         try {
             value = (await this.readMetadata(`operations/${part(id)}`, explicit)).value;
@@ -2720,10 +2793,11 @@ export class DesktopAdapter {
         operation.checkedServiceId = operation.serviceId && operation.checkedWorkId === operation.workId && operation.checkedKind && operationKind(operation.checkedKind).startsWith('service:') ? operation.serviceId : undefined;
         const diagnostic = operationDiagnostic(value.error);
         Object.assign(operation, { workId: value.workId ?? operation.workId, state: value.state, phase: value.packagePhase ?? value.state, created: value.createdAt ?? '', updated: value.updatedAt ?? '', error: diagnostic?.message ?? legacyOperationError(value.error), diagnostic, diagnostics: operationDiagnostics(value.diagnostics), correlationId: operationCorrelationId(value.correlationId) ?? diagnostic?.correlationId, snapshotId: value.result?.snapshotId ?? operation.snapshotId, observationError: undefined });
+        delete operation.terminalHint;
         operation.action = lifecycleAction(value.kind || value.type || operation.kind);
         this.retainTerminal(operation);
         const importingUnpublished = operationKind(operation.checkedKind || operation.kind) === 'transfer:import' && operation.state !== 'succeeded';
-        if (operation.workId && !importingUnpublished && (previousState !== operation.state || explicit)) {
+        if (operation.workId && !importingUnpublished && !(historical && terminalOperation(operation.state)) && (previousState !== operation.state || explicit)) {
             const intent = this.getWork(operation.workId)?.lifecycleIntent;
             // A pre-terminal list read cannot confirm a successful Delete. Rearm
             // exactly on the current Delete's transition to success, never on each
@@ -2747,7 +2821,7 @@ export class DesktopAdapter {
         for (const record of value.operations ?? [])
             if (!this.state.operations.some(o => o.id === record.operationId)) {
                 const kind = typeof record.type === 'string' && record.type ? record.type : 'Operation';
-                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+                this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', ...(record.terminal === true ? { terminalHint: { state: terminalOperation(record.terminalState) ? record.terminalState : undefined, checkedAt: record.terminalCheckedAt } } : {}), phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
             }
         for (const work of this.state.works)
             this.associateOperations(work);
@@ -2791,7 +2865,7 @@ export class DesktopAdapter {
         }
     }
     observationTargets() {
-        const active = this.state.operations.filter(op => !terminalOperation(op.state) && !this.pausedOperations.has(op.id) && !this.invalidOperationTargets.has(op.id));
+        const active = this.state.operations.filter(op => !terminalOperation(op.state) && (!op.terminalHint || this.operationNeedsAttention(op)) && !this.pausedOperations.has(op.id) && !this.invalidOperationTargets.has(op.id));
         const workIds = new Set([...this.workSync].filter(([, sync]) => sync.work).map(([id]) => id));
         for (const op of active)
             if (op.workId)
@@ -2861,11 +2935,10 @@ export class DesktopAdapter {
         await Promise.allSettled(pending);
     }
     observePage(workId, visible, includeChat = true, serviceName = '', requestId = '', requestList = false, listService = '', worksList = false) {
-        const observeRecovery = visible && worksList && this.state.signedIn;
+        const observeRecovery = visible && this.state.signedIn && (worksList || this.coreGate.blocked || this.status.readiness?.value?.state === 'RECOVERING');
         if (observeRecovery !== this.recoveryListVisible) {
             this.recoveryListVisible = observeRecovery;
             this.recoveryObservation++;
-            this.recoveryReads = 0;
             clearTimeout(this.recoveryTimer);
             this.recoveryTimer = undefined;
             if (!observeRecovery)
@@ -2938,8 +3011,16 @@ export class DesktopAdapter {
     scheduleRecoveryRead() {
         // Bound automatic observation to ten minutes at the normal two-second cadence.
         const limit = 300;
-        if (!this.recoveryListVisible || this.recoveryTimer || this.recoveryReads >= limit)
+        if (!this.recoveryListVisible || this.recoveryTimer || this.corePaused)
             return;
+        if (!this.recoveryStartedAt)
+            this.recoveryStartedAt = Date.now();
+        if (this.recoveryReads >= limit || Date.now() - this.recoveryStartedAt >= 600000) {
+            this.corePaused = true;
+            this.connectionCheck.error = t('conn.observationPaused');
+            this.emit();
+            return;
+        }
         const epoch = this.epoch, version = this.recoveryObservation;
         this.recoveryTimer = setTimeout(async () => {
             this.recoveryReads++;
@@ -2948,7 +3029,7 @@ export class DesktopAdapter {
                 const { value: status } = await this.readMetadata('status', false);
                 if (epoch !== this.epoch || version !== this.recoveryObservation)
                     return;
-                this.status = status;
+                this.acceptCoreStatus(status);
                 this.state.lastChecked = status.checkedAt ?? new Date().toISOString();
                 this.state.scenario = !status.health?.available ? 'core-offline' : !status.readiness?.available || status.readiness.value?.ready === false ? 'env-not-ready' : 'normal';
                 Object.assign(this.connectionCheck, { checkedAt: this.state.lastChecked, error: status.health?.available && !status.readiness?.available ? t('common.notConfirmed') : '' });
@@ -2957,7 +3038,7 @@ export class DesktopAdapter {
                     this.emit();
             }
             catch (error) {
-                if (epoch === this.epoch && version === this.recoveryObservation) {
+                if (epoch === this.epoch && version === this.recoveryObservation && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
                     this.connectionCheck.error = errorText(error);
                     this.emit();
                 }
@@ -2966,7 +3047,8 @@ export class DesktopAdapter {
                 if (epoch === this.epoch && version === this.recoveryObservation) {
                     this.recoveryTimer = undefined;
                     if (this.recoveryListVisible && this.needsRecoveryObservation() && !this.connectionCheck.error) {
-                        if (this.recoveryReads >= limit) {
+                        if (this.recoveryReads >= limit || Date.now() - this.recoveryStartedAt >= 600000) {
+                            this.corePaused = true;
                             this.connectionCheck.error = t('conn.observationPaused');
                             this.emit();
                         }
@@ -3101,6 +3183,7 @@ export class DesktopAdapter {
         return value;
     }
     async send(id, sessionId, text, includeIdentity, inputMode, images = [], cancelRunId) {
+        this.assertCoreReady();
         if (!text.trim() && !images.length)
             throw new Error(t('d.error.writeMessageFirst'));
         const work = this.getWork(id);
@@ -3866,6 +3949,7 @@ export class DesktopAdapter {
         });
     }
     async writeFile(id, path, method, body, headers = {}) {
+        this.assertCoreReady();
         if (path === '/' && method !== 'MKCOL')
             throw new Error(t('d.error.rootCannotMutate'));
         const epoch = this.epoch;
@@ -4044,6 +4128,7 @@ export class DesktopAdapter {
     async replaceSkill(id, name) { const work = this.getWork(id); const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }
     async applyConfiguration(id) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); } // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     async installPackage(id, name, sourceLabel, files, updateTarget) {
+        this.assertCoreReady();
         const kind = sourceLabel.split(': ')[0];
         const spec = sourceLabel.slice(kind.length + 2);
         let source;
@@ -4118,6 +4203,7 @@ export class DesktopAdapter {
         }
     }
     async inspectWork(file) {
+        this.assertCoreReady();
         if (this.inspectionContext && this.inspectionContext.importState !== 'unsubmitted')
             throw new Error(t('d.error.importAlreadySubmitted'));
         const selection = ++this.inspectionSelection;
@@ -4318,6 +4404,7 @@ export class DesktopAdapter {
         void observe();
     }
     async importWork(name) {
+        this.assertCoreReady();
         const context = this.inspectionContext;
         if (!context?.ready || !this.inspectionTransfer)
             throw new Error(t('d.error.inspectPackageFirst'));
@@ -4360,6 +4447,7 @@ export class DesktopAdapter {
         }
     }
     async prepareExport(id) {
+        this.assertCoreReady();
         const value = await this.request(`works/${part(id)}/exports`, 'POST');
         if (value.workId !== id || typeof value.snapshotId !== 'string' || !value.snapshotId || typeof value.operationId !== 'string' || !value.operationId)
             throw failure('RESULT_UNKNOWN', 'd.error.exportAcceptanceIncomplete');

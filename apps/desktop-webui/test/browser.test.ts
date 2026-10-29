@@ -83,7 +83,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     corePaths.push(request.url ?? "");
     response.setHeader("content-type", "application/json");
     if (request.url === "/healthz") return response.end(JSON.stringify({status:"healthy"}));
-    if (request.url === "/readyz") return response.end(JSON.stringify({ready:true}));
+    if (request.url === "/readyz") return response.end(JSON.stringify({status:"ready",state:"READY",ready:true}));
     if (request.url === "/healthz") response.end(JSON.stringify({ status: "ok" }));
     else if (request.url === "/readyz") { response.writeHead(503); response.end(JSON.stringify({ code: "RUNTIME_UNAVAILABLE" })); }
     else if (request.url === "/api/v1/service-access") response.end(JSON.stringify({ version: 1, protocols: ["http", "ws"] }));
@@ -256,7 +256,7 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
   const core = createServer(async (request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url === "/healthz") return response.end(JSON.stringify({status:"healthy"}));
-    if (request.url === "/readyz") return response.end(JSON.stringify({ready:true}));
+    if (request.url === "/readyz") return response.end(JSON.stringify({status:"ready",state:"READY",ready:true}));
     if (request.url === "/api/v1/me") return response.end(JSON.stringify({ id: "owner", account: "owner", role: "user" }));
     if (request.url === "/api/v1/works") return response.end(JSON.stringify({ works: deleted ? showLong ? [longWork] : [] : [work] }));
     if (request.url === `/api/v1/works/${workId}`) return response.end(JSON.stringify(work));
@@ -346,7 +346,8 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await expect(page.locator('.object-control-state')).toContainText('Start Work');
     await expect(page.locator('.object-control-progress')).toHaveCount(0);
     await page.getByRole('button',{name:'Work options'}).click();
-    await page.locator('#modal [data-action=operation]').click();
+    await page.locator('#modal [data-action=work-current-tasks]').click();
+    await page.locator('#modal [data-action=operation]').first().click();
     await expect(page.locator('#modal .phase-track')).toContainText('pending');
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
@@ -459,7 +460,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
   let coreSessionRevoked = false;
   const core = createServer(async (request, response) => {
     if (request.url === "/healthz") return response.end(JSON.stringify({status:"healthy"}));
-    if (request.url === "/readyz") return response.end(JSON.stringify({ready:true}));
+    if (request.url === "/readyz") return response.end(JSON.stringify({status:"ready",state:"READY",ready:true}));
     if (request.url === "/api/v1/me") {
       const secondUser = request.headers.authorization === "Bearer second-user-secret";
       if (coreSessionRevoked && !secondUser) { response.writeHead(401); return response.end(JSON.stringify({ code: "UNAUTHENTICATED", message: "Session revoked" })); }

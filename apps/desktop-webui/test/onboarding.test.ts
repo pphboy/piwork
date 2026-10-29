@@ -136,8 +136,8 @@ test('IP browser directly creates an administrator, model/runtime save, workbenc
     await expect(page.getByRole('link',{name:'Open workbench',exact:true})).toBeDisabled();
     await page.goto(server.origin+'/');
     await expect(page.locator('body')).not.toContainText('Browser access required');
-    await expect(page.locator('.works-page')).toBeVisible();
-    await expect(page.getByRole('button',{name:'New Work',exact:true}).first()).toBeVisible();
+    await expect(page.locator('.core-startup-page')).toBeVisible();
+    await expect(page.getByRole('button',{name:'New Work',exact:true})).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText('piwork-cli desktop');
     assert.equal(await page.evaluate(()=>window.isSecureContext),serverIP==='127.0.0.1');
     await page.goto(server.origin+'/admin/runtime');
@@ -219,7 +219,7 @@ test('lost model/runtime responses are read back without replay and survive rest
   server=await server.restart();
   await page.goto(server.origin+'/setup');await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
   await page.getByLabel('Account',{exact:true}).fill('admin');await page.getByLabel('Password',{exact:true}).fill('synthetic-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();
-  await expect(page.locator('.works-page')).toBeVisible();
+  await expect(page.locator('.core-startup-page')).toBeVisible();
   await page.goto(server.origin+'/admin/setup?step=prepare');await expect(page.locator('#preparation-answer')).toBeVisible();
   const state=await page.evaluate(async()=>({models:await(await fetch('/console/api/admin/models')).json(),storage:JSON.stringify({local:{...localStorage},session:{...sessionStorage}})}));
   assert.equal(state.models.models.length,1);assert.doesNotMatch(state.storage,/synthetic-key|synthetic-password/);
@@ -560,7 +560,7 @@ test('setup, Admin and hosted Desktop retain shared control states and wrap at 3
   await page.getByText('Runtime diagnostics',{exact:true}).click();await expect(page.locator('[data-runtime-agent-image]')).not.toHaveText('Unavailable');
   for(const width of [1440,360]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:join(evidence,`admin-runtime-${width}.png`),fullPage:true});}
   await page.goto(server.origin+'/admin/models');await page.getByRole('link',{name:'Long model name '.repeat(16).trim(),exact:true}).click();const danger=page.getByRole('button',{name:'Delete model',exact:true});await expect(danger).toBeVisible();assert.equal((await appearance(danger)).height,40);const dangerStyle=await appearance(danger);assert.equal(dangerStyle.color,'rgb(180, 35, 50)');await danger.hover();assert.notEqual((await appearance(danger)).background,dangerStyle.background);
-  await page.goto(server.origin+'/');await expect(page.locator('.works-page')).toBeVisible();const desktop=page.getByRole('button',{name:'New Work',exact:true}).first();assert.equal((await appearance(desktop)).height,normal.height);await page.screenshot({path:join(evidence,'desktop-360.png'),fullPage:true});
+  await page.goto(server.origin+'/');await expect(page.locator('.core-startup-page')).toBeVisible();const desktop=page.getByRole('button',{name:'Check again',exact:true});assert.equal((await appearance(desktop)).height,normal.height);await page.screenshot({path:join(evidence,'desktop-360.png'),fullPage:true});
   // A connection failure in the hosted Desktop renders the real Sign in link.
   await page.route('**/_desktop/api/session',route=>route.abort('failed'));await page.reload();const signIn=page.getByRole('link',{name:'Sign in',exact:true});await expect(signIn).toBeVisible();await expect(signIn).toHaveAttribute('href','/login');const linkStyle=await appearance(signIn);assert.equal(linkStyle.height,normal.height);assert.equal(linkStyle.padding,normal.padding);await signIn.focus();assert.equal((await appearance(signIn)).outline,'solid');await page.screenshot({path:join(evidence,'desktop-connect-360.png'),fullPage:true});
  } finally {await browser.close();await server.stop();}
@@ -576,7 +576,7 @@ test('ordinary users see pending setup; unavailable release metadata preserves s
   await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await expect(page.locator('main')).toContainText('What’s next');await page.goto(server.origin+'/setup');await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
   await page.unroute('**/_web/api/onboarding');
   const created=await page.evaluate(async()=>{const session=await(await fetch('/_web/api/session')).json();const r=await fetch('/console/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json','X-Csrf-Token':session.csrfToken},body:JSON.stringify({account:'ordinary',password:'synthetic-user-password',role:'user'})});return r.status;});assert.equal(created,201);
-  await page.getByRole('button',{name:'Administrator account',exact:true}).click();await page.getByRole('menuitem',{name:'Sign out',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await page.getByLabel('Account',{exact:true}).fill('ordinary');await page.getByLabel('Password',{exact:true}).fill('synthetic-user-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.locator('.works-page')).toBeVisible();
+  await page.getByRole('button',{name:'Administrator account',exact:true}).click();await page.getByRole('menuitem',{name:'Sign out',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await page.getByLabel('Account',{exact:true}).fill('ordinary');await page.getByLabel('Password',{exact:true}).fill('synthetic-user-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.locator('.core-startup-page')).toBeVisible();
   await page.locator('[data-action=account]').click();await expect(page.getByRole('menuitem',{name:'Administration',exact:true})).toHaveCount(0);await expect(page.getByRole('menuitem',{name:'Quick setup',exact:true})).toHaveCount(0);await expect(page.getByRole('menuitem',{name:'Sign out',exact:true})).toBeVisible();await page.keyboard.press('Escape');
   await page.goto(server.origin+'/setup');await expect(page.getByRole('heading',{name:'Core setup is pending'})).toBeVisible();await expect(page.getByLabel('Model ID',{exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:'Overview',exact:true})).toHaveCount(0);await expect(page.getByRole('link',{name:'Open workbench',exact:true})).toBeVisible();
   await page.route('**/_web/api/onboarding',async route=>{const response=await route.fetch(),value=await response.json();value.status.ready=true;await route.fulfill({response,json:value});});await page.getByRole('button',{name:'Refresh state',exact:true}).click();await expect(page.getByRole('heading',{name:'Your Core is ready'})).toBeVisible();
@@ -684,7 +684,7 @@ test('preparation explains waiting and enables its exit only after all dependenc
   assert.equal(new URL(page.url()).pathname,'/admin/setup');await expect(refresh).toBeFocused();assert.equal(await exit.evaluate(element=>element===(window as any).originalPreparationExit),true);
   mode='helpers';await refresh.click();await expect(exit).toBeDisabled();await expect(page.locator('[data-preparation-step]')).toHaveClass('current');
   mode='ready';await refresh.click();await expect(exit).toBeEnabled();await captureFollowup(page,'ready');
-  await exit.click();await expect(page.locator('.works-page')).toBeVisible();
+  await exit.click();await expect(page.locator('.core-startup-page')).toBeVisible();
   assert.deepEqual({models,runtimes,tests,works},{models:1,runtimes:1,tests:0,works:0});
  } finally {await browser.close();await server.stop();}
 });
@@ -755,11 +755,11 @@ test('Workbench link keeps draft decisions, modified navigation and an independe
  try{
   const context=await browser.newContext(),page=await context.newPage();await loginSetup(page,server);await fillModel(page,'draft-workbench');let posts=0,puts=0;page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/admin/models'))posts++;if(r.method()==='PUT'&&r.url().endsWith('/admin/runtime'))puts++;});
   const link=page.getByRole('link',{name:'Workbench',exact:true});await expect(link).toHaveAttribute('href','/');await expect(link.locator('svg')).toHaveCount(1);
-  const popupPromise=context.waitForEvent('page');await link.click({modifiers:['Control']});const popup=await popupPromise;await expect(popup.locator('.works-page')).toBeVisible();await popup.close();await expect(page.getByLabel('Model ID',{exact:true})).toHaveValue('draft-workbench');await expect(page.locator('#leave-dialog')).not.toBeVisible();
+  const popupPromise=context.waitForEvent('page');await link.click({modifiers:['Control']});const popup=await popupPromise;await expect(popup.locator('.core-startup-page')).toBeVisible();await popup.close();await expect(page.getByLabel('Model ID',{exact:true})).toHaveValue('draft-workbench');await expect(page.locator('#leave-dialog')).not.toBeVisible();
   await link.focus();await page.keyboard.press('Enter');await expect(page.getByRole('dialog')).toContainText('Unsaved model configuration');await page.getByRole('button',{name:'Keep editing',exact:true}).click();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
-  await link.click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await expect(page.locator('.works-page')).toBeVisible();assert.deepEqual({posts,puts},{posts:0,puts:0});
-  await page.goto(server.origin+'/admin/setup');await fillModel(page,'save-before-workbench');await link.click();await page.getByRole('dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('.works-page')).toBeVisible();assert.deepEqual({posts,puts},{posts:1,puts:1});
-  await page.goto(server.origin+'/admin/setup?step=prepare');await expect(page.locator('#workbench-exit')).toBeDisabled();await expect(link).toBeEnabled();await link.click();await expect(page.locator('.works-page')).toBeVisible();
+  await link.click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await expect(page.locator('.core-startup-page')).toBeVisible();assert.deepEqual({posts,puts},{posts:0,puts:0});
+  await page.goto(server.origin+'/admin/setup');await fillModel(page,'save-before-workbench');await link.click();await page.getByRole('dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('.core-startup-page')).toBeVisible();assert.deepEqual({posts,puts},{posts:1,puts:1});
+  await page.goto(server.origin+'/admin/setup?step=prepare');await expect(page.locator('#workbench-exit')).toBeDisabled();await expect(link).toBeEnabled();await link.click();await expect(page.locator('.core-startup-page')).toBeVisible();
   await page.goto(server.origin+'/admin/runtime');await page.getByRole('button',{name:'Edit runtime',exact:true}).click();await page.locator('#modelRef').selectOption({index:0});await link.click();await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes?');await page.getByRole('button',{name:'Cancel',exact:true}).click();await expect(page.locator('#runtime-form')).toBeVisible();
  }finally{await browser.close();await server.stop();}
 });

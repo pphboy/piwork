@@ -26,7 +26,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, expireIm
     if (request.url === '/api/v1/login') { const token = `private-native-${++nextToken}`; tokens.add(token); response.end(JSON.stringify({ token, expiresAt: '2099-01-01T00:00:00Z', user: { id: 'owner', account: 'owner', role: 'user' } })); }
     else if (request.url === '/api/v1/me') { if (offline) { response.writeHead(503); response.end('{}'); } else if (tokens.has(token)) response.end(JSON.stringify({ id: 'owner', account: 'owner', role: 'user' })); else { response.writeHead(401); response.end(JSON.stringify({ code: 'AUTHENTICATION_FAILED', message: 'Expired session' })); } }
     else if (request.url === '/api/v1/logout') { if (offline) { response.writeHead(503); response.end('{}'); } else { tokens.delete(token); response.writeHead(204); response.end(); } }
-    else if (request.url === '/healthz' || request.url === '/readyz') response.end(JSON.stringify({ ready: !offline }));
+    else if (request.url === '/healthz' || request.url === '/readyz') response.end(JSON.stringify({ status: offline ? 'not_ready' : 'ready', state: offline ? 'RUNTIME_UNAVAILABLE' : 'READY', ready: !offline }));
     else if (request.url === '/api/v1/works') response.end(JSON.stringify({ works: [] }));
     else if (request.url === '/api/v1/skills') response.end(JSON.stringify({ skills: [] }));
     else if (request.url === '/api/v1/packages') response.end(JSON.stringify({ packages: [] }));

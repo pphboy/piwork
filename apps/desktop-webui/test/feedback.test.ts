@@ -62,7 +62,7 @@ type Reply = { passthrough?: boolean; status?: number; json?: unknown; body?: st
 const mtime1 = 'Sat, 03 Oct 2026 01:00:00 GMT';
 const mtime2 = 'Sat, 03 Oct 2026 01:00:02 GMT';
 const mtime3 = 'Sat, 03 Oct 2026 01:00:04 GMT';
-async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true, duringInitial?: (page: Page) => Promise<void>) {
+async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler: (record: RequestRecord) => Reply | undefined | Promise<Reply | undefined>, anonymous = false, waitForInitialWork = true, duringInitial?: (page: Page) => Promise<void>, gatePage = false) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); t.after(() => page.close()); page.setDefaultTimeout(5000);
   const requests: RequestRecord[] = [];
   const baseline = process.env.PIWORK_SESSION_BASELINE_DIR;
@@ -116,6 +116,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
   });
   await page.goto(base + (anonymous ? '/' : '/#/work/work-1'));
   if (duringInitial) await duringInitial(page);
+  if (gatePage) return {page,requests};
   await expect(page.getByRole('heading', { name: anonymous ? 'Connect to your Core' : 'Recovery Work', exact: true })).toBeVisible();
   if (!anonymous && waitForInitialWork) await expect.poll(() => api(page, `
     const work = adapter.getWork('work-1');
@@ -1210,8 +1211,9 @@ test('DWUI-OPREC-001 recovered Work control is available on its own row and chec
   await expect(row.locator('.object-control-state')).toContainText('Stop Work');
   await expect(row.locator('.object-control-progress')).toHaveCount(0);
   await row.locator('[data-action="work-menu"]').click();
-  await expect(page.locator('#modal [data-action="operation"][data-id="original-stop"]')).toBeVisible();
-  await page.locator('#modal [data-action="check-work-progress"]').click();
+  await button(page,'work-current-tasks').click();
+  await page.locator('#modal [data-action="operation"][data-id="original-stop"]').click();
+  await button(page,'check-operation').click();
   assert.ok(requests.some(r => r.method === 'GET' && r.path === 'operations/original-stop'));
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
@@ -1245,11 +1247,12 @@ test('DWUI-OPREC-001 a newer Stop replaces the older Start in the Work progress 
   await expect(progress).toContainText('Stop Work');
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
   await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click();
+  await button(page,'work-current-tasks').click();
   await expect(page.locator('#modal')).toContainText('Stop Work');
   await expect(page.locator('#modal [data-id="new-stop"]')).toBeVisible();
   // The superseded Start is not the current target, so the menu does not present
   // it as the Work's outstanding task; its original result stays queryable.
-  await expect(page.locator('#modal .work-menu-task').filter({ hasText: 'Stop Work' })).toHaveCount(1);
+  await expect(page.locator('#modal .operation-list [data-id="new-stop"]')).toHaveCount(1);
 });
 
 test('DWUI-OPREC-002 orphaned imports and deletions remain reachable after reload, search and an empty list', async t => {
@@ -1358,6 +1361,7 @@ test('DWUI-OPREC-002 a confirmed created Work takes over its original task from 
   const created_row = page.locator('.work-row').filter({ hasText: 'New Work' });
   await expect(created_row.locator('.object-control-state')).toContainText('Create Work');
   await created_row.locator('[data-action="work-menu"]').click();
+  await button(page,'work-current-tasks').click();
   await expect(page.locator('#modal [data-action="operation"][data-id="create-original"]')).toBeVisible();
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
@@ -1631,7 +1635,7 @@ test('DWUI-017 closed Start details still recover Ready and original lookup with
     if (r.path === 'works' || r.path === 'works/work-1') return offline ? { status: 503, json: { message: 'readback offline' } } : { json: r.path === 'works' ? { works: [fact()] } : fact() };
   });
   const navigations: string[] = []; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations.push(request.url()); });
-  await button(page, 'start-work').click(); await button(page, 'work-menu').click(); await expect(page.locator('#modal')).toContainText('Start Work · succeeded');
+  await button(page, 'start-work').click(); await button(page, 'work-menu').click(); await button(page,'work-current-tasks').click(); await expect(page.locator('#modal .operation-list')).toContainText('Start Work');
   await page.locator('#modal [data-action="operation"][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
   await button(page, 'close-modal').click(); await workTasks(page);
@@ -1709,7 +1713,7 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('.works-page')).toBeVisible();
   // The read-only check lives in the Work's own menu, next to its original task.
-  const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click(); await page.locator('#modal [data-action="check-work-progress"]').click(); await expect(page.locator('#modal')).toHaveCount(0); };
+  const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click(); await button(page,'work-history').click(); await page.locator('#modal [data-action=operation][data-id=c02-start]').click(); await button(page,'check-operation').click(); await button(page,'close-modal').click(); await expect(page.locator('#modal')).toHaveCount(0); };
   terminal = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
   ready = true; await checkFromMenu();
@@ -2343,38 +2347,35 @@ test('a revoked file session clears the preview and returns to sign-in', async t
   assert.ok(requests.some(record => record.path === 'session'), 'file auth reuses the session readback');
 });
 
-test('Core recovery uses compact toolbar and refreshes Work without stale operation text', async t => {
+test('Core recovery uses a startup gate, relay animation and automatic Work readback', async t => {
   let recovering = true;
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'status') return { json: { health: { available: true }, readiness: { available: true, value: { state: recovering ? 'RECOVERING' : 'READY', ready: !recovering } } } };
     if (r.path === 'works') return { json: { works: [{ id: 'work-1', name: 'Recovery Work', desiredState: 'running', observedState: recovering ? 'starting' : 'ready' }] } };
-  });
-  await page.goto(base + '/#/works');
-  await page.evaluate(async () => { const { adapter } = await import('/desktop/browser/' + 'adapter.js'); await adapter.checkConnection(); });
-  await expect(page.locator('.works-toolbar')).toContainText('Starting');
-  await expect(page.locator('.works-toolbar .core-starting-spinner')).toBeVisible();
-  await expect(page.locator('.works-page h1')).toHaveCount(0);
-  await expect(page.locator('.works-page')).not.toContainText('The runtime is not ready');
+  }, false, false, undefined, true);
+  await expect(page.locator('.core-startup-page')).toContainText('Core is starting');
+  await expect(page.locator('.core-startup-blocks i')).toHaveCount(4);
+  await expect(page.locator('.works-toolbar')).toHaveCount(0);
   await page.setViewportSize({ width: 360, height: 800 });
-  await expect(page.locator('#search')).toBeVisible();
-  await expect(page.locator('.works-toolbar .connection')).toBeVisible();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.equal(await page.locator('.core-startup-symbol').evaluate(e => getComputedStyle(e).animationName), 'none');
+  assert.equal(await page.locator('.core-startup-blocks i').first().evaluate(e => getComputedStyle(e).animationName), 'core-block-relay');
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  assert.equal(await page.locator('.core-starting-spinner').evaluate(e => getComputedStyle(e).animationName), 'none');
+  assert.equal(await page.locator('.core-startup-blocks i').first().evaluate(e => getComputedStyle(e).animationName), 'none');
+  assert.equal(await page.locator('.core-startup-wait .core-starting-spinner').evaluate(e => getComputedStyle(e).animationName), 'none');
   await page.evaluate(async () => { const locale = await import('/desktop/browser/' + 'locale.js'); locale.chooseLocale('zh-CN'); });
-  await expect(page.locator('.works-toolbar .connection')).toContainText('启动中');
+  await expect(page.locator('#core-startup-title')).toHaveText('Core 正在启动');
   recovering = false;
+  await page.goto(base + '/#/works');
   await expect(page.locator('.work-row')).toContainText('就绪', { timeout: 8000 });
-  await expect(page.locator('.works-toolbar')).not.toContainText('启动中');
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
 });
 
-test('Core readiness failure is not shown as an animated startup', async t => {
-  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { state: 'RUNTIME_UNAVAILABLE', ready: false } } } } : undefined);
-  await button(page, 'back-works').click();
-  await expect(page.locator('.works-toolbar .connection')).toContainText('Runtime unavailable');
-  await expect(page.locator('.core-starting-spinner')).toHaveCount(0);
-  await expect(page.locator('.works-page')).toContainText('the runtime is unavailable');
+test('Core readiness failure is a static recoverable startup state', async t => {
+  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { state: 'RUNTIME_UNAVAILABLE', ready: false } } } } : undefined, false, false, undefined, true);
+  await expect(page.locator('#core-startup-title')).toHaveText('Core could not become ready');
+  await expect(page.locator('.core-startup-blocks,.core-starting-spinner')).toHaveCount(0);
+  await expect(button(page,'check-connection')).toBeVisible();
   await button(page, 'connection').click();
   await expect(page.locator('.status-grid')).toContainText('Runtime unavailable');
 });
@@ -2397,10 +2398,133 @@ test('automatic Work recovery stays observable after one failed attempt and beco
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
 });
 
-test('unconfirmed readiness does not claim that the runtime failed', async t => {
-  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: false, error: 'invalid response' } } } : undefined);
-  await button(page, 'back-works').click();
-  await expect(page.locator('.works-page')).toContainText('runtime readiness could not be confirmed');
-  await expect(page.locator('.works-toolbar .connection')).toContainText('Not confirmed');
+test('unconfirmed readiness has a static read recovery exit', async t => {
+  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: false, error: 'invalid response' } } } : undefined, false, false, undefined, true);
+  await expect(page.locator('#core-startup-title')).toHaveText('Core status is not confirmed');
+  await expect(button(page,'check-connection')).toBeVisible();
   await expect(page.locator('.core-starting-spinner')).toHaveCount(0);
+});
+test('startup recovery gates business entries until Core ready, including a direct Work route', async t => {
+  let recovering = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: { available: true, value: { state: recovering ? 'RECOVERING' : 'READY', ready: !recovering } } } };
+  }, false, true, async page => {
+    try {
+      await expect(page.locator('.core-startup-page')).toContainText('Core is starting');
+      for (const hash of ['#/app/work-1/counter/8000','#/works','#/work/work-1']) { await page.evaluate(value=>{location.hash=value},hash); await expect(page.locator('.core-startup-page')).toBeVisible(); }
+      await expect(button(page, 'new-work')).toHaveCount(0);
+      await expect(button(page, 'work-menu')).toHaveCount(0);
+      const result = await api(page, "try { await adapter.lifecycle('work-1','retry'); return 'submitted'; } catch(e) { return e.code; }");
+      assert.equal(result, 'CORE_NOT_READY');
+    } finally { recovering = false; }
+  });
+  await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible({timeout:10000});
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('recovered Work keeps five failed retries in history, never as menu progress rows after reload', async t => {
+  const ids = Array.from({length:5},(_,i)=>`retry-history-${i}`);
+  const { page, requests } = await fixture(t, r => {
+    if(r.path === 'known-operations') return {json:{operations:ids.map(operationId=>({operationId,workId:'work-1',type:'Retry Work',recordedAt:'2026-10-28T10:00:00Z',terminal:true,terminalState:'failed',terminalCheckedAt:'2026-10-28T10:00:01Z'}))}};
+    if(r.path.startsWith('operations/retry-history-')) return {json:{operationId:r.path.split('/')[1],workId:'work-1',kind:'retry-work',state:'failed',createdAt:'2026-10-28T10:00:00Z',error:{message:'synthetic old failure'}}};
+  });
+  for(let pass=0;pass<2;pass++){
+    if(pass)await page.reload();
+    await expect(button(page,'work-menu')).toBeVisible();await button(page,'work-menu').click();
+    await expect(page.locator('.work-menu-task')).toHaveCount(0);
+    await expect(button(page,'work-history')).toBeVisible();await button(page,'work-history').click();
+    await expect(page.locator('.operation-list > button')).toHaveCount(5);
+    await page.locator('[data-action=operation][data-id=retry-history-0]').click();
+    await expect(page.locator('.phase-track')).toContainText('failed');
+    assert.equal(requests.filter(r=>r.path==='operations/work-1').length,0);
+    await button(page,'close-modal').click();
+  }
+  assert.equal(requests.filter(r=>r.method!=='GET').length,0);
+});
+
+
+test('confirmed Core recovery preserves an existing composer and pauses writes until readiness returns',async t=>{
+ let recovering=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path==='status')return{json:{health:{available:true},readiness:{available:true,value:{state:recovering?'RECOVERING':'READY',ready:!recovering}}}};
+ });
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft kept across Core recovery');
+ await page.locator('#composer').evaluate(el=>(window as any).__preservedComposer=el);
+ recovering=true;await api(page,'await adapter.checkConnection();');
+ await expect(page.locator('#core-recovery-banner')).toBeVisible();
+ assert(await page.locator('#composer').evaluate(el=>(el.closest('[inert]')!==null)));
+ assert(await page.locator('#composer').evaluate(el=>el===(window as any).__preservedComposer));
+ assert.equal(await page.locator('#composer').inputValue(),'draft kept across Core recovery');
+ recovering=false;await api(page,'await adapter.checkConnection();');
+ await expect(page.locator('#core-recovery-banner')).toHaveCount(0);
+ await expect(page.locator('#composer')).toHaveValue('draft kept across Core recovery');
+ assert(await page.locator('#composer').evaluate(el=>el===(window as any).__preservedComposer));
+ assert.equal(requests.filter(r=>r.method!=='GET').length,0);
+});
+
+test('confirmed Core recovery keeps the same Service iframe and restores it without remounting',async t=>{
+ let recovering=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path==='status')return {json:{health:{available:true},readiness:{available:true,value:{state:recovering?'RECOVERING':'READY',ready:!recovering}}}};
+  if(r.path.endsWith('/services'))return {json:{services:[{serviceId:'counter',name:'Counter',enabled:true,observedState:'ready',access:{hostname:'counter.w-one.work',ports:[{port:8000,url:'http://counter.w-one.work:8000',name:'http'}]}}]}};
+  if(r.path==='service-entries')return {json:{entryId:'core-continuity-entry',origin:'http://service.test',entryUrl:'about:blank',embed:'unknown'}};
+  if(r.path==='service-entries/core-continuity-entry')return {json:{embed:'unknown'}};
+ });
+ await expect(page.locator('iframe')).toHaveCount(1);await page.locator('iframe').evaluate(el=>(window as any).__coreRecoveryFrame=el);
+ const writes=requests.filter(r=>r.method!=='GET').length;
+ recovering=true;await api(page,'await adapter.checkConnection();');
+ await expect(page.locator('#core-recovery-banner')).toBeVisible();assert(await page.locator('iframe').evaluate(el=>el===(window as any).__coreRecoveryFrame&&!!el.closest('[inert]')));
+ recovering=false;await api(page,'await adapter.checkConnection();');await expect(page.locator('#core-recovery-banner')).toHaveCount(0);
+ assert(await page.locator('iframe').evaluate(el=>el===(window as any).__coreRecoveryFrame));
+ assert.equal(requests.filter(r=>r.method==='POST'&&/works\/.+\/(start|retry|stop)$/.test(r.path)).length,0);
+ assert(requests.filter(r=>r.method!=='GET').length>=writes);
+});
+
+
+for (const revocation of ['stopped','deleted','work-denied','service-stopped','service-failed','service-disabled','service-denied','service-removed']) test(`WARN-1 Core recovery revokes ${revocation} iframe without discarding the composer`,async t=>{
+ let recovering=false,revoked=false;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path==='status')return{json:{health:{available:true},readiness:{available:true,value:{state:recovering?'RECOVERING':'READY',ready:!recovering}}}};
+  if(r.path==='works/work-1'&&revoked){
+   if(revocation==='work-denied')return{status:403,json:{code:'FORBIDDEN'}};
+   if(['stopped','deleted'].includes(revocation))return{json:{id:'work-1',name:'Recovery Work',desiredState:revocation,observedState:revocation}};
+  }
+  if(r.path.endsWith('/services')){
+   if(revoked&&revocation==='service-denied')return{status:403,json:{code:'FORBIDDEN'}};
+   return{json:{services:revoked&&revocation==='service-removed'?[]:[{serviceId:'counter',name:'Counter',enabled:!(revoked&&revocation==='service-disabled'),observedState:revoked&&revocation==='service-stopped'?'stopped':revoked&&revocation==='service-failed'?'failed':'ready',access:{hostname:'counter.w-one.work',ports:[{port:8000,url:'http://counter.w-one.work:8000',name:'http'}]}}]}};
+  }
+  if(r.path==='service-entries')return{json:{entryId:'warn-retained-entry',origin:'http://service.test',entryUrl:'about:blank',embed:'unknown'}};
+  if(r.path==='service-entries/warn-retained-entry')return{json:{embed:'unknown'}};
+ });
+ await expect(page.locator('iframe')).toHaveCount(1);
+ await page.locator('#composer').fill('draft survives runtime revocation');
+ const composer=await page.locator('#composer').elementHandle();
+ recovering=true;await api(page,'await adapter.checkConnection();');
+ await expect(page.locator('#core-recovery-banner')).toBeVisible();
+ revoked=true;
+ await api(page,revocation.startsWith('service-')?"await adapter.loadServices('work-1').catch(()=>{});":"await adapter.refreshWorkStatus('work-1',true).catch(()=>{});");
+ await expect(page.locator('iframe')).toHaveCount(0);
+ assert(await composer!.evaluate(el=>el.isConnected));
+ await expect(page.locator('#composer')).toHaveValue('draft survives runtime revocation');
+ assert.equal(requests.filter(r=>r.method==='POST'&&/works\/.+\/(start|retry|stop)$/.test(r.path)).length,0);
+});
+
+test('WARN-2 failed current Service stays current with Ready Work and becomes history only after Service recovery',async t=>{
+ let observed='stopped';
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'counter',name:'Counter',enabled:true,observedState:observed,access:{hostname:'counter.w-one.work',ports:[{port:8000,url:'http://counter.w-one.work:8000',name:'http'}]}}]}};
+  if(r.path==='works/work-1/services/counter/restart'){observed='failed';return{status:202,json:{operationId:'current-service-restart',workId:'work-1',serviceId:'counter'}};}
+  if(r.path==='operations/current-service-restart')return{json:{operationId:'current-service-restart',workId:'work-1',serviceId:'counter',kind:'restart-service',state:'failed',error:{message:'Current restart failed',serviceId:'counter'}}};
+ });
+ await api(page,"await adapter.operateService('work-1','counter','restart');await adapter.checkOperation('current-service-restart');await adapter.refreshWorkStatus('work-1',true);await adapter.listWorks();await adapter.loadServices('work-1');");
+ assert.equal(await api(page,"return adapter.workSynchronizationPending('work-1');"),false);
+ await button(page,'work-menu').click();await expect(button(page,'work-current-tasks')).toHaveCount(1);
+ await button(page,'work-history').click();await page.locator('[data-action="history-filter"][data-filter="current"]').click();
+ await expect(page.locator('.operation-list [data-id="current-service-restart"]')).toHaveCount(1);
+ observed='ready';await api(page,"await adapter.loadServices('work-1');");
+ await expect(page.locator('.operation-list [data-id="current-service-restart"]')).toHaveCount(0);
+ await page.locator('[data-action="history-filter"][data-filter="history"]').click();
+ await expect(page.locator('.operation-list [data-id="current-service-restart"]')).toContainText('failed');
+ assert.equal(await api(page,"return adapter.getOperation('current-service-restart').state;"),'failed');
+ assert.equal(requests.filter(r=>r.path==='works/work-1/services/counter/restart'&&r.method==='POST').length,1);
 });

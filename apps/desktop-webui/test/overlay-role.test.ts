@@ -205,7 +205,7 @@ test('first-read reveal is CSS-only, static, and does not reintroduce modal anim
  assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-/);
  const coreSpinner = 'animation: core-starting-spin 1s linear infinite';
  assert.ok(css.includes(coreSpinner));
- assert.doesNotMatch(css.replace(coreSpinner,''),/animation:[^;]*(?:pulse|spin)/);
+ assert.doesNotMatch(css.replaceAll(coreSpinner,''),/animation:[^;]*(?:pulse|spin)/);
  const shimmer=(css.match(/animation:[^;]*skeleton-shimmer[^;]*/g)||[]);
  assert.ok(shimmer.length<=1);assert.ok((css.match(/@keyframes skeleton-shimmer/g)||[]).length<=1);
 });

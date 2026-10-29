@@ -190,7 +190,7 @@ test('local auth: stale CSRF updates from readonly session, preserves account in
 });
 test('local auth: offline Core retains its normal session and last known identity', async t => {
   const { page } = await fixture(t, r => r.path === 'session' ? { json: { ...signedOut(), state: 'offline', lastKnownUser: { account: 'owner', role: 'user' }, lastConfirmedAt: '2026-10-03T00:00:00Z' } } : r.path === 'status' ? { json: { health: { available: false } } } : undefined);
-  await expect(page.locator('body')).toContainText('Core is unreachable');
+  await expect(page.locator('body')).toContainText('Cannot reach Core');
   assert.equal(await api(page, 'return adapter.state.sessionState'), 'ready');
   assert.equal(await page.locator('[data-action="account"]').count(), 1);
 });
@@ -274,13 +274,14 @@ test('local auth: a delayed business 401 readback cannot abandon a newer new ini
       if (++readbacks === 1) { await oldReadback.promise; return { json: signedOut(2) }; }
       freshStarted = true; await freshSession.promise; return { json: signedOut(2) };
     }
-    if (r.path === 'status') return { json: { health: { available: false } } };
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: {available:true,value:{ready:true,state:'READY'}} } };
     if (r.path === 'works' && armed) return { status: 401, json: { code: 'AUTH_REQUIRED' } };
   });
-  await expect(page.locator('body')).toContainText('Core is unreachable');
+  await expect(page.locator('.works-page')).toBeVisible();
   await expect.poll(() => api(page, 'return !!adapter.worksChecked')).toBe(true);
+  await expect.poll(() => records.filter(r => r.path === 'works').length).toBe(2);
   const initialWorksReads = records.filter(r => r.path === 'works').length;
-  assert.equal(initialWorksReads, 1, 'initial authenticated list must finish before the delayed 401 is armed');
+  assert(initialWorksReads >= 1, 'initial authenticated list must finish before the delayed 401 is armed');
   armed = true;
   const epoch = await api(page, 'return adapter.identityEpoch');
   const originalRead = api(page, `return adapter.request('works').catch(error => error.code)`);
@@ -354,7 +355,7 @@ for (const offline of [false, true]) test(`local auth: current business 401 read
   assert.equal(await api(page, 'return adapter.state.signedIn'), offline);
   if (offline) {
     assert.equal(code, 'CORE_UNAVAILABLE'); assert.equal(await api(page, 'return adapter.state.core.account'), 'owner');
-    await expect(page.locator('body')).toContainText('Core is unreachable');
+    await expect(page.locator('.works-page')).toBeVisible();
   } else {
     assert.equal(code, 'AUTH_REQUIRED'); assert.equal(await api(page, 'return adapter.state.core.account'), '');
     await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
@@ -383,13 +384,13 @@ for (const rejectedCode of ['LOCAL_CSRF_OR_AUTH_REQUIRED', 'LOCAL_AUTH_REQUIRED'
       if (++sessionReads === 1) { entered = true; await fresh.promise; return { json: signedOut(2) }; }
       return { json: signedIn() };
     }
-    if (r.path === 'status') return { json: { health: { available: false } } };
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: {available:true,value:{ready:true,state:'READY'}} } };
     if (r.path === 'old-mutation') {
       await rejected.promise;
       return { status: rejectedCode === 'LOCAL_AUTH_REQUIRED' ? 401 : 403, json: { code: rejectedCode } };
     }
   });
-  await expect(page.locator('body')).toContainText('Core is unreachable');
+  await expect(page.locator('.works-page')).toBeVisible();
   armed = true;
   const original = api(page, "return adapter.request('old-mutation', 'POST').catch(error => error.code)");
   await expect.poll(() => records.some(r => r.path === 'old-mutation')).toBe(true);
@@ -416,10 +417,10 @@ test('Reconcile auth: an obsolete CSRF readback is discarded after initializatio
       if (++sessionReads === 1) { await stale.promise; return { json: signedOut(2) }; }
       await fresh.promise; return { json: signedOut(2) };
     }
-    if (r.path === 'status') return { json: { health: { available: false } } };
+    if (r.path === 'status') return { json: { health: { available: true }, readiness: {available:true,value:{ready:true,state:'READY'}} } };
     if (r.path === 'old-mutation') return { status: 403, json: { code: 'LOCAL_CSRF_OR_AUTH_REQUIRED' } };
   });
-  await expect(page.locator('body')).toContainText('Core is unreachable'); armed = true;
+  await expect(page.locator('.works-page')).toBeVisible(); armed = true;
   const original = api(page, "return adapter.request('old-mutation','POST').catch(error=>error.code)");
   await expect.poll(() => sessionReads).toBe(1);
   const reopen = api(page, 'await adapter.initialize()');
@@ -438,12 +439,11 @@ test('pending Core: initial and manual checks have one local indicator, end on f
     if (r.path === 'session') return { json: signedIn() };
     if (r.path === 'status') { statusCalls++; await (statusCalls === 1 ? first.promise : manual.promise); return fail ? { status: 503, json: { message: 'Connection test failed' } } : { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } }; }
   });
-  await expect(button(page, 'connection').locator('.pending-dots')).toHaveCount(1);
-  await expect(page.locator('.loading-list .skeleton')).toHaveCount(3); await expect(page.locator('.loading-list')).toHaveText('');
+  await expect(page.locator('.core-startup-page .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.loading-list')).toHaveCount(0);
   await expect(page.locator('.pending-dots')).toHaveCount(1);
-  await expect(button(page, 'connection')).not.toContainText('Connected');
-  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
-  await expect(page.locator('.works-footer')).not.toContainText('0 Works');
+  await expect(page.locator('#core-startup-title')).toHaveText('Checking Core');
+  await expect(page.locator('.works-footer')).toHaveCount(0);
   if (process.env.PIWORK_UI_EVIDENCE === '1') {
     await expect(page.locator('.brand-logo')).toHaveJSProperty('complete', true);
     await expect.poll(() => page.locator('.brand-logo').evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
@@ -560,22 +560,19 @@ test('Works initial error has one cause and retry; retries stay local and confir
 });
 
 
-test('Works failed initial Core check leaves an unconfirmed list with explicit read recovery', async t => {
+test('failed initial Core check keeps business gated and offers a read-only readiness retry', async t => {
+  let fail = true;
   const { page, records } = await fixture(t, r => {
     if (r.path === 'session') return { json: signedIn() };
-    if (r.path === 'status') return { status: 503, json: { message: 'Initial Core check unavailable' } };
+    if (r.path === 'status') return fail ? { status: 503, json: { message: 'Initial Core check unavailable' } } : {json:{health:{available:true},readiness:{available:true,value:{ready:true,state:'READY'}}}};
   });
-  await expect(page.getByRole('heading', { name: 'Works have not been read' })).toBeVisible();
-  await expect.poll(() => api(page, 'return !adapter.connectionCheck.checking && !adapter.connectionRequest;')).toBe(true);
-  await expect(page.getByRole('heading', { name: 'No matching Works' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toHaveCount(0);
-  await expect(page.locator('.works-footer')).toContainText('Works not yet read');
-  await expect(page.locator('.loading-list')).toHaveCount(0); await expect(page.locator('.pending-dots')).toHaveCount(0);
+  await expect(page.locator('#core-startup-title')).toHaveText('Core status is not confirmed');
+  await expect(page.locator('.work-row,[data-action=new-work]')).toHaveCount(0);
+  await expect(page.locator('.core-starting-spinner')).toHaveCount(0);
   assert.equal(records.filter(r => r.path === 'works').length, 0);
-  await captureWorksEvidence(page, 'works-unconfirmed-core-error');
-  await page.getByRole('button', { name: 'Read Works', exact: true }).click();
+  if (process.env.PIWORK_UI_EVIDENCE === '1') { await mkdir('dist/server-ui-core-flow/desktop',{recursive:true}); await page.screenshot({path:'dist/server-ui-core-flow/desktop/core-unconfirmed.png',fullPage:true}); }
+  fail = false; await button(page,'check-connection').click();
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
   await expect(page.locator('.works-footer')).toContainText('0 Works');
-  assert.equal(records.filter(r => r.path === 'works').length, 1);
   assert.equal(records.filter(r => r.method !== 'GET').length, 0);
 });

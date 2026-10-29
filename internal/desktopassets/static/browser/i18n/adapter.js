@@ -4,6 +4,7 @@
 // English literal passed to DesktopError.
 export const adapterStrings = {
   en: {
+    'd.error.coreNotReady': 'Core is not ready. Check its status before starting a new action.',
     'd.error.cleanupIncomplete': 'Cleanup records are incomplete.',
     'd.error.cleanupIdentity': 'Cleanup record identity is invalid.',
     // DesktopError and cached adapter feedback (adapter.ts)
@@ -376,6 +377,7 @@ export const adapterStrings = {
     'd.lifecycle.workUnconfirmed': 'Work status not confirmed',
   },
   'zh-CN': {
+    'd.error.coreNotReady': 'Core 尚未就绪，请先检查状态再执行新的操作。',
     'd.error.cleanupIncomplete': '清理记录不完整。',
     'd.error.cleanupIdentity': '清理记录身份无效。',
     'd.error.historyCapabilities': '历史功能信息不完整。',

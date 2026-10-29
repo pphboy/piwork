@@ -261,8 +261,8 @@ test('R4 anonymous inspection survives failed login then same-Core first login, 
 test('R4 Core/account/logout changes never preserve another identity inspection', async t => {
   const { page } = await fixture(t, r => r.path === 'work-packages' ? { json: { transferId: r.headers['x-piwork-transfer-id'], summary: { sourceName: 'private summary', integrityVerified: true } } } : undefined, true);
   await api(page, `await adapter.inspectWork(new File(['x'],'x.work')); await adapter.switchCore('http://other.test'); return adapter.inspection;`).then(value => assert.equal(value, null));
-  await api(page, `await adapter.signIn('http://other.test','owner','pass'); await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signIn('http://other.test','other-account','pass');`); assert.equal(await api(page, `return adapter.inspection;`), null);
-  await api(page, `await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signOut();`); assert.equal(await api(page, `return adapter.inspection;`), null);
+  await api(page, `await adapter.signIn('http://other.test','owner','pass'); await adapter.checkConnection(); await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signIn('http://other.test','other-account','pass');`); assert.equal(await api(page, `return adapter.inspection;`), null);
+  await api(page, `await adapter.checkConnection(); await adapter.inspectWork(new File(['x'],'x.work')); await adapter.signOut();`); assert.equal(await api(page, `return adapter.inspection;`), null);
 });
 
 test('R5 replace/Cancel/Escape release exact IDs; failed DELETE retains independent retry record and 404 confirms cleanup', async t => {
@@ -292,7 +292,7 @@ test('R5 upload cancellation and late callback cannot resurrect abandoned inspec
   lostDelete = false; await api(page, `return adapter.cleanupInspection('${id}');`); assert.equal(await api(page, `return adapter.cleanupPending.size;`), 0);
   uploadDelay = false; await api(page, `await adapter.inspectWork(new File(['y'],'y.work')); try { await adapter.importWork(''); } catch {} return adapter.inspectionContext.importState;`).then(value => assert.equal(value, 'unknown'));
   const deletes = requests.filter(r => r.method === 'DELETE').length; await api(page, `await adapter.abandonInspection(); try { await adapter.importWork(''); } catch {} try { await adapter.inspectWork(new File(['z'],'z.work')); } catch {}`); assert.equal(requests.filter(r => r.path === 'work-imports').length, 1); assert.equal(requests.filter(r => r.method === 'DELETE').length, deletes);
-  await api(page, `await adapter.signOut(); await adapter.signIn('http://core.test','owner','pass');`); lostImport = false;
+  await api(page, `await adapter.signOut(); await adapter.signIn('http://core.test','owner','pass'); await adapter.checkConnection();`); lostImport = false;
   await api(page, `await adapter.inspectWork(new File(['a'],'a.work')); await adapter.importWork(''); await adapter.abandonInspection();`); assert.equal(await api(page, `return adapter.inspectionContext.operationId;`), 'original-operation'); assert.equal(requests.filter(r => r.method === 'DELETE').length, deletes);
 });
 
@@ -2689,6 +2689,7 @@ test('Reconcile import: anonymous Inspect survives login, a name conflict and a 
   await api(page, "await adapter.inspectWork(new File(['archive'],'original.work'));");
   assert.equal(requests.filter(r => r.path === 'work-imports').length, 0);
   await api(page, "await adapter.signIn('http://core.test','owner','pass');");
+  await api(page, 'await adapter.checkConnection();');
   assert.equal(await api(page, 'return adapter.inspectionTransfer;'), transfer);
   assert.equal(await api(page, 'return adapter.inspection.sourceName;'), 'Original archive');
   await assert.rejects(api(page, "await adapter.importWork('Taken');"));

@@ -191,6 +191,8 @@ export interface OperationDiagnostics {
   diagnosticCollection?: { state?: string; code?: string };
 }
 export interface Operation {
+  /** Display hint from a previously verified result; never current admission evidence. */
+  terminalHint?: { state?: 'succeeded' | 'failed' | 'superseded'; checkedAt?: string };
   importName?: string;
   importSourceName?: string;
   action?: LifecycleAction;
