@@ -68,6 +68,113 @@ func TestHistoryBackupRestoresExactOriginalBytesWithoutBusinessRollback(t *testi
 	}
 }
 
+func TestSchema5CheckpointPreservesBothHistoryAndMemory(t *testing.T) {
+	private, scope := memoryFixture(t)
+	spool := t.TempDir()
+	request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: []string{"context-memory-source"}, TargetSchema: 6}
+	before := fingerprint(t, private)
+	saved, err := CheckpointHistory(context.Background(), private, spool, request)
+	if err != nil || saved.SchemaVersion != 5 || saved.State != "saved" || len(saved.ManifestDigest) != 64 {
+		t.Fatal(saved, err)
+	}
+	if again, err := CheckpointHistory(context.Background(), private, spool, request); err != nil || again != saved {
+		t.Fatal(again, err)
+	}
+	if !reflect.DeepEqual(before, fingerprint(t, private)) {
+		t.Fatal("checkpoint changed source databases")
+	}
+	for _, name := range []string{"work.sqlite", "memory.sqlite"} {
+		original, err := os.ReadFile(filepath.Join(private, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		backup, err := os.ReadFile(filepath.Join(spool, "backup-"+name))
+		if err != nil || !reflect.DeepEqual(backup, original) {
+			t.Fatal(name, err)
+		}
+	}
+	if err := os.Rename(filepath.Join(private, "memory.sqlite"), filepath.Join(private, "memory.original")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(private, "memory.sqlite"), []byte("unowned"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckpointHistory(context.Background(), private, spool, request); err == nil {
+		t.Fatal("accepted replaced Memory")
+	}
+}
+
+func TestSchema5BackupRestoresBothDatabasesAndRetriesAfterLostReceipt(t *testing.T) {
+	private, scope := memoryFixture(t)
+	spool := t.TempDir()
+	request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: []string{"context-memory-source"}, TargetSchema: 6}
+	before := fingerprint(t, private)
+	saved, err := CheckpointHistory(context.Background(), private, spool, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openMemoryFixture(t, private)
+	if _, err := db.Exec("UPDATE runs SET final_text='changed'; UPDATE memory.memory_entries SET rule='changed'"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	request.ExpectedManifestDigest = saved.ManifestDigest
+	restored, err := RestoreHistoryBackup(context.Background(), private, spool, request)
+	if err != nil || restored.State != "restored" || restored.SchemaVersion != 5 {
+		t.Fatal(restored, err)
+	}
+	if !reflect.DeepEqual(before, fingerprint(t, private)) {
+		t.Fatal("restored databases differ")
+	}
+	if again, err := RestoreHistoryBackup(context.Background(), private, spool, request); err != nil || again != restored {
+		t.Fatal(again, err)
+	}
+	if err := os.Remove(filepath.Join(spool, "history-restored.json")); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := RestoreHistoryBackup(context.Background(), private, spool, request); err != nil || again != restored {
+		t.Fatal("retry without receipt", again, err)
+	}
+}
+
+func TestSchema5RestoreResumesAfterPartialReplacement(t *testing.T) {
+	for _, name := range []string{"work.sqlite", "memory.sqlite"} {
+		t.Run(name, func(t *testing.T) {
+			private, scope := memoryFixture(t)
+			spool := t.TempDir()
+			request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: []string{"context-memory-source"}, TargetSchema: 6}
+			before := fingerprint(t, private)
+			saved, err := CheckpointHistory(context.Background(), private, spool, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db := openMemoryFixture(t, private)
+			if _, err := db.Exec("UPDATE runs SET final_text='changed'; UPDATE memory.memory_entries SET rule='changed'"); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			raw, err := os.ReadFile(filepath.Join(spool, "backup-"+name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			temporary := filepath.Join(private, "replacement.tmp")
+			if err := os.WriteFile(temporary, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(temporary, filepath.Join(private, name)); err != nil {
+				t.Fatal(err)
+			}
+			request.ExpectedManifestDigest = saved.ManifestDigest
+			if _, err := RestoreHistoryBackup(context.Background(), private, spool, request); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, fingerprint(t, private)) {
+				t.Fatal("partial restore lost original bytes")
+			}
+		})
+	}
+}
+
 func TestCheckpointResumesAllocatedMemoryBeforeSavedReceipt(t *testing.T) {
 	for _, published := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-path", true: "before-initialization"}[published], func(t *testing.T) {

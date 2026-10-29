@@ -6,8 +6,8 @@ import { HISTORY_LIMITS, HistoryError, HistoryQuerySchema, HistoryPageSchema, hi
 import { type HistoryRunRecord, type WorkStore } from "@piwork/work-store";
 import { historyRunView, historySessionView } from "./history-projection.js";
 
-type Block = Pick<HistorySegment,"type"> & Partial<Pick<HistorySegment,"toolCallId"|"toolName"|"image"|"resultKind"|"truncated"|"isError"|"blockIndex"|"blockCount">> & {text:string;blockId:string};
-interface Entry { id:string;order:number;role:string;runId:string;location?:HistoryEntryLocation;blocks?:Block[];result?:HistoryRunRecord; }
+type Block = Pick<HistorySegment,"type"> & Partial<Pick<HistorySegment,"toolCallId"|"toolName"|"image"|"resultKind"|"truncated"|"isError"|"blockIndex"|"blockCount"|"streamId"|"streamOffset">> & {text:string;blockId:string};
+interface Entry { id:string;order:number;role:string;runId:string;location?:HistoryEntryLocation;blocks?:Block[];result?:HistoryRunRecord;recoveryUnconfirmed?:boolean;streams?:Map<string,{streamId:string;streamOffset:number}>;checkpoint?:{events:{sequence:number;bytes:number}[];bytes:number;skip?:number}; }
 interface Snapshot { id:string;session:HistoryPage["session"];source:IndexedHistorySnapshot;entries:Entry[];runs:HistoryRunRecord[];byRun:Map<string,HistoryRunRecord>;lastAssistant:Map<string,Entry>;resultMatches:Map<string,boolean>;used:number; }
 interface Position { item:number;block:number;offset:number; }
 interface Cursor { snapshot:string;scope:string;position:Position; }
@@ -66,7 +66,7 @@ export class SessionHistoryReader {
         if(activeEntry!==entry){activeEntry=entry;activeBlocks=this.blocks(snapshot,entry,query.imageProfile!==undefined);}
         const blocks=activeBlocks;
         const blockIndex=position.block<0?blocks.length-1:position.block,block=blocks[blockIndex]!;
-        const total=entry.result?entry.result.resultBytes ?? 0:Buffer.byteLength(block.text);
+        const total=entry.result?entry.result.resultBytes ?? 0:entry.checkpoint?.bytes ?? Buffer.byteLength(block.text);
         const boundary=position.offset<0?total:position.offset;
         let offset:number,text:string;
         if(entry.result) {
@@ -75,6 +75,13 @@ export class SessionHistoryReader {
           if(older&&offset>0) {while(raw.length&&(raw[0]!&0xc0)===0x80){offset++;raw=raw.subarray(1);}}
           while(raw.length&&!Buffer.from(raw.toString("utf8")).equals(raw))raw=raw.subarray(0,raw.length-1);
           text=raw.toString("utf8");
+        } else if(entry.checkpoint) {
+          offset=older?Math.max(0,boundary-HISTORY_LIMITS.fragmentBytes):boundary;
+          const end=older?boundary:Math.min(total,boundary+HISTORY_LIMITS.fragmentBytes);
+          let raw=this.checkpointRange(sessionId,entry,offset,end-offset);
+          if(older&&offset>0)while(raw.length&&(raw[0]!&0xc0)===0x80){offset++;raw=raw.subarray(1);}
+          while(raw.length&&!Buffer.from(raw.toString('utf8')).equals(raw))raw=raw.subarray(0,raw.length-1);
+          text=raw.toString('utf8');
         } else {
           const raw=Buffer.from(block.text); offset=older?Math.max(0,boundary-HISTORY_LIMITS.fragmentBytes):boundary;
           if(older)while(offset<boundary&&(raw[offset]!&0xc0)===0x80)offset++;
@@ -84,7 +91,7 @@ export class SessionHistoryReader {
         }
         const length=Buffer.byteLength(text);
         if(total>0&&!length) return fail("HISTORY_CORRUPT","The history range could not advance.");
-        segment={...block,entryId:entry.id,entryOrder:entry.order,role:entry.role,runId:entry.runId,blockIndex:block.blockIndex??blockIndex,blockCount:block.blockCount??blocks.length,
+        segment={...block,...(entry.recoveryUnconfirmed?{recoveryUnconfirmed:true}:{}),entryId:entry.id,entryOrder:entry.order,role:entry.role,runId:entry.runId,blockIndex:block.blockIndex??blockIndex,blockCount:block.blockCount??blocks.length,
           byteOffset:offset,totalBytes:total,text,complete:offset+length===total};
         const done=older?offset===0:offset+length===total;
         if(!done)position={item:position.item,block:blockIndex,offset:older?offset:offset+length};
@@ -94,7 +101,8 @@ export class SessionHistoryReader {
         seen.add(entry.id);
       }
       const previousRuns=page.runs;
-      if(summary&&!page.runs.some(r=>r.runId===summary.runId))page.runs=[...page.runs,summary];
+      if(summary){const existing=page.runs.findIndex(r=>r.runId===summary!.runId);
+        page.runs=existing<0?[...page.runs,summary]:page.runs.map((run,index)=>index===existing?summary!:run);}
       if(segment)page.segments.push(segment);
       // Reserve the longest possible cursor and check real Go-compatible JSON.
       const encoded=historyJSON({...page,nextCursor:"x".repeat(256),hasMore:true});
@@ -138,7 +146,25 @@ export class SessionHistoryReader {
       const next=entries.findIndex(e=>e.runId&&(byRun.get(e.runId)?.acceptedAt ?? "")>run.acceptedAt);
       if(next<0)entries.push(entry);else entries.splice(next,0,entry);
     }
-    for(const run of runs)if(run.resultBytes!==null){
+    const recoveredRuns=new Set<string>();
+    for(const run of runs)if(['succeeded','cancelled','failed','interrupted'].includes(run.state)) {
+      const saved=entries.filter(e=>e.runId===run.runId&&e.role!=='user');
+      const recovered=this.uncoveredCheckpoints(sessionId,source,saved,this.checkpointEntries(sessionId,run));
+      if(!recovered.length)continue;
+      recoveredRuns.add(run.runId);
+      const last=entries.findLastIndex(e=>e.runId===run.runId);
+      const next=entries.findIndex(e=>e.runId&&(byRun.get(e.runId)?.acceptedAt ?? '')>run.acceptedAt);
+      entries.splice(last>=0?last+1:next>=0?next:entries.length,0,...recovered);
+    }
+    // A Run can fail before the SDK writes its first message. Give it a
+    // paginated metadata anchor so its real state and Details remain visible;
+    // do not invent a prompt or a reply that was never saved.
+    for(const run of runs)if(run.resultBytes===null&&!entries.some(entry=>entry.runId===run.runId)){
+      const id=`${run.runId}-empty`,entry:Entry={id,order:0,role:'assistant',runId:run.runId,blocks:[{type:'empty',blockId:id,text:''}]};
+      const next=entries.findIndex(item=>item.runId&&(byRun.get(item.runId)?.acceptedAt ?? '')>run.acceptedAt);
+      entries.splice(next>=0?next:entries.length,0,entry);
+    }
+    for(const run of runs)if(run.resultBytes!==null && !(run.resultBytes===0 && recoveredRuns.has(run.runId))){
       const result:Entry={id:`${run.runId}-final`,order:0,role:"assistant",runId:run.runId,result:run,blocks:[{type:"run-result",blockId:`${run.runId}-final-0`,text:""}]};
       const last=entries.findLastIndex(entry=>entry.runId===run.runId);
       if(last>=0)entries.splice(last+1,0,result);else entries.push(result);
@@ -147,6 +173,86 @@ export class SessionHistoryReader {
     const lastAssistant=new Map(entries.filter(entry=>entry.role==='assistant'&&!entry.result&&entry.runId).map(entry=>[entry.runId,entry]));
     const snapshot:Snapshot={id:randomUUID(),session:historySessionView(record),source,entries,runs,byRun,lastAssistant,resultMatches:new Map(),used:this.now()};
     this.snapshots.set(snapshot.id,snapshot);this.prune();return snapshot;
+  }
+  private checkpointEntries(sessionId:string,run:HistoryRunRecord):Entry[] {
+    const entries:Entry[]=[],started=new Set<string>();let after=0,group:Entry|undefined;
+    while(true){const batch=this.store.historyOutputEventIndex(this.workId,sessionId,run.runId,run.latestSequence,after);if(!batch.length)break;
+      for(const event of batch){after=event.sequence;
+        if(event.kind==='text'){
+          if(event.bytes===0)continue;
+          if(!group){const id=`${run.runId}-text-${event.sequence}`;group={id,order:0,role:'assistant',runId:run.runId,blocks:[{type:'text',blockId:id,text:''}],checkpoint:{events:[],bytes:0}};entries.push(group);}
+          group.checkpoint!.events.push({sequence:event.sequence,bytes:event.bytes});group.checkpoint!.bytes+=event.bytes;
+          if(!Number.isSafeInteger(group.checkpoint!.bytes))return fail('HISTORY_CORRUPT','A saved text range is too large.');continue;
+        }
+        group=undefined;
+        // Tool previews are bounded when generated by the Agent. Reject a
+        // forged oversized event rather than assembling an unbounded body.
+        if(event.bytes>512*1024)return fail('HISTORY_CORRUPT','A saved tool event exceeds its history budget.');
+        const parts:string[]=[];let cursor={sequence:event.sequence-1,part:Number.MAX_SAFE_INTEGER},count=0;
+        while(count<event.parts){const chunks=this.store.historyOutputChunks(this.workId,sessionId,run.runId,event.sequence,cursor,8);if(!chunks.length)return fail('HISTORY_CORRUPT','A saved tool event is incomplete.');
+          for(const chunk of chunks){if(chunk.sequence!==event.sequence||chunk.kind!==event.kind||chunk.part!==count++)return fail('HISTORY_CORRUPT','A saved tool event is inconsistent.');parts.push(chunk.data);cursor={sequence:chunk.sequence,part:chunk.part};}}
+        let value:any;try{value=JSON.parse(parts.join(''));}catch{return fail('HISTORY_CORRUPT','A saved tool event is invalid.');}
+        if(!value || typeof value.toolName!=='string'||!value.toolName||typeof value.toolCallId!=='string'||!value.toolCallId)return fail('HISTORY_CORRUPT','A saved tool identity is invalid.');
+        if(event.kind==='tool-start'){if(started.has(value.toolCallId))continue;started.add(value.toolCallId);}
+        const id=`${run.runId}-checkpoint-${event.sequence}`,base={blockId:id,text:'',toolName:value.toolName,toolCallId:value.toolCallId};
+        if(event.kind==='tool-start')entries.push({id,order:0,role:'assistant',runId:run.runId,blocks:[{...base,type:'tool-call'}]});
+        else {const result=value.result ?? {kind:'unavailable',truncated:false,isError:value.isError===true},kind=result?.kind;
+          if(!['text','non-text','unavailable'].includes(kind)||kind==='text'&&typeof result.text!=='string'||typeof result.truncated!=='boolean'||typeof result.isError!=='boolean')return fail('HISTORY_CORRUPT','A saved tool result is invalid.');
+          entries.push({id,order:0,role:'toolResult',runId:run.runId,blocks:[{...base,type:'tool-result',text:kind==='text'?result.text:'',resultKind:kind,truncated:result.truncated,isError:result.isError}]});
+        }
+      }
+    }
+    return entries;
+  }
+  private checkpointRange(sessionId:string,entry:Entry,offset:number,length:number):Buffer {
+    offset+=entry.checkpoint!.skip??0;
+    const result:Buffer[]=[];let position=0,remaining=length;
+    for(const event of entry.checkpoint!.events){const start=Math.max(0,offset-position),available=Math.min(event.bytes-start,remaining);
+      if(available>0){const part=this.store.historyOutputTextRange(this.workId,sessionId,entry.runId,event.sequence,start,available);if(part.length!==available)return fail('HISTORY_CORRUPT','A saved text range is incomplete.');result.push(part);remaining-=available;}
+      position+=event.bytes;if(!remaining)break;
+    }
+    if(remaining)return fail('HISTORY_CORRUPT','A saved text range is incomplete.');return Buffer.concat(result);
+  }
+  /** Match only a verified prefix in the same Run. Tool call identities
+   * establish the intervening boundaries; text is checked byte-for-byte. */
+  private uncoveredCheckpoints(sessionId:string,source:IndexedHistorySnapshot,saved:Entry[],checkpoints:Entry[]):Entry[] {
+    if(!saved.length||!checkpoints.length)return checkpoints;
+    let index=0,offset=0;
+    const remaining=(uncertain:boolean):Entry[]=>{
+      const rest=checkpoints.slice(index).map(entry=>uncertain?{...entry,recoveryUnconfirmed:true}:entry);
+      if(!offset||!rest.length)return rest;
+      const current=rest[0]!;if(!current.checkpoint)return rest;
+      const id=`${current.id}-remaining-${offset}`;
+      rest[0]={...current,id,blocks:[{type:'text',blockId:id,text:'',streamId:current.id,streamOffset:offset}],checkpoint:{...current.checkpoint,skip:offset,bytes:current.checkpoint.bytes-offset}};
+      return rest;
+    };
+    for(const entry of saved){if(!entry.location)return remaining(true);
+      const value=source.read(entry.location);
+      for(const block of value.blocks){
+        if(block.type==='image')continue;
+        if(block.type==='text'){
+          const raw=Buffer.from(block.text);let at=0;
+          const origin=checkpoints[index],originOffset=offset;
+          while(at<raw.length){const current=checkpoints[index];if(!current?.checkpoint)return remaining(true);
+            const size=Math.min(raw.length-at,current.checkpoint.bytes-offset,HISTORY_LIMITS.fragmentBytes);
+            if(size<=0)return remaining(true);
+            if(!this.checkpointRange(sessionId,current,offset,size).equals(raw.subarray(at,at+size)))return remaining(true);
+            at+=size;offset+=size;if(offset===current.checkpoint.bytes){index++;offset=0;}
+          }
+          // A block is associated only when every byte was checked against
+          // one event group; equal prose by itself does not establish identity.
+          if(raw.length&&origin?.checkpoint&&originOffset+raw.length<=origin.checkpoint.bytes){
+            entry.streams??=new Map();entry.streams.set(block.blockId,{streamId:origin.id,streamOffset:originOffset});
+          }
+        } else {
+          if(offset!==0)return remaining(true);
+          const current=checkpoints[index]?.blocks?.[0];
+          if(!current||current.type!==block.type||current.toolCallId!==block.toolCallId||current.toolName!==block.toolName)return remaining(true);
+          index++;
+        }
+      }
+    }
+    return remaining(false);
   }
   private blocks(snapshot:Snapshot,entry:Entry,images:boolean):Block[] {
     let blocks=entry.blocks;
@@ -157,7 +263,7 @@ export class SessionHistoryReader {
       }
       blocks=value.blocks.map((block,i)=>{
         const blockId=entry.id!==value.id?`${entry.id}-${i}`:block.blockId;
-        if(block.type==="text")return {type:block.type,blockId,text:block.text};
+        if(block.type==="text")return {type:block.type,blockId,text:block.text,...entry.streams?.get(block.blockId)};
         if(block.type==="image")return {type:block.type,blockId:`${entry.runId}-image-${block.image.imageIndex}`,text:"",image:block.image};
         const base={type:block.type,blockId,text:"",toolCallId:block.toolCallId,toolName:block.toolName};
         return block.type==="tool-result"?{...base,text:block.result.kind==="text"?block.result.text:"",resultKind:block.result.kind,truncated:block.result.truncated,isError:block.result.isError}:base;
@@ -169,7 +275,15 @@ export class SessionHistoryReader {
   private resultEntry(snapshot:Snapshot,run:HistoryRunRecord):Entry {
     if(run.resultBytes===null)return fail("HISTORY_CORRUPT","The Run has no saved final result.");
     const last=snapshot.lastAssistant.get(run.runId);
-    if(last&&snapshot.resultMatches.get(run.runId)!==false){const blocks=this.blocks(snapshot,last,true);
+    if(last?.checkpoint&&snapshot.resultMatches.get(run.runId)!==false){
+      if(snapshot.resultMatches.get(run.runId)===true)return last;
+      if(last.checkpoint.bytes===run.resultBytes){let same=true;
+        for(let start=0;start<run.resultBytes;start+=HISTORY_LIMITS.fragmentBytes){const size=Math.min(HISTORY_LIMITS.fragmentBytes,run.resultBytes-start);
+          if(!this.checkpointRange(run.sessionId,last,start,size).equals(this.store.historyResult(this.workId,run.sessionId,run.runId,start,size))){same=false;break;}}
+        if(same){snapshot.resultMatches.set(run.runId,true);return last;}
+      }
+    }
+    if(last&&!last.checkpoint&&snapshot.resultMatches.get(run.runId)!==false){const blocks=this.blocks(snapshot,last,true);
       // The result range omits tool blocks but keeps the original SDK shape.
       // Cursor positions still index the filtered text array locally.
       const texts=blocks.flatMap((block,blockIndex)=>block.type==='text'?[{...block,blockIndex,blockCount:blocks.length}]:[]);

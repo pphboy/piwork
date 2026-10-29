@@ -34,6 +34,154 @@ function content(pages:HistoryPage[]) {
  return [...blocks].map(([id,parts])=>[id,[...parts].sort(([a],[b])=>a-b).map(([,s])=>s).join("")] as const);
 }
 
+test('a Run that fails before any SDK message has a paged state anchor without invented prose',()=>{
+ const f=fixture();try{
+  const run=f.store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'preflight-failure',requestDigest:'digest',promptDigest:'digest'}).run;
+  f.store.completeRun(run.runId,'failed',null,JSON.stringify({code:'MODEL_EXECUTION_FAILED',message:'Model execution failed.',retryable:true}));
+  const pages=readAll(f.reader,f.session.sessionId,{direction:'newer',runId:run.runId});
+  assert.deepEqual(pages.flatMap(page=>page.segments).map(segment=>[segment.type,segment.text,segment.runId]),[['empty','',run.runId]]);
+  assert.ok(pages.flatMap(page=>page.runs).some(value=>value.runId===run.runId&&value.state===5&&value.error?.message==='Model execution failed.'));
+ }finally{f.close();}
+});
+
+test('cancelled, failed and interrupted output recovers in event order when SDK has no assistant turn',()=>{
+ for(const state of ['cancelled','failed','interrupted'] as const){const f=fixture();try{
+  f.store.close();
+  let store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:state,requestDigest:'digest',promptDigest:'digest'}).run;
+  const first='汉🙂'.repeat(12000),second='后续回复';
+  store.appendEvent(run.runId,'text',JSON.stringify({delta:first.slice(0,4000)}));
+  store.appendEvent(run.runId,'text',JSON.stringify({delta:first.slice(4000)}));
+  store.appendEvent(run.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'call-1'}));
+  store.appendEvent(run.runId,'tool-end',JSON.stringify({toolName:'read',toolCallId:'call-1',isError:false,result:{kind:'text',text:'done',truncated:false,isError:false}}));
+  store.appendEvent(run.runId,'text',JSON.stringify({delta:second}));
+  store.completeRun(run.runId,state,null,null);store.compactRunEvents(run.runId,1);store.close();
+  store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1'});
+  try {
+   const reader=new SessionHistoryReader('work-1',store),forward=readAll(reader,f.session.sessionId,{direction:'newer',runId:run.runId}),backward=readAll(reader,f.session.sessionId,{direction:'older',runId:run.runId});
+   assert.deepEqual(new Map(content(forward)),new Map(content(backward)));
+   assert.deepEqual(content(forward).map(([,text])=>text),[first,'','done',second]);
+   assert.deepEqual([...new Set(forward.flatMap(p=>p.segments.map(s=>s.type)))],['text','tool-call','tool-result']);
+   assert.ok(forward.flatMap(p=>p.runs).some(r=>r.runId===run.runId&&r.state==={failed:5,cancelled:6,interrupted:7}[state]&&r.resultRef===null));
+  }finally{store.close();}
+ }finally{f.close();}}
+});
+
+test('checkpoint recovery appends only the verified remainder of an SDK text prefix',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'prefix',requestDigest:'digest',promptDigest:'digest'}).run;
+   f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});appendAssistantMessage(f.sdk,'开头');
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'开头还有后续'}));store.completeRun(run.runId,'cancelled',null,null);
+   const pages=readAll(new SessionHistoryReader('work-1',store),f.session.sessionId,{direction:'newer',runId:run.runId});
+   assert.deepEqual(content(pages).map(([,text])=>text),['开头','还有后续']);
+   const segments=pages.flatMap(page=>page.segments);
+   assert.deepEqual(segments.map(s=>[s.streamId,s.streamOffset]),[[`${run.runId}-text-1`,0],[`${run.runId}-text-1`,6]]);
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
+test('successful SDK text also identifies the verified event stream for cursor recovery',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'success-stream',requestDigest:'digest',promptDigest:'digest'}).run;
+   f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});appendAssistantMessage(f.sdk,'完整回答');
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'完整回答'}));store.completeRun(run.runId,'succeeded','完整回答',null);
+   const segments=readAll(new SessionHistoryReader('work-1',store),f.session.sessionId,{direction:'newer',runId:run.runId}).flatMap(page=>page.segments);
+   assert.deepEqual(segments.filter(s=>s.type==='text').map(s=>[s.text,s.streamId,s.streamOffset]),[['完整回答',`${run.runId}-text-1`,0]]);
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
+test('a nonempty result retains a verified SDK prefix and checkpoint remainder for client reconciliation',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'prefix-result',requestDigest:'digest',promptDigest:'digest'}).run;
+   f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});appendAssistantMessage(f.sdk,'开头');
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'开头后续'}));store.completeRun(run.runId,'cancelled','开头后续',null);
+   const pages=readAll(new SessionHistoryReader('work-1',store),f.session.sessionId,{direction:'newer',runId:run.runId});
+   const segments=pages.flatMap(page=>page.segments);
+   assert.deepEqual(content(pages).map(([,text])=>text),['开头','后续','开头后续']);
+   assert.ok(segments.some(segment=>segment.blockId===`${run.runId}-text-1-remaining-6`&&!segment.recoveryUnconfirmed));
+   assert.ok(segments.some(segment=>segment.type==='run-result'));
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
+test('unmatched SDK content does not erase checkpoint output and marks the uncertain relationship',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'mismatch',requestDigest:'digest',promptDigest:'digest'}).run;
+   f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});appendAssistantMessage(f.sdk,'已有历史');
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'已输出内容'}));store.completeRun(run.runId,'failed',null,null);
+   const pages=readAll(new SessionHistoryReader('work-1',store),f.session.sessionId,{direction:'newer',runId:run.runId});
+   assert.deepEqual(content(pages).map(([,value])=>value),['已有历史','已输出内容']);
+   const segments=pages.flatMap(page=>page.segments);
+   assert.equal(segments.find(segment=>segment.text==='已有历史')?.recoveryUnconfirmed,undefined);
+   assert.equal(segments.find(segment=>segment.text==='已有历史')?.streamId,undefined);
+   assert.equal(segments.find(segment=>segment.text==='已输出内容')?.recoveryUnconfirmed,true);
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
+test('an empty cancelled result does not hide durable partial output',()=>{
+ for(const savedPrefix of [false,true]){const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'empty-result',requestDigest:'digest',promptDigest:'digest'}).run;
+   if(savedPrefix){f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});appendAssistantMessage(f.sdk,'已输出');}
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'已输出的内容'}));store.completeRun(run.runId,'cancelled','',null);
+   const reader=new SessionHistoryReader('work-1',store),pages=readAll(reader,f.session.sessionId,{direction:'newer',runId:run.runId});
+   assert.equal(content(pages).map(([,value])=>value).join(''),'已输出的内容');
+   const result=readAll(reader,f.session.sessionId,{direction:'newer',content:'result',runId:run.runId,snapshot:pages[0]!.snapshotId});
+   assert.equal(content(result).map(([,value])=>value).join(''),'');
+   assert.ok(result.flatMap(p=>p.runs).some(value=>value.state===6));
+  }finally{store.close();}
+ }finally{f.close();}}
+});
+
+test('nonempty cancelled result reuses the matching checkpoint while retaining earlier tool turns',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'nonempty-result',requestDigest:'digest',promptDigest:'digest'}).run;
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'工具前'}));
+   store.appendEvent(run.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'call-1'}));
+   store.appendEvent(run.runId,'tool-end',JSON.stringify({toolName:'read',toolCallId:'call-1',result:{kind:'text',text:'完成',truncated:false,isError:false}}));
+   const last='部分答案🙂'.repeat(8000);store.appendEvent(run.runId,'text',JSON.stringify({delta:last}));
+   store.completeRun(run.runId,'cancelled',last,null);store.compactRunEvents(run.runId,1);
+   const reader=new SessionHistoryReader('work-1',store),pages=readAll(reader,f.session.sessionId,{direction:'newer',runId:run.runId});
+   assert.deepEqual(content(pages).map(([,value])=>value),['工具前','','完成',last]);
+   const lastEntry=pages.flatMap(page=>page.segments).find(segment=>segment.text.startsWith('部分答案'))!.entryId;
+   assert.equal(pages.flatMap(page=>page.runs).findLast(value=>value.resultRef?.entryId)?.resultRef?.entryId,lastEntry);
+   const result=readAll(reader,f.session.sessionId,{direction:'newer',content:'result',runId:run.runId,snapshot:pages[0]!.snapshotId});
+   assert.equal(content(result).map(([,value])=>value).join(''),last);assert.equal(result[0]!.segments[0]!.entryId,lastEntry);
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
+test('checkpoint recovery aligns SDK tool identities and repeated text without duplication',()=>{
+ const f=fixture();try {
+  f.store.close();const store=WorkStore.open(join(f.root,'work.sqlite'),{workId:'work-1',historyMigration:{operationId:'test-op',workId:'work-1',fromSchema:5,toSchema:6,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)}});
+  try {const run=store.acceptRun({workId:'work-1',sessionId:f.session.sessionId,submissionKey:'mixed',requestDigest:'digest',promptDigest:'digest'}).run;
+   f.sdk.appendCustomEntry('piwork-run',{runId:run.runId});
+   const usage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};
+   f.sdk.appendMessage({role:'assistant',content:[{type:'text',text:'相同'},{type:'toolCall',id:'call-1',name:'read',arguments:{}}],api:'fixture',provider:'fixture',model:'fixture',usage,stopReason:'toolUse',timestamp:1});
+   f.sdk.appendMessage({role:'toolResult',toolCallId:'call-1',toolName:'read',content:[{type:'text',text:'完成'}],isError:false,timestamp:2});
+   appendAssistantMessage(f.sdk,'相同');
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'相同'}));
+   store.appendEvent(run.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'call-1'}));
+   store.appendEvent(run.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'call-1'}));
+   store.appendEvent(run.runId,'tool-end',JSON.stringify({toolName:'read',toolCallId:'call-1',result:{kind:'text',text:'完成',truncated:false,isError:false}}));
+   store.appendEvent(run.runId,'text',JSON.stringify({delta:'相同'}));store.completeRun(run.runId,'failed',null,null);
+   const reader=new SessionHistoryReader('work-1',store),pages=readAll(reader,f.session.sessionId,{direction:'newer',runId:run.runId});
+   assert.deepEqual(content(pages).map(([,text])=>text),['相同','','完成','相同']);
+   assert.deepEqual(pages.flatMap(p=>p.segments).filter(s=>s.type==='text').map(s=>[s.streamId,s.streamOffset]),[[`${run.runId}-text-1`,0],[`${run.runId}-text-5`,0]]);
+   assert.equal(pages.flatMap(p=>p.segments).filter(s=>s.type==='tool-call').length,1);
+   const older=readAll(reader,f.session.sessionId,{direction:'older',runId:run.runId});
+   assert.deepEqual(new Map(content(older)),new Map(content(pages)));
+  }finally{store.close();}
+ }finally{f.close();}
+});
+
 test("454 messages / 235 tools, giant message and both directions stay bounded and preserve SDK originals",()=>{
  const f=fixture();try{
   const run=f.store.acceptRun({workId:"work-1",sessionId:f.session.sessionId,submissionKey:"original",requestDigest:"digest",promptDigest:"digest"}).run;

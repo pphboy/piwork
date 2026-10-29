@@ -193,7 +193,7 @@ export class AgentApplication {
     if (!config.deterministic) { await initializeChildAgentDirectory(); await initializeDefaultChildAgentModel(config.model); }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     if(config.historyMigration && (config.initializationOnly!==true || config.historyMigration.workId!==config.workId
-      || config.historyMigration.operationId!==config.correlationId || config.historyMigration.fromSchema!==4 || config.historyMigration.toSchema!==5)) {
+      || config.historyMigration.operationId!==config.correlationId || !([4,5].includes(config.historyMigration.fromSchema) && [5,6].includes(config.historyMigration.toSchema) && config.historyMigration.fromSchema<config.historyMigration.toSchema))) {
       throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
     }
     if (config.historyMigration) {

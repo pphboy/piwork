@@ -88,11 +88,14 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 	if s.SchemaVersion == 5 {
 		definition = currentSchemaSQL
 	}
+	if s.SchemaVersion == 6 {
+		definition = schemaV6SQL
+	}
 	if _, err := target.ExecContext(ctx, definition); err != nil {
 		return err
 	}
 	storeID := uuid.NewString()
-	if s.SchemaVersion == 5 {
+	if s.SchemaVersion >= 5 {
 		if _, err := target.ExecContext(ctx, "ATTACH DATABASE ? AS memory", filepath.Join(staged, "memory.sqlite")); err != nil {
 			return err
 		}
@@ -282,7 +285,7 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 			return rowErr
 		}
 	}
-	if s.SchemaVersion == 5 {
+	if s.SchemaVersion >= 5 {
 		for _, table := range memoryTables {
 			rows, err := s.database.QueryContext(ctx, "SELECT * FROM memory."+table)
 			if err != nil {
@@ -374,7 +377,7 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 		return err
 	}
 	defer unix.Close(stagedFD)
-	if s.SchemaVersion == 5 {
+	if s.SchemaVersion >= 5 {
 		originalMemory, err := Regular(root, "memory.sqlite")
 		if err != nil {
 			return err

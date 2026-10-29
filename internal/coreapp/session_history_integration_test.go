@@ -89,6 +89,7 @@ func TestNativeLargeSessionHistory(t *testing.T) {
 	}
 	q := contracts.HistoryQuery{Direction: contracts.Supplied("newer")}
 	entries := map[string]bool{}
+	unconfirmed := map[string]bool{}
 	pages, maxBytes := 0, 0
 	for {
 		page, err := api.HistoryPage(ctx, work, session, q)
@@ -100,6 +101,9 @@ func TestNativeLargeSessionHistory(t *testing.T) {
 		}
 		for _, part := range page.Segments {
 			entries[string(part.EntryId)] = true
+			if part.RecoveryUnconfirmed.Present && part.RecoveryUnconfirmed.Value {
+				unconfirmed[string(part.EntryId)] = true
+			}
 		}
 		raw, _ := json.Marshal(page)
 		maxBytes = max(maxBytes, len(raw)+1)
@@ -113,7 +117,10 @@ func TestNativeLargeSessionHistory(t *testing.T) {
 		}
 		q.Cursor = contracts.Supplied(next)
 	}
-	if len(entries) != 1459 {
+	// This synthetic fixture saves only the final stream event while its SDK
+	// history starts hundreds of turns earlier. The relationship is genuinely
+	// ambiguous, so preserve the one checkpoint rather than guess its identity.
+	if len(entries) != 1460 || len(unconfirmed) != 1 {
 		t.Fatal("missing messages/persisted result fallback", len(entries))
 	}
 	q.Cursor = contracts.Field[string]{}
@@ -188,7 +195,7 @@ func TestNativeLargeSessionHistory(t *testing.T) {
 		Messages []json.RawMessage
 		Runs     []json.RawMessage
 	}
-	if json.Unmarshal(stdout.Bytes(), &output) != nil || len(output.Messages) != 1459 || len(output.Runs) != 1006 {
+	if json.Unmarshal(stdout.Bytes(), &output) != nil || len(output.Messages) != 1460 || len(output.Runs) != 1006 {
 		t.Fatal("CLI truncated complete history", len(output.Messages), len(output.Runs))
 	}
 
@@ -334,4 +341,81 @@ func TestNativeLargeSessionHistory(t *testing.T) {
 	}
 	t.Log("stopped export/import and actual Core restart preserved the complete result without an implicit Start")
 	t.Logf("real Core/mTLS Agent: %d messages, %d runs, %d pages, max JSON %d; 7 MiB result/watch; restart 410; original source unchanged", len(entries), runCount, pages, maxBytes)
+}
+
+func TestNativeCancelledCheckpointHistoryAfterEventCompaction(t *testing.T) {
+	a, base, auth, work, ctx := nativeApplyFixture(t)
+	path := "/api/v1/works/" + work
+	status, created := packageHTTPCall(t, base, path+"/sessions", "POST", auth, map[string]string{"idempotencyKey": "checkpoint-session"})
+	if status != 201 {
+		t.Fatal(status, created)
+	}
+	session := created["sessionId"].(string)
+	f := brainAcceptance{t: t, a: a, base: base, auth: auth, work: work, path: path, ctx: ctx, session: session}
+	program := `import {WorkStore} from '/workspace/packages/work-store/dist/index.js';import {AgentSessionService} from '/workspace/apps/agentd/dist/sessions.js';import {appendAssistantMessage} from '/workspace/packages/pi-adapter/dist/index.js';const s=WorkStore.open('/var/data/work.sqlite');const work=` + stringMustJSON(work) + `,session=` + stringMustJSON(session) + `;const r=s.acceptRun({workId:work,sessionId:session,submissionKey:'partial-checkpoint',requestDigest:'fixture',promptDigest:'fixture'}).run;const sdk=new AgentSessionService(work,s,'/var/data/workspace','/var/data/sessions').continue(session);sdk.appendCustomEntry('piwork-run',{runId:r.runId});const usage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};sdk.appendMessage({role:'assistant',content:[{type:'text',text:'工具前'},{type:'toolCall',id:'synthetic-call',name:'read',arguments:{}}],api:'fixture',provider:'fixture',model:'fixture',usage,stopReason:'toolUse',timestamp:1});sdk.appendMessage({role:'toolResult',toolCallId:'synthetic-call',toolName:'read',content:[{type:'text',text:'完成'}],isError:false,timestamp:2});appendAssistantMessage(sdk,'取消前的回复');s.appendEvent(r.runId,'text',JSON.stringify({delta:'工具前'}));s.appendEvent(r.runId,'tool-start',JSON.stringify({toolName:'read',toolCallId:'synthetic-call'}));s.appendEvent(r.runId,'tool-end',JSON.stringify({toolName:'read',toolCallId:'synthetic-call',result:{kind:'text',text:'完成',truncated:false,isError:false}}));s.appendEvent(r.runId,'text',JSON.stringify({delta:'取消前的回复'}));s.completeRun(r.runId,'cancelled',null,null);s.compactRunEvents(r.runId,1);console.log(JSON.stringify({run:r.runId,schema:s.schemaVersion}));s.close();`
+	var seeded struct {
+		Run    string
+		Schema int
+	}
+	if raw := f.agentEval(program); json.Unmarshal([]byte(raw), &seeded) != nil || seeded.Run == "" || seeded.Schema != 6 {
+		t.Fatal("checkpoint fixture", raw)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path+"/runs/"+seeded.Run+"/events?after=0&responseProfile=history-v1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", auth)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cursorError struct {
+		Code string `json:"code"`
+	}
+	decodeErr := json.NewDecoder(response.Body).Decode(&cursorError)
+	response.Body.Close()
+	if response.StatusCode != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatal("compacted event cursor did not expire", response.StatusCode)
+	}
+	if decodeErr != nil || cursorError.Code != "CURSOR_EXPIRED" {
+		t.Fatal("unexpected cursor error", cursorError, decodeErr)
+	}
+	api, err := client.New(base, strings.TrimPrefix(auth, "Bearer "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := contracts.HistoryQuery{Direction: contracts.Supplied("newer"), RunId: contracts.Supplied(contracts.Identifier(seeded.Run))}
+	var texts []string
+	var types []string
+	var streams []string
+	for {
+		page, err := api.HistoryPage(ctx, work, session, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, segment := range page.Segments {
+			texts = append(texts, segment.Text)
+			types = append(types, segment.Type)
+			if segment.Type == "text" {
+				if !segment.StreamId.Present || !segment.StreamOffset.Present || segment.StreamOffset.Value != 0 {
+					t.Fatal("missing verified stream identity", segment)
+				}
+				streams = append(streams, string(segment.StreamId.Value))
+			}
+		}
+		next, err := sessionhistory.Next(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next == "" {
+			break
+		}
+		query.Cursor = contracts.Supplied(next)
+	}
+	if strings.Join(texts, "|") != "工具前||完成|取消前的回复" || strings.Join(types, "|") != "text|tool-call|tool-result|text" {
+		t.Fatal("checkpoint history", texts, types)
+	}
+	if strings.Join(streams, "|") != seeded.Run+"-text-1|"+seeded.Run+"-text-4" {
+		t.Fatal("incorrect stream identities", streams)
+	}
 }

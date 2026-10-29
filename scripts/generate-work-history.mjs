@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 const root = new URL("../", import.meta.url);
 for (const [source, sqlOutput, objectOutput, constant, objectConstant, goOutput] of [
   ["schema.sql", "brain-schema.ts", "schema-objects.ts", "WORK_SCHEMA_SQL", "WORK_SCHEMA_OBJECTS", "schema-objects.json"],
+  ["schema-v6.sql", "schema-v6.ts", "schema-v6-objects.ts", "WORK_SCHEMA_V6_SQL", "WORK_SCHEMA_V6_OBJECTS", "schema-v6-objects.json"],
   ["schema-v4.sql", "legacy-schema.ts", "legacy-schema-objects.ts", "LEGACY_SCHEMA_SQL", "LEGACY_SCHEMA_OBJECTS", "schema-v4-objects.json"],
   ["memory-schema.sql", "memory-schema.ts", "memory-schema-objects.ts", "MEMORY_SCHEMA_SQL", "MEMORY_SCHEMA_OBJECTS", "memory-schema-objects.json"],
 ]) {

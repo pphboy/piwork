@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { initializeMemoryDatabase, migrateWorkDatabase, sameSchema, validateLegacyWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
+import { initializeMemoryDatabase, migrateWorkDatabase, sameSchema, upgradeWorkDatabaseToV6, validateLegacyWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { FeedbackStore, type RequestPhase } from "./feedback.js";
 import { MemoryStore, type MemorySelection } from "./memory.js";
 import { migrateExperience, type HistoryMigration } from "./memory-migration.js";
 import { parseChatImageInput, chatInputDigest, ChatImageError } from "@piwork/contracts";
+import { readOutputChunks, readOutputEventIndex, readOutputTextRange, recordOutputChunks, type OutputChunk, type OutputEventKind, type OutputEventIndex } from "./output-checkpoint.js";
 
 export { WORK_SCHEMA_VERSION };
 export const DEFAULT_MAX_RUN_EVENTS = 10_000;
@@ -147,7 +148,7 @@ export class WorkStore {
       const legacy = !fresh && sameSchema(objects, LEGACY_SCHEMA_OBJECTS);
       if (legacy) {
         validateLegacyWorkDatabase(database);
-        if (!options.historyMigration || options.historyMigration.workId !== options.workId) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        if (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== 4) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
       } else if (!fresh) migrateWorkDatabase(database);
       try { const identity=secure(memoryPath, fresh);if(fresh)createdMemory=identity; }
       catch (error) {
@@ -165,7 +166,7 @@ export class WorkStore {
       database.exec("PRAGMA foreign_keys = ON");
       if (fresh) { database.exec("BEGIN IMMEDIATE"); migrateWorkDatabase(database); }
       initializeMemoryDatabase(database);
-      if (legacy) migrateExperience(database, options.historyMigration!);
+      if (legacy) migrateExperience(database, {...options.historyMigration!,toSchema:5});
       const store = new WorkStore(database);
       const inferred = options.workId ?? String(database.prepare("SELECT work_id FROM work_memory_binding LIMIT 1").get()?.work_id ?? "");
       if (inferred) {
@@ -173,6 +174,13 @@ export class WorkStore {
         else store.memory.assertOwner(inferred);
         store.memory.snapshot(inferred);
       } else if (!fresh) throw new Error("WORK_MEMORY_INVALID");
+      if (options.historyMigration?.toSchema === 6) {
+        const grant=options.historyMigration;
+        if (fresh || grant.workId!==inferred || !grant.operationId || !grant.storeId || !/^[a-f0-9]{64}$/.test(grant.backupManifestDigest) ||
+          ![4,5].includes(grant.fromSchema) || store.schemaVersion!==5 && store.schemaVersion!==6) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        if (grant.fromSchema===4 && database.prepare("SELECT store_id FROM memory.memory_meta WHERE singleton=1").get()?.store_id!==grant.storeId) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        upgradeWorkDatabaseToV6(database);
+      }
       if (fresh) database.exec("COMMIT");
       return store;
     } catch (error) {
@@ -361,6 +369,32 @@ export class WorkStore {
     return row.part instanceof Uint8Array ? Buffer.from(row.part) : Buffer.alloc(0);
   }
 
+  historyOutputChunks(workId:string,sessionId:string,runId:string,through:number,after?:{sequence:number;part:number},limit?:number):OutputChunk[] {
+    this.assertOpen();
+    if(this.schemaVersion<6) {
+      const run=this.historyRun(workId,runId);
+      if(!run || run.sessionId!==sessionId)throw Object.assign(new Error('Run not found'),{name:'RunNotFoundError'});
+      return [];
+    }
+    return readOutputChunks(this.database,workId,sessionId,runId,through,after,limit);
+  }
+
+  historyOutputEventIndex(workId:string,sessionId:string,runId:string,through:number,after=0,limit=100):OutputEventIndex[] {
+    this.assertOpen();
+    if(this.schemaVersion<6) {
+      const run=this.historyRun(workId,runId);
+      if(!run || run.sessionId!==sessionId)throw Object.assign(new Error('Run not found'),{name:'RunNotFoundError'});
+      return [];
+    }
+    return readOutputEventIndex(this.database,workId,sessionId,runId,through,after,limit);
+  }
+
+  historyOutputTextRange(workId:string,sessionId:string,runId:string,sequence:number,offset:number,length:number):Buffer {
+    this.assertOpen();
+    if(this.schemaVersion<6)throw new Error('WORK_HISTORY_FORMAT_UNSUPPORTED');
+    return readOutputTextRange(this.database,workId,sessionId,runId,sequence,offset,length);
+  }
+
   *historyToolCalls(workId: string, sessionId: string): Generator<{runId:string;callId:string}> {
     let run = "", sequence = 0;
     while (true) {
@@ -449,6 +483,9 @@ export class WorkStore {
       const sequence = row.latest_sequence + 1;
       this.database.prepare(`INSERT INTO run_events(run_id, sequence, event_type, payload_json, created_at)
         VALUES (?, ?, ?, ?, ?)`).run(runId, sequence, eventType, payloadJson, now);
+      if (this.schemaVersion >= 6 && (eventType === 'text' || eventType === 'tool-start' || eventType === 'tool-end')) {
+        recordOutputChunks(this.database,runId,sequence,eventType as OutputEventKind,payloadJson);
+      }
       this.database.prepare("UPDATE runs SET latest_sequence = ? WHERE run_id = ?").run(sequence, runId);
       this.database.exec("COMMIT");
       return sequence;

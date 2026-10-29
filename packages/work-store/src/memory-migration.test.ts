@@ -39,6 +39,17 @@ test("Core-authorized migration retains all adopted, effective, failed and stage
  const after=readFileSync(f.path);const reopened=WorkStore.open(f.path,{workId:work});reopened.close();assert.deepEqual(readFileSync(f.path),after);
  }finally{f.close();}
 });
+test("schema 4 can migrate through 5 to 6 and resume after the first stage",()=>{
+ for(const resume of [false,true]) { const f=legacy();try {
+  f.prepare();
+  if(resume){const stage=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});stage.close();}
+  const grant={...f.grant,toSchema:6 as const};
+  const store=WorkStore.open(f.path,{workId:work,historyMigration:grant});
+  try {assert.equal(store.schemaVersion,6);assert.equal(store.memory.head(work),2);assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);}
+  finally {store.close();}
+  const reopened=WorkStore.open(f.path,{workId:work,historyMigration:grant});reopened.close();
+ }finally{f.close();}}
+});
 test("unauthorized, wrong-owner and invalid-evidence legacy migration preserve original rows and format",()=>{
  for(const scenario of ["unauthorized","owner","evidence"]){const f=legacy();try{
   if(scenario!=="unauthorized")f.prepare();

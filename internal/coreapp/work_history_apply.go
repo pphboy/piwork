@@ -26,6 +26,8 @@ import (
 
 type applyHistoryBackup struct {
 	BackupKey               string                 `json:"backupKey"`
+	SourceSchema            int64                  `json:"sourceSchema,omitempty"`
+	TargetSchema            int64                  `json:"targetSchema,omitempty"`
 	ManifestDigest          string                 `json:"manifestDigest,omitempty"`
 	State                   string                 `json:"state"`
 	InitializationValidated bool                   `json:"initializationValidated"`
@@ -92,7 +94,7 @@ func (a *Application) runApplyHistoryHelper(ctx context.Context, operationID str
 	}); err != nil {
 		return result, err
 	}
-	request := workhistory.BackupRequest{OperationID: operationID, WorkID: plan.WorkID, BackupKey: plan.HistoryBackup.BackupKey, ContextIDs: contexts}
+	request := workhistory.BackupRequest{OperationID: operationID, WorkID: plan.WorkID, BackupKey: plan.HistoryBackup.BackupKey, ContextIDs: contexts, TargetSchema: plan.HistoryBackup.TargetSchema}
 	if action == "restore-history-backup" {
 		request.ExpectedManifestDigest = plan.HistoryBackup.ManifestDigest
 	}
@@ -186,18 +188,18 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 		if err != nil {
 			return err
 		}
-		if old.WorkHistorySchema == 5 && capabilities.WorkHistorySchema == 4 {
+		if old.WorkHistorySchema > capabilities.WorkHistorySchema {
 			return contracts.NewError("CONTEXT_FORMAT_UNSUPPORTED", "")
 		}
-		if old.WorkHistorySchema == 5 || capabilities.WorkHistorySchema != 5 {
+		if old.WorkHistorySchema == capabilities.WorkHistorySchema {
 			return nil
 		}
 	}
-	if capabilities.WorkHistorySchema != 5 {
+	if capabilities.WorkHistorySchema != 5 && capabilities.WorkHistorySchema != 6 {
 		return nil
 	}
 	if plan.HistoryBackup == nil {
-		plan.HistoryBackup = &applyHistoryBackup{BackupKey: uuid.NewString(), State: "planned"}
+		plan.HistoryBackup = &applyHistoryBackup{BackupKey: uuid.NewString(), TargetSchema: capabilities.WorkHistorySchema, State: "planned"}
 		if err := a.saveApplyPlan(ctx, operationID, *plan); err != nil {
 			return err
 		}
@@ -213,10 +215,11 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 		plan.HistoryBackup = nil
 		return a.saveApplyPlan(ctx, operationID, *plan)
 	}
-	if result.SchemaVersion != 4 || result.State != "saved" || len(result.ManifestDigest) != 64 {
+	if (result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6)) || result.State != "saved" || len(result.ManifestDigest) != 64 {
 		return corestore.ErrStorage
 	}
 	plan.HistoryBackup.State = "saved"
+	plan.HistoryBackup.SourceSchema = result.SchemaVersion
 	plan.HistoryBackup.ManifestDigest = result.ManifestDigest
 	if err := a.saveApplyPlan(ctx, operationID, *plan); err != nil {
 		return err
@@ -242,8 +245,9 @@ func (a *Application) restoreHistoryUpgrade(ctx context.Context, operationID str
 		}
 		if result.State == "not-required" {
 			plan.HistoryBackup.State = "restored"
-		} else if result.State == "saved" && result.SchemaVersion == 4 && len(result.ManifestDigest) == 64 {
+		} else if result.State == "saved" && (result.SchemaVersion == 4 || result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6) && len(result.ManifestDigest) == 64 {
 			plan.HistoryBackup.State = "saved"
+			plan.HistoryBackup.SourceSchema = result.SchemaVersion
 			plan.HistoryBackup.ManifestDigest = result.ManifestDigest
 		} else {
 			return corestore.ErrStorage
@@ -262,7 +266,7 @@ func (a *Application) restoreHistoryUpgrade(ctx context.Context, operationID str
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 4 || result.State != "restored" {
+	if result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.SourceSchema == 5) || result.State != "restored" {
 		return corestore.ErrStorage
 	}
 	plan.HistoryBackup.State = "restored"
@@ -367,7 +371,18 @@ func migrationGrant(operationID string, plan workApplyPlan) *contracts.WorkHisto
 	if plan.HistoryBackup == nil || plan.HistoryBackup.State != "saved" || plan.HistoryBackup.InitializationValidated {
 		return nil
 	}
-	return &contracts.WorkHistoryMigration{OperationId: operationID, WorkId: plan.WorkID, FromSchema: 4, ToSchema: 5, StoreId: plan.HistoryBackup.BackupKey, BackupManifestDigest: contracts.WorkBlobDigest(plan.HistoryBackup.ManifestDigest)}
+	from, to := plan.HistoryBackup.SourceSchema, plan.HistoryBackup.TargetSchema
+	// Persisted schema-4-to-5 operations from older Core versions omit both.
+	if from == 0 {
+		from = 4
+	}
+	if to == 0 {
+		to = 5
+	}
+	if from != 4 && from != 5 || to != 5 && to != 6 || from >= to {
+		return nil
+	}
+	return &contracts.WorkHistoryMigration{OperationId: operationID, WorkId: plan.WorkID, FromSchema: float64(from), ToSchema: float64(to), StoreId: plan.HistoryBackup.BackupKey, BackupManifestDigest: contracts.WorkBlobDigest(plan.HistoryBackup.ManifestDigest)}
 }
 
 func (a *Application) clearCommittedHistory(tx *sql.Tx, operationID string, plan workApplyPlan) error {
@@ -446,7 +461,11 @@ func (a *Application) reconcileHistoryUpgradeLocked(ctx context.Context, workID 
 			return err
 		}
 		if result.State == "saved" {
+			if (result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6)) || len(result.ManifestDigest) != 64 {
+				return corestore.ErrStorage
+			}
 			plan.HistoryBackup.State = "saved"
+			plan.HistoryBackup.SourceSchema = result.SchemaVersion
 			plan.HistoryBackup.ManifestDigest = result.ManifestDigest
 		}
 		if result.State == "restored" {
@@ -513,7 +532,8 @@ func (server *serviceRPC) AuthorizeHistoryMigration(ctx context.Context, request
 		if err != nil {
 			return err
 		}
-		if input.WorkId != scope.WorkID || input.FromSchema != 4 || input.ToSchema != 5 || input.StoreId != plan.HistoryBackup.BackupKey || string(input.BackupManifestDigest) != plan.HistoryBackup.ManifestDigest {
+		grant := migrationGrant(input.OperationId, plan)
+		if grant == nil || input.WorkId != scope.WorkID || input.FromSchema != grant.FromSchema || input.ToSchema != grant.ToSchema || input.StoreId != plan.HistoryBackup.BackupKey || string(input.BackupManifestDigest) != plan.HistoryBackup.ManifestDigest {
 			return internaltls.ErrIdentity
 		}
 		var pending string

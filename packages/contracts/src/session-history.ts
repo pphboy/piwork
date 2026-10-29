@@ -38,7 +38,8 @@ export const HistorySegmentSchema = Type.Object({
   byteOffset: position, totalBytes: position, complete: Type.Boolean(), text: Type.String({ maxLength: HISTORY_LIMITS.fragmentBytes }),
   toolCallId: Type.Optional(IdentifierSchema), toolName: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   resultKind: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("non-text"), Type.Literal("unavailable")])),
-  truncated: Type.Optional(Type.Boolean()), isError: Type.Optional(Type.Boolean()),
+  truncated: Type.Optional(Type.Boolean()), isError: Type.Optional(Type.Boolean()), recoveryUnconfirmed: Type.Optional(Type.Boolean()),
+  streamId: Type.Optional(IdentifierSchema), streamOffset: Type.Optional(position),
   image: Type.Optional(Type.Object({ ...ChatImageDescriptorSchema.properties, imageIndex: Type.Integer({ minimum: 0, maximum: 3 }) }, strict)),
 }, strict);
 export const HistoryPageSchema = Type.Object({

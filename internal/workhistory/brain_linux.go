@@ -29,7 +29,7 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 	objects := map[string]map[string]historyRow{}
 	for table, key := range map[string]string{"sessions": "session_id", "runs": "run_id", "service_events": "event_pk", "agent_requests": "request_id", "agent_request_runs": "run_id", "agent_evidence": "evidence_id", "brain_experience_revisions": "", "brain_experience_heads": "work_id", "run_events": ""} {
 		query := "SELECT * FROM " + table + " ORDER BY rowid"
-		if historyVersion(ctx, db) == 5 {
+		if historyVersion(ctx, db) >= 5 {
 			if table == "brain_experience_revisions" {
 				query = "SELECT ? AS work_id,version,entry_id,scope,rule,evidence_ids_json,source_request_id,'effective' AS status,created_at FROM memory.memory_entries UNION ALL SELECT ?,candidate_version,entry_id,scope,rule,evidence_ids_json,source_request_id,status,created_at FROM memory.memory_candidates WHERE status!='effective'"
 			}
@@ -383,7 +383,7 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 			return true
 		}
 		rows := versions[version]
-		if len(rows) == 0 && historyVersion(ctx, db) == 5 {
+		if len(rows) == 0 && historyVersion(ctx, db) >= 5 {
 			var found int
 			return db.QueryRowContext(ctx, "SELECT 1 FROM memory.memory_versions WHERE version=?", version).Scan(&found) == nil
 		}

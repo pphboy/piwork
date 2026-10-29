@@ -38,6 +38,28 @@ test("provider authentication failures preserve safe terminal state and original
   });
 });
 
+test('executor failure and cancellation retain emitted text and tool checkpoints',async()=>{
+ for(const outcome of ['failure','cancel'] as const)await withStore(async store=>{
+  let ready!:()=>void;const started=new Promise<void>(resolve=>ready=resolve);
+  const manager=readyManager(store,{async execute(context){
+   context.emit('text',{delta:'已经输出'});
+   context.emit('tool-start',{toolName:'read',toolCallId:'call-fixture'});
+   context.emit('tool-end',{toolName:'read',toolCallId:'call-fixture',isError:false,result:{kind:'text',text:'完成',truncated:false,isError:false}});
+   context.emit('text',{delta:'后续内容'});ready();
+   if(outcome==='failure')throw new Error('synthetic provider failure');
+   await new Promise<void>((_,reject)=>context.signal.addEventListener('abort',()=>reject(new Error('synthetic abort')),{once:true}));
+   return {finalText:''};
+  }});
+  const run=manager.submit({workId:'work-a',sessionId:'session-a',submissionKey:`partial-${outcome}`,prompt:'fixture'}).run;
+  await started;if(outcome==='cancel')manager.cancel(run.runId);
+  const final=await manager.wait(run.runId);assert.equal(final.state,outcome==='failure'?'failed':'cancelled');assert.equal(final.finalText,null);
+  const events=store.historyOutputEventIndex('work-a','session-a',run.runId,final.latestSequence);
+  assert.deepEqual(events.map(event=>event.kind),['text','tool-start','tool-end','text']);
+  assert.equal(store.historyOutputTextRange('work-a','session-a',run.runId,events[0]!.sequence,0,100).toString(),'已经输出');
+  assert.equal(store.historyOutputTextRange('work-a','session-a',run.runId,events[3]!.sequence,0,100).toString(),'后续内容');
+ });
+});
+
 test("unavailable Work storage rejects submission before executor side effects", async () => {
   await withStore(async (store) => {
     let executions = 0;
@@ -147,7 +169,7 @@ test("daemon recovery interrupts old active Runs and never repeats their externa
       workId: "work-a", sessionId: "session-a", submissionKey: "crashed", requestDigest: "request", promptDigest: "prompt", now: NOW,
     });
     store.markRunRunning(accepted.run.runId, NOW);
-    store.appendEvent(accepted.run.runId, "tool-end", JSON.stringify({ sideEffect: ++sideEffects }), NOW);
+    store.appendEvent(accepted.run.runId, "tool-end", JSON.stringify({ toolName:"fixture", toolCallId:"fixture-call", sideEffect: ++sideEffects }), NOW);
     const manager = readyManager(store, { async execute() { sideEffects += 1; return { finalText: "must not execute" }; } });
     const interrupted = manager.recover();
     assert.equal(interrupted[0]?.state, "interrupted");

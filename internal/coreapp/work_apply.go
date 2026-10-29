@@ -491,7 +491,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 		if err != nil {
 			return err
 		}
-		if old.WorkHistorySchema == 5 && next.WorkHistorySchema == 4 {
+		if old.WorkHistorySchema > next.WorkHistorySchema {
 			return a.finishWorkApply(ctx, operation, plan, "CONTEXT_FORMAT_UNSUPPORTED", "context-validate", "not-required", false)
 		}
 	}

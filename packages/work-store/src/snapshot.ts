@@ -5,6 +5,8 @@ import { migrateWorkDatabase, initializeMemoryDatabase } from "./migrations.js";
 import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
+import { WORK_SCHEMA_V6_SQL } from "./schema-v6.js";
+import { WORK_SCHEMA_V6_OBJECTS } from "./schema-v6-objects.js";
 import { randomUUID } from "node:crypto";
 import { MEMORY_TABLES } from "./snapshot-memory.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
@@ -18,8 +20,10 @@ function invalid(): never { throw new WorkHistoryValidationError("SNAPSHOT_HISTO
 const BASE_TABLES = ["schema_migrations", "sessions", "runs", "run_events", "submit_idempotency", "session_idempotency", "work_activity"] as const;
 const TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"] as const;
 const CURRENT_TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "work_memory_binding"] as const;
-type Table = typeof TABLES[number] | typeof CURRENT_TABLES[number];
-const tables = (version: 4 | 5): readonly Table[] => version === 4 ? TABLES : CURRENT_TABLES;
+const V6_TABLES = [...CURRENT_TABLES, "run_output_chunks"] as const;
+type Table = typeof TABLES[number] | typeof V6_TABLES[number];
+type HistoryVersion = 4 | 5 | 6;
+const tables = (version: HistoryVersion): readonly Table[] => version === 4 ? TABLES : version === 5 ? CURRENT_TABLES : V6_TABLES;
 type Row = Record<string, SQLInputValue>;
 const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
 const MAX_ROWS = 1_000_000, MAX_ROW_BYTES = 64 * 1024 ** 2;
@@ -88,7 +92,7 @@ export interface WorkHistorySummary { readonly sessions: number; readonly runs: 
  * The source database is never opened by SQLite: a byte copy is read-only validated first. */
 export class WorkHistorySnapshot {
   private closed = false;
-  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary, readonly schemaVersion: 4 | 5) {}
+  private constructor(private readonly database: DatabaseSync, private readonly scratch: string, readonly scope: WorkHistoryScope, readonly summary: WorkHistorySummary, readonly schemaVersion: HistoryVersion) {}
 
   static open(privateDirectory: string, scope: WorkHistoryScope, stoppedWriterInspection = false): WorkHistorySnapshot | undefined {
     let root: number | undefined, scratch: string | undefined, database: DatabaseSync | undefined;
@@ -120,9 +124,10 @@ export class WorkHistorySnapshot {
       database = new DatabaseSync(join(scratch, FILES[0]), { readOnly: true, allowExtension: false, enableDoubleQuotedStringLiterals: false, enableForeignKeyConstraints: true });
       database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
       const actual = schema(database);
-      const version: 4 | 5 = sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 5
+      const version: HistoryVersion = sameSchema(actual, WORK_SCHEMA_V6_OBJECTS as unknown as SchemaRow[]) ? 6
+        : sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 5
         : sameSchema(actual, LEGACY_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 4 : (() => { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED"); })();
-      if (version === 5) {
+      if (version >= 5) {
         for (const name of ["work.sqlite-journal", "memory.sqlite-journal"]) {
           try { const fd = regular(root, name); closeSync(fd); throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY"); }
           catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -161,7 +166,8 @@ export class WorkHistorySnapshot {
       target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
       if (this.schemaVersion === 4) target.exec(LEGACY_SCHEMA_SQL);
       else {
-        migrateWorkDatabase(target);
+        if (this.schemaVersion === 6) target.exec(WORK_SCHEMA_V6_SQL);
+        else migrateWorkDatabase(target, 5);
         target.prepare("ATTACH DATABASE ? AS memory").run(join(temporaryDirectory, "memory.sqlite"));
         target.exec("PRAGMA memory.journal_mode=DELETE; PRAGMA memory.synchronous=FULL");
         initializeMemoryDatabase(target);
@@ -201,7 +207,7 @@ export class WorkHistorySnapshot {
             insert.run(...columns.map((column) => row[column]!));
           }
         }
-        if (this.schemaVersion === 5) {
+        if (this.schemaVersion >= 5) {
           for (const table of MEMORY_TABLES) {
             const columns = (target.prepare(`PRAGMA memory.table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
             const insert = target.prepare(`INSERT INTO memory.${table}(${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`);
@@ -220,7 +226,7 @@ export class WorkHistorySnapshot {
       const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try { fchownSync(file, attributes.uid, attributes.gid); fchmodSync(file, attributes.mode & 0o7777); fsyncSync(file); }
       finally { closeSync(file); }
-      if (this.schemaVersion === 5) {
+      if (this.schemaVersion >= 5) {
         const memoryPath = join(temporaryDirectory, "memory.sqlite");
         const memoryFD = openSync(memoryPath, constants.O_RDONLY | constants.O_NOFOLLOW);
         try { fchownSync(memoryFD, attributes.uid, attributes.gid); fchmodSync(memoryFD, 0o600); fsyncSync(memoryFD); }
@@ -243,7 +249,7 @@ export class WorkHistorySnapshot {
   close(): void { if (this.closed) return; this.closed = true; this.database.close(); rmSync(this.scratch, { recursive: true, force: true }); }
 }
 
-function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope, version: 4 | 5, inspection: boolean): WorkHistorySummary {
+function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHistoryScope, version: HistoryVersion, inspection: boolean): WorkHistorySummary {
   if (!nonempty(scope.sourceWorkId)) invalid();
   let count = 0; const counts = new Map<Table, number>();
   for (const table of tables(version)) {
@@ -273,6 +279,11 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
             if(chatInputDigest(input.prompt,input.images)!==run?.prompt_digest)invalid();
           } catch { invalid(); }
         }
+      } else if (table === "run_output_chunks") {
+        if (!nonempty(row.run_id) || !integer(row.sequence, 1) || !integer(row.part) || typeof row.payload_json !== "string" || Buffer.byteLength(row.payload_json) > 65536) invalid();
+        let payload: unknown;
+        try { payload = JSON.parse(row.payload_json); } catch { invalid(); }
+        if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length !== 1 || typeof (payload as {data?:unknown}).data !== "string" || Buffer.byteLength((payload as {data:string}).data) > 8192) invalid();
       } else if (table === "submit_idempotency") {
         if (!nonempty(row.submission_key) || !nonempty(row.request_digest)) invalid();
       } else if (table === "session_idempotency") {
@@ -286,6 +297,8 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
   if (database.prepare(`SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id = r.run_id GROUP BY r.run_id
     HAVING COUNT(e.sequence) != r.latest_sequence - r.earliest_available_sequence + 1
       OR (COUNT(e.sequence) > 0 AND (MIN(e.sequence) != r.earliest_available_sequence OR MAX(e.sequence) != r.latest_sequence)) LIMIT 1`).get()) invalid();
+  if (version === 6 && (database.prepare(`SELECT 1 FROM run_output_chunks c JOIN runs r ON r.run_id=c.run_id WHERE c.sequence>r.latest_sequence LIMIT 1`).get() ||
+    database.prepare(`SELECT 1 FROM run_output_chunks GROUP BY run_id,sequence HAVING MIN(part)!=0 OR MAX(part)!=COUNT(*)-1 OR COUNT(DISTINCT kind)!=1 LIMIT 1`).get())) invalid();
   validateBrainHistory(database, scope.sourceWorkId, scope.contextIds);
   return { sessions: counts.get("sessions")!, runs: counts.get("runs")!, events: counts.get("run_events")! };
 }
