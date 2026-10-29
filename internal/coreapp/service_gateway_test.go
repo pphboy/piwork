@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"piwork/internal/corestore"
 	"piwork/internal/identity"
 )
 
@@ -45,6 +46,9 @@ func gatewayFixture(t *testing.T, handler http.Handler) (*Application, string, s
 		t.Fatal(err)
 	}
 	a.serviceGateway.route = func(context.Context, string, string) (string, error) { return host, nil }
+	// This HTTP fixture has synthetic Work rows rather than a running Agent.
+	// Production admission is exercised separately against actual route proofs.
+	a.serviceGateway.admissionForTest = func(context.Context, corestore.WorkRecord) (uint64, bool) { return 1, true }
 	work, _ := a.Store.Work(context.Background(), workID, false)
 	service, _ := a.Store.Service(context.Background(), workID, accepted.ServiceID, false)
 	access, err := a.serviceDomains().describe(context.Background(), work, service)
@@ -73,6 +77,91 @@ func gatewayRequest(t *testing.T, base, token, path string, body []byte, headers
 	t.Cleanup(func() { response.Body.Close() })
 	return response
 }
+
+func TestServiceGatewayRejectsPersistedReadyWithoutCurrentAgentProof(t *testing.T) {
+	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }))
+	a.serviceGateway.admissionForTest = nil
+	if err := a.Store.Write(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`INSERT INTO work_context_snapshots(snapshot_id,work_id,configuration_json,image_identity,created_by_user_id,created_at) SELECT 'old-context',id,'{}','old-image',owner_user_id,? FROM works WHERE id='work-service-fixture1'`, packageNow()); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE works SET active_context_id='old-context',observed_state='ready' WHERE id='work-service-fixture1'`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO runtime_generations(work_id,generation,instance_id,state,retry_count,created_at,updated_at) VALUES('work-service-fixture1',1,'old-instance','ready',0,?,?)`, packageNow(), packageNow())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response := gatewayRequest(t, base, token, path+"/", nil, nil)
+	if response.StatusCode != 503 {
+		t.Fatalf("persisted readiness bypassed current Agent proof: %d", response.StatusCode)
+	}
+}
+
+func TestWorkReadRequiresCurrentAgentProofForReadyObservation(t *testing.T) {
+	a, _, _, _ := gatewayFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	const workID = "work-service-fixture1"
+	work, err := a.Store.Work(context.Background(), workID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.setWorkRoutesOnline("", 0)
+	admitted := false
+	a.serviceGateway.admissionForTest = func(context.Context, corestore.WorkRecord) (uint64, bool) { return 1, admitted }
+	actor := identity.Principal{UserID: work.OwnerUserID, Role: "user"}
+	for _, tc := range []struct {
+		admitted bool
+		want     string
+	}{{false, "unknown"}, {true, "ready"}, {false, "unknown"}} {
+		admitted = tc.admitted
+		for _, path := range []string{"/api/v1/works", "/api/v1/works/" + workID} {
+			response := httptest.NewRecorder()
+			handled, err := a.workRead(response, httptest.NewRequest("GET", path, nil), actor)
+			if !handled || err != nil || response.Code != 200 {
+				t.Fatalf("read %s: %v %d", path, err, response.Code)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if path == "/api/v1/works" {
+				body = body["works"].([]any)[0].(map[string]any)
+			}
+			if body["observedState"] != tc.want {
+				t.Fatalf("%s: got %v, want %s", path, body["observedState"], tc.want)
+			}
+		}
+	}
+}
+
+func TestServiceGatewayAllowsVerifiedWorkWhileGlobalNotReadyAndRevokesEpoch(t *testing.T) {
+	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: available\n\n")
+		http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	}))
+	var epoch atomic.Uint64
+	epoch.Store(1)
+	a.serviceGateway.admissionForTest = func(context.Context, corestore.WorkRecord) (uint64, bool) { return epoch.Load(), true }
+	a.mu.Lock()
+	a.status.Ready = false
+	a.mu.Unlock()
+	response := gatewayRequest(t, base, token, path+"/events", nil, nil)
+	reader := bufio.NewReader(response.Body)
+	line, err := reader.ReadString('\n')
+	if response.StatusCode != 200 || err != nil || line != "data: available\n" {
+		t.Fatalf("verified Work blocked by global state: status=%d line=%q err=%v", response.StatusCode, line, err)
+	}
+	epoch.Store(2)
+	started := time.Now()
+	_, err = io.ReadAll(reader)
+	if err == nil || time.Since(started) > 2*time.Second {
+		t.Fatalf("old Engine stream did not close: %v after %s", err, time.Since(started))
+	}
+}
+
 func TestServiceGatewayPreservesHTTPAndApplicationAuthentication(t *testing.T) {
 	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "app=session; Path=/")
@@ -161,6 +250,31 @@ func TestServiceGatewaySSELimitsAndRevocation(t *testing.T) {
 	}
 }
 
+func TestServiceGatewayClosesExistingStreamOnCoreShutdown(t *testing.T) {
+	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: open\n\n")
+		_ = http.NewResponseController(w).Flush()
+		<-r.Context().Done()
+	}))
+	response := gatewayRequest(t, base, token, path+"/events", nil, nil)
+	reader := bufio.NewReader(response.Body)
+	if line, err := reader.ReadString('\n'); err != nil || line != "data: open\n" {
+		t.Fatal("stream did not open", line, err)
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- a.Close(shutdown) }()
+	started := time.Now()
+	if _, err := io.ReadAll(reader); err == nil || time.Since(started) > 2*time.Second {
+		t.Fatal("Core shutdown did not revoke stream", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestServiceGatewayWebSocketFramesAndRevocation(t *testing.T) {
 	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/reject" {
@@ -220,6 +334,49 @@ func TestServiceGatewayWebSocketFramesAndRevocation(t *testing.T) {
 	_, err = reader.ReadByte()
 	if err == nil || time.Since(start) > 2*time.Second {
 		t.Fatal("Service stop did not close WebSocket", err, time.Since(start))
+	}
+}
+
+func TestServiceGatewayWebSocketClosesWhenEngineProofIsRevoked(t *testing.T) {
+	a, base, token, path := gatewayFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, buffer, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		_ = buffer.Flush()
+		_, _ = io.Copy(conn, buffer)
+	}))
+	var epoch atomic.Uint64
+	var admitted atomic.Bool
+	epoch.Store(1)
+	admitted.Store(true)
+	a.serviceGateway.admissionForTest = func(context.Context, corestore.WorkRecord) (uint64, bool) { return epoch.Load(), admitted.Load() }
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(base, "http://"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	request := "GET " + path + "/socket HTTP/1.1\r\nHost: " + strings.TrimPrefix(base, "http://") + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" + gatewayCredential + ": " + token + "\r\n\r\n"
+	if _, err := conn.Write([]byte(request)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, nil)
+	if err != nil || response.StatusCode != 101 {
+		t.Fatal("WebSocket admission failed", response, err)
+	}
+	admitted.Store(false)
+	epoch.Store(2)
+	started := time.Now()
+	if _, err := reader.ReadByte(); err == nil || time.Since(started) > 2*time.Second {
+		t.Fatal("Engine proof loss did not close WebSocket", err)
+	}
+	denied := gatewayRequest(t, base, token, path+"/", nil, nil)
+	if denied.StatusCode != 503 {
+		t.Fatal("new connection bypassed revoked Engine proof", denied.StatusCode)
 	}
 }
 

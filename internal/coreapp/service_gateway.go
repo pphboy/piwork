@@ -22,6 +22,7 @@ import (
 
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
+	"piwork/internal/internaltls"
 )
 
 const gatewayCredential = "X-Piwork-Gateway-Token"
@@ -33,10 +34,12 @@ type gatewayTarget struct {
 	Hostname, WorkID, ServiceID, UserID, Token, Address string
 	Generation                                          string
 	Port                                                int64
+	EngineEpoch                                         uint64
 }
 type serviceGateway struct {
 	app                   *Application
 	route                 func(context.Context, string, string) (string, error)
+	admissionForTest      func(context.Context, corestore.WorkRecord) (uint64, bool)
 	transport             http.RoundTripper
 	mu                    sync.Mutex
 	active                int
@@ -64,7 +67,51 @@ func newServiceGateway(a *Application) *serviceGateway {
 	}
 	return g
 }
-func (g *serviceGateway) accepting() bool { return g.app.Status().Ready }
+func (g *serviceGateway) accepting() bool {
+	g.app.mu.Lock()
+	closed := g.app.closed
+	g.app.mu.Unlock()
+	g.app.routeFence.mu.Lock()
+	online := g.app.routeFence.online
+	g.app.routeFence.mu.Unlock()
+	return !closed && online
+}
+
+// A persisted observed_state is not proof of current readiness after Core or
+// Engine restart. The route exists only after the captured Agent and Services
+// have been checked during this Engine epoch.
+func (g *serviceGateway) workAdmission(ctx context.Context, work corestore.WorkRecord) (uint64, bool) {
+	if g.admissionForTest != nil {
+		return g.admissionForTest(ctx, work)
+	}
+	if work.ActiveContextID == nil {
+		return 0, false
+	}
+	var generation int64
+	var instance, state string
+	err := g.app.Store.Read(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT generation,COALESCE(instance_id,''),state FROM runtime_generations WHERE work_id=? ORDER BY generation DESC LIMIT 1`, work.ID).Scan(&generation, &instance, &state)
+	})
+	if err != nil || generation < 1 || instance == "" || state != "ready" {
+		return 0, false
+	}
+	g.app.routeFence.mu.Lock()
+	defer g.app.routeFence.mu.Unlock()
+	if !g.app.routeFence.online {
+		return 0, false
+	}
+	if g.app.engine != nil && g.app.routeFence.scope != "" {
+		if err := g.app.engine.WithVerificationIdentity(g.app.routeFence.scope, g.app.routeFence.generation, func() error { return nil }); err != nil {
+			return 0, false
+		}
+	}
+	scope := internaltls.Scope{InstallationID: g.app.Store.InstallationID(), WorkID: work.ID, Generation: generation, InstanceID: instance}
+	_, lifetime, err := g.app.agentRoutes.Admission(scope, *work.ActiveContextID)
+	if err != nil || lifetime.Err() != nil {
+		return 0, false
+	}
+	return g.app.routeFence.epoch, true
+}
 func (g *serviceGateway) authorize(ctx context.Context, r *http.Request, hostname string, requested *int64) (gatewayTarget, error) {
 	var target gatewayTarget
 	if !g.accepting() {
@@ -93,6 +140,10 @@ func (g *serviceGateway) authorize(ctx context.Context, r *http.Request, hostnam
 		return target, contracts.NewError("NOT_FOUND", "")
 	}
 	if !serviceEligible(work, service) {
+		return target, contracts.NewError("SERVICE_UNAVAILABLE", "")
+	}
+	epoch, admitted := g.workAdmission(ctx, work)
+	if !admitted {
 		return target, contracts.NewError("SERVICE_UNAVAILABLE", "")
 	}
 	port, err := selectedServicePort(service, requested)
@@ -127,10 +178,14 @@ func (g *serviceGateway) authorize(ctx context.Context, r *http.Request, hostnam
 	}); err != nil {
 		return target, err
 	}
+	currentEpoch, admitted := g.workAdmission(ctx, work)
+	if !g.accepting() || !admitted || currentEpoch != epoch {
+		return target, contracts.NewError("SERVICE_UNAVAILABLE", "")
+	}
 	if supplied := r.Header.Values("X-Piwork-Gateway-Generation"); len(supplied) > 1 || len(supplied) == 1 && supplied[0] != generation {
 		return target, contracts.NewError("SERVICE_UNAVAILABLE", "")
 	}
-	return gatewayTarget{Hostname: normalized, WorkID: work.ID, ServiceID: service.ServiceID, Port: port, Address: address, Token: tokens[0], UserID: session.User.ID, Generation: generation}, nil
+	return gatewayTarget{Hostname: normalized, WorkID: work.ID, ServiceID: service.ServiceID, Port: port, Address: address, Token: tokens[0], UserID: session.User.ID, Generation: generation, EngineEpoch: epoch}, nil
 }
 
 func gatewayGenerationKey(workID, serviceID string) string {
@@ -177,8 +232,10 @@ func (g *serviceGateway) quickCheck(ctx context.Context, target gatewayTarget) b
 		return false
 	}
 	var valid bool
+	var work corestore.WorkRecord
 	err = g.app.Store.Read(ctx, func(tx *sql.Tx) error {
-		work, err := corestore.ReadWork(tx, target.WorkID, false)
+		var err error
+		work, err = corestore.ReadWork(tx, target.WorkID, false)
 		if err != nil {
 			return err
 		}
@@ -203,7 +260,11 @@ func (g *serviceGateway) quickCheck(ctx context.Context, target gatewayTarget) b
 		valid = err == nil && port == target.Port
 		return nil
 	})
-	return err == nil && valid
+	if err != nil || !valid {
+		return false
+	}
+	epoch, admitted := g.workAdmission(ctx, work)
+	return admitted && epoch == target.EngineEpoch && g.accepting()
 }
 func (g *serviceGateway) review(ctx context.Context, target gatewayTarget, cancel context.CancelFunc) {
 	timer := time.NewTicker(200 * time.Millisecond)

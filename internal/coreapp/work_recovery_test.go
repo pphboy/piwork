@@ -3,6 +3,9 @@ package coreapp
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,5 +117,95 @@ func TestRecoveryFailureObservationFollowsScheduledRetry(t *testing.T) {
 	work, err = a.Store.Work(ctx, "no-generation", false)
 	if err != nil || work.ObservedState != "failed" {
 		t.Fatalf("missing generation failure lost: %+v %v", work, err)
+	}
+}
+
+func TestRecoveryWorkersIsolateSlowWorkAndBoundConcurrency(t *testing.T) {
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	fast := make(chan struct{})
+	var active, maximum atomic.Int32
+	failure := errors.New("fixture failure")
+	done := make(chan error, 1)
+	go func() {
+		done <- recoverWorksConcurrently(context.Background(), []string{"slow", "fast", "failure"}, func(id string) error {
+			current := active.Add(1)
+			defer active.Add(-1)
+			for old := maximum.Load(); current > old && !maximum.CompareAndSwap(old, current); old = maximum.Load() {
+			}
+			switch id {
+			case "slow":
+				close(blocked)
+				<-release
+			case "fast":
+				close(fast)
+			case "failure":
+				return failure
+			}
+			return nil
+		})
+	}()
+	select {
+	case <-blocked:
+	case <-time.After(time.Second):
+		t.Fatal("slow work not started")
+	}
+	select {
+	case <-fast:
+	case <-time.After(time.Second):
+		t.Fatal("slow work blocked sibling")
+	}
+	close(release)
+	if err := <-done; !errors.Is(err, failure) {
+		t.Fatal("failure not retained", err)
+	}
+	if maximum.Load() > 2 {
+		t.Fatal("recovery exceeded bound", maximum.Load())
+	}
+}
+
+func TestRecoveryLockedWorksYieldBothSlots(t *testing.T) {
+	var first, second sync.Mutex
+	first.Lock()
+	second.Lock()
+	defer first.Unlock()
+	defer second.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, nonblockingRecoveryKey{}, true)
+	var deferred atomic.Int32
+	err := recoverWorksConcurrently(ctx, []string{"first", "second", "unblocked"}, func(id string) error {
+		var lock *sync.Mutex
+		switch id {
+		case "first":
+			lock = &first
+		case "second":
+			lock = &second
+		default:
+			return nil
+		}
+		if err := lockWorkContext(ctx, lock); errors.Is(err, errWorkRecoveryDeferred) {
+			deferred.Add(1)
+			return nil
+		} else if err != nil {
+			return err
+		}
+		lock.Unlock()
+		return errors.New("held Work lock was acquired")
+	})
+	if err != nil || deferred.Load() != 2 {
+		t.Fatalf("locked Works consumed recovery slots: %d %v", deferred.Load(), err)
+	}
+}
+
+func TestRecoveryYieldsBeforeSelectingAnOperationOwnedByLiveCoordinator(t *testing.T) {
+	var app Application
+	var live sync.Mutex
+	live.Lock()
+	defer live.Unlock()
+	app.workOperationLocks.Store("work-live", &live)
+	ctx := context.WithValue(context.Background(), nonblockingRecoveryKey{}, true)
+	if processed, err := app.processOneWorkOperation(ctx, "work-live"); processed || !errors.Is(err, errWorkRecoveryDeferred) {
+		t.Fatal("recovery entered an operation already owned by the live queue", processed, err)
 	}
 }

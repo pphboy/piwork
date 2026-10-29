@@ -60,3 +60,22 @@ func TestPerformanceRejectsUnknownFieldsAndPreservesPhaseBoundary(t *testing.T) 
 		t.Fatal(terminal)
 	}
 }
+
+func TestStartupPerformanceRecordsCancellationWithoutPrivateError(t *testing.T) {
+	var output bytes.Buffer
+	ctx, cancel := context.WithCancel(WithPerformanceWriter(WithPerformance(context.Background(), PerformanceIdentity{CorrelationID: "startup-fixture-123456"}), &output))
+	span := BeginPerformance(ctx, "image-export")
+	cancel()
+	span.End(errors.New("secret /private/path"))
+	var events []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 2 || events[0]["outcome"] != "started" || events[1]["outcome"] != "cancelled" || events[1]["durationMs"].(float64) < 0 || strings.Contains(output.String(), "private") || strings.Contains(output.String(), "secret") {
+		t.Fatal("invalid interrupted startup metric", output.String())
+	}
+}

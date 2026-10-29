@@ -2,6 +2,7 @@ package coreapp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -16,6 +17,8 @@ import (
 
 	"piwork/internal/contracts"
 	"piwork/internal/dockerengine"
+	"piwork/internal/internaltls"
+	"piwork/internal/workruntime"
 )
 
 func preparationFixture(t *testing.T, configure func(*runtimePreparation)) (*Application, string, string) {
@@ -28,7 +31,13 @@ func preparationFixture(t *testing.T, configure func(*runtimePreparation)) (*App
 	a.preparation.executeForTest = func(context.Context, string, RuntimeProfile) error { return nil }
 	a.preparation.probeForTest = func(context.Context) error { return nil }
 	configure(a.preparation)
-	t.Cleanup(func() { closeSettingsApp(t, a) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := a.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+	})
 	address, err := a.Listen(ListenAddress{"127.0.0.1", 0})
 	if err != nil {
 		t.Fatal(err)
@@ -92,8 +101,31 @@ func TestPreparationSlowDependenciesDoNotBlockProbesOrDuplicateAttempts(t *testi
 			t.Fatal(code, body)
 		}
 	}
-	if time.Since(started) > time.Second || maximum.Load() > 2 || a.Preparation().Components["agent"].Attempt != 1 {
+	if time.Since(started) > time.Second || maximum.Load() > 3 || a.Preparation().Components["agent"].Attempt != 1 {
 		t.Fatal("queries blocked or rescheduled preparation", time.Since(started), maximum.Load(), a.Preparation())
+	}
+}
+
+func TestPreparationSlowDefaultsDoNotStarveFileOrSnapshotHelpers(t *testing.T) {
+	blocked := make(chan struct{})
+	defer close(blocked)
+	a, _, _ := preparationFixture(t, func(p *runtimePreparation) {
+		p.executeForTest = func(ctx context.Context, name string, _ RuntimeProfile) error {
+			if name == "agent" || name == "packageHelper" {
+				select {
+				case <-blocked:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}
+	})
+	preparation := waitPreparation(t, a, func(value Preparation) bool {
+		return value.Components["fileHelper"].State == "ready" && value.Components["snapshotHelper"].State == "ready" && value.Components["agent"].State == "preparing"
+	})
+	if a.Status().Ready || preparation.Components["defaultContext"].State == "ready" {
+		t.Fatal("blocked default image incorrectly reported ready")
 	}
 }
 
@@ -260,6 +292,60 @@ func TestPreparationAttemptDeadlineHeartbeatRecoveryAndClose(t *testing.T) {
 	}
 }
 
+func TestPreparationEngineReplacementCancelsRecoveryAndFencesPublication(t *testing.T) {
+	var identity atomic.Int32
+	identity.Store(1)
+	firstStarted, firstCancelled, secondStarted := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var attempts atomic.Int32
+	a, _, _ := preparationFixture(t, func(p *runtimePreparation) {
+		p.probeInterval = 20 * time.Millisecond
+		p.retryDelay = func(int) time.Duration { return 20 * time.Millisecond }
+		p.identityForTest = func(context.Context) (string, uint64, error) {
+			if identity.Load() == 1 {
+				return "first-engine", 1, nil
+			}
+			return "replacement-engine", 2, nil
+		}
+		p.recoveryForTest = func(ctx context.Context) error {
+			if attempts.Add(1) == 1 {
+				close(firstStarted)
+				<-ctx.Done()
+				close(firstCancelled)
+				return ctx.Err()
+			}
+			select {
+			case <-secondStarted:
+			default:
+				close(secondStarted)
+			}
+			return nil
+		}
+	})
+	select {
+	case <-firstStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("initial recovery did not start")
+	}
+	old := a.captureWorkRouteEpoch(context.Background())
+	identity.Store(2)
+	select {
+	case <-firstCancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Engine replacement did not cancel old recovery")
+	}
+	select {
+	case <-secondStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovery did not restart on the new Engine")
+	}
+	if err := a.publishWorkRoute(old, internaltls.Scope{}, "", workruntime.Started{}); !errors.Is(err, errWorkSuperseded) {
+		t.Fatalf("old Engine attempt could publish: %v", err)
+	}
+	if err := a.publishWorkRoute(a.captureWorkRouteEpoch(context.Background()), internaltls.Scope{}, "", workruntime.Started{}); !errors.Is(err, workruntime.ErrRouteUnavailable) {
+		t.Fatalf("current epoch did not reach route validation: %v", err)
+	}
+}
+
 func TestPreparationImagePullsAreDeduplicatedRetryableAndImmutable(t *testing.T) {
 	p := newRuntimePreparation(&Application{})
 	gate := make(chan struct{})
@@ -311,6 +397,103 @@ func TestPreparationImagePullsAreDeduplicatedRetryableAndImmutable(t *testing.T)
 	}
 }
 
+func TestPreparationPullWaitersCancelIndependentlyAndEngineChangeInvalidates(t *testing.T) {
+	app := &Application{}
+	p := newRuntimePreparation(app)
+	t.Cleanup(func() { _ = p.images.Close(context.Background()) })
+	started, release := make(chan struct{}), make(chan struct{})
+	var pulls atomic.Int32
+	p.pullForTest = func(ctx context.Context, _ string) (dockerengine.PreparedImage, error) {
+		if pulls.Add(1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return dockerengine.PreparedImage{}, ctx.Err()
+			}
+		}
+		return dockerengine.PreparedImage{ID: "sha256:fixture", Labels: map[string]string{"label": "original"}, RepoDigests: []string{"digest"}}, nil
+	}
+	firstCtx, cancel := context.WithCancel(context.Background())
+	firstDone := make(chan error, 1)
+	go func() { _, err := p.pullImage(firstCtx, "fixture/agent"); firstDone <- err }()
+	<-started
+	secondDone := make(chan error, 1)
+	go func() { _, err := p.pullImage(context.Background(), "fixture/agent"); secondDone <- err }()
+	deadline := time.Now().Add(time.Second)
+	for p.images.Stats().Waiters < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if p.images.Stats().Waiters != 2 {
+		close(release)
+		t.Fatal("second waiter did not join the shared pull")
+	}
+	cancel()
+	if err := <-firstDone; !errors.Is(err, context.Canceled) {
+		close(release)
+		t.Fatal("cancelled waiter did not return", err)
+	}
+	close(release)
+	if err := <-secondDone; err != nil || pulls.Load() != 1 {
+		t.Fatal("one waiter cancelled another", err, pulls.Load())
+	}
+	copy, err := p.pullImage(context.Background(), "fixture/agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copy.Labels["label"], copy.RepoDigests[0] = "changed", "changed"
+	again, err := p.pullImage(context.Background(), "fixture/agent")
+	if err != nil || again.Labels["label"] != "original" || again.RepoDigests[0] != "digest" {
+		t.Fatal("shared pull returned mutable cached state", err)
+	}
+	app.mu.Lock()
+	p.engineEpoch++
+	app.mu.Unlock()
+	if _, err := p.pullImage(context.Background(), "fixture/agent"); err != nil || pulls.Load() != 2 {
+		t.Fatal("new Engine reused a previous reference resolution", err, pulls.Load())
+	}
+}
+
+func TestPreparationEngineLossCancelsOldComponentAttempt(t *testing.T) {
+	var identity atomic.Int32
+	identity.Store(1)
+	started, cancelled := make(chan struct{}), make(chan struct{})
+	var attempts atomic.Int32
+	a, _, _ := preparationFixture(t, func(p *runtimePreparation) {
+		p.probeInterval = 20 * time.Millisecond
+		p.retryDelay = func(int) time.Duration { return 20 * time.Millisecond }
+		p.identityForTest = func(context.Context) (string, uint64, error) {
+			if identity.Load() == 1 {
+				return "engine-one", 1, nil
+			}
+			return "engine-two", 2, nil
+		}
+		p.executeForTest = func(ctx context.Context, name string, _ RuntimeProfile) error {
+			if name == "agent" && attempts.Add(1) == 1 {
+				close(started)
+				<-ctx.Done()
+				close(cancelled)
+				return ctx.Err()
+			}
+			return nil
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("old component did not start")
+	}
+	identity.Store(2)
+	select {
+	case <-cancelled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Engine replacement left the old component running")
+	}
+	waitPreparation(t, a, func(value Preparation) bool {
+		return value.Components["agent"].State == "ready" && attempts.Load() >= 2
+	})
+}
+
 func TestPreparationRealEngineSlowPullStatusAndProtocolFailure(t *testing.T) {
 	// Real Go Engine client against a controllable Unix API fixture. No runnable
 	// image is fabricated: incompatible labels must fail before image execution.
@@ -330,6 +513,8 @@ func TestPreparationRealEngineSlowPullStatusAndProtocolFailure(t *testing.T) {
 	id := "sha256:" + strings.Repeat("a", 64)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/info"):
+			json.NewEncoder(w).Encode(map[string]string{"ID": "fixture-daemon", "Driver": "overlay2", "DockerRootDir": "/var/lib/docker"})
 		case strings.HasSuffix(r.URL.Path, "/_ping"):
 			w.Header().Set("API-Version", "1.51")
 			w.WriteHeader(200)
@@ -381,4 +566,236 @@ func TestPreparationRealEngineSlowPullStatusAndProtocolFailure(t *testing.T) {
 	if pulls.Load() != 1 {
 		t.Fatal("shared image was pulled twice", pulls.Load())
 	}
+}
+
+func TestPreparationRecoveryRunsBeforeDefaultsAndSurvivesConfigChange(t *testing.T) {
+	started, recoveryGate, recoveryDone := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	agentGate := make(chan struct{})
+	cancelled := make(chan struct{}, 1)
+	var first atomic.Bool
+	a, base, operator := preparationFixture(t, func(p *runtimePreparation) {
+		p.recoveryForTest = func(ctx context.Context) error {
+			if !first.CompareAndSwap(false, true) {
+				return nil
+			}
+			close(started)
+			select {
+			case <-ctx.Done():
+				cancelled <- struct{}{}
+				return ctx.Err()
+			case <-recoveryGate:
+				close(recoveryDone)
+				return nil
+			}
+		}
+		p.executeForTest = func(ctx context.Context, name string, _ RuntimeProfile) error {
+			if name == "agent" {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-agentGate:
+				}
+			}
+			return nil
+		}
+	})
+	defer func() {
+		select {
+		case <-recoveryGate:
+		default:
+			close(recoveryGate)
+		}
+		select {
+		case <-agentGate:
+		default:
+			close(agentGate)
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovery waited for default agent")
+	}
+	if a.Status().Ready {
+		t.Fatal("default dependency should keep global readiness false")
+	}
+	code, _ := httpCall(t, base, "/control/runtime", "PUT", operator, map[string]string{"provider": "fixture", "model": "new-default", "credential": "synthetic-only"})
+	if code != 200 {
+		t.Fatal("default update failed", code)
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("default update cancelled an unrelated recovery")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(recoveryGate)
+	select {
+	case <-recoveryDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovery did not complete")
+	}
+	if a.Status().Ready {
+		t.Fatal("global readiness skipped default preparation")
+	}
+	close(agentGate)
+	waitPreparation(t, a, func(p Preparation) bool { return p.Components["defaultContext"].State == "ready" && a.Status().Ready })
+}
+
+func TestPreparationRunsRecoveryWhenDefaultRuntimeIsMissing(t *testing.T) {
+	ctx := context.Background()
+	init := runtimeInitializationFixture()
+	init.Runtime = nil
+	a, err := New(ctx, Options{DataDirectory: t.TempDir(), Initialization: init, Shutdown: func(context.Context, *Application) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeSettingsApp(t, a) })
+	login, err := a.Identity.Login(ctx, init.Administrator.Account, init.Administrator.Password, "recovery-without-default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := packageNow()
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO works(id,owner_user_id,name,desired_state,observed_state,desired_revision,control_version,created_at,updated_at) VALUES(?,?,?,'running','unknown',1,1,?,?)`, "work-existing-no-default", login.User.ID, "Existing Work", now, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	started, packagesStarted := make(chan struct{}), make(chan struct{})
+	var once, packagesOnce sync.Once
+	a.preparation.executeForTest = func(context.Context, string, RuntimeProfile) error { return nil }
+	a.preparation.probeForTest = func(context.Context) error { return nil }
+	a.preparation.recoveryForTest = func(context.Context) error { once.Do(func() { close(started) }); return nil }
+	a.preparation.packageRecoveryForTest = func(context.Context) error { packagesOnce.Do(func() { close(packagesStarted) }); return nil }
+	if _, err := a.Listen(ListenAddress{"127.0.0.1", 0}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing default prevented recovery")
+	}
+	select {
+	case <-packagesStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing default prevented package cleanup")
+	}
+	status := a.Status()
+	if status.Ready || status.State != "RUNTIME_NOT_CONFIGURED" {
+		t.Fatal("missing default reported globally ready", status)
+	}
+	if entry := a.Preparation().Components["docker"]; entry.State != "ready" {
+		t.Fatal("Docker not initialized for retained Work", entry)
+	}
+}
+
+func TestCorePackageRecoveryIsSharedAndFencedByEngineEpoch(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	a, _, _ := preparationFixture(t, func(p *runtimePreparation) {
+		p.packageRecoveryForTest = func(ctx context.Context) error {
+			if calls.Add(1) == 1 {
+				close(started)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}
+	})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("package recovery did not start")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.ensureCorePackageRecovery(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter was not released: %v", err)
+	}
+	close(release)
+	if err := a.ensureCorePackageRecovery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("same Engine recovered packages %d times", calls.Load())
+	}
+	a.mu.Lock()
+	a.preparation.engineEpoch++
+	a.mu.Unlock()
+	if err := a.ensureCorePackageRecovery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("new Engine did not revalidate package recovery: %d", calls.Load())
+	}
+}
+
+func TestRecoverySignalsReevaluateOnlyAffectedWorks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &Application{ctx: ctx, cancel: cancel}
+	p := newRuntimePreparation(a)
+	a.preparation = p
+	p.engineOnline = true
+	p.engineEpoch = 1
+	p.recoveryStarted = true
+	events := make(chan []string, 4)
+	p.recoveryTargetsForTest = func(_ context.Context, ids []string) error {
+		events <- append([]string(nil), ids...)
+		return nil
+	}
+	a.recoveryWG.Add(1)
+	go p.recoveryLoop()
+	defer func() { cancel(); a.recoveryWG.Wait() }()
+	a.mu.Lock()
+	p.wakeRecoveryLocked()
+	a.mu.Unlock()
+	select {
+	case ids := <-events:
+		if len(ids) != 0 {
+			t.Fatalf("startup inventory was not full: %v", ids)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startup inventory did not run")
+	}
+	a.wakeWorkRecovery("affected", "affected")
+	select {
+	case ids := <-events:
+		if len(ids) != 1 || ids[0] != "affected" {
+			t.Fatalf("cleanup woke unrelated Work or duplicated work: %v", ids)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("affected Work was not rechecked")
+	}
+}
+
+func TestPreparationRecoveryFailureDoesNotPublishGlobalReady(t *testing.T) {
+	var fail atomic.Bool
+	fail.Store(true)
+	a, base, _ := preparationFixture(t, func(p *runtimePreparation) {
+		p.retryDelay = func(int) time.Duration { return 25 * time.Millisecond }
+		p.recoveryForTest = func(context.Context) error {
+			if fail.Load() {
+				return errors.New("synthetic recovery failure")
+			}
+			return nil
+		}
+	})
+	waitPreparation(t, a, func(p Preparation) bool {
+		return p.Components["defaultContext"].State == "ready" && a.Status().State == "RUNTIME_UNAVAILABLE"
+	})
+	if code, _ := httpCall(t, base, "/readyz?profile=docker-delivery", "GET", "", nil); code != 503 {
+		t.Fatal("failed recovery reported ready", code)
+	}
+	fail.Store(false)
+	waitPreparation(t, a, func(p Preparation) bool { return p.Ready && a.Status().Ready })
 }

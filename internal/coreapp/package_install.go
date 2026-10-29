@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
+	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
 	"piwork/internal/identity"
 	"piwork/internal/pipackage"
@@ -292,6 +293,8 @@ func (a *Application) acceptPackage(r *http.Request, actor identity.Principal, w
 }
 
 func (a *Application) probePackageEnvironmentUncached(ctx context.Context, imageID string) (result contracts.PiPackagePreparedEnvironment, returned error) {
+	span := diagnostics.BeginPerformance(ctx, "environment-probe-execute")
+	defer func() { span.End(returned) }()
 	spec := dockerengine.PackageHelperSpec{PackageIdentity: dockerengine.PackageIdentity{WorkID: "core", JobID: "probe-" + uuid.NewString()}, Epoch: 1, Action: "environment", ImageID: imageID}
 	runtime := environmentProbeRuntime(a.dockerRuntime)
 	if a.envRuntimeForTest != nil {

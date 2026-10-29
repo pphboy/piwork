@@ -76,6 +76,8 @@ type Store struct {
 	rootCloseErr       error
 	transientMu        sync.Mutex
 	transientWork      map[string]int
+	preparationTouchMu sync.Mutex
+	preparationTouches map[string]time.Time
 }
 
 func Open(ctx context.Context, options Options) (_ *Store, returned error) {
@@ -509,6 +511,12 @@ func (s *Store) InstallationID() string { return s.installationID }
 // Write serializes short durable mutations. Callers must commit before any
 // Docker/RPC/network effect; operations persist their fence within this callback.
 func (s *Store) Write(ctx context.Context, callback func(*sql.Tx) error) error {
+	return s.writeFenced(ctx, nil, callback)
+}
+
+// writeFenced acquires the sole writer before entering an external publication
+// fence. The fence covers SQL and commit, and must never acquire a Store lease.
+func (s *Store) writeFenced(ctx context.Context, fence func(func() error) error, callback func(*sql.Tx) error) error {
 	// The writer pool's single connection serializes mutations, including waits
 	// for admission, which must remain cancelable during shutdown.
 	tx, finish, err := s.beginTransaction(ctx, false)
@@ -516,13 +524,30 @@ func (s *Store) Write(ctx context.Context, callback func(*sql.Tx) error) error {
 		return err
 	}
 	defer finish()
-	if err := callback(tx); err != nil {
-		return err
+	touches := s.takePreparationTouches()
+	committed := false
+	defer func() {
+		if !committed {
+			s.restorePreparationTouches(touches)
+		}
+	}()
+	publish := func() error {
+		if err := applyPreparationTouches(ctx, tx, touches); err != nil {
+			return err
+		}
+		if err := callback(tx); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return ErrStorage
+		}
+		committed = true
+		return nil
 	}
-	if err := tx.Commit(); err != nil {
-		return ErrStorage
+	if fence == nil {
+		return publish()
 	}
-	return nil
+	return fence(publish)
 }
 func (s *Store) Read(ctx context.Context, callback func(*sql.Tx) error) error {
 	tx, finish, err := s.beginTransaction(ctx, true)

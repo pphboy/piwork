@@ -334,6 +334,7 @@ func (a *Application) startCapturedWorkForRecovery(ctx context.Context, workID s
 }
 
 func (a *Application) startCapturedWorkLocked(ctx context.Context, workID string, generation int64, instanceID string, capturedContexts ...string) (workruntime.Started, error) {
+	ctx = a.captureWorkRouteEpoch(ctx)
 	finishMutation, err := a.Store.BeginTransientMutation(ctx, workID)
 	if err != nil {
 		return workruntime.Started{}, err
@@ -478,7 +479,7 @@ func (a *Application) startCapturedWorkLocked(ctx context.Context, workID string
 		if err := corestore.FinishRuntimeReplacementTx(tx, workID, generation); err != nil {
 			return err
 		}
-		return a.agentRoutes.Publish(spec.Scope, spec.ContextID, started)
+		return a.publishWorkRoute(ctx, spec.Scope, spec.ContextID, started)
 	})
 	if err != nil {
 		if client := a.agentRoutes.Revoke(workID); client != nil {

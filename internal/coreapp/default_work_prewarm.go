@@ -68,13 +68,13 @@ func (a *Application) prewarmDefaultWork(ctx context.Context, profile RuntimePro
 		needsEnvironment = needsEnvironment || item.Enabled
 	}
 	if needsEnvironment {
-		if err := a.environmentCache.Pin(environmentKey{image.ID, 1}); err != nil {
+		if err := a.pinPackageEnvironment(ctx, image.ID); err != nil {
 			return err
 		}
 		if _, err := a.probePackageEnvironment(ctx, image.ID); err != nil {
 			return err
 		}
-	} else if err := a.environmentCache.Pin(); err != nil {
+	} else if err := a.clearPackageEnvironmentPin(); err != nil {
 		return err
 	}
 	return a.confirmDefaultPreparationRevision(ctx)

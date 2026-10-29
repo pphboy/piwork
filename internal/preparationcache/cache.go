@@ -117,6 +117,7 @@ func (c *Cache[K, V]) Get(ctx context.Context, key K, work func(context.Context)
 			continue
 		}
 		jobContext, cancel := context.WithTimeout(c.ctx, c.options.Timeout)
+		jobContext = diagnostics.CopyPerformanceDestination(jobContext, ctx)
 		correlation = "preparation-" + uuid.NewString()
 		jobContext = diagnostics.WithPerformance(jobContext, diagnostics.PerformanceIdentity{CorrelationID: correlation})
 		job := &flight[V]{ctx: jobContext, cancel: cancel, done: make(chan struct{}), waiters: 1, id: correlation}

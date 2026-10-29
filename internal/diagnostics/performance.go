@@ -22,6 +22,17 @@ type PerformanceIdentity struct {
 type performanceKey struct{}
 type performanceWriterKey struct{}
 type performanceSinkKey struct{}
+type serializedPerformanceWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *serializedPerformanceWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(data)
+}
+
 type performanceScope struct {
 	mu sync.Mutex
 	id PerformanceIdentity
@@ -39,7 +50,10 @@ func WithPerformanceIfAbsent(ctx context.Context, id PerformanceIdentity) contex
 }
 
 func WithPerformanceWriter(ctx context.Context, writer io.Writer) context.Context {
-	return context.WithValue(ctx, performanceWriterKey{}, writer)
+	if writer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, performanceWriterKey{}, &serializedPerformanceWriter{writer: writer})
 }
 
 func PerformanceWriter(ctx context.Context) io.Writer {
@@ -49,6 +63,18 @@ func PerformanceWriter(ctx context.Context) io.Writer {
 
 func WithPerformanceSink(ctx context.Context, sink Sink) context.Context {
 	return context.WithValue(ctx, performanceSinkKey{}, sink)
+}
+
+// Shared preparations keep their own identity and lifetime, while writing to
+// the same bounded destination as the request that started them.
+func CopyPerformanceDestination(destination, source context.Context) context.Context {
+	if writer, ok := source.Value(performanceWriterKey{}).(io.Writer); ok && writer != nil {
+		destination = context.WithValue(destination, performanceWriterKey{}, writer)
+	}
+	if sink, ok := source.Value(performanceSinkKey{}).(Sink); ok && sink != nil {
+		destination = WithPerformanceSink(destination, sink)
+	}
+	return destination
 }
 
 // BindPerformance attaches accepted business identities without changing the
@@ -132,7 +158,9 @@ func (s *PerformanceSpan) write(outcome string, duration time.Duration, cacheSta
 func performancePhase(phase string) bool {
 	switch phase {
 	case "create-request", "image-resolve", "image-inspection", "environment-probe", "context-capture", "acceptance",
-		"runtime-prepare", "container-start", "readiness-rpc", "diagnostic-collection", "activation":
+		"runtime-prepare", "container-start", "readiness-rpc", "diagnostic-collection", "activation",
+		"startup-docker", "startup-agent", "startup-package-helper", "startup-default-context", "startup-file-helper", "startup-snapshot-helper", "startup-recovery", "work-verification",
+		"agent-image-persistent-hit", "file-image-persistent-hit", "snapshot-image-persistent-hit", "image-export", "image-scan", "environment-persistent-hit", "environment-probe-execute":
 		return true
 	}
 	return false

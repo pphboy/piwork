@@ -28,6 +28,18 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 	a, base, auth, work, _ := nativeApplyFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
+	const privateMarker = "fixture-preparation-record-private-marker"
+	key := corestore.PreparationKey{Engine: strings.Repeat("e", 64), Image: "sha256:" + strings.Repeat("b", 64), Kind: "agent", Platform: "linux/amd64", Version: 1}
+	if saved, err := a.Store.WritePreparation(ctx, key, json.RawMessage(`{"marker":"`+privateMarker+`"}`), nil); err != nil || !saved {
+		t.Fatal("private preparation fixture", saved, err)
+	}
+	for _, path := range []string{"/api/v1/works", "/api/v1/works/" + work, "/api/v1/works/" + work + "/configuration"} {
+		status, value := packageHTTPCall(t, base, path, "GET", auth, nil)
+		raw, err := json.Marshal(value)
+		if err != nil || status != 200 || bytes.Contains(raw, []byte(privateMarker)) {
+			t.Fatal("private preparation record appeared in Work API", path, status, err)
+		}
+	}
 	if os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE") == "" || os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE") == "" {
 		t.Fatal("native helpers required")
 	}
@@ -186,6 +198,31 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 		}
 		if round == 0 {
 			firstDigest, firstSize = digest, size
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				file.Close()
+				t.Fatal(err)
+			}
+			// .work V1 contains uncompressed manifest, metadata and blobs. Scan
+			// across buffer boundaries as well as the package's decoded contents.
+			marker := []byte(privateMarker)
+			buffer, tail := make([]byte, 64*1024+len(marker)-1), 0
+			for {
+				n, readErr := file.Read(buffer[tail:])
+				if bytes.Contains(buffer[:tail+n], marker) {
+					file.Close()
+					t.Fatal("private preparation record appeared in .work export")
+				}
+				total := tail + n
+				tail = min(total, len(marker)-1)
+				copy(buffer[:tail], buffer[total-tail:total])
+				if readErr == io.EOF {
+					break
+				}
+				if readErr != nil {
+					file.Close()
+					t.Fatal(readErr)
+				}
+			}
 			verified, err := workpackage.Read(ctx, io.NewSectionReader(file, 0, size), workpackage.ReadOptions{})
 			if err != nil {
 				file.Close()

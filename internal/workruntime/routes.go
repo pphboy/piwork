@@ -76,3 +76,17 @@ func (r *Routes) Revoke(workID string) *agentclient.Client {
 	entry.cancel()
 	return entry.client
 }
+
+// RevokeAll invalidates every admission belonging to a lost Engine epoch.
+// The caller closes the returned clients after releasing its own locks.
+func (r *Routes) RevokeAll() []*agentclient.Client {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clients := make([]*agentclient.Client, 0, len(r.works))
+	for id, entry := range r.works {
+		delete(r.works, id)
+		entry.cancel()
+		clients = append(clients, entry.client)
+	}
+	return clients
+}

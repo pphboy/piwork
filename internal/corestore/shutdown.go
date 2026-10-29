@@ -73,6 +73,7 @@ func (s *Store) closeDatabase(ctx context.Context) {
 		<-drained
 	}
 	s.cancelTransactions()
+	touchErr := s.flushPreparationTouches(ctx)
 	var readErr, writeErr error
 	if s.reader.Close() != nil {
 		readErr = ErrShutdown
@@ -83,7 +84,7 @@ func (s *Store) closeDatabase(ctx context.Context) {
 	}
 	s.life.Lock()
 	defer s.life.Unlock()
-	s.databaseCloseErr = errors.Join(s.databaseCloseErr, readErr, checkpointErr, writeErr)
+	s.databaseCloseErr = errors.Join(s.databaseCloseErr, touchErr, readErr, checkpointErr, writeErr)
 	if s.releaseRoot {
 		s.closeRoot()
 	}

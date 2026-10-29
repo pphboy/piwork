@@ -181,6 +181,7 @@ test('DWUI-018 old Work and list responses cannot reverse a Stop or reinsert con
 
 test('DWUI-018 create ID remains associated when local persistence was not confirmed', async t => {
   const a = fixture(t, (path, method) => method === 'POST' ? { operationId: 'create-original', workId: 'work-one', localRecordSaved: false } : raw('provisioning'));
+  a.acceptCoreStatus({health:{available:true},readiness:{available:true,value:{state:'READY',ready:true}}});
   const op = await a.createWork('My Work', {});
   const work = await a.refreshWorkStatus('work-one');
   assert.equal(op.localRecordSaved, false); assert.equal(work.operationId, op.id);

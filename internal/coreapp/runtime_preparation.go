@@ -2,18 +2,23 @@ package coreapp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"math"
 	"sync"
 	"time"
 
+	"piwork/internal/agentclient"
 	"piwork/internal/contracts"
+	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
+	"piwork/internal/preparationcache"
 )
 
 const preparationAttemptTimeout = 10 * time.Minute
 
 var preparationNames = [...]string{"docker", "agent", "packageHelper", "defaultContext", "fileHelper", "snapshotHelper"}
+var preparationSchedule = [...]string{"docker", "agent", "fileHelper", "snapshotHelper", "packageHelper", "defaultContext"}
 
 type PreparationComponent = contracts.PreparationComponent
 type Preparation = contracts.Preparation
@@ -28,17 +33,13 @@ type preparationRequest struct {
 	defaultRevision           int64
 	profile                   RuntimeProfile
 	configured, administrator bool
-}
-
-type imagePreparation struct {
-	done  chan struct{}
-	image dockerengine.PreparedImage
-	err   error
+	recoverable               bool
 }
 
 type imagePreparationKey struct {
 	revision  int64
 	reference string
+	engine    uint64
 }
 
 // State and admission use Application.mu. The coordinator is the sole owner
@@ -52,19 +53,43 @@ type runtimePreparation struct {
 	started     bool
 	invalidated bool
 	cancel      context.CancelFunc
-	imagesMu    sync.Mutex
-	images      map[imagePreparationKey]*imagePreparation
+	images      *preparationcache.Cache[imagePreparationKey, dockerengine.PreparedImage]
+	// Recovery is owned by the Core lifetime, not a default-config generation.
+	recoveryStarted  bool
+	recoveryReady    bool
+	recoveryFailed   bool
+	recoveryWake     chan struct{}
+	recoveryFull     bool
+	recoveryTargets  map[string]struct{}
+	recoveryCancel   context.CancelFunc
+	packageStarted   bool
+	packageWake      chan struct{}
+	packageCancel    context.CancelFunc
+	engineEpoch      uint64
+	engineOnline     bool
+	engineScope      string
+	engineGeneration uint64
+	engineContext    context.Context
+	engineCancel     context.CancelFunc
 	// Test seams replace external effects, not the scheduler or public state.
 	executeForTest              func(context.Context, string, RuntimeProfile) error
 	pullForTest                 func(context.Context, string) (dockerengine.PreparedImage, error)
 	probeForTest                func(context.Context) error
+	identityForTest             func(context.Context) (string, uint64, error)
+	recoveryForTest             func(context.Context) error
+	recoveryTargetsForTest      func(context.Context, []string) error
+	packageRecoveryForTest      func(context.Context) error
 	retryDelay                  func(int) time.Duration
 	attemptTimeout              time.Duration
 	probeInterval, probeTimeout time.Duration
 }
 
 func newRuntimePreparation(app *Application) *runtimePreparation {
-	p := &runtimePreparation{app: app, entries: map[string]preparationEntry{}, wake: make(chan struct{}, 1), changed: make(chan struct{}), images: map[imagePreparationKey]*imagePreparation{}, retryDelay: preparationRetryDelay, attemptTimeout: preparationAttemptTimeout, probeInterval: 2 * time.Second, probeTimeout: 3 * time.Second}
+	lifecycle := app.ctx
+	if lifecycle == nil {
+		lifecycle = context.Background()
+	}
+	p := &runtimePreparation{app: app, entries: map[string]preparationEntry{}, wake: make(chan struct{}, 1), recoveryWake: make(chan struct{}, 1), recoveryTargets: make(map[string]struct{}), packageWake: make(chan struct{}, 1), changed: make(chan struct{}), images: preparationcache.New[imagePreparationKey](lifecycle, preparationcache.Options[dockerengine.PreparedImage]{Clone: clonePreparedImage}), retryDelay: preparationRetryDelay, attemptTimeout: preparationAttemptTimeout, probeInterval: 2 * time.Second, probeTimeout: 3 * time.Second}
 	for _, name := range preparationNames {
 		p.entries[name] = preparationEntry{PreparationComponent: PreparationComponent{State: "unconfigured", Code: preparationCode("RUNTIME_UNCONFIGURED")}}
 	}
@@ -100,6 +125,277 @@ func preparationFailure(name string, err error) (state, code string) {
 func (p *runtimePreparation) notifyLocked() {
 	close(p.changed)
 	p.changed = make(chan struct{})
+}
+
+// The default-creation environment and the recovered Work inventory are
+// independent prerequisites of the aggregate base readiness state.
+func (p *runtimePreparation) updateBaseStateLocked() {
+	if p.app.closed {
+		return
+	}
+	request := p.request
+	state := "RECOVERING"
+	switch {
+	case !request.administrator:
+		state = "ADMIN_REQUIRED"
+	case !request.configured:
+		state = "RUNTIME_NOT_CONFIGURED"
+	case p.invalidated:
+		state = "RECOVERING"
+	default:
+		for _, name := range []string{"docker", "agent", "packageHelper", "defaultContext"} {
+			entry := p.entries[name]
+			if entry.State == "failed" || entry.State == "retrying" {
+				state = "RUNTIME_UNAVAILABLE"
+				break
+			}
+		}
+		if p.recoveryFailed {
+			state = "RUNTIME_UNAVAILABLE"
+		}
+		if p.entries["docker"].State == "ready" && p.entries["agent"].State == "ready" && p.entries["packageHelper"].State == "ready" && p.entries["defaultContext"].State == "ready" && p.recoveryReady && !p.recoveryFailed {
+			state = "READY"
+		}
+	}
+	p.app.state = state
+	p.app.status.Ready = state == "READY"
+	p.app.status.Checks.RuntimeAvailable = state == "READY"
+}
+
+func (p *runtimePreparation) wakeRecoveryLocked() {
+	p.recoveryFull = true
+	p.signalRecoveryLocked()
+}
+
+func (p *runtimePreparation) signalRecoveryLocked() {
+	select {
+	case p.recoveryWake <- struct{}{}:
+	default:
+	}
+}
+
+func (a *Application) wakeWorkRecovery(workIDs ...string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.closed && a.preparation != nil && a.preparation.recoveryStarted {
+		p := a.preparation
+		if len(workIDs) == 0 {
+			p.wakeRecoveryLocked()
+			return
+		}
+		for _, id := range workIDs {
+			if id != "" {
+				p.recoveryTargets[id] = struct{}{}
+			}
+		}
+		p.signalRecoveryLocked()
+	}
+}
+
+func (p *runtimePreparation) startRecoveryLocked() {
+	if p.app.closed {
+		return
+	}
+	if !p.recoveryStarted {
+		p.recoveryStarted = true
+		p.app.recoveryWG.Add(1)
+		go p.recoveryLoop()
+	}
+	p.wakeRecoveryLocked()
+	if p.app.dockerRuntime != nil || p.packageRecoveryForTest != nil {
+		if !p.packageStarted {
+			p.packageStarted = true
+			p.app.recoveryWG.Add(1)
+			go p.packageRecoveryLoop()
+		}
+		select {
+		case p.packageWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Core package recovery must precede the built-in brain, but cannot depend on
+// default configuration: existing Works may be waiting for its cleanup.
+func (a *Application) ensureCorePackageRecovery(ctx context.Context) error {
+	select {
+	case a.packageRecoveryGate <- struct{}{}:
+		defer func() { <-a.packageRecoveryGate }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	a.mu.Lock()
+	p := a.preparation
+	epoch, online := p.engineEpoch, p.engineOnline && !a.closed
+	a.mu.Unlock()
+	if !online {
+		return dockerengine.ErrUnavailable
+	}
+	if a.packagesRecoveredEpoch == epoch {
+		return nil
+	}
+	var err error
+	if p.packageRecoveryForTest != nil {
+		err = p.packageRecoveryForTest(ctx)
+	} else {
+		err = a.recoverCorePackageJobs(ctx, "core")
+	}
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	current := ctx.Err() == nil && !a.closed && p.engineOnline && p.engineEpoch == epoch
+	a.mu.Unlock()
+	if !current {
+		return errWorkSuperseded
+	}
+	a.packagesRecoveredEpoch = epoch
+	return nil
+}
+
+func (p *runtimePreparation) packageRecoveryLoop() {
+	defer p.app.recoveryWG.Done()
+	for {
+		select {
+		case <-p.app.ctx.Done():
+			return
+		case <-p.packageWake:
+		}
+		failures := 0
+		for {
+			p.app.mu.Lock()
+			if p.app.closed || !p.engineOnline {
+				p.app.mu.Unlock()
+				break
+			}
+			epoch := p.engineEpoch
+			attempt, cancel := context.WithTimeout(p.app.ctx, p.attemptTimeout)
+			attempt = p.app.startupPerformance(attempt)
+			p.packageCancel = cancel
+			p.app.mu.Unlock()
+			coreDone := make(chan error, 1)
+			go func() { coreDone <- p.app.ensureCorePackageRecovery(attempt) }()
+			workErr := p.app.recoverWorkPackageJobs(attempt)
+			err := errors.Join(<-coreDone, workErr)
+			cancel()
+			p.app.mu.Lock()
+			p.packageCancel = nil
+			current := !p.app.closed && p.engineOnline && p.engineEpoch == epoch
+			p.app.mu.Unlock()
+			if !current || err == nil {
+				break
+			}
+			failures++
+			delay := time.NewTimer(p.retryDelay(failures))
+			select {
+			case <-p.app.ctx.Done():
+				delay.Stop()
+				return
+			case <-p.packageWake:
+				delay.Stop()
+			case <-delay.C:
+			}
+		}
+	}
+}
+
+func (p *runtimePreparation) executeRecovery(ctx context.Context, workIDs []string) error {
+	if p.recoveryTargetsForTest != nil {
+		return p.recoveryTargetsForTest(ctx, workIDs)
+	}
+	if p.recoveryForTest != nil {
+		return p.recoveryForTest(ctx)
+	}
+	if p.app.options.Recover != nil {
+		return p.app.options.Recover(ctx, p.app)
+	}
+	if p.app.workRuntime != nil {
+		return p.app.recoverCapturedWorks(ctx, workIDs...)
+	}
+	return p.app.emptyRecovery(ctx)
+}
+
+// Only this goroutine performs startup inventories. Config changes never
+// cancel it; a lost Engine cancels the active attempt and fences its result.
+func (p *runtimePreparation) recoveryLoop() {
+	defer p.app.recoveryWG.Done()
+	for {
+		select {
+		case <-p.app.ctx.Done():
+			return
+		case <-p.recoveryWake:
+		}
+		p.app.mu.Lock()
+		full := p.recoveryFull
+		p.recoveryFull = false
+		var workIDs []string
+		if !full {
+			for id := range p.recoveryTargets {
+				workIDs = append(workIDs, id)
+			}
+		}
+		clear(p.recoveryTargets)
+		p.app.mu.Unlock()
+		if !full && len(workIDs) == 0 {
+			continue
+		}
+		failures := 0
+		for {
+			p.app.mu.Lock()
+			if p.app.closed || p.app.ctx.Err() != nil {
+				p.app.mu.Unlock()
+				return
+			}
+			if !p.engineOnline {
+				p.app.mu.Unlock()
+				break
+			}
+			epoch := p.engineEpoch
+			attempt, cancel := context.WithTimeout(p.app.ctx, p.attemptTimeout)
+			attempt = p.app.startupPerformance(attempt)
+			p.recoveryCancel = cancel
+			p.app.mu.Unlock()
+			span := diagnostics.BeginPerformance(attempt, "startup-recovery")
+			err := p.executeRecovery(attempt, workIDs)
+			if err == nil {
+				err = attempt.Err()
+			}
+			span.End(err)
+			cancel()
+			p.app.mu.Lock()
+			p.recoveryCancel = nil
+			current := !p.app.closed && p.app.ctx.Err() == nil && p.engineEpoch == epoch && p.engineOnline
+			if current {
+				if full {
+					p.recoveryReady = err == nil
+					p.recoveryFailed = err != nil
+				} else if err != nil {
+					p.recoveryFailed = true
+					p.wakeRecoveryLocked()
+				}
+				if err == nil && p.app.workRuntime != nil {
+					p.app.recoveryOnce.Do(func() { p.app.recoveryWG.Add(1); go p.app.runtimeRecoveryLoop() })
+				}
+				p.updateBaseStateLocked()
+				p.notifyLocked()
+			}
+			p.app.mu.Unlock()
+			if !current {
+				break
+			}
+			if err == nil {
+				break
+			}
+			failures++
+			delay := time.NewTimer(p.retryDelay(failures))
+			select {
+			case <-p.app.ctx.Done():
+				delay.Stop()
+				return
+			case <-delay.C:
+			}
+		}
+	}
 }
 
 func (a *Application) Preparation() Preparation {
@@ -170,6 +466,14 @@ func (a *Application) ScheduleRuntimeRefresh() error {
 	if err != nil {
 		return err
 	}
+	var recoverable bool
+	if !admin || !configured {
+		if err := a.Store.Read(a.ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(a.ctx, `SELECT EXISTS(SELECT 1 FROM works WHERE deleted_at IS NULL OR observed_state!='deleted')`).Scan(&recoverable)
+		}); err != nil {
+			return err
+		}
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.closed {
@@ -181,17 +485,18 @@ func (a *Application) ScheduleRuntimeRefresh() error {
 	}
 	// Repeated in-process observation does not restart a completed or active
 	// generation. HTTP status never calls this method at all.
-	if p.started && !p.invalidated && defaults.Revision == p.request.defaultRevision && profile.Revision == p.request.profile.Revision && configured == p.request.configured && admin == p.request.administrator {
+	if p.started && !p.invalidated && defaults.Revision == p.request.defaultRevision && profile.Revision == p.request.profile.Revision && configured == p.request.configured && admin == p.request.administrator && recoverable == p.request.recoverable {
 		return nil
 	}
-	p.request = preparationRequest{generation: p.request.generation + 1, defaultRevision: defaults.Revision, profile: profile, configured: configured, administrator: admin}
+	p.request = preparationRequest{generation: p.request.generation + 1, defaultRevision: defaults.Revision, profile: profile, configured: configured, administrator: admin, recoverable: recoverable}
 	p.invalidated = false
 	if p.cancel != nil {
 		p.cancel()
 	}
 	for _, name := range preparationNames {
 		state, code := "pending", (*string)(nil)
-		if !admin || !configured || name == "fileHelper" && a.options.FileHelperImage == "" || name == "snapshotHelper" && a.options.SnapshotHelperImage == "" {
+		independent := recoverable && (name == "docker" || name == "fileHelper" || name == "snapshotHelper")
+		if ((!admin || !configured) && !independent) || name == "fileHelper" && a.options.FileHelperImage == "" || name == "snapshotHelper" && a.options.SnapshotHelperImage == "" {
 			state, code = "unconfigured", preparationCode("RUNTIME_UNCONFIGURED")
 		}
 		p.entries[name] = preparationEntry{PreparationComponent: PreparationComponent{State: state, Code: code}}
@@ -253,6 +558,7 @@ func (p *runtimePreparation) loop() {
 		}
 		request := p.request
 		ctx, cancel := context.WithCancel(p.app.ctx)
+		ctx = p.app.startupPerformance(ctx)
 		ctx = context.WithValue(ctx, preparationGenerationKey{}, request.generation)
 		ctx = context.WithValue(ctx, preparationRevisionKey{}, request.profile.Revision)
 		ctx = context.WithValue(ctx, preparationDefaultKey{}, request.defaultRevision)
@@ -266,15 +572,20 @@ func (p *runtimePreparation) loop() {
 type preparationGenerationKey struct{}
 type preparationRevisionKey struct{}
 type preparationDefaultKey struct{}
+type preparationEngineKey struct{}
 
 func (p *runtimePreparation) currentLocked(ctx context.Context) bool {
 	generation, _ := ctx.Value(preparationGenerationKey{}).(uint64)
-	return !p.app.closed && ctx.Err() == nil && (generation == 0 || generation == p.request.generation)
+	epoch, scoped := ctx.Value(preparationEngineKey{}).(uint64)
+	return !p.app.closed && ctx.Err() == nil && (generation == 0 || generation == p.request.generation) && (!scoped || p.engineOnline && epoch == p.engineEpoch)
 }
 
 type preparationResult struct {
-	name string
-	err  error
+	name        string
+	err         error
+	scope       string
+	generation  uint64
+	engineEpoch uint64
 }
 type preparationJob struct {
 	active   bool
@@ -282,7 +593,7 @@ type preparationJob struct {
 }
 
 func (p *runtimePreparation) run(ctx context.Context, request preparationRequest) {
-	if !request.administrator || !request.configured {
+	if (!request.administrator || !request.configured) && !request.recoverable {
 		return
 	}
 	jobs := map[string]*preparationJob{}
@@ -303,9 +614,9 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 			p.app.mu.Unlock()
 			return
 		}
-		for _, name := range preparationNames {
+		for _, name := range preparationSchedule {
 			entry, job := p.entries[name], jobs[name]
-			if active >= 2 || job.active || entry.State != "pending" && entry.State != "retrying" || time.Now().Before(entry.retryAt) {
+			if active >= 3 || job.active || entry.State != "pending" && entry.State != "retrying" || time.Now().Before(entry.retryAt) {
 				continue
 			}
 			if name != "docker" && p.entries["docker"].State != "ready" {
@@ -319,20 +630,36 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 			p.entries[name] = entry
 			job.active, active = true, active+1
 			workers.Add(1)
-			go func(name string) {
+			epoch, engineCtx := p.engineEpoch, p.engineContext
+			go func(name string, epoch uint64, engineCtx context.Context) {
 				defer workers.Done()
 				budget := p.attemptTimeout
 				if name == "docker" {
 					budget = p.probeTimeout
 				}
 				attempt, cancel := context.WithTimeout(ctx, budget)
+				if name != "docker" {
+					attempt = context.WithValue(attempt, preparationEngineKey{}, epoch)
+					if engineCtx != nil {
+						stop := context.AfterFunc(engineCtx, cancel)
+						defer stop()
+					}
+				}
+				phase := map[string]string{"docker": "startup-docker", "agent": "startup-agent", "packageHelper": "startup-package-helper", "defaultContext": "startup-default-context", "fileHelper": "startup-file-helper", "snapshotHelper": "startup-snapshot-helper"}[name]
+				span := diagnostics.BeginPerformance(attempt, phase)
 				err := p.execute(attempt, name, request.profile)
+				var scope string
+				var generation uint64
+				if name == "docker" && err == nil {
+					scope, generation, err = p.observeEngineIdentity(attempt)
+				}
+				span.End(err)
 				cancel()
 				select {
-				case results <- preparationResult{name, err}:
+				case results <- preparationResult{name: name, err: err, scope: scope, generation: generation, engineEpoch: epoch}:
 				case <-ctx.Done():
 				}
-			}(name)
+			}(name, epoch, engineCtx)
 		}
 		p.notifyLocked()
 		p.app.mu.Unlock()
@@ -351,9 +678,14 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 					defer workers.Done()
 					check, cancel := context.WithTimeout(ctx, p.probeTimeout)
 					err := p.probeEngine(check, request.profile)
+					var scope string
+					var generation uint64
+					if err == nil {
+						scope, generation, err = p.observeEngineIdentity(check)
+					}
 					cancel()
 					select {
-					case results <- preparationResult{"heartbeat", err}:
+					case results <- preparationResult{name: "heartbeat", err: err, scope: scope, generation: generation}:
 					case <-ctx.Done():
 					}
 				}()
@@ -364,8 +696,12 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 				p.app.mu.Unlock()
 				return
 			}
+			var revoked []*agentclient.Client
 			if result.name == "heartbeat" {
 				probing = false
+				if result.err == nil && (result.scope != p.engineScope || result.generation != p.engineGeneration) {
+					result.err = dockerengine.ErrUnavailable
+				}
 				if result.err == nil {
 					p.app.mu.Unlock()
 					continue
@@ -373,6 +709,15 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 				result.name = "docker"
 			} else {
 				jobs[result.name].active, active = false, active-1
+				if result.name != "docker" && (!p.engineOnline || result.engineEpoch != p.engineEpoch) {
+					entry := p.entries[result.name]
+					entry.State, entry.Code, entry.retryAt, entry.RetryAfterSeconds = "pending", nil, time.Time{}, nil
+					p.entries[result.name] = entry
+					p.updateBaseStateLocked()
+					p.notifyLocked()
+					p.app.mu.Unlock()
+					continue
+				}
 			}
 			entry := p.entries[result.name]
 			if result.err == nil {
@@ -387,46 +732,93 @@ func (p *runtimePreparation) run(ctx context.Context, request preparationRequest
 				}
 			}
 			p.entries[result.name] = entry
-			if result.name == "docker" && result.err != nil {
-				p.app.state = "RUNTIME_UNAVAILABLE"
-				p.app.status.Checks.RuntimeAvailable = false
-				for _, name := range preparationNames[1:] {
-					previous := p.entries[name]
-					if previous.State == "ready" {
-						previous.State = "pending"
-						p.entries[name] = previous
+			if result.name == "docker" {
+				if result.err != nil {
+					if p.engineOnline {
+						p.engineEpoch++
+					}
+					p.engineOnline = false
+					if p.engineCancel != nil {
+						p.engineCancel()
+						p.engineCancel, p.engineContext = nil, nil
+					}
+					p.engineScope, p.engineGeneration = "", 0
+					p.app.fileMu.Lock()
+					p.app.fileImageID, p.app.fileImageCaptured = "", false
+					p.app.fileMu.Unlock()
+					p.app.snapshotMu.Lock()
+					p.app.snapshotImageID, p.app.snapshotImageCaptured = "", false
+					p.app.snapshotMu.Unlock()
+					revoked = p.app.revokeEngineWorkRoutes()
+					p.recoveryReady = false
+					if p.recoveryCancel != nil {
+						p.recoveryCancel()
+					}
+					if p.packageCancel != nil {
+						p.packageCancel()
+					}
+					for _, name := range preparationNames[1:] {
+						previous := p.entries[name]
+						if previous.State == "ready" {
+							previous.State = "pending"
+							p.entries[name] = previous
+						}
+					}
+				} else {
+					newEngine := !p.engineOnline
+					if !p.engineOnline {
+						p.engineEpoch++
+						p.engineContext, p.engineCancel = context.WithCancel(p.app.ctx)
+					}
+					p.engineOnline = true
+					p.engineScope, p.engineGeneration = result.scope, result.generation
+					p.app.setWorkRoutesOnline(result.scope, result.generation)
+					if newEngine || !p.recoveryStarted {
+						p.startRecoveryLocked()
 					}
 				}
 			}
 			if result.name == "defaultContext" {
-				if result.err == nil && p.entries["docker"].State == "ready" && p.entries["agent"].State == "ready" && p.entries["packageHelper"].State == "ready" {
-					p.app.state = "READY"
-					p.app.status.Checks.RuntimeAvailable = true
-					if p.app.workRuntime != nil {
-						p.app.recoveryOnce.Do(func() { p.app.recoveryWG.Add(1); go p.app.runtimeRecoveryLoop() })
-					}
-				} else if result.err == nil {
+				if result.err == nil && (p.entries["docker"].State != "ready" || p.entries["agent"].State != "ready" || p.entries["packageHelper"].State != "ready") {
 					entry.State = "pending"
 					p.entries[result.name] = entry
-				} else {
-					p.app.state = "RUNTIME_UNAVAILABLE"
 				}
 			}
-			if result.name == "agent" || result.name == "packageHelper" {
-				if result.err != nil {
-					p.app.state = "RUNTIME_UNAVAILABLE"
-				}
-			}
-			if (result.name == "fileHelper" || result.name == "snapshotHelper") && result.err == nil && p.entries["defaultContext"].State == "ready" {
-				// Revisit Works skipped behind durable helper-dependent intents.
-				contextEntry := p.entries["defaultContext"]
-				contextEntry.State = "pending"
-				p.entries["defaultContext"] = contextEntry
-			}
+			p.updateBaseStateLocked()
 			p.notifyLocked()
 			p.app.mu.Unlock()
+			closeAgentClients(revoked)
 		}
 	}
+}
+
+func (a *Application) startupPerformance(ctx context.Context) context.Context {
+	if a.logs == nil {
+		return ctx
+	}
+	ctx = diagnostics.WithPerformanceWriter(ctx, a.consoleStderr())
+	ctx = diagnostics.WithPerformanceSink(ctx, a.diagnosticSink())
+	return diagnostics.WithPerformance(ctx, diagnostics.PerformanceIdentity{CorrelationID: "startup-" + a.logs.BootID()})
+}
+
+// A daemon without usable identity remains usable, but is never eligible for
+// durable result reuse. A change to or from a known identity still fences all
+// current Work routes on the next observation.
+func (p *runtimePreparation) observeEngineIdentity(ctx context.Context) (string, uint64, error) {
+	if p.identityForTest != nil {
+		return p.identityForTest(ctx)
+	}
+	if p.executeForTest != nil || p.app.options.DependencyCheck != nil {
+		return "", 0, nil
+	}
+	scope, generation, err := p.app.engine.VerificationIdentity(ctx)
+	if ctx.Err() != nil {
+		return "", 0, ctx.Err()
+	}
+	if err != nil {
+		return "", generation, nil
+	}
+	return scope, generation, nil
 }
 
 func (p *runtimePreparation) probeEngine(ctx context.Context, profile RuntimeProfile) error {
@@ -493,11 +885,10 @@ func (p *runtimePreparation) execute(ctx context.Context, name string, profile R
 func (a *Application) prepareDefaultContext(ctx context.Context, profile RuntimeProfile) error {
 	// Recover accepted Core package jobs before the built-in package checks its
 	// scope gate; otherwise an interrupted job could prevent its own recovery.
-	if a.dockerRuntime != nil && !a.packagesRecovered {
-		if err := a.recoverCorePackageJobs(ctx); err != nil {
+	if a.dockerRuntime != nil {
+		if err := a.ensureCorePackageRecovery(ctx); err != nil {
 			return err
 		}
-		a.packagesRecovered = true
 	}
 	if err := a.ensureBundledBrain(ctx); err != nil {
 		return err
@@ -513,17 +904,6 @@ func (a *Application) prepareDefaultContext(ctx context.Context, profile Runtime
 			return err
 		}
 	}
-	var err error
-	if a.options.Recover != nil {
-		err = a.options.Recover(ctx, a)
-	} else if a.workRuntime != nil {
-		err = a.recoverCapturedWorks(ctx)
-	} else {
-		err = a.emptyRecovery(ctx)
-	}
-	if err != nil {
-		return err
-	}
 	return a.confirmDefaultPreparationRevision(ctx)
 }
 
@@ -531,35 +911,38 @@ func (a *Application) prepareDefaultContext(ctx context.Context, profile Runtime
 // its immutable identity for that revision; failures remain retryable.
 func (p *runtimePreparation) pullImage(ctx context.Context, ref string) (dockerengine.PreparedImage, error) {
 	revision, _ := ctx.Value(preparationRevisionKey{}).(int64)
-	key := imagePreparationKey{revision, ref}
-	p.imagesMu.Lock()
-	if previous, ok := p.images[key]; ok {
-		p.imagesMu.Unlock()
-		select {
-		case <-ctx.Done():
-			return dockerengine.PreparedImage{}, ctx.Err()
-		case <-previous.done:
+	p.app.mu.Lock()
+	epoch, engineCtx := p.engineEpoch, p.engineContext
+	if expected, scoped := ctx.Value(preparationEngineKey{}).(uint64); scoped && (!p.engineOnline || expected != epoch) {
+		p.app.mu.Unlock()
+		return dockerengine.PreparedImage{}, errWorkSuperseded
+	}
+	p.app.mu.Unlock()
+	key := imagePreparationKey{revision: revision, reference: ref, engine: epoch}
+	return p.images.Get(ctx, key, func(shared context.Context) (dockerengine.PreparedImage, error) {
+		attempt, cancel := context.WithCancel(shared)
+		defer cancel()
+		if engineCtx != nil {
+			stop := context.AfterFunc(engineCtx, cancel)
+			defer stop()
 		}
-		return previous.image, previous.err
+		if p.pullForTest != nil {
+			return p.pullForTest(attempt, ref)
+		}
+		return p.app.engine.PrepareImage(attempt, ref)
+	})
+}
+
+func clonePreparedImage(value dockerengine.PreparedImage) dockerengine.PreparedImage {
+	value.RepoDigests = append([]string(nil), value.RepoDigests...)
+	if value.Labels != nil {
+		labels := make(map[string]string, len(value.Labels))
+		for key, label := range value.Labels {
+			labels[key] = label
+		}
+		value.Labels = labels
 	}
-	call := &imagePreparation{done: make(chan struct{})}
-	p.images[key] = call
-	p.imagesMu.Unlock()
-	if p.pullForTest != nil {
-		call.image, call.err = p.pullForTest(ctx, ref)
-	} else {
-		call.image, call.err = p.app.engine.PrepareImage(ctx, ref)
-	}
-	if call.err == nil && ctx.Err() != nil {
-		call.err = ctx.Err()
-	}
-	p.imagesMu.Lock()
-	if call.err != nil {
-		delete(p.images, key)
-	}
-	close(call.done)
-	p.imagesMu.Unlock()
-	return call.image, call.err
+	return value
 }
 
 func (p *runtimePreparation) prepareImage(ctx context.Context, kind, ref string) (dockerengine.PreparedImage, error) {

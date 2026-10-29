@@ -1,6 +1,6 @@
 export type CorePhase = 'checking' | 'recovering' | 'ready' | 'unconfigured' | 'failed' | 'unreachable' | 'unconfirmed' | 'paused';
 export interface CoreAdmission { phase: CorePhase; blocked: boolean }
-/** Readiness, not a Work or optional-helper status, controls this gate. */
+/** Aggregate readiness supplies the default gate; a current Work may also admit its workspace. */
 export function coreAdmission(status: Record<string, any>, admitted: boolean, held: boolean, checking: boolean, error: string, paused: boolean): CoreAdmission {
   let phase: CorePhase;
   const value = status.readiness?.value;

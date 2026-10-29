@@ -76,10 +76,11 @@ func serviceEligible(work corestore.WorkRecord, service corestore.ServiceRecord)
 type serviceDomainResolver struct {
 	Store   *corestore.Store
 	Inspect func(context.Context, string, string) (bool, error)
+	Admit   func(context.Context, corestore.WorkRecord) (uint64, bool)
 }
 
 func (a *Application) serviceDomains() serviceDomainResolver {
-	return serviceDomainResolver{Store: a.Store, Inspect: func(ctx context.Context, workID, serviceID string) (bool, error) {
+	return serviceDomainResolver{Store: a.Store, Admit: a.serviceGateway.workAdmission, Inspect: func(ctx context.Context, workID, serviceID string) (bool, error) {
 		view, _, err := a.inspectServiceRuntime(ctx, workID, serviceID)
 		return view != nil && view.State != nil && view.State.Running, err
 	}}
@@ -106,8 +107,15 @@ func (resolver serviceDomainResolver) describe(ctx context.Context, work coresto
 		access.DefaultPortName = &name
 	}
 	access.Status = "unavailable"
-	if serviceEligible(work, service) && resolver.Inspect != nil {
+	if serviceEligible(work, service) && resolver.Inspect != nil && resolver.Admit != nil {
+		epoch, admitted := resolver.Admit(ctx, work)
+		if !admitted {
+			return access, nil
+		}
 		if ready, err := resolver.Inspect(ctx, work.ID, service.ServiceID); err == nil && ready {
+			if current, ok := resolver.Admit(ctx, work); !ok || current != epoch {
+				return access, nil
+			}
 			if selected != nil {
 				access.Status = "available"
 			} else if len(ports) > 0 {

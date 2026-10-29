@@ -98,11 +98,16 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 					continue
 				}
 				var entry map[string]any
-				if json.Unmarshal(scanner.Bytes(), &entry) != nil || entry["event"] != "performance" || (entry["phase"] != "image-inspection" && entry["phase"] != "environment-probe") || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
+				allowedPhases := map[string]bool{"image-inspection": true, "environment-probe": true, "startup-docker": true, "startup-agent": true, "startup-package-helper": true, "startup-default-context": true, "startup-file-helper": true, "startup-snapshot-helper": true, "startup-recovery": true, "work-verification": true, "agent-image-persistent-hit": true, "file-image-persistent-hit": true, "snapshot-image-persistent-hit": true, "image-export": true, "image-scan": true, "environment-persistent-hit": true, "environment-probe-execute": true}
+				if json.Unmarshal(scanner.Bytes(), &entry) != nil {
+					t.Fatal("native Core emitted an invalid diagnostic")
+				}
+				phase, _ := entry["phase"].(string)
+				if entry["event"] != "performance" || !allowedPhases[phase] || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
 					t.Fatal("native Core emitted a failure or an unexpected diagnostic")
 				}
 				for key := range entry {
-					if key != "event" && key != "phase" && key != "outcome" && key != "timestamp" && key != "correlationId" && key != "durationMs" && key != "cacheState" {
+					if key != "event" && key != "phase" && key != "outcome" && key != "timestamp" && key != "correlationId" && key != "durationMs" && key != "cacheState" && key != "preparationCorrelationId" {
 						t.Fatal("native Core preparation diagnostic exposed an unexpected field", key)
 					}
 				}

@@ -1,4 +1,4 @@
-/** Readiness, not a Work or optional-helper status, controls this gate. */
+/** Aggregate readiness supplies the default gate; a current Work may also admit its workspace. */
 export function coreAdmission(status, admitted, held, checking, error, paused) {
     let phase;
     const value = status.readiness?.value;

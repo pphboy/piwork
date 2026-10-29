@@ -35,6 +35,8 @@ func inspectionFixture(t *testing.T, labels map[string]string, save http.Handler
 			return
 		}
 		switch p {
+		case "/info":
+			json.NewEncoder(w).Encode(map[string]string{"ID": "fixture-daemon", "Driver": "overlay2", "DockerRootDir": "/var/lib/docker"})
 		case "/images/" + id + "/json":
 			json.NewEncoder(w).Encode(map[string]any{"Id": id, "Os": "linux", "Architecture": "amd64", "Config": map[string]any{"Labels": labels}})
 		case "/images/get":

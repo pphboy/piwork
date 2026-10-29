@@ -65,6 +65,13 @@ func (a *Application) recoverSnapshotJobs(ctx context.Context, onlyPending bool)
 				return err
 			}
 			log.Print("piwork: snapshot cleanup remains pending for " + job.OperationID)
+		} else {
+			if job.SourceWorkID != nil {
+				a.wakeWorkRecovery(*job.SourceWorkID)
+			}
+			if job.TargetWorkID != nil {
+				a.wakeWorkRecovery(*job.TargetWorkID)
+			}
 		}
 	}
 	if !onlyPending {

@@ -9,24 +9,50 @@ import (
 	"sync"
 	"time"
 
+	"piwork/internal/contracts"
 	"piwork/internal/corestore"
+	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
 	"piwork/internal/safefs"
 )
 
+type nonblockingRecoveryKey struct{}
+
+var errWorkRecoveryDeferred = errors.New("Work recovery is waiting for its active coordinator")
+
+// Retry a busy Work later without holding one of the bounded recovery slots.
+// At most one timer exists per Work; shutdown prevents its callback admitting
+// any new work and no timer has authority to alter the stored intent.
+func (a *Application) deferWorkRecovery(workID string) {
+	if _, pending := a.workRecoveryDeferred.LoadOrStore(workID, struct{}{}); pending {
+		return
+	}
+	time.AfterFunc(250*time.Millisecond, func() {
+		a.workRecoveryDeferred.Delete(workID)
+		a.wakeWorkRecovery(workID)
+	})
+}
+
 // recoverCapturedWorks adopts only known, exact-identity Agent generations.
 // Pending package/file/snapshot jobs still need their own recoverers before
 // this can serve as the complete Core startup gate.
-func (a *Application) recoverCapturedWorks(ctx context.Context) error {
+func (a *Application) recoverCapturedWorks(ctx context.Context, targets ...string) error {
 	if a.workRuntime == nil || a.dockerRuntime == nil {
 		return errRecoveryRequired
 	}
 	var workIDs []string
-	blockedFiles, err := a.recoverCoreFiles(ctx)
-	if err != nil {
-		return err
-	}
-	err = a.Store.Read(ctx, func(tx *sql.Tx) error {
+	blockedFiles := make(map[string]bool)
+	err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		jobs, err := corestore.PendingFileJobs(tx, nil)
+		if err != nil {
+			return err
+		}
+		for _, job := range jobs {
+			_, live := a.fileJobs.Load(job.ID)
+			if job.CoreEpoch != a.fileEpoch || job.State == "cleanup-pending" && !live {
+				blockedFiles[job.WorkID] = true
+			}
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT id FROM works WHERE deleted_at IS NULL ORDER BY id`)
 		if err != nil {
 			return err
@@ -53,6 +79,13 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+	// Close file gates before waiting for helper availability. The cleanup
+	// itself runs independently and must not occupy a Work recovery slot.
+	for id := range blockedFiles {
+		if err := a.closeWorkFiles(ctx, id); err != nil {
+			return err
+		}
 	}
 	pending, err := a.Store.PendingOperations(ctx)
 	if err != nil {
@@ -102,23 +135,48 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 			return errRecoveryRequired
 		}
 	}
-	for _, id := range workIDs {
+	if len(targets) > 0 {
+		selected := make(map[string]bool, len(targets))
+		for _, id := range targets {
+			selected[id] = true
+		}
+		filtered := workIDs[:0]
+		for _, id := range workIDs {
+			if selected[id] {
+				filtered = append(filtered, id)
+			}
+		}
+		workIDs = filtered
+	}
+	return recoverWorksConcurrently(ctx, workIDs, func(id string) (returned error) {
+		defer func() {
+			if errors.Is(returned, errWorkRecoveryDeferred) {
+				a.deferWorkRecovery(id)
+				returned = nil
+			}
+		}()
+		ctx := context.WithValue(ctx, nonblockingRecoveryKey{}, true)
 		if blockedSnapshots[id] {
-			continue
+			return nil
 		}
 		if blockedFiles[id] {
-			if _, err := a.requireFileImage(); err != nil {
-				continue
+			return nil
+		}
+		if err := a.assertPackageScopeIdle(ctx, id); err != nil {
+			_, view := contracts.ProjectError(err)
+			if view.Code == "PI_PACKAGE_BUSY" {
+				return nil
 			}
-			// Stop runtime resources even if a helper's absence remains unknown.
-			_ = a.stopAcceptedWork(ctx, id)
-			if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
-				_, err := tx.Exec(`UPDATE works SET observed_state='failed',updated_at=? WHERE id=?`, packageNow(), id)
-				return err
-			}); err != nil {
-				return err
-			}
-			continue
+			return err
+		}
+		var pendingPackageResources bool
+		if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+			return tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM resource_bindings WHERE installation_id=? AND work_id=? AND resource_kind IN ('package-helper','package-volume','package-network'))`, a.Store.InstallationID(), id).Scan(&pendingPackageResources)
+		}); err != nil {
+			return err
+		}
+		if pendingPackageResources {
+			return nil
 		}
 		for {
 			processed, err := a.processOneWorkOperation(ctx, id)
@@ -133,7 +191,7 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 		if errors.Is(err, corestore.ErrNotFound) {
 			// A recovered delete committed its terminal Operation and Work
 			// tombstone together while processing the pending queue.
-			continue
+			return nil
 		}
 		if err != nil {
 			return err
@@ -150,12 +208,18 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 			}
 			if persisted, err := a.Store.RuntimeGeneration(ctx, id, generation); err == nil {
 				if !runtimeRetryPermitted(persisted, time.Now().UTC()) {
-					continue
+					return nil
 				}
 			} else if !errors.Is(err, corestore.ErrNotFound) {
 				return err
 			}
-			if _, err, writeErr := a.startCapturedWorkForRecovery(ctx, id, generation, instanceID, work.ControlVersion); err != nil && !errors.Is(err, errWorkSuperseded) {
+			span := diagnostics.BeginPerformance(ctx, "work-verification")
+			_, err, writeErr := a.startCapturedWorkForRecovery(ctx, id, generation, instanceID, work.ControlVersion)
+			span.End(err)
+			if errors.Is(err, errWorkRecoveryDeferred) {
+				return err
+			}
+			if err != nil && !errors.Is(err, errWorkSuperseded) {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -170,8 +234,46 @@ func (a *Application) recoverCapturedWorks(ctx context.Context) error {
 		} else {
 			return errRecoveryRequired
 		}
+		return nil
+	})
+}
+
+// recoverWorksConcurrently admits at most two Work recoveries at a time. A
+// blocked Work is independent of its siblings; the caller still receives all
+// failures after every admitted task has settled.
+func recoverWorksConcurrently(ctx context.Context, ids []string, recoverOne func(string) error) error {
+	jobs := make(chan string)
+	var workers sync.WaitGroup
+	var mu sync.Mutex
+	var result error
+	for n := 0; n < 2; n++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for id := range jobs {
+				if err := recoverOne(id); err != nil {
+					mu.Lock()
+					result = errors.Join(result, err)
+					mu.Unlock()
+				}
+			}
+		}()
 	}
-	return nil
+	for _, id := range ids {
+		select {
+		case <-ctx.Done():
+			mu.Lock()
+			result = errors.Join(result, ctx.Err())
+			mu.Unlock()
+			close(jobs)
+			workers.Wait()
+			return result
+		case jobs <- id:
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	return result
 }
 
 func runtimeRetryPermitted(value corestore.RuntimeGeneration, at time.Time) bool {
@@ -244,27 +346,35 @@ func (a *Application) runtimeRecoveryLoop() {
 	probe := time.NewTicker(2 * time.Second)
 	defer probe.Stop()
 	for {
+		a.mu.Lock()
+		engineCtx := a.preparation.engineContext
+		a.mu.Unlock()
 		select {
 		case <-a.ctx.Done():
 			return
 		case <-probe.C:
-			a.scheduleFileRecovery(a.ctx)
-			a.reconcileReadyAgents(a.ctx)
-			a.reconcileServices(a.ctx)
+			if engineCtx != nil && engineCtx.Err() == nil {
+				a.scheduleFileRecovery(engineCtx)
+				a.reconcileReadyAgents(engineCtx)
+				a.reconcileServices(engineCtx)
+			}
 			continue
 		case <-ticker.C:
 		}
-		due, err := a.Store.DueRuntimeRetries(a.ctx, time.Now().UTC())
+		if engineCtx == nil || engineCtx.Err() != nil {
+			continue
+		}
+		due, err := a.Store.DueRuntimeRetries(engineCtx, time.Now().UTC())
 		if err != nil {
 			continue
 		}
 		for _, generation := range due {
-			if a.ctx.Err() != nil {
-				return
+			if engineCtx.Err() != nil {
+				break
 			}
-			a.recoverDueGeneration(a.ctx, generation)
+			a.recoverDueGeneration(engineCtx, generation)
 		}
-		_ = a.resetStableGenerations(a.ctx)
+		_ = a.resetStableGenerations(engineCtx)
 	}
 }
 

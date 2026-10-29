@@ -46,7 +46,20 @@ func (a *Application) kickCorePackageJob(id string) {
 	a.mu.Unlock()
 	go func() {
 		defer a.packageWG.Done()
-		defer a.packageRunning.Delete(id)
+		workScoped := false
+		defer func() {
+			a.packageRunning.Delete(id)
+			if workScoped {
+				a.mu.Lock()
+				if !a.closed && a.preparation != nil && a.preparation.packageStarted {
+					select {
+					case a.preparation.packageWake <- struct{}{}:
+					default:
+					}
+				}
+				a.mu.Unlock()
+			}
+		}()
 		defer close(worker.done)
 		defer cancel()
 		select {
@@ -58,6 +71,11 @@ func (a *Application) kickCorePackageJob(id string) {
 		var job corestore.PackageJob
 		if err := a.Store.Read(a.ctx, func(tx *sql.Tx) error { var err error; job, err = corestore.ReadPackageJob(tx, id); return err }); err != nil || job.Phase != "queued" || job.LeasesReleased {
 			return
+		}
+		if job.WorkID != nil {
+			workScoped = true
+			// Recheck only the Work whose package cleanup or publish settled.
+			defer a.wakeWorkRecovery(*job.WorkID)
 		}
 		a.runCorePackageJob(workerContext, job)
 	}()

@@ -2372,7 +2372,7 @@ test('Core recovery uses a startup gate, relay animation and automatic Work read
 });
 
 test('Core readiness failure is a static recoverable startup state', async t => {
-  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { state: 'RUNTIME_UNAVAILABLE', ready: false } } } } : undefined, false, false, undefined, true);
+  const { page } = await fixture(t, r => r.path === 'status' ? { json: { health: { available: true }, readiness: { available: true, value: { state: 'RUNTIME_UNAVAILABLE', ready: false } } } } : r.path === 'works' ? {json:{works:[]}} : undefined, false, false, undefined, true);
   await expect(page.locator('#core-startup-title')).toHaveText('Core could not become ready');
   await expect(page.locator('.core-startup-blocks,.core-starting-spinner')).toHaveCount(0);
   await expect(button(page,'check-connection')).toBeVisible();
@@ -2408,6 +2408,7 @@ test('startup recovery gates business entries until Core ready, including a dire
   let recovering = true;
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'status') return { json: { health: { available: true }, readiness: { available: true, value: { state: recovering ? 'RECOVERING' : 'READY', ready: !recovering } } } };
+    if (r.path === 'works' && recovering) return {json:{works:[{id:'work-1',name:'Recovery Work',desiredState:'running',observedState:'starting'}]}};
   }, false, true, async page => {
     try {
       await expect(page.locator('.core-startup-page')).toContainText('Core is starting');
@@ -2420,6 +2421,16 @@ test('startup recovery gates business entries until Core ready, including a dire
   });
   await expect(page.getByRole('heading', { name: 'Recovery Work', exact: true })).toBeVisible({timeout:10000});
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('a recovered Work opens during default preparation while new default Work remains blocked', async t => {
+  const {page,requests}=await fixture(t,r=>r.path==='status' ? {json:{health:{available:true},readiness:{available:true,value:{state:'RECOVERING',ready:false}}}} : undefined);
+  await expect(page.getByRole('heading',{name:'Recovery Work',exact:true})).toBeVisible();
+  await expect(page.locator('.core-startup-page')).toHaveCount(0);
+  assert.ok(requests.some(r=>r.path==='works/work-1/sessions' && r.method==='GET'));
+  const result=await api(page,"try { await adapter.createWork('new default',{}); return 'submitted'; } catch(e) { return e.code; }");
+  assert.equal(result,'CORE_NOT_READY');
+  assert.equal(requests.filter(r=>r.path==='works' && r.method==='POST').length,0);
 });
 
 test('recovered Work keeps five failed retries in history, never as menu progress rows after reload', async t => {
@@ -2443,7 +2454,7 @@ test('recovered Work keeps five failed retries in history, never as menu progres
 });
 
 
-test('confirmed Core recovery preserves an existing composer and pauses writes until readiness returns',async t=>{
+test('default recovery preserves an already verified Work composer without pausing it',async t=>{
  let recovering=false;
  const {page,requests}=await fixture(t,r=>{
   if(r.path==='status')return{json:{health:{available:true},readiness:{available:true,value:{state:recovering?'RECOVERING':'READY',ready:!recovering}}}};
@@ -2451,8 +2462,8 @@ test('confirmed Core recovery preserves an existing composer and pauses writes u
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft kept across Core recovery');
  await page.locator('#composer').evaluate(el=>(window as any).__preservedComposer=el);
  recovering=true;await api(page,'await adapter.checkConnection();');
- await expect(page.locator('#core-recovery-banner')).toBeVisible();
- assert(await page.locator('#composer').evaluate(el=>(el.closest('[inert]')!==null)));
+ await expect(page.locator('#core-recovery-banner')).toHaveCount(0);
+ assert(await page.locator('#composer').evaluate(el=>(el.closest('[inert]')===null)));
  assert(await page.locator('#composer').evaluate(el=>el===(window as any).__preservedComposer));
  assert.equal(await page.locator('#composer').inputValue(),'draft kept across Core recovery');
  recovering=false;await api(page,'await adapter.checkConnection();');
@@ -2462,7 +2473,7 @@ test('confirmed Core recovery preserves an existing composer and pauses writes u
  assert.equal(requests.filter(r=>r.method!=='GET').length,0);
 });
 
-test('confirmed Core recovery keeps the same Service iframe and restores it without remounting',async t=>{
+test('default recovery keeps a verified Service iframe active without remounting',async t=>{
  let recovering=false;
  const {page,requests}=await fixture(t,r=>{
   if(r.path==='status')return {json:{health:{available:true},readiness:{available:true,value:{state:recovering?'RECOVERING':'READY',ready:!recovering}}}};
@@ -2473,7 +2484,7 @@ test('confirmed Core recovery keeps the same Service iframe and restores it with
  await expect(page.locator('iframe')).toHaveCount(1);await page.locator('iframe').evaluate(el=>(window as any).__coreRecoveryFrame=el);
  const writes=requests.filter(r=>r.method!=='GET').length;
  recovering=true;await api(page,'await adapter.checkConnection();');
- await expect(page.locator('#core-recovery-banner')).toBeVisible();assert(await page.locator('iframe').evaluate(el=>el===(window as any).__coreRecoveryFrame&&!!el.closest('[inert]')));
+ await expect(page.locator('#core-recovery-banner')).toHaveCount(0);assert(await page.locator('iframe').evaluate(el=>el===(window as any).__coreRecoveryFrame&&!el.closest('[inert]')));
  recovering=false;await api(page,'await adapter.checkConnection();');await expect(page.locator('#core-recovery-banner')).toHaveCount(0);
  assert(await page.locator('iframe').evaluate(el=>el===(window as any).__coreRecoveryFrame));
  assert.equal(requests.filter(r=>r.method==='POST'&&/works\/.+\/(start|retry|stop)$/.test(r.path)).length,0);
@@ -2500,7 +2511,7 @@ for (const revocation of ['stopped','deleted','work-denied','service-stopped','s
  await page.locator('#composer').fill('draft survives runtime revocation');
  const composer=await page.locator('#composer').elementHandle();
  recovering=true;await api(page,'await adapter.checkConnection();');
- await expect(page.locator('#core-recovery-banner')).toBeVisible();
+ await expect(page.locator('#core-recovery-banner')).toHaveCount(0);
  revoked=true;
  await api(page,revocation.startsWith('service-')?"await adapter.loadServices('work-1').catch(()=>{});":"await adapter.refreshWorkStatus('work-1',true).catch(()=>{});");
  await expect(page.locator('iframe')).toHaveCount(0);

@@ -24,6 +24,16 @@ test('recovery gate protects direct mutations without manufacturing an unknown i
  assert.equal(calls,0);assert.equal(adapter.requestCancellation('work-one','request'),undefined);
  assert.equal(adapter.inspectionContext,inspection);assert.equal(inspection.importState,'unsubmitted');
 });
+test('a currently verified Work remains usable while default preparation is blocked',async t=>{
+ const adapter=new DesktopAdapter();t.after(()=>adapter.clearIdentity());adapter.state.signedIn=true;adapter.state.sessionState='ready';adapter.acceptCoreStatus(recovering);
+ adapter.state.works=[{id:'work-one',desired:'running',status:'Ready'}];adapter.worksChecked=new Date().toISOString();
+ assert.equal(adapter.coreGate.blocked,false);
+ let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response('{}')});
+ await adapter.request('works/work-one/sessions','POST',{});assert.equal(calls,1);
+ await assert.rejects(adapter.createWork('name',{}),(e:any)=>e.code==='CORE_NOT_READY');assert.equal(calls,1);
+ adapter.state.works[0].status='Unknown';assert.equal(adapter.coreGate.blocked,true);
+ adapter.state.works[0].status='Ready';adapter.acceptCoreStatus({health:{available:false},readiness:{available:true,value:{state:'RUNTIME_UNAVAILABLE',ready:false}}});assert.equal(adapter.coreGate.blocked,true);
+});
 test('Core recovery budget is elapsed-time bounded even when status reads are slow',t=>{
  const adapter=new DesktopAdapter();t.after(()=>adapter.clearIdentity());adapter.state.signedIn=true;adapter.state.sessionState='ready';adapter.status=recovering;
  adapter.recoveryStartedAt=Date.now()-600001;adapter.observePage('',true);

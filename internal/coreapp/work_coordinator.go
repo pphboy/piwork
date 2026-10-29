@@ -186,6 +186,14 @@ func (a *Application) workLoop(workID string, ch chan struct{}) {
 }
 
 func (a *Application) processOneWorkOperation(ctx context.Context, workID string) (bool, error) {
+	// Startup recovery and the live queue may see the same accepted operation.
+	// Serialize the whole selection and execution, not only its later effects.
+	operationLock, _ := a.workOperationLocks.LoadOrStore(workID, &sync.Mutex{})
+	lock := operationLock.(*sync.Mutex)
+	if err := lockWorkContext(ctx, lock); err != nil {
+		return false, err
+	}
+	defer lock.Unlock()
 	operations, err := a.Store.PendingOperations(ctx)
 	if err != nil {
 		return false, err
@@ -361,6 +369,12 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 	}
 	if ctx.Err() != nil {
 		return true, ctx.Err()
+	}
+	// A recovery pass never owns a Work whose normal coordinator is holding
+	// its lock. Yield the recovery slot without completing that coordinator's
+	// still-running Stop/Delete as a failed operation.
+	if errors.Is(err, errWorkRecoveryDeferred) {
+		return true, err
 	}
 	if errors.Is(err, errWorkSuperseded) {
 		_, finishErr := a.completeDiagnosticOperation(ctx, current.ID, "superseded", nil, nil, nil)

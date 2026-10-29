@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"piwork/internal/contracts"
+	"piwork/internal/corestore"
 )
 
 func TestServiceDomainIdentityAndDefaultPortSelection(t *testing.T) {
@@ -39,7 +40,7 @@ func TestServiceDomainIdentityAndDefaultPortSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolver := serviceDomainResolver{Store: a.Store, Inspect: func(context.Context, string, string) (bool, error) { return true, nil }}
+	resolver := serviceDomainResolver{Store: a.Store, Admit: func(context.Context, corestore.WorkRecord) (uint64, bool) { return 1, true }, Inspect: func(context.Context, string, string) (bool, error) { return true, nil }}
 	access, err := resolver.describe(ctx, work, service)
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +48,17 @@ func TestServiceDomainIdentityAndDefaultPortSelection(t *testing.T) {
 	if access.Status != "available" || access.DefaultURL == nil || access.DefaultPortName == nil || *access.DefaultPortName != "api" || !strings.HasPrefix(access.Hostname, "notes.w-") || len(access.Ports) != 2 || access.Ports[0].Port != 8000 {
 		t.Fatal(access)
 	}
+	resolver.Admit = func(context.Context, corestore.WorkRecord) (uint64, bool) { return 0, false }
+	if unavailable, err := resolver.describe(ctx, work, service); err != nil || unavailable.Status != "unavailable" {
+		t.Fatal("old observed state was treated as current admission", unavailable, err)
+	}
+	epoch := uint64(1)
+	resolver.Admit = func(context.Context, corestore.WorkRecord) (uint64, bool) { return epoch, true }
+	resolver.Inspect = func(context.Context, string, string) (bool, error) { epoch++; return true, nil }
+	if unavailable, err := resolver.describe(ctx, work, service); err != nil || unavailable.Status != "unavailable" {
+		t.Fatal("Engine epoch changed during inspection", unavailable, err)
+	}
+	resolver.Inspect = func(context.Context, string, string) (bool, error) { return true, nil }
 	if port, err := selectedServicePort(service, nil); err != nil || port != 8080 {
 		t.Fatal("default port", port, err)
 	}

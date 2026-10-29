@@ -59,8 +59,13 @@ func preparationHelperArchive(t *testing.T, kind string) ([]byte, string, map[st
 		return buffer.Bytes()
 	}
 	path := "usr/local/bin/piwork-" + kind + "-helper"
-	layer := archive(map[string][]byte{path: elf})
+	files := map[string][]byte{path: elf}
 	labels := map[string]string{"piwork." + kind + "_protocol": "1"}
+	if kind == "agent" {
+		files = map[string][]byte{"usr/local/bin/piwork-package-helper": elf, "usr/local/bin/piwork-service-mcp": elf}
+		labels = map[string]string{"io.piwork.agent.protocol": "v2", "io.piwork.package-helper.contract": "2", "io.piwork.service-mcp.contract": "1", "io.piwork.work-history.schema": "4", "io.piwork.run-model.contract": "1", "io.piwork.work-feedback.contract": "1"}
+	}
+	layer := archive(files)
 	config, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "config": map[string]any{"Entrypoint": []string{"/" + path}, "Labels": labels}, "rootfs": map[string]any{"type": "layers", "diff_ids": []string{fmt.Sprintf("sha256:%x", sha256.Sum256(layer))}}})
 	manifest, _ := json.Marshal([]map[string]any{{"Config": "config.json", "Layers": []string{"layer.tar"}}})
 	return archive(map[string][]byte{"config.json": config, "manifest.json": manifest, "layer.tar": layer}), fmt.Sprintf("sha256:%x", sha256.Sum256(config)), labels
@@ -91,6 +96,10 @@ func TestPreparationRealHelperCaptureRecoversAfterFirstPullFailure(t *testing.T)
 	}
 	var available atomic.Bool
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/info") {
+			json.NewEncoder(w).Encode(map[string]string{"ID": "fixture-daemon", "Driver": "overlay2", "DockerRootDir": "/var/lib/docker"})
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/_ping") {
 			w.Header().Set("API-Version", "1.51")
 			return
@@ -149,6 +158,9 @@ func TestPreparationRealHelperCaptureRecoversAfterFirstPullFailure(t *testing.T)
 	}
 	a.preparation.retryDelay = func(int) time.Duration { return 100 * time.Millisecond }
 	a.preparation.probeForTest = func(context.Context) error { return nil }
+	// Synthetic Works below have no Agent runtime; this fixture exercises helper
+	// capture and leaves Work reconciliation to the dedicated recovery tests.
+	a.preparation.recoveryForTest = func(context.Context) error { return nil }
 	a.preparation.executeForTest = func(ctx context.Context, name string, _ RuntimeProfile) error {
 		switch name {
 		case "fileHelper":

@@ -71,7 +71,9 @@ func (s logSink) Performance(value map[string]any, console []byte) {
 	_ = s.manager.Emit(corelogs.Event{
 		Stream: "stderr", Level: level, Component: "core", Event: "performance." + eventName,
 		Message: "Performance span completed.", WorkID: text("workId"), OperationID: text("operationId"),
-		CorrelationID: text("correlationId"), Fields: fields, ConsoleText: console,
+		// diagnostics has already emitted the structured console line; persist
+		// it without writing a second copy that would double execution counts.
+		CorrelationID: text("correlationId"), Fields: fields, ConsoleText: []byte{},
 	})
 }
 

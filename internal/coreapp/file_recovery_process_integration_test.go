@@ -263,8 +263,17 @@ func TestNativeCoreFileJobsSurviveCrashBeforeAndAfterCommit(t *testing.T) {
 			if phase == "after-commit" {
 				want = "committed"
 			}
-			if status, data, err := call("GET", nil); err != nil || status != 200 || string(data) != want {
-				t.Fatal("crash recovery changed committed outcome", status, string(data), want, err)
+			// Global readiness no longer implies that every Work's file cleanup
+			// and current Agent proof have finished. Wait on this exact Work;
+			// only its explicit temporary-unavailability response is retryable.
+			for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+				status, data, err := call("GET", nil)
+				if err == nil && status == 200 && string(data) == want {
+					break
+				}
+				if err != nil || status != 409 || !bytes.Contains(data, []byte("WORK_FILES_UNAVAILABLE")) || time.Now().After(deadline) {
+					t.Fatal("crash recovery changed committed outcome", status, string(data), want, err)
+				}
 			}
 			for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
 				var pending int

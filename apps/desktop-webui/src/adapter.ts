@@ -278,13 +278,21 @@ export class DesktopAdapter {
   private recoveryStartedAt = 0;
   get coreGate() {
     const gate = coreAdmission(this.status, this.coreAdmitted, this.coreHeld, this.connectionCheck.checking, this.connectionCheck.error, this.corePaused);
-    return { ...gate, blocked: this.state.signedIn && this.state.sessionState === 'ready' && gate.blocked };
+    // The Work list is current-Core evidence: Core projects previously Ready
+    // records to Unknown until their Agent route is verified in this epoch.
+    const partial = !!this.worksChecked && !!this.status.health?.available && !!this.status.readiness?.available &&
+      this.state.works.some(work => work.desired === 'running' && this.project(work).usable);
+    return { ...gate, blocked: this.state.signedIn && this.state.sessionState === 'ready' && gate.blocked && !partial };
   }
   assertCoreReady() { if (this.coreGate.blocked) throw failure('CORE_NOT_READY', 'd.error.coreNotReady', undefined, 409); }
+  assertDefaultReady() {
+    this.assertCoreReady();
+    if (!this.status.health?.available || !this.status.readiness?.available || this.status.readiness.value?.ready !== true) throw failure('CORE_NOT_READY', 'd.error.coreNotReady', undefined, 409);
+  }
   private acceptCoreStatus(status: Data) {
     this.status = status;
     if (status.health?.available && status.readiness?.available && status.readiness.value?.ready === true) { this.coreAdmitted = true; this.coreHeld = false; }
-    else if (status.readiness?.available && status.readiness.value?.ready === false) this.coreHeld = true;
+    else if (status.health?.available === false || status.readiness?.available && status.readiness.value?.ready === false) this.coreHeld = true;
   }
   inspection: Data | null = null;
   inspectionTransfer = '';
@@ -650,6 +658,7 @@ export class DesktopAdapter {
   }
   private async requestRaw(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<Data> {
     if (method !== 'GET' && /^(works(?:\/|$)|work-imports$|service-entries$)/.test(path)) this.assertCoreReady();
+    if (method === 'POST' && path === 'works') this.assertDefaultReady();
     const epoch = this.epoch, authSequence = this.authSequence;
     let response: Response;
     try { response = await fetch(`/_desktop/api/${path}`, { method, credentials: 'same-origin', signal, headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Piwork-Csrf': this.csrf, ...headers }, ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }) }); }
@@ -1506,7 +1515,7 @@ export class DesktopAdapter {
     this.scheduleOperationPoll(); this.emit(); return operation;
   }
   async createWork(name: string, config: Partial<Configuration>, image?: string) {
-    this.assertCoreReady();
+    this.assertDefaultReady();
     const payload: Data = { name };
     if (image) payload.baseImage = image;
     if (config.skills !== undefined) payload.skills = config.skills;

@@ -1,6 +1,7 @@
 package coreapp
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/url"
@@ -29,12 +30,25 @@ func workView(work corestore.WorkRecord) any {
 		work.DesiredRevision, work.ActiveRevision, work.ControlVersion, work.DeletedAt, work.CreatedAt, work.UpdatedAt}
 }
 
+// Durable observations describe the last completed reconciliation. A Ready
+// Work is usable only while its current Agent route is still admitted.
+func (a *Application) currentWorkView(ctx context.Context, work corestore.WorkRecord) any {
+	if work.DesiredState == "running" && (work.ObservedState == "ready" || work.ObservedState == "degraded") {
+		if !a.serviceGateway.accepting() {
+			work.ObservedState = "unknown"
+		} else if _, admitted := a.serviceGateway.workAdmission(ctx, work); !admitted {
+			work.ObservedState = "unknown"
+		}
+	}
+	return workView(work)
+}
+
 func (a *Application) workRead(w http.ResponseWriter, r *http.Request, actor identity.Principal) (bool, error) {
 	if r.Method != http.MethodGet {
 		return false, nil
 	}
 	if r.URL.EscapedPath() == "/api/v1/works" {
-		works := make([]any, 0)
+		records := make([]corestore.WorkRecord, 0)
 		err := a.Store.Read(r.Context(), func(tx *sql.Tx) error {
 			rows, err := tx.QueryContext(r.Context(), `SELECT id FROM works WHERE deleted_at IS NULL ORDER BY created_at,id`)
 			if err != nil {
@@ -51,13 +65,17 @@ func (a *Application) workRead(w http.ResponseWriter, r *http.Request, actor ide
 					return err
 				}
 				if work.OwnerUserID == actor.UserID || actor.Role == "admin" {
-					works = append(works, workView(work))
+					records = append(records, work)
 				}
 			}
 			return rows.Err()
 		})
 		if err != nil {
 			return true, err
+		}
+		works := make([]any, 0, len(records))
+		for _, work := range records {
+			works = append(works, a.currentWorkView(r.Context(), work))
 		}
 		send(w, 200, map[string]any{"works": works})
 		return true, nil
@@ -78,6 +96,6 @@ func (a *Application) workRead(w http.ResponseWriter, r *http.Request, actor ide
 	if err != nil {
 		return true, err
 	}
-	send(w, 200, workView(work))
+	send(w, 200, a.currentWorkView(r.Context(), work))
 	return true, nil
 }

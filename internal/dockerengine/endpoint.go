@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/containerd/errdefs"
@@ -151,9 +152,12 @@ func SelectEndpoint(options SelectionOptions) (Endpoint, error) {
 }
 
 type Engine struct {
-	api        *client.Client
-	Endpoint   Endpoint
-	APIVersion string
+	api                *client.Client
+	Endpoint           Endpoint
+	APIVersion         string
+	identityMu         sync.Mutex
+	identityScope      string
+	identityGeneration uint64
 }
 
 func Connect(ctx context.Context, endpoint Endpoint) (*Engine, error) {
@@ -207,6 +211,7 @@ func (e *Engine) Close() error { return e.api.Close() }
 // Callers set their own short liveness deadline independently of image pulls.
 func (e *Engine) Ping(ctx context.Context) error {
 	if _, err := e.api.Ping(ctx, client.PingOptions{}); err != nil {
+		e.invalidateVerificationIdentity()
 		return ErrUnavailable
 	}
 	return nil

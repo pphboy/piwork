@@ -34,6 +34,15 @@ func normalizeShutdownOptions(options *Options) error {
 // Shutdown must not block forever behind a canceled lifecycle worker's lock.
 // Keeping sync.Mutex permits test fixtures to freeze a real acceptance boundary.
 func lockWorkContext(ctx context.Context, lock *sync.Mutex) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if recovery, _ := ctx.Value(nonblockingRecoveryKey{}).(bool); recovery {
+		if lock.TryLock() {
+			return nil
+		}
+		return errWorkRecoveryDeferred
+	}
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {

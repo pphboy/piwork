@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"piwork/internal/contracts"
+	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 )
 
@@ -211,7 +217,7 @@ func TestCoreCloseRetainsDependenciesUntilSharedCleanupReturns(t *testing.T) {
 		}
 	})
 	go func() {
-		_, _ = a.environmentCache.Get(context.Background(), environmentKey{"fixture", 1}, func(ctx context.Context) (contracts.PiPackagePreparedEnvironment, error) {
+		_, _ = a.environmentCache.Get(context.Background(), environmentKey{imageID: "fixture", version: 1}, func(ctx context.Context) (contracts.PiPackagePreparedEnvironment, error) {
 			close(started)
 			<-ctx.Done()
 			<-cleanup
@@ -230,5 +236,128 @@ func TestCoreCloseRetainsDependenciesUntilSharedCleanupReturns(t *testing.T) {
 	once.Do(func() { close(cleanup) })
 	if err := a.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnvironmentPreparationPersistsAcrossCoreRestart(t *testing.T) {
+	ctx := context.Background()
+	archive, id, labels := preparationHelperArchive(t, "agent")
+	socketDir, err := os.MkdirTemp("", "piwork-env-engine-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(socketDir)
+	socket := filepath.Join(socketDir, "engine.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saves atomic.Int32
+	var missing atomic.Bool
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/_ping"):
+			w.Header().Set("API-Version", "1.51")
+		case strings.HasSuffix(r.URL.Path, "/version"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"ApiVersion": "1.51", "MinAPIVersion": "1.44", "Os": "linux", "Arch": "amd64"})
+		case strings.HasSuffix(r.URL.Path, "/info"):
+			_ = json.NewEncoder(w).Encode(map[string]string{"ID": "fixture-daemon", "Driver": "overlay2", "DockerRootDir": "/var/lib/docker"})
+		case strings.HasSuffix(r.URL.Path, "/images/"+id+"/json"):
+			if missing.Load() {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"Id": id, "Os": "linux", "Architecture": "amd64", "Config": map[string]any{"Labels": labels}})
+		case strings.HasSuffix(r.URL.Path, "/images/get"):
+			saves.Add(1)
+			_, _ = w.Write(archive)
+		default:
+			http.NotFound(w, r)
+		}
+	})}
+	go server.Serve(listener)
+	defer server.Close()
+	dir := t.TempDir()
+	runtime := &probeRuntimeFixture{}
+	setup := func() *Application {
+		a, err := New(ctx, Options{DataDirectory: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.engine, err = dockerengine.Connect(ctx, dockerengine.Endpoint{Host: "unix://" + socket, ConfigDirectory: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.inspector, err = dockerengine.NewImageInspectorWithLifecycle(ctx, a.ctx, a.engine, a.inspectionRoot, a.Store)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.dockerRuntime, err = dockerengine.NewRuntime(a.engine, a.Store.InstallationID(), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.envRuntimeForTest = runtime
+		return a
+	}
+	a := setup()
+	first, err := a.probePackageEnvironment(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.started.Load() != 1 || saves.Load() != 1 {
+		t.Fatal("cold preparation counts", runtime.started.Load(), saves.Load())
+	}
+	closeSettingsApp(t, a)
+	b := setup()
+	defer closeSettingsApp(t, b)
+	second, err := b.probePackageEnvironment(ctx, id)
+	if err != nil || second.NodeAbi != first.NodeAbi {
+		t.Fatal("reopen", err)
+	}
+	if runtime.started.Load() != 1 || saves.Load() != 1 {
+		t.Fatal("repeated probe or export", runtime.started.Load(), saves.Load())
+	}
+	scope, generation, err := b.engine.VerificationIdentity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := corestore.PreparationKey{Engine: scope, Image: id, Kind: "environment", Platform: "linux/amd64/", Version: 1}
+	raw, found, err := b.Store.ReadPreparation(ctx, key)
+	if err != nil || !found {
+		t.Fatal("missing persisted environment", err)
+	}
+	nextRule := key
+	nextRule.Version++
+	if _, hit, err := b.Store.ReadPreparation(ctx, nextRule); err != nil || hit {
+		t.Fatal("changed rule reused old result", err)
+	}
+	if saved, err := b.Store.WritePreparation(ctx, nextRule, raw, nil); err != nil || !saved {
+		t.Fatal("write next rule", err)
+	}
+	if err := b.Store.DeletePreparation(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	b.environmentCache.Invalidate(environmentKey{imageID: id, version: 1, scope: scope, generation: generation})
+	if _, err := b.probePackageEnvironment(ctx, id); err != nil {
+		t.Fatal("reprobe after rule invalidation", err)
+	}
+	if runtime.started.Load() != 2 || saves.Load() != 1 {
+		t.Fatal("rule invalidation did not reprobe", runtime.started.Load(), saves.Load())
+	}
+	missing.Store(true)
+	if _, err := b.probePackageEnvironment(ctx, id); !errors.Is(err, dockerengine.ErrResourceMissing) {
+		t.Fatal("missing image accepted", err)
+	}
+	missing.Store(false)
+	runtime.remove = func(context.Context) error { return errors.New("synthetic cleanup failure") }
+	if _, err := b.probePackageEnvironment(ctx, id); err == nil {
+		t.Fatal("cleanup failure was accepted")
+	}
+	runtime.remove = nil
+	if _, err := b.probePackageEnvironment(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.started.Load() != 4 || saves.Load() != 2 {
+		t.Fatal("missing image did not invalidate", runtime.started.Load(), saves.Load())
 	}
 }

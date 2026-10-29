@@ -116,6 +116,8 @@ func (a *Application) recoverCoreFiles(ctx context.Context) (map[string]bool, er
 				return nil, ctx.Err()
 			}
 			blocked[id] = true
+		} else {
+			a.wakeWorkRecovery(id)
 		}
 	}
 	return blocked, nil
@@ -152,12 +154,23 @@ func (a *Application) scheduleFileRecovery(ctx context.Context) {
 			defer a.fileRecoveryActive.Delete(job.ID)
 			budget, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
+			if job.CoreEpoch != a.fileEpoch {
+				if err := a.closeWorkFiles(budget, job.WorkID); err != nil {
+					return
+				}
+			}
 			if err := a.recoverFileJob(budget, job.ID, false); err != nil {
+				if job.CoreEpoch != a.fileEpoch && budget.Err() == nil {
+					_ = a.stopAcceptedWork(budget, job.WorkID)
+					_ = a.Store.Write(budget, func(tx *sql.Tx) error {
+						_, err := tx.Exec(`UPDATE works SET observed_state='failed',updated_at=? WHERE id=? AND desired_state='running'`, packageNow(), job.WorkID)
+						return err
+					})
+				}
 				return
 			}
-			// A pending user Operation keeps its original identity and resumes.
-			a.enqueueWork(job.WorkID)
-			a.restoreAfterFileCleanup(budget, job.WorkID)
+			// Recheck all fences for this Work before resuming its Operation.
+			a.wakeWorkRecovery(job.WorkID)
 		}(job)
 	}
 }

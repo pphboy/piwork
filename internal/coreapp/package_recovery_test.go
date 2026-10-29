@@ -77,6 +77,60 @@ func seedRecoverableCorePackage(t *testing.T, a *Application, phase, failure str
 	return job
 }
 
+func TestCorePackageRecoveryKeepsUnrelatedWorkCleanupIsolated(t *testing.T) {
+	a, _, _ := appFixture(t, Options{DataDirectory: t.TempDir()})
+	ctx := context.Background()
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO resource_bindings(installation_id,work_id,resource_kind,logical_id,runtime_id,generation,labels_json,observed_at) VALUES(?,?,?,?,?,?,?,?)`, a.Store.InstallationID(), "work-blocked", "package-helper", "work-blocked/job", "unconfirmed-helper", 1, `{}`, packageNow())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recoverCorePackageJobs(ctx, "core"); err != nil {
+		t.Fatal("unrelated Work blocked Core package recovery", err)
+	}
+	if err := a.recoverCorePackageJobs(ctx, "work-free"); err != nil {
+		t.Fatal("unrelated Work blocked another Work", err)
+	}
+	if err := a.recoverCorePackageJobs(ctx, "work-blocked"); err == nil {
+		t.Fatal("unconfirmed resource was accepted")
+	}
+	if err := a.Store.Read(ctx, func(tx *sql.Tx) error {
+		var count int
+		if err := tx.QueryRow(`SELECT count(*) FROM resource_bindings WHERE work_id='work-blocked' AND logical_id='work-blocked/job'`).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			t.Fatal("unconfirmed resource was deleted")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPackageRecoveryScopesYieldBoundedSlots(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	completed := make(chan string, 1)
+	err := recoverPackageScopes(ctx, []string{"blocked-a", "blocked-b", "free"}, 50*time.Millisecond, func(attempt context.Context, id string) error {
+		if id == "free" {
+			completed <- id
+			return nil
+		}
+		<-attempt.Done()
+		return attempt.Err()
+	})
+	if err == nil {
+		t.Fatal("blocked cleanups were reported as complete")
+	}
+	select {
+	case <-completed:
+	default:
+		t.Fatal("blocked Work cleanups held both recovery slots")
+	}
+}
+
 func TestCorePackageRecoveryPublishesOnlyVerifiedCapture(t *testing.T) {
 	for _, test := range []struct{ name, phase, prior, damage, state, code string }{
 		{"capture before phase commit", "prepare", "", "", "succeeded", ""},

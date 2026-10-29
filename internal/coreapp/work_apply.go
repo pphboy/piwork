@@ -398,6 +398,7 @@ func applyQuota(tx *sql.Tx, workID string, config contracts.WorkConfig, restore 
 }
 
 func (a *Application) processWorkApply(ctx context.Context, operation corestore.OperationRecord) (returned error) {
+	ctx = a.captureWorkRouteEpoch(ctx)
 	plan, err := a.readApplyPlan(ctx, operation)
 	if err != nil {
 		return err
@@ -717,7 +718,7 @@ func (a *Application) rollbackWorkApply(ctx context.Context, operation corestore
 		return errWorkSuperseded
 	}
 	err = a.finishWorkApply(ctx, operation, plan, plan.ErrorCode, plan.ErrorStage, "succeeded", false, func() error {
-		return a.agentRoutes.Publish(spec.Scope, spec.ContextID, started)
+		return a.publishWorkRoute(ctx, spec.Scope, spec.ContextID, started)
 	})
 	if err != nil {
 		started.Client.Close()
@@ -823,7 +824,7 @@ func (a *Application) publishWorkApply(ctx context.Context, operation corestore.
 			if _, err := corestore.OpenFileGate(tx, plan.WorkID, now); err != nil {
 				return err
 			}
-			return a.agentRoutes.Publish(spec.Scope, spec.ContextID, started)
+			return a.publishWorkRoute(ctx, spec.Scope, spec.ContextID, started)
 		}
 		return nil
 	})
