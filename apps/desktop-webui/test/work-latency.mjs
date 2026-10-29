@@ -31,8 +31,9 @@ export async function measureBrowserCreates({ launchUrl, password, count, retire
       const value = await response.json();
       await expect(page.locator('#modal')).toContainText('Operation ID', { timeout: 180_000 });
       await page.getByRole('button', { name: 'Close dialog' }).click();
-      await expect(page.locator('.work-row').filter({ hasText: name })).toContainText('Ready', { timeout: 180_000 });
-      await page.getByRole('button', { name: new RegExp(`^${name}(?:\\s|$)`) }).click();
+      const row = page.locator('.work-row').filter({ has: page.getByText(name, { exact: true }) });
+      await expect(row).toContainText('Ready', { timeout: 180_000 });
+      await row.locator('a.work-name').click();
       await expect(page.locator('.work-header')).toContainText(name);
       await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180_000 });
       const totalMs = performance.now() - start;
