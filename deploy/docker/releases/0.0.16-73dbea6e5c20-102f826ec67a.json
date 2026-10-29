@@ -1,0 +1,85 @@
+{
+  "manifestVersion": 2,
+  "application": "unified-linux",
+  "controlPlanePort": 17891,
+  "corePort": 17871,
+  "serviceEntryMode": "path",
+  "releaseVersion": "0.0.16",
+  "sourceCommit": "73dbea6e5c20e5c77a331771754a7838d26046ce",
+  "sourceModified": false,
+  "sourceInputHash": "102f826ec67a2cf6e1c356057c012b606072750b5cf0819bb461e0fdb6292e58",
+  "desktopUIHash": "925688c95aff0c733603691af97ec511c9c8962325dd62757c72528e91a522cb",
+  "consoleUIHash": "df3e3d405eaceee48a46186a1b3b3d0f48b32fea4068e3d95a9342a5e2bcf6da",
+  "registry": "docker.io/pphboy",
+  "platform": "linux/amd64",
+  "runtimeImage": "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8",
+  "core": {
+    "format": "piwork-go-core",
+    "schemaVersion": 1
+  },
+  "clientCredentialVersion": 1,
+  "releaseId": "0.0.16-73dbea6e5c20-102f826ec67a",
+  "images": {
+    "core": {
+      "reference": "docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a",
+      "imageId": "sha256:239d0670643782885559da5ed6cdd501eb08a744397ff57a4f5bab21a5fd428f",
+      "platform": "linux/amd64",
+      "protocolLabels": {},
+      "digest": "sha256:b6b92004d7b32f7b8f06308717f5c22e6addbcde239ab2c37b0b997c782e8e0e",
+      "digestReference": "docker.io/pphboy/piwork-core@sha256:b6b92004d7b32f7b8f06308717f5c22e6addbcde239ab2c37b0b997c782e8e0e"
+    },
+    "agent": {
+      "reference": "docker.io/pphboy/piwork-agentd:0.0.16-73dbea6e5c20-102f826ec67a",
+      "imageId": "sha256:4d4d0757f0cecd5902837a4d7f6712957ed215bd83220717d19b82f54ed777ba",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "io.piwork.agent.protocol": "v2",
+        "io.piwork.package-helper.contract": "2",
+        "io.piwork.service-mcp.contract": "1",
+        "io.piwork.work-history.schema": "5",
+        "io.piwork.run-model.contract": "1",
+        "io.piwork.work-feedback.contract": "1"
+      },
+      "digest": "sha256:fec5358d81bb66863751c2bfd7a3dd1710a805213c8b20f9ac8240dd03d6d66d",
+      "digestReference": "docker.io/pphboy/piwork-agentd@sha256:fec5358d81bb66863751c2bfd7a3dd1710a805213c8b20f9ac8240dd03d6d66d"
+    },
+    "fileHelper": {
+      "reference": "docker.io/pphboy/piwork-file-helper:0.0.16-73dbea6e5c20-102f826ec67a",
+      "imageId": "sha256:7793a08bde3b1043e1d5cc8e5b2aad543b8a6b53df28bbc9f7e59a5a1d28a40c",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "piwork.file_protocol": "1"
+      },
+      "digest": "sha256:b63fbeea397eb443e5cae8466a1b3bef0e690c540ba62864edc93a0be89d2f69",
+      "digestReference": "docker.io/pphboy/piwork-file-helper@sha256:b63fbeea397eb443e5cae8466a1b3bef0e690c540ba62864edc93a0be89d2f69"
+    },
+    "snapshotHelper": {
+      "reference": "docker.io/pphboy/piwork-snapshot-helper:0.0.16-73dbea6e5c20-102f826ec67a",
+      "imageId": "sha256:20e0def173d14f1de8a7fa3c22fc16808647aa8c800adcbf931e1c1032e38ae6",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "piwork.snapshot_protocol": "1"
+      },
+      "digest": "sha256:04800d5ecf2fe7fcba619d3889ddf72ed98f33752caf6c1b4d175e6c9bdcc2da",
+      "digestReference": "docker.io/pphboy/piwork-snapshot-helper@sha256:04800d5ecf2fe7fcba619d3889ddf72ed98f33752caf6c1b4d175e6c9bdcc2da"
+    },
+    "packageHelper": {
+      "reference": "docker.io/pphboy/piwork-agentd:0.0.16-73dbea6e5c20-102f826ec67a",
+      "imageId": "sha256:4d4d0757f0cecd5902837a4d7f6712957ed215bd83220717d19b82f54ed777ba",
+      "platform": "linux/amd64",
+      "protocolLabels": {
+        "io.piwork.agent.protocol": "v2",
+        "io.piwork.package-helper.contract": "2",
+        "io.piwork.service-mcp.contract": "1",
+        "io.piwork.work-history.schema": "5",
+        "io.piwork.run-model.contract": "1",
+        "io.piwork.work-feedback.contract": "1"
+      },
+      "digest": "sha256:fec5358d81bb66863751c2bfd7a3dd1710a805213c8b20f9ac8240dd03d6d66d",
+      "digestReference": "docker.io/pphboy/piwork-agentd@sha256:fec5358d81bb66863751c2bfd7a3dd1710a805213c8b20f9ac8240dd03d6d66d"
+    }
+  },
+  "state": "published",
+  "compatiblePreviousReleaseVersions": [],
+  "directlyRollbackablePreviousVersions": []
+}
