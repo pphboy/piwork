@@ -72,16 +72,31 @@ func TestHostedInspectionIsPrivateToBrowserAndKnownOperationsToUser(t *testing.T
 		t.Fatal("other session cleanup affected owner", r.Code)
 	}
 	payload := json.RawMessage(`{"operationId":"operation-owned","workId":"work-owned"}`)
-	if err := first.desktop.operationRecords().accept(first.desktop.origin, "owner", "workStart", payload); err != nil {
+	if err := first.desktop.operationRecords().accept(first.desktop.identity.coreURL, "owner", "Work action", payload); err != nil {
 		t.Fatal(err)
 	}
-	same, err := second.desktop.operationRecords().list(second.desktop.origin, "owner")
+	same, err := second.desktop.operationRecords().list(second.desktop.identity.coreURL, "owner")
 	if err != nil || len(same) != 1 {
 		t.Fatal("same user cannot recover known operation", err, len(same))
 	}
-	distinct, err := other.desktop.operationRecords().list(other.desktop.origin, "other")
+	distinct, err := other.desktop.operationRecords().list(other.desktop.identity.coreURL, "other")
 	if err != nil || len(distinct) != 0 {
 		t.Fatal("known operation crossed user", err)
+	}
+	if err := first.desktop.operationRecords().observeTerminal(first.desktop.identity.coreURL, "owner", "operation-owned", json.RawMessage(`{"operationId":"operation-owned","workId":"work-owned","kind":"start-work","state":"failed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	known := call(second, "GET", "known-operations", nil)
+	var restored struct {
+		Operations []struct {
+			OperationID       string `json:"operationId"`
+			Terminal          bool   `json:"terminal"`
+			TerminalState     string `json:"terminalState"`
+			TerminalCheckedAt string `json:"terminalCheckedAt"`
+		}
+	}
+	if known.Code != 200 || json.Unmarshal(known.Body.Bytes(), &restored) != nil || len(restored.Operations) != 1 || !restored.Operations[0].Terminal || restored.Operations[0].TerminalState != "failed" || restored.Operations[0].TerminalCheckedAt == "" {
+		t.Fatal("terminal hint not exposed to same user", known.Code, known.Body.String())
 	}
 	first.Close()
 	if _, err := os.Stat(filepath.Join(root, "sessions", "first", "desktop-transfers-go", value.TransferID)); !os.IsNotExist(err) {

@@ -123,7 +123,7 @@ func (d *nativeDesktop) serveControl(w http.ResponseWriter, r *http.Request) boo
 		if json.Unmarshal(result, &operation) == nil && (operation.State == "succeeded" || operation.State == "failed" || operation.State == "superseded") {
 			id := strings.TrimPrefix(r.URL.Path, "/_desktop/api/operations/")
 			if desktopIDPattern.MatchString(id) {
-				_ = d.operationRecords().markTerminal(coreURL, userID, id)
+				_ = d.operationRecords().observeTerminal(coreURL, userID, id, result)
 			}
 		}
 	}

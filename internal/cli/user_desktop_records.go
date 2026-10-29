@@ -16,14 +16,16 @@ import (
 )
 
 type desktopKnownOperation struct {
-	OperationID string `json:"operationId"`
-	Type        string `json:"type"`
-	WorkID      string `json:"workId,omitempty"`
-	ServiceID   string `json:"serviceId,omitempty"`
-	SnapshotID  string `json:"snapshotId,omitempty"`
-	RecordedAt  string `json:"recordedAt"`
-	Terminal    bool   `json:"terminal,omitempty"`
-	Hidden      bool   `json:"hidden,omitempty"`
+	OperationID       string `json:"operationId"`
+	Type              string `json:"type"`
+	WorkID            string `json:"workId,omitempty"`
+	ServiceID         string `json:"serviceId,omitempty"`
+	SnapshotID        string `json:"snapshotId,omitempty"`
+	RecordedAt        string `json:"recordedAt"`
+	Terminal          bool   `json:"terminal,omitempty"`
+	TerminalState     string `json:"terminalState,omitempty"`
+	TerminalCheckedAt string `json:"terminalCheckedAt,omitempty"`
+	Hidden            bool   `json:"hidden,omitempty"`
 }
 
 type desktopOperationRecords struct{ credentialPath string }
@@ -108,6 +110,39 @@ func (s desktopOperationRecords) markTerminal(coreURL, userID, operationID strin
 	})
 }
 
+// Remember only a verified original result; cached terminal hints never grant
+// Work access or replace a fresh control target. Old records remain readable.
+func (s desktopOperationRecords) observeTerminal(coreURL, userID, operationID string, raw json.RawMessage) error {
+	var value struct{ OperationID, WorkID, ServiceID, Kind, Type, State string }
+	if json.Unmarshal(raw, &value) != nil || value.OperationID != operationID || !desktopIDPattern.MatchString(operationID) {
+		return nil
+	}
+	if value.State != "succeeded" && value.State != "failed" && value.State != "superseded" {
+		return nil
+	}
+	normalize := func(kind string) string {
+		return strings.Join(strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(strings.ToLower(kind))), " ")
+	}
+	kind := value.Kind
+	if kind == "" {
+		kind = value.Type
+	}
+	return s.withState(coreURL, userID, true, func(items *[]desktopKnownOperation) error {
+		for index := range *items {
+			item := &(*items)[index]
+			if item.OperationID != operationID || item.Hidden || item.WorkID != value.WorkID || item.ServiceID != "" && item.ServiceID != value.ServiceID || !desktopRecordedKindMatches(normalize(item.Type), normalize(kind)) {
+				continue
+			}
+			item.Terminal, item.TerminalState, item.TerminalCheckedAt = true, value.State, time.Now().UTC().Format(time.RFC3339Nano)
+			item.Type = kind
+			if item.ServiceID == "" {
+				item.ServiceID = value.ServiceID
+			}
+		}
+		return nil
+	})
+}
+
 func (s desktopOperationRecords) hide(coreURL, userID, operationID string) error {
 	if !desktopIDPattern.MatchString(operationID) {
 		return errors.New("invalid Operation ID")
@@ -145,4 +180,29 @@ func (s desktopOperationRecords) list(coreURL, userID string) ([]desktopKnownOpe
 		result = []desktopKnownOperation{}
 	}
 	return result, err
+}
+
+func desktopRecordedKindMatches(expected, actual string) bool {
+	if expected == actual {
+		return true
+	}
+	switch expected {
+	case "work action":
+		for _, action := range []string{"create", "start", "stop", "retry", "delete"} {
+			if actual == action+" work" {
+				return true
+			}
+		}
+	case "service action":
+		for _, action := range []string{"start", "stop", "enable", "disable", "restart", "retry", "remove", "create", "update", "cleanup temporary", "create temporary"} {
+			if actual == action+" service" {
+				return true
+			}
+		}
+	case "pi package action":
+		return strings.HasPrefix(actual, "pi package ") || strings.HasSuffix(actual, " pi package")
+	case "apply work configuration":
+		return actual == "apply configuration"
+	}
+	return false
 }

@@ -28,9 +28,13 @@ func (d *nativeDesktop) serveKnownOperations(w http.ResponseWriter, r *http.Requ
 			desktopError(w, 503, "LOCAL_RECORDS_UNAVAILABLE")
 			return true
 		}
-		public := make([]map[string]string, 0, len(items))
+		public := make([]map[string]any, 0, len(items))
 		for _, item := range items {
-			value := map[string]string{"operationId": item.OperationID, "type": item.Type, "recordedAt": item.RecordedAt}
+			value := map[string]any{"operationId": item.OperationID, "type": item.Type, "recordedAt": item.RecordedAt, "terminal": item.Terminal}
+			if item.TerminalState != "" {
+				value["terminalState"] = item.TerminalState
+				value["terminalCheckedAt"] = item.TerminalCheckedAt
+			}
 			for key, entry := range map[string]string{"workId": item.WorkID, "serviceId": item.ServiceID, "snapshotId": item.SnapshotID} {
 				if entry != "" {
 					value[key] = entry
