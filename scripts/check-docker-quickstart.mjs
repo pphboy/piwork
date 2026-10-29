@@ -128,30 +128,24 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
   if (websiteRoot) {
     const siteRead = name => { try { return readFileSync(join(websiteRoot, name), 'utf8'); } catch { errors.push(`website ${name}: missing material`); return ''; } };
     for (const prefix of ['', 'zh/']) {
+      const installation = siteRead(`docs/${prefix}guide/installation.md`);
+      const source = siteRead(`docs/${prefix}guide/source-installation.md`);
       try {
-        const text = siteRead(`docs/${prefix}guide/quick-start.md`);
-        check(sameCode(section(text, 'docker-quickstart'), trials[0]), `website ${prefix}Quick Start: startup commands differ`);
-        check(normalize(section(text, 'native-quickstart')) === normalize(nativeQuickStart(prefix ? 'zh' : 'en', { buildLink: `/${prefix}guide/source-installation.html` })), `website ${prefix}Quick Start: native Linux instructions differ`);
-        check(!text.includes('undefined'), `website ${prefix}Quick Start: undefined generated content`);
-      }
-      catch { check(false, `website ${prefix}Quick Start: missing trial marker`); }
+        check(sameCode(section(installation, 'docker-quickstart'), trials[0]), `website ${prefix}installation: startup commands differ`);
+        check(normalize(section(source, 'native-quickstart')) === normalize(nativeQuickStart(prefix ? 'zh' : 'en')), `website ${prefix}source-installation: native Linux instructions differ`);
+      } catch { check(false, `website ${prefix}server guides: missing startup marker`); }
+      check(!`${installation}${source}`.includes('undefined'), `website ${prefix}server guides: undefined generated content`);
       for (const marker of ['core-compose-demo', 'terminal-operations']) {
-        try { check(sameCode(section(siteRead(`docs/${prefix}guide/installation.md`), marker), section(read('deploy/docker/README.md'), marker)), `website ${prefix}installation: ${marker} commands differ`); }
+        try { check(sameCode(section(installation, marker), section(read('deploy/docker/README.md'), marker)), `website ${prefix}installation: ${marker} commands differ`); }
         catch { check(false, `website ${prefix}installation: missing ${marker}`); }
       }
-    }
-    for (const prefix of ['', 'zh/']) {
-      const first = siteRead(`docs/${prefix}guide/first-work.md`);
-      check(first.includes('Open workbench') && first.includes('Service'), `website ${prefix}First Work: browser flow missing`);
-      for (const name of ['index.md', 'guide/quick-start.md', 'guide/installation.md', 'guide/first-work.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
-        const text = siteRead(`docs/${prefix}${name}`);
+      for (const [name, text] of [['installation.md', installation], ['source-installation.md', source]]) {
         const refs = text.match(/(?:docker\.io\/)?pphboy\/piwork-[a-z-]+:[A-Za-z0-9_.-]+/g) || [];
         check(refs.every(ref => Object.values(release.images).some(expected => expected.replace(/^docker\.io\//, '') === ref.replace(/^docker\.io\//, ''))), `website ${prefix}${name}: stale current image reference`);
         const downloadIds = [...text.matchAll(/\/install\/([^/\s)]+)\/(?:docker-compose|single-host-compose)\.yml/g)].map(match => match[1]);
         check(downloadIds.every(id => id === release.releaseId), `website ${prefix}${name}: stale current download reference`);
       }
-      check(siteRead(`docs/${prefix}guide/installation.md`).includes('examples/single-host/'), `website ${prefix}installation: single-host reference missing`);
-      check(siteRead(`docs/${prefix}index.md`).includes(`/install/${release.releaseId}/docker-compose.yml`), `website ${prefix}homepage: Core download missing`);
+      check(installation.includes('examples/single-host/'), `website ${prefix}installation: single-host reference missing`);
     }
     check(siteRead(`docs/public/install/${release.releaseId}/docker-compose.yml`) === read('deploy/docker/docker-compose.yml'), 'website download: candidate Compose differs');
     check(siteRead(`docs/public/install/${release.releaseId}/single-host-compose.yml`) === read('examples/single-host/docker-compose.yml'), 'website download: single-host Compose differs');

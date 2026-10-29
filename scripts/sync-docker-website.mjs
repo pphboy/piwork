@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { quickStart, coreDemo, terminalOperations, nativeQuickStart, serviceNetworkNote } from './docker-quickstart-content.mjs';
@@ -15,13 +15,11 @@ const block = (marker, body) => `<!-- ${marker}:start -->\n\n${body}\n<!-- ${mar
 
 for (const [prefix, language] of [['', 'en'], ['zh/', 'zh']]) {
   const zh = language === 'zh';
-  const native = '<details>\n<summary>' + (zh ? '构建并使用原生 Linux 应用' : 'Build and use the native Linux application') + '</summary>\n\n'
-    + block('native-quickstart', nativeQuickStart(language, { buildLink: `/${prefix}guide/source-installation.html` })) + '\n\n</details>';
   const trial = quickStart(metadata, language, { composeLink: download, exampleLink: `https://github.com/pphboy/piwork/blob/main/examples/single-host/README${zh ? '.zh-CN' : ''}.md`, operationsLink: `/${prefix}guide/installation.html#terminal-operations` });
-  write(`docs/${prefix}guide/quick-start.md`, '# Quick Start\n\n## ' + (zh ? '一键启动 Piwork' : 'Start Piwork with one command') + '\n\n' + block('docker-quickstart', trial) + '\n\n' + native + '\n');
   const installation = [zh ? '# 安装与部署' : '# Installation and Deployment', zh
-    ? `默认试用见 [Quick Start](/zh/guide/quick-start.html)。统一应用直接提供网页、管理和首次引导；可下载 [docker-compose.yml](${download})；默认不需要业务环境变量，浏览器完成管理员与模型配置。当前状态：${metadata.state}。`
-    : `Use [Quick Start](/guide/quick-start.html) for the default trial. The unified application serves the workbench, administration and setup; optionally download [docker-compose.yml](${download}); initialize the administrator and model in the browser without business environment variables. Current state: ${metadata.state}.`,
+    ? `本页供 Linux 服务端维护者部署统一应用。桌面一键启动见 [快速开始](/zh/guide/quick-start.html)。以下服务端命令和 [docker-compose.yml](${download}) 对应当前 Core 发行；无需业务环境变量，浏览器完成首次配置。当前状态：${metadata.state}。`
+    : `This page is for Linux server maintainers. For the desktop one-click launcher, use [Quick Start](/guide/quick-start.html). The server commands and [docker-compose.yml](${download}) below match the current Core release; initialize in the browser without business environment variables. Current state: ${metadata.state}.`,
+    zh ? '## 启动 Linux 服务端' : '## Start the Linux server', block('docker-quickstart', trial),
     zh ? '## 平台与持久化' : '## Platforms and persistence', zh
     ? serviceNetworkNote(true)
     : serviceNetworkNote(false),
@@ -32,30 +30,10 @@ for (const [prefix, language] of [['', 'en'], ['zh/', 'zh']]) {
     : 'For source/native builds, see [Build from Source](/guide/source-installation.html). The older 0.0.1 installer, release.env, templates and Desktop operations remain in the [versioned upstream guide](https://github.com/pphboy/piwork/releases). Existing install/0.0.1 and install/0.1.0 links retain their older provenance.',
   ].join('\n\n') + '\n';
   write(`docs/${prefix}guide/installation.md`, installation);
-  let home = read(`docs/${prefix}index.md`);
-  const start = zh ? '## 开始使用' : '## Get started';
-  const at = home.indexOf(start);
-  if (at < 0) throw new Error('Homepage startup slot is missing.');
-  home = home.slice(0, at) + start + '\n\n' + (zh
-    ? `[一键启动 Piwork](/zh/guide/quick-start.html)：一个 Docker 容器，打开服务器 IP 的网页完成管理员、模型与 CoreRuntime 配置，直接使用完整工作台。无需 CLI、域名或初始化环境。可选 [docker-compose.yml](${download})。当前状态 ${metadata.state}；${published ? '镜像已发布并完成匿名核验。' : '候选镜像尚未公开发布。'}\n`
-    : `[Start Piwork with one command](/guide/quick-start.html): one Docker container, then open the server IP to configure the administrator, model and CoreRuntime and use the full workbench. No CLI, domain or initialization environment is required. Optional [docker-compose.yml](${download}). State: ${metadata.state}. ${published ? 'Images are published and anonymously verified.' : 'Candidate images have not been published.'}\n`);
-  write(`docs/${prefix}index.md`, home);
-
-  write(`docs/${prefix}guide/first-work.md`, (zh
-    ? '# 第一个 Work\n\n先按 [Quick Start](/zh/guide/quick-start.html) 启动并完成网页引导。点击 **Open workbench**，选择 **New Work**，创建后在 Chat 发送消息。Files 管理工作区，Settings 保存并显式 Apply 配置，Service 可预览或独立打开。关闭网页不停止 Work。\n\nService 响应 Cookie 保存在服务端分区；依赖脚本读取/写入 Cookie 的应用不保证透明兼容。脚本写入的浏览器 Cookie 可能在同 IP 的 Service 间串用，不会被代理采用。详情见安装说明。\n'
-    : '# Your first Work\n\nFollow [Quick Start](/guide/quick-start.html) and complete browser setup. Click **Open workbench**, choose **New Work**, then send a message in Chat. Use Files for the workspace, Settings to save and explicitly Apply configuration, and Service to preview or open an application tab. Closing the browser does not stop a Work.\n\nService response Cookies stay in server-side partitions. Apps relying on script-read/written Cookies are outside transparent support. Script-written browser Cookies may be shared across Services on the same IP and are never adopted by the proxy. See Installation for details.\n'));
   const sourcePath = `docs/${prefix}guide/source-installation.md`;
-  const source = (zh?'# 源码构建':'# Build from Source')+'\n\n```sh\nnpm ci\nmake build\n```\n\n'+nativeQuickStart(language)+'\n'+serviceNetworkNote(zh)+'\n\n[Docker release builds](https://github.com/pphboy/piwork/blob/main/openspec/specs/docker-delivery/spec.md)\n';
+  const source = (zh?'# 源码构建':'# Build from Source')+'\n\n```sh\nnpm ci\nmake build\n```\n\n'+block('native-quickstart', nativeQuickStart(language))+'\n'+serviceNetworkNote(zh)+'\n\n[Docker release builds](https://github.com/pphboy/piwork/blob/main/openspec/specs/docker-delivery/spec.md)\n';
   write(sourcePath, source);
-  for (const file of ['guide/index.md', 'spec/index.md']) {
-    const path = `docs/${prefix}${file}`;
-    let contents = read(path);
-    const marker = '<!-- docker-trial-route -->';
-    const route = zh ? '[Quick Start](/zh/guide/quick-start.html) 使用统一应用与网页引导，CLI 可选；原生构建与管理员操作见独立导航。' : '[Quick Start](/guide/quick-start.html) uses the unified application and browser onboarding. CLI is optional; native builds and administrator operations have separate navigation.';
-    if (contents.includes(marker)) contents = contents.replace(new RegExp(marker + '[\\s\\S]*?' + marker), marker + '\n' + route + '\n' + marker);
-    else contents += '\n' + marker + '\n' + route + '\n' + marker + '\n';
-    write(path, contents);
-  }
+
 }
 
 const output = join(website, 'docs/public/install', metadata.releaseId);
@@ -67,9 +45,14 @@ writeFileSync(join(output, 'README.txt'), `Piwork ${metadata.releaseId}\nState: 
 const files = ['README.txt', 'docker-compose.yml', 'single-host-compose.yml', 'release-metadata.json'];
 writeFileSync(join(output, 'SHA256SUMS'), files.map(name => `${createHash('sha256').update(readFileSync(join(output, name))).digest('hex')}  ${name}\n`).join(''));
 const siteReadme = read('README.md');
-const from = siteReadme.indexOf('## Content maintenance');
-const to = siteReadme.indexOf('## Build and deployment');
-write('README.md', siteReadme.slice(0, from) + `## Content maintenance\n\nDocker Quick Start starts one unified Linux application with browser onboarding and the full workbench. Default startup requires no business environment variables; only an optional paired ADMIN test bootstrap remains. CLI is optional. Same-origin Service paths, trust boundaries and script Cookie limitations are documented alongside the main entry. The single-host example has separate data. Published provenance is preserved.\n\nKeep both locales aligned with upstream commands and image defaults. Source: ${metadata.sourceCommit}; input SHA256: ${metadata.sourceInputHash}; state: ${metadata.state}. ${published ? 'Image identities and anonymous readability have been verified; the versioned downloads match this release.' : 'Candidate image/download availability is not public until release verification.'} Existing install/0.0.1 and install/0.1.0 files retain their provenance.\n\nRun upstream check-docker-quickstart.mjs with --website-root pointing at this directory after synchronizing. No real credentials or initialization env belongs in static files. Website synchronization does not push images or publish pages.\n\n` + siteReadme.slice(to));
+const start = '<!-- server-release:start -->';
+const end = '<!-- server-release:end -->';
+const from = siteReadme.indexOf(start);
+const to = siteReadme.indexOf(end);
+if (from >= 0 && to > from && siteReadme.indexOf(start, from + start.length) < 0 && siteReadme.indexOf(end, to + end.length) < 0) {
+  const identity = `Core server materials: ${metadata.releaseId}; state: ${metadata.state}. Source: ${metadata.sourceCommit}; input SHA256: ${metadata.sourceInputHash}.`;
+  write('README.md', siteReadme.slice(0, from) + block('server-release', identity) + siteReadme.slice(to + end.length));
+}
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (!process.argv[2]) throw new Error('usage: sync-docker-website.mjs REVIEW_OUTPUT_DIRECTORY');

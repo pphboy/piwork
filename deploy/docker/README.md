@@ -84,6 +84,8 @@ PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a 
 
 Process health and runtime readiness are separate: /healthz is available before web setup finishes; /readyz remains unready. Manage users, models, runtime and dependency preparation in embedded Admin. Operator credentials and protected management APIs remain separate from user CLI credentials.
 
+Core builds with startup preparation reuse perform the full image and required package-environment checks once for an existing installation, then keep successful results in that installation’s data directory. Later restarts may reuse them for the same Engine, images and rules. An Engine or image change, rule update, missing or damaged record triggers verification again. Preserve the data volume; records contain no Work content and are not exported in `.work`. Restart performance targets do not apply to first installation, new images or first record creation. While defaults are still preparing, global /readyz remains unready; an existing Work can recover and be accessed after its own current checks succeed, while creating a default Work waits for default preparation.
+
 ```sh
 curl --fail http://127.0.0.1:17891/healthz
 docker logs --tail 100 piwork-core-quickstart

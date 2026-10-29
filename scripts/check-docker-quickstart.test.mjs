@@ -199,64 +199,67 @@ test('CLI gate reports source drift without displaying configured values', t => 
   assert(!result.stderr.includes('synthetic-canary-must-not-print'));
 });
 
-test('website command and download drift is checked without a sibling-repository dependency', t => {
+test('server website sync preserves editorial pages, desktop downloads and historical identities', t => {
   const base = fixture(t), website = join(base, 'website');
   const release = JSON.parse(readFileSync(join(base, 'deploy/docker/candidate.json'), 'utf8'));
+  const protectedFiles = new Map();
   for (const prefix of ['', 'zh/']) {
-    const guide = join(website, 'docs', prefix, 'guide'); mkdirSync(guide, { recursive: true });
-    mkdirSync(join(website, 'docs', prefix, 'spec'), { recursive: true });
-    writeFileSync(join(website, 'docs', prefix, 'index.md'), prefix ? '# Home\n\n## 开始使用\n' : '# Home\n\n## Get started\n');
-    for (const name of ['first-work.md', 'source-installation.md', 'index.md']) writeFileSync(join(guide, name), '# Fixture\n\n```sh\ndocker run old:tag\n```\n');
-    writeFileSync(join(website, 'docs', prefix, 'spec/index.md'), '# Spec\n');
+    for (const name of ['index.md', 'guide/downloads.md', 'guide/quick-start.md', 'guide/first-work.md', 'guide/index.md', 'spec/index.md']) {
+      protectedFiles.set(`docs/${prefix}${name}`, `# Editorial ${prefix}${name}\n\n<Homepage />\nOne-click desktop download.\n`);
+    }
   }
-  writeFileSync(join(website, 'README.md'), '## Content maintenance\n\n## Build and deployment\n');
+  protectedFiles.set('docs/.vitepress/theme/HomeStory.vue', '<template>Creative Studio</template>\n');
+  protectedFiles.set('docs/.vitepress/theme/download-release.json', '{"version":"0.2.0"}\n');
+  protectedFiles.set('docs/public/screenshots/work.webp', 'synthetic-image-bytes');
+  for (const [name, contents] of protectedFiles) {
+    const path = join(website, name); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, contents);
+  }
+  const readme = '# Editorial README\n\n<!-- server-release:start -->\nold\n<!-- server-release:end -->\n\nKeep this footer.\n';
+  writeFileSync(join(website, 'README.md'), readme);
   const rootTexts = ['README.md', 'README.zh-CN.md'].map(name => [name, readFileSync(join(base, name))]);
   for (const [name] of rootTexts) writeFileSync(join(base, name), '# Piwork\n');
   syncWebsite(website, release, base);
   for (const [name, bytes] of rootTexts) writeFileSync(join(base, name), bytes);
-  const publicPath = join(website, 'docs/public/install', release.releaseId);
+  const assertEditorial = () => {
+    for (const [name, bytes] of protectedFiles) assert.equal(readFileSync(join(website, name), 'utf8'), bytes, name);
+    const updated = readFileSync(join(website, 'README.md'), 'utf8');
+    assert(updated.startsWith('# Editorial README\n\n') && updated.endsWith('\n\nKeep this footer.\n'));
+  };
+  assertEditorial();
   for (const prefix of ['', 'zh/']) {
-    const quickStart = readFileSync(join(website, 'docs', prefix, 'guide/quick-start.md'), 'utf8');
-    assert(!quickStart.includes('undefined'));
-    const native = section(quickStart, 'native-quickstart');
-    assert.deepEqual(codeBlocks(native), codeBlocks(nativeQuickStart('en')));
-    assert(native.includes(`](/${prefix}guide/source-installation.html)`));
-    assert(native.includes('piwork/server') && !native.includes('piwork setup link'));
-    assert(native.includes(prefix ? '停止本安装受管 Work' : 'stops this installation’s managed Works'));
+    const installation = readFileSync(join(website, 'docs', prefix, 'guide/installation.md'), 'utf8');
+    assert(!installation.includes('undefined'));
+    assert.deepEqual(codeBlocks(section(installation, 'docker-quickstart')), codeBlocks(section(readFileSync(join(base, 'deploy/docker/README.md'), 'utf8'), 'docker-quickstart')));
     const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
-    assert(source.includes('blob/main/openspec/specs/docker-delivery/spec.md'));
-    for (const name of ['quick-start.md', 'installation.md', 'source-installation.md']) {
-      assert(!readFileSync(join(website, 'docs', prefix, 'guide', name), 'utf8').includes('openspec/changes/remove-docs-dir/'));
-    }
+    assert.equal(section(source, 'native-quickstart').trim(), nativeQuickStart(prefix ? 'zh' : 'en').trim());
+    assert(source.includes('piwork/server') && !source.includes('piwork setup link'));
   }
   assert.deepEqual(checkQuickStart(base, { websiteRoot: website }), []);
   const next = { ...release, releaseId: release.releaseId + '-next', images: Object.fromEntries(Object.entries(release.images).map(([role, ref]) => [role, ref + '-next'])) };
   const historical = join(website, 'docs/public/install/0.0.1'); mkdirSync(historical, { recursive: true });
   writeFileSync(join(historical, 'frozen.txt'), 'old-release');
   syncWebsite(website, next, base);
-  for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'index.md'), 'utf8').includes(next.releaseId));
+  assertEditorial();
+  for (const prefix of ['', 'zh/']) assert(readFileSync(join(website, 'docs', prefix, 'guide/installation.md'), 'utf8').includes(next.releaseId));
   assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
-  syncWebsite(website, {...release,state:'published'}, base);
-  for(const prefix of ['', 'zh/']) {
-    const home=readFileSync(join(website,'docs',prefix,'index.md'),'utf8');
-    assert(!home.includes('Candidate images have not been published.'));
-    assert(!home.includes('候选镜像尚未公开发布'));
-    assert(home.includes(prefix?'镜像已发布并完成匿名核验':'Images are published and anonymously verified'));
-  }
-  assert(readFileSync(join(publicPath,'README.txt'),'utf8').includes('anonymous image readability verified'));
-  assert(!readFileSync(join(website,'README.md'),'utf8').includes('Candidate image/download availability is not public'));
-  assert.equal(readFileSync(join(historical, 'frozen.txt'), 'utf8'), 'old-release');
+  syncWebsite(website, { ...release, state: 'published' }, base);
+  assertEditorial();
+  assert(readFileSync(join(website, 'README.md'), 'utf8').includes('state: published'));
+  assert(readFileSync(join(website, 'docs/public/install', release.releaseId, 'README.txt'), 'utf8').includes('anonymous image readability verified'));
+  // Sites without an explicit managed slot are entirely editorial, including README.
+  writeFileSync(join(website, 'README.md'), '# No managed slot\n');
   syncWebsite(website, release, base);
-  for (const prefix of ['', 'zh/']) for (const name of ['index.md', 'guide/first-work.md', 'guide/installation.md', 'guide/source-installation.md', 'guide/index.md', 'spec/index.md']) {
-    const path = join(website, 'docs', prefix, name), original = readFileSync(path, 'utf8');
+  assert.equal(readFileSync(join(website, 'README.md'), 'utf8'), '# No managed slot\n');
+  for (const prefix of ['', 'zh/']) for (const name of ['installation.md', 'source-installation.md']) {
+    const path = join(website, 'docs', prefix, 'guide', name), original = readFileSync(path, 'utf8');
     writeFileSync(path, original + '\n' + next.images.core + '\n');
     assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('stale current image')), name);
     writeFileSync(path, original);
   }
-  replace(website, 'docs/zh/guide/quick-start.md', '--stop-timeout 60', '--stop-timeout 59');
-  assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website zh/Quick Start')));
-  replace(website, 'docs/guide/quick-start.md', '--data-dir', '--incorrect-data-dir');
+  replace(website, 'docs/zh/guide/installation.md', '--stop-timeout 60', '--stop-timeout 59');
+  assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('installation: startup commands')));
+  replace(website, 'docs/guide/source-installation.md', '--data-dir', '--incorrect-data-dir');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('native Linux instructions')));
-  writeFileSync(join(publicPath, 'docker-compose.yml'), 'different material');
+  writeFileSync(join(website, 'docs/public/install', release.releaseId, 'docker-compose.yml'), 'different material');
   assert(checkQuickStart(base, { websiteRoot: website }).some(message => message.includes('website download')));
 });

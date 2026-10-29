@@ -84,6 +84,8 @@ PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a 
 
 进程健康与运行环境就绪分开：未完成网页初始化时 /healthz 可用，/readyz 尚未就绪。用户、模型、运行环境和依赖准备在内嵌 Admin 完成；operator 凭证和受保护管理 API 保留，用户 CLI 不读取 operator 凭证。
 
+包含启动准备复用的 Core 构建会在旧安装首次完整校验镜像和所需包环境后，把成功结果保存在本安装数据目录；相同 Engine、镜像和校验规则下，后续重启可复用。更换 Engine 或镜像、规则更新、记录丢失或损坏时会重新校验。保留数据卷；这些记录不包含 Work 内容，也不会导出到 `.work`。首次安装、新镜像和首次建记录不适用重启性能目标。默认环境仍在准备时，全局 /readyz 保持未就绪；已完成当前核验的既有 Work 可独立恢复并访问，创建默认 Work 仍须等待默认准备完成。
+
 ```sh
 curl --fail http://127.0.0.1:17891/healthz
 docker logs --tail 100 piwork-core-quickstart
