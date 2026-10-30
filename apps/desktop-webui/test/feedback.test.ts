@@ -2872,6 +2872,96 @@ test('Chat history: consecutive Send completion and refresh keep confirmed turn 
  assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,3);
 });
 
+test('Paged message identity: a fixed Agent without live coordinates shows one answer and one Run', async t => {
+ const posts:any[]=[];
+ const session={workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}};
+ const run=(state=4)=>({workId:'work-1',sessionId:'session-1',runId:'run-1',submissionKey:posts[0]?.submissionKey,state,finalText:state===4?'Reply':''});
+ const segments=()=>[
+  {entryId:'run-1-user',entryOrder:0,role:'user',runId:'run-1',blockId:'run-1-user-0',blockIndex:0,blockCount:1,type:'text',text:'Question',byteOffset:0,totalBytes:Buffer.byteLength('Question'),complete:true},
+  {entryId:'saved-reply',entryOrder:1,role:'assistant',runId:'run-1',blockId:'saved-reply-0',blockIndex:0,blockCount:1,type:'text',text:'Reply',byteOffset:0,totalBytes:Buffer.byteLength('Reply'),complete:true},
+ ];
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){posts.push(JSON.parse(r.body));return{json:{run:run(1)}};}
+  if(/^works\/work-1\/runs\/run-1$/.test(r.path))return{json:{run:run()}};
+  if(r.path==='works/work-1/runs/run-1/events')return{body:[{sequence:1,kind:{$case:'text',text:{delta:'Reply'}}},{sequence:2,kind:{$case:'state',state:{state:4,finalText:'Reply'}}}].map(event=>JSON.stringify(event)+'\n').join(''),headers:{'Content-Type':'application/x-ndjson'}};
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session,snapshotId:'frozen',segments:segments(),runs:posts.length?[{...run(),resultRef:null}]:[],hasMore:false,nextCursor:null}};
+ });
+ await page.locator('#composer').fill('Question');await button(page,'send-message').click();
+ await expect.poll(()=>api(page,`const messages=adapter.getWork('work-1').sessions[0].messages;return messages.length===2&&messages.every(m=>m.text&&!m.historyRecoveryUnconfirmed);`)).toBe(true);
+ await expect(page.locator('#messages .message.user')).toHaveCount(1);await expect(page.locator('#messages .message.assistant')).toHaveCount(1);
+ await api(page,`await adapter.loadSession('work-1','session-1');await adapter.loadSession('work-1','session-1');`);
+ await expect(page.locator('#messages .message.user')).toHaveCount(1);await expect(page.locator('#messages .message.assistant')).toHaveCount(1);
+ await page.reload();await expect(page.locator('#messages .message.user')).toHaveCount(1);await expect(page.locator('#messages .message.assistant')).toHaveCount(1);
+ assert.equal(posts.length,1);
+ assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/runs').length,1);
+});
+
+test('Paged message identity: saved prefixes, split blocks and final takeover keep the reading prose', async t => {
+ const paragraphs=Array.from({length:180},(_,index)=>`Paragraph ${String(index).padStart(3,'0')} ${'Reading prose. '.repeat(6)}`),text=paragraphs.join('\n\n');
+ const session={workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}};
+ let stage=0,savedSegments:any[]=[];
+ const encoder=new TextEncoder();
+ const block=(entryId:string,blockId:string,value:string,index:number,count:number,order=2)=>({entryId,entryOrder:order,role:'assistant',runId:'run-1',blockId,blockIndex:index,blockCount:count,type:'text',text:value,byteOffset:0,totalBytes:encoder.encode(value).length,complete:true});
+ const {page}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(/^works\/work-1\/runs\/run-1$/.test(r.path))return{json:{run:{workId:'work-1',sessionId:'session-1',runId:'run-1',state:4,finalText:text}}};
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session,snapshotId:`frozen-${stage}`,segments:[{entryId:'run-1-user',entryOrder:0,role:'user',runId:'run-1',blockId:'run-1-user-0',blockIndex:0,blockCount:1,type:'text',text:'Question',byteOffset:0,totalBytes:8,complete:true},...savedSegments],runs:[],hasMore:false,nextCursor:null}};
+ });
+ await api(page,`const s=adapter.getWork('work-1').sessions[0],sources=adapter.liveSources('work-1','session-1');
+  sources.acceptInput({id:'run-1-user',runId:'run-1',role:'user',text:'Question'});sources.begin('run-1',0);sources.text('run-1',1,${JSON.stringify(text)});
+  s.messages=[{id:'run-1-user',runId:'run-1',role:'user',text:'Question'},{id:'run-1-text-1',runId:'run-1',role:'assistant',text:${JSON.stringify(text)}},{id:'run-1-tool-live',runId:'run-1',role:'assistant',text:'',tool:{id:'call-1',name:'read',status:'Completed',content:'Public tool output.\\n'.repeat(40)}}];adapter.emit();`);
+ await page.locator('#composer').fill('Keep this reading draft');await page.locator('#composer').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(4,11));
+ await page.locator('.activity > summary').click();await page.locator('.tool-event > summary').click();
+ const visible=()=>page.evaluate(()=>{const pane=document.querySelector<HTMLElement>('#messages')!,box=pane.getBoundingClientRect(),range=document.caretRangeFromPoint?.(box.left+24,box.top+2),node=range?.startContainer;
+  return node?(node.textContent||'').slice(range!.startOffset,range!.startOffset+32):undefined;});
+ const stmt=()=>api(page,`const s=adapter.getWork('work-1').sessions[0];return {draft:document.querySelector('#composer').value,selection:[document.querySelector('#composer').selectionStart,document.querySelector('#composer').selectionEnd],open:[...document.querySelectorAll('details')].filter(d=>d.open).length,joined:s.messages.filter(m=>m.role==='assistant'&&!m.tool).map(m=>m.text).join('')};`);
+ await page.evaluate(()=>{const pane=document.querySelector<HTMLElement>('#messages')!,node=document.querySelector<HTMLElement>('[data-message-key$=":run-1-text-1"]')!;pane.scrollTop+=node.getBoundingClientRect().top-pane.getBoundingClientRect().top+520;pane.dispatchEvent(new Event('scroll'));});
+ const before=await visible();assert.ok(before);
+ for(const [next,cuts] of [[900,[900]],[1800,[900,1800]],[text.length,[900,1800,text.length]]] as const){
+  stage++;
+  savedSegments=cuts.length===1&&next<text.length
+   ?[block('saved-live','saved-live-0',text.slice(0,next),0,1)]
+   :cuts.map((cut,index)=>block('saved-final',`saved-final-${index}`,text.slice(index?cuts[index-1]:0,cut),index,cuts.length));
+  await api(page,`adapter.historyProjection('work-1','session-1').clear();await adapter.loadSavedRun('work-1',{id:'run-1',sessionId:'session-1',status:'succeeded',cursor:9,created:'2026-10-30T00:00:00Z'});`);
+  await page.evaluate(()=>new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(done))));
+  const afterMeasure=await visible(),state=await stmt();
+  assert.equal(afterMeasure,before,`same reading prose after stage ${stage}`);
+  assert.equal(state.draft,'Keep this reading draft');assert.deepEqual(state.selection,[4,11]);
+  assert.ok(state.open>=2,'Activity and raw tool stay expanded');
+  assert.equal(state.joined,text,`saved prefix and one uncovered tail never duplicate content at stage ${stage}`);
+ }
+ await expect(page.locator('#composer')).toHaveValue('Keep this reading draft');
+});
+
+test('Paged message identity: failed output keeps a saved prefix and one uncovered tail', async t => {
+ const posts:any[]=[];
+ const session={workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}};
+ let finished=false;
+ const run=()=>({workId:'work-1',sessionId:'session-1',runId:'run-1',submissionKey:posts[0]?.submissionKey,state:finished?5:1,finalText:'',...(finished?{error:{code:'INTERNAL_ERROR',message:'Synthetic failure'}}:{})});
+ const segments=()=>[
+  {entryId:'run-1-user',entryOrder:0,role:'user',runId:'run-1',blockId:'run-1-user-0',blockIndex:0,blockCount:1,type:'text',text:'Question',byteOffset:0,totalBytes:Buffer.byteLength('Question'),complete:true},
+  {entryId:'saved-prefix',entryOrder:1,role:'assistant',runId:'run-1',blockId:'saved-prefix-0',blockIndex:0,blockCount:1,type:'text',text:'Rep',byteOffset:0,totalBytes:3,complete:true},
+ ];
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{json:{contractVersion:1,profile:'session-history-v1',pageBytes:524288}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){posts.push(JSON.parse(r.body));return{json:{run:run()}};}
+  if(/^works\/work-1\/runs\/run-1$/.test(r.path))return{json:{run:run()}};
+  if(r.path==='works/work-1/runs/run-1/events'){finished=true;return{body:[{sequence:1,kind:{$case:'text',text:{delta:'Reply'}}},{sequence:2,kind:{$case:'state',state:{state:5,finalText:''}}}].map(event=>JSON.stringify(event)+'\n').join(''),headers:{'Content-Type':'application/x-ndjson'}};}
+  if(r.path.endsWith('/history'))return{json:{contractVersion:1,session,snapshotId:'frozen',segments:finished?segments():[],runs:finished?[{...run(),resultRef:null}]:[],hasMore:false,nextCursor:null}};
+ });
+ await page.locator('#composer').fill('Question');await button(page,'send-message').click();
+ const assistant=()=>api(page,`return adapter.getWork('work-1').sessions[0].messages.filter(m=>m.role==='assistant'&&!m.tool).map(m=>m.text).join('')`);
+ await expect.poll(assistant).toBe('Reply');
+ await expect.poll(()=>api(page,`return adapter.getWork('work-1').sessions[0].messages.some(m=>m.id==='saved-prefix-0');`)).toBe(true);
+ assert.equal(await assistant(),'Reply');
+ await api(page,`await adapter.loadSession('work-1','session-1');await adapter.loadSession('work-1','session-1');`);
+ assert.equal(await assistant(),'Reply');
+ await expect(page.locator('#messages .message.user')).toHaveCount(1);
+ assert.equal(posts.length,1);
+ assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/runs').length,1);
+});
+
 for(const [width,locale]of [[1440,'en'],[360,'zh-CN']]as const)test(`Chat history: real uncertainty uses message icons and scoped read-only recovery at ${width}px`,async t=>{
  const runId='run-original',userId=`${runId}-user`,toolId=`${runId}-tool-call-1`;
  const session={workId:'work-1',sessionId:'session-1',modelPreference:null,source:{kind:'chat'}};

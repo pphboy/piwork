@@ -1,5 +1,6 @@
 import { t } from './locale.js';
 import { historyMessages } from './chat-projection.js';
+import { LiveMessageSources, verifyLiveCoverage, type LiveCoverage, type SavedTextGroup } from './live-message-sources.js';
 import type { Message } from './models.js';
 type Data = Record<string, any>;
 interface Range { offset: number; bytes: Uint8Array }
@@ -17,9 +18,20 @@ export class HistoryProjection {
   private suppressed = new Set<string>();
   private resultTargets = new Map<string,string>();
   private visibleResults = new Map<string,string>();
+  /** A Run range is confirmed only after one frozen snapshot was read to its start. */
+  private confirmedRuns = new Map<string, Set<string>>();
+  constructor(private readonly sources = new LiveMessageSources()) {}
+  confirmRunRange(snapshotId: string, runId: string) {
+    if (!snapshotId || !runId) return;
+    const order = this.snapshotOrders.get(snapshotId);
+    if (!order || ![...order.keys()].some(id => this.entries.get(id)?.runId === runId)) return;
+    let runs = this.confirmedRuns.get(snapshotId);
+    if (!runs) { runs = new Set(); this.confirmedRuns.set(snapshotId, runs); }
+    runs.add(runId);
+  }
   suppress(runId: string) { this.suppressed.add(runId); }
   reveal(runId: string) { this.suppressed.delete(runId); }
-  clear() { this.entries.clear(); this.snapshotOrders.clear(); this.orderEdges.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
+  clear() { this.entries.clear(); this.snapshotOrders.clear(); this.orderEdges.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); this.confirmedRuns.clear(); }
   orderingAnchor(runId: string) {
     return [...this.entries.values()].findLast(entry=>entry.runId && entry.runId!==runId)?.runId;
   }
@@ -83,6 +95,7 @@ export class HistoryProjection {
         links.add(ids[i]!);
       }
       this.snapshotOrders.delete(id);
+      this.confirmedRuns.delete(id);
     }
   }
   private orderedEntries() {
@@ -108,6 +121,66 @@ export class HistoryProjection {
       for(const to of edges.get(id)!){const next=indegree.get(to)!-1;indegree.set(to,next);if(next===0&&pending.has(to))push(to);}
     }
     return {result,uncertain};
+  }
+  /** Groups public text of one Run in the confirmed frozen range. The first
+   * block must begin the interval at byte zero; a missing or hidden predecessor
+   * is a gap, never a suffix that could pass a prefix comparison. */
+  private savedGroups(saved: Message[], snapshotId: string, runId: string): SavedTextGroup[] {
+    const order = this.snapshotOrders.get(snapshotId);
+    if (!order) return [];
+    const toolCalls = new Map<string, { entryId: string; blockIndex: number }>();
+    const blocks = new Map<string, { entryId: string; blockIndex: number; start: number | undefined; complete: boolean; indexes: Set<number> }>();
+    for (const entryId of order.keys()) {
+      const entry = this.entries.get(entryId);
+      if (!entry || entry.runId !== runId) continue;
+      const indexes = new Set<number>();
+      for (const block of entry.blocks.values()) if (Number.isSafeInteger(block.value.blockIndex)) indexes.add(block.value.blockIndex);
+      for (const block of entry.blocks.values()) {
+        const part = block.value;
+        if (part.type === 'tool-call' && part.toolCallId) { toolCalls.set(part.toolCallId, { entryId, blockIndex: part.blockIndex }); continue; }
+        if (part.type !== 'text') continue;
+        const ranges = [...block.ranges].sort((a, b) => a.offset - b.offset), value = this.text(block);
+        blocks.set(part.blockId, { entryId, blockIndex: part.blockIndex, start: ranges[0]?.offset, complete: value.complete, indexes });
+      }
+    }
+    const groups: SavedTextGroup[] = [];
+    let boundary: string | null = null, current: SavedTextGroup | undefined, append = true;
+    let lastTool: { entryId: string; blockIndex: number } | undefined;
+    const lastBlock = new Map<string, number>();
+    for (const [index, message] of saved.entries()) {
+      if (message.runId !== runId || message.role === 'user') continue;
+      if (message.tool) {
+        const call = message.tool.id ? toolCalls.get(message.tool.id) : undefined;
+        if (call) {
+          if (current) current.open = false;
+          boundary = message.tool.id!; current = undefined; append = true; lastTool = call; lastBlock.clear();
+        }
+        continue;
+      }
+      if (!message.id) continue;
+      const meta = blocks.get(message.id);
+      if (!meta) continue;
+      if (!current) {
+        current = { boundary, text: '', startConfirmed: false, open: true, messageIndexes: [] };
+        groups.push(current); append = true;
+        const beginsEntry = meta.blockIndex === 0;
+        const afterSameEntryTool = !!lastTool && lastTool.entryId === meta.entryId && meta.blockIndex > lastTool.blockIndex;
+        const startsInterval = boundary === null ? beginsEntry : beginsEntry || afterSameEntryTool;
+        if (startsInterval && meta.start === 0) current.startConfirmed = true;
+        else append = false;
+      }
+      if (!append) continue;
+      const previous = lastBlock.get(meta.entryId);
+      if (previous !== undefined) {
+        for (let at = previous + 1; at < meta.blockIndex; at++) if (!meta.indexes.has(at)) { current.open = true; append = false; break; }
+        if (!append) continue;
+      }
+      current.text += message.text;
+      current.messageIndexes.push(index);
+      lastBlock.set(meta.entryId, meta.blockIndex);
+      if (!meta.complete) { current.open = true; append = false; }
+    }
+    return groups.filter(group => group.messageIndexes.length > 0);
   }
   private text(block: Block) {
     const ranges=[...block.ranges].sort((a,b)=>a.offset-b.offset);
@@ -248,6 +321,48 @@ export class HistoryProjection {
       if(liveUnconfirmed)target.historyStored=false;
       coveredLive.add(index);
     });
+    // Paged Agents may omit optional stream coordinates. Their Run range is
+    // still trustworthy when one frozen snapshot was read to the Run's start
+    // and the live side observed the same origin; only then are bytes compared.
+    const compatDecisions = new Map<string, LiveCoverage>();
+    const liveSegments = new Map<string, Message>();
+    for (const [, run] of this.sources.entries()) for (const source of run.messages) if (source.role === 'assistant' && !source.tool && source.id) liveSegments.set(source.id, source);
+    const groupTails = new Map<number, Message[]>();
+    for (const [snapshotId, runIds] of this.confirmedRuns) for (const runId of runIds) {
+      const run = this.sources.run(runId); if (!run || this.suppressed.has(runId)) continue;
+      const groups = this.savedGroups(saved, snapshotId, runId); if (!groups.length) continue;
+      for (const [sourceId, decision] of verifyLiveCoverage(run, groups)) {
+        if (compatDecisions.has(sourceId)) continue;
+        compatDecisions.set(sourceId, decision);
+        for (const at of decision.messageIndexes) saved[at]!.historyDisplaySource = sourceId;
+        const first = decision.messageIndexes[0];
+        if (first !== undefined) saved[first]!.historyDisplayKey = sourceId;
+        if (!decision.covered) {
+          const at = Math.max(...decision.messageIndexes);
+          const bucket = groupTails.get(at) ?? [];
+          bucket.push({ id: `${sourceId}-remaining-${decision.remainingBytes}`, runId, role: 'assistant', text: decision.remaining, historyRecoveryUnconfirmed: true, historyDisplaySource: sourceId });
+          groupTails.set(at, bucket);
+        }
+      }
+    }
+    const seenSources = new Set<string>();
+    previous.forEach((message,index)=>{
+      if(message.historyStored||message.role!=='assistant'||message.tool||!message.id||!message.runId)return;
+      const remaining=/^(.*)-remaining-\d+$/.exec(message.id), sourceId=liveSegments.has(message.id)?message.id:remaining&&liveSegments.has(remaining[1]!)?remaining[1]:undefined;
+      if(!sourceId||liveSegments.get(sourceId)!.runId!==message.runId)return;
+      if(streamRanges.has(JSON.stringify([message.runId,sourceId]))||unresolvedIdentity.has(index))return;
+      const decision=compatDecisions.get(sourceId);
+      if(!decision){
+        const segment=liveSegments.get(sourceId)!;
+        if(message.id===sourceId){if(message.text!==segment.text)message.text=segment.text;}
+        else if(!seenSources.has(sourceId)){seenSources.add(sourceId);message.id=sourceId;message.text=segment.text;message.historyRecoveryUnconfirmed=true;}
+        return;
+      }
+      coveredLive.add(index);
+      if(decision.covered||seenSources.has(sourceId))return;
+      seenSources.add(sourceId);
+    });
+
     const savedPositions=new Map<string,number>(saved.flatMap((message,index)=>[
       ...(message.id?[[`id:${identity(message)}`,index] as const]:[]),
       ...(message.runId&&message.tool?.id?[[`tool:${message.runId}:${message.tool.id}`,index] as const]:[]),
@@ -268,6 +383,6 @@ export class HistoryProjection {
       if(target===undefined)tail.push(placed);
       else {const bucket=before.get(target)??[];bucket.push(placed);before.set(target,bucket);}
     });
-    return [...saved.flatMap((message,index)=>[...(before.get(index)??[]),message]),...tail];
+    return [...saved.flatMap((message,index)=>[...(before.get(index)??[]),message,...(groupTails.get(index)??[])]),...tail];
   }
 }

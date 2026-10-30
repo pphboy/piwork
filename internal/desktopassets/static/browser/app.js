@@ -1685,12 +1685,57 @@ function captureChatAnchor(messages) {
             break;
         anchor = node;
     }
-    return anchor ? { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey, offset: anchor.getBoundingClientRect().top - viewport.top } : undefined;
+    return anchor ? { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey, offset: anchor.getBoundingClientRect().top - viewport.top, source: anchor.dataset.sourceKey, text: readingSnippet(messages) } : undefined;
+}
+/** The first visible characters let a split saved block keep the exact prose
+ * the reader was looking at, rather than the old node's top edge. */
+function readingSnippet(messages) {
+    const viewport = messages.getBoundingClientRect();
+    const range = document.caretRangeFromPoint?.(viewport.left + 24, viewport.top + 2);
+    const node = range?.startContainer;
+    if (!node)
+        return;
+    const text = (node.textContent ?? '').slice(range.startOffset, range.startOffset + 64).trim();
+    return text.length >= 8 ? text : undefined;
+}
+function scrollToSnippet(messages, snippet, candidates) {
+    const viewport = messages.getBoundingClientRect();
+    for (const node of candidates) {
+        if (!node.getClientRects().length)
+            continue;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+            const value = textNode.nodeValue ?? '', at = value.indexOf(snippet);
+            if (at < 0)
+                continue;
+            const range = document.createRange();
+            range.setStart(textNode, at);
+            range.setEnd(textNode, Math.min(value.length, at + snippet.length));
+            const rect = range.getBoundingClientRect();
+            if (!rect.height)
+                continue;
+            messages.scrollTop += rect.top - viewport.top - 2;
+            return true;
+        }
+    }
+    return false;
 }
 function restoreChatAnchor(messages, anchor) {
     if (!anchor?.key)
         return;
-    const node = [...messages.querySelectorAll('[data-message-key], [data-activity-key]')].find(node => (node.dataset.messageKey === anchor.key || node.dataset.activityKey === anchor.key) && node.getClientRects().length);
+    const keyed = [...messages.querySelectorAll('[data-message-key], [data-activity-key]')];
+    const match = (node) => node.dataset.messageKey === anchor.key || node.dataset.activityKey === anchor.key;
+    const sourced = anchor.source ? keyed.filter(node => node.dataset.sourceKey === anchor.source) : [];
+    // A covered live bubble may have been split into several saved blocks. The
+    // same source identity plus the visible characters keeps the prose in place.
+    if (anchor.text && sourced.length && scrollToSnippet(messages, anchor.text, sourced))
+        return;
+    let node = keyed.find(node => match(node) && node.getClientRects().length);
+    if (!node && sourced.length) {
+        const viewport = messages.getBoundingClientRect();
+        node = sourced.find(candidate => candidate.getClientRects().length && candidate.getBoundingClientRect().bottom > viewport.top);
+    }
     if (node)
         messages.scrollTop += node.getBoundingClientRect().top - messages.getBoundingClientRect().top - anchor.offset;
 }
@@ -1779,7 +1824,7 @@ function messageMarkup(w, sessionId, messages, replyRun) {
             let body = m.role === 'assistant' && !m.historyIncomplete ? renderChatMarkdown(m.text, { workId: w.id }) : esc(m.text);
             if (textWait === index && messageIndex === group.messages.length - 1)
                 body = inlineReplyTail(body, wait);
-            return `<div class="message ${m.role}" data-message-key="${esc(key)}">${author ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${body}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.pendingImages?.length ? `<div class="chat-message-images">${m.pendingImages.map(image => `<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>` : ''}${messageSubmissionMarkup(w, m)}${messageHistoryMarkup(sessionId, m)}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>` : ''}</div>`;
+            return `<div class="message ${m.role}" data-message-key="${esc(key)}"${m.historyDisplaySource ? ` data-source-key="${esc(m.historyDisplaySource)}"` : ''}>${author ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${body}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.pendingImages?.length ? `<div class="chat-message-images">${m.pendingImages.map(image => `<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>` : ''}${messageSubmissionMarkup(w, m)}${messageHistoryMarkup(sessionId, m)}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>` : ''}</div>`;
         }).join('') + execution;
     }).join('');
 }

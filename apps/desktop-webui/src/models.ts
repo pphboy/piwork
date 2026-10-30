@@ -71,6 +71,9 @@ export interface WorkspaceFile {
   preview?: FilePreview;
 }
 export interface Message {
+  /** Live tool boundary active when this text segment started; null means the
+   * Run start and undefined means the origin was not observed. */
+  origin?: string | null;
   /** Derived live output; the original remains in the Session read model. */
   historyLegacyProjection?: boolean;
   historyStored?: boolean;
@@ -80,6 +83,10 @@ export interface Message {
   historyIncomplete?: boolean;
   historyOrderUnconfirmed?: boolean;
   historyRecoveryUnconfirmed?: boolean;
+  /** A stable display identity for a saved turn that replaced live output. */
+  historyDisplayKey?: string;
+  /** Live source identity shared by every saved block of one output. */
+  historyDisplaySource?: string;
   submission?: { key: string; phase: 'sending' | 'unknown' | 'failed' | 'accepted'; error?: string; stopping?: boolean; previousKeys?: string[] };
   pendingImages?: import('./images.js').ImageInput[];
   images?: import('./images.js').HistoryImage[];

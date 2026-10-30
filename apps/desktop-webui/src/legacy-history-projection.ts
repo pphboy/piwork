@@ -1,16 +1,8 @@
 import type { Message } from './models.js';
 import { historyMessages, mergeLegacyMessages, upsertTool } from './chat-projection.js';
+import { LiveMessageSources } from './live-message-sources.js';
 
 type Data = Record<string, any>;
-type Source = Message & { origin?: string | null };
-interface RunSources {
-  messages: Source[];
-  boundary: string | null | undefined;
-  sequence: number;
-  observing: boolean;
-  terminal: boolean;
-  covered: boolean;
-}
 interface Group { messages: Message[]; closed: boolean }
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
 const identity = (message: Message) => JSON.stringify([message.runId, message.id]);
@@ -32,54 +24,17 @@ function normalizeInputs(raw: Data[]): Data[] {
   });
 }
 
-/** Session-local raw live sources are separate from their displayed tails,
- * so a later delta never appends to a clipped copy. */
 export class LegacyHistoryProjection {
-  private runs = new Map<string, RunSources>();
   private raw: Data[] = [];
   private finals = new Map<string, Message>();
   private latestFinal?: Message;
-
-  private run(runId: string): RunSources {
-    let value = this.runs.get(runId);
-    if (!value) { value = { messages: [], boundary: undefined, sequence: 0, observing: false, terminal: false, covered: false }; this.runs.set(runId, value); }
-    return value;
-  }
-  acceptInput(message: Message) {
-    if (!message.runId) return;
-    const run = this.run(message.runId), at = run.messages.findIndex(item => item.id === message.id);
-    if (at >= 0) run.messages[at] = { ...message }; else run.messages.push({ ...message });
-  }
-  begin(runId: string, after: number) {
-    const run = this.run(runId); run.observing = true;
-    if (after === 0) run.boundary = null;
-  }
-  end(runId: string, terminal = false) {
-    const run = this.runs.get(runId); if (!run) return;
-    run.observing = false; run.terminal ||= terminal;
-    if (run.terminal && run.covered) this.runs.delete(runId);
-  }
-  stop() { for (const id of this.runs.keys()) this.end(id); }
-  text(runId: string, sequence: number, delta: string) {
-    const run = this.run(runId);
-    if (sequence <= run.sequence) return;
-    run.sequence = sequence; run.covered = false;
-    let message = run.messages.at(-1);
-    if (!message || message.role !== 'assistant' || message.tool || message.origin !== run.boundary) {
-      message = { id: `${runId}-text-${sequence}`, runId, role: 'assistant', text: '', ...(run.boundary !== undefined ? { origin: run.boundary } : {}) };
-      run.messages.push(message);
-    }
-    message.text += delta;
-  }
-  tool(runId: string, sequence: number, message: Message, phase: string) {
-    const run = this.run(runId);
-    // Parallel results may finish out of call order. Starts define boundaries.
-    if (phase === 'tool-start' && message.tool?.id) run.boundary = message.tool.id;
-    else if (message.tool?.id && !run.messages.some(item => item.tool?.id === message.tool?.id)) run.boundary = undefined;
-    if (sequence <= run.sequence) return;
-    run.sequence = sequence; run.covered = false;
-    upsertTool(run.messages, { ...message });
-  }
+  constructor(private readonly sources = new LiveMessageSources()) {}
+  acceptInput(message: Message) { this.sources.acceptInput(message); }
+  begin(runId: string, after: number) { this.sources.begin(runId, after); }
+  end(runId: string, terminal = false) { this.sources.end(runId, terminal); }
+  stop() { this.sources.stop(); }
+  text(runId: string, sequence: number, delta: string) { this.sources.text(runId, sequence, delta); }
+  tool(runId: string, sequence: number, message: Message, phase: string) { this.sources.tool(runId, sequence, message, phase); }
   project(previous: Message[]): Message[] { return this.merge(this.raw, previous); }
   result(message: Message) {
     if (message.runId) { this.finals.set(message.runId, message); this.latestFinal = message; }
@@ -88,7 +43,7 @@ export class LegacyHistoryProjection {
   merge(raw: Data[], previous: Message[], final?: Message, terminalRuns: readonly string[] = []): Message[] {
     this.raw = raw;
     if (final) this.result(final);
-    for (const id of terminalRuns) { const run = this.runs.get(id); if (run) run.terminal = true; }
+    for (const id of terminalRuns) this.sources.end(id, true);
     const normalized = normalizeInputs(raw), saved = historyMessages(normalized);
     const groups = new Map<string, Group>(), boundaries = new Map<string, string | null>();
     for (const message of saved) {
@@ -102,7 +57,7 @@ export class LegacyHistoryProjection {
         group.messages.push(message);
       }
     }
-    const knownSources = new Set([...this.runs.values()].flatMap(run => run.messages.map(identity)));
+    const knownSources = new Set([...this.sources.entries()].flatMap(([, run]) => run.messages.map(identity)));
     const coveredFinals = new Set<string>();
     for (const [runId, result] of this.finals) {
       // Explicit terminal result refers to the last SDK answer, not any equal
@@ -111,9 +66,9 @@ export class LegacyHistoryProjection {
       if (last?.role !== 'assistant' || !last.blocks?.length || last.blocks.some((block: Data) => block.type !== 'text')) continue;
       if (last.blocks.map((block: Data) => block.text).join('') === result.text) coveredFinals.add(identity(result));
     }
-    const retained = previous.filter(message => !(message.historyLegacyProjection && message.runId && this.runs.has(message.runId)) && !knownSources.has(identity(message)) && !coveredFinals.has(identity(message)));
+    const retained = previous.filter(message => !(message.historyLegacyProjection && message.runId && this.sources.run(message.runId)) && !knownSources.has(identity(message)) && !coveredFinals.has(identity(message)));
     const live: Message[] = [];
-    for (const [runId, run] of this.runs) {
+    for (const [runId, run] of this.sources.entries()) {
       let covered = true;
       for (const source of run.messages) {
         const mark = (message: Message): Message => ({ ...message, historyLegacyProjection: true });
@@ -143,9 +98,9 @@ export class LegacyHistoryProjection {
         covered = false; live.push(mark(source));
       }
       run.covered = covered;
-      if (run.terminal && !run.observing && covered) this.runs.delete(runId);
+      if (run.terminal && !run.observing && covered) this.sources.forget(runId);
     }
-    const finalSource = this.latestFinal?.runId ? this.runs.get(this.latestFinal.runId)?.messages.at(-1) : undefined;
+    const finalSource = this.latestFinal?.runId ? this.sources.run(this.latestFinal.runId)?.messages.at(-1) : undefined;
     const liveCoversResult = finalSource?.role === 'assistant' && !finalSource.tool && finalSource.origin !== undefined && finalSource.text === this.latestFinal?.text;
     const fallback = this.latestFinal && !coveredFinals.has(identity(this.latestFinal)) && !liveCoversResult ? this.latestFinal : undefined;
     const result = mergeLegacyMessages(normalized, [...retained, ...live], fallback);

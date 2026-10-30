@@ -111,7 +111,7 @@ export function activityGroups(messages: Message[], previous: ActivityGroup[] = 
     if (!message.text && !message.tool && !message.images?.length && !message.pendingImages?.length) return;
     const last = groups.at(-1);
     if (message.tool && message.runId && last?.activity && last.messages[0]?.runId === message.runId) last.messages.push(message);
-    else groups.push({ key: message.id ?? `${message.runId || 'legacy'}-${index}`, messages: [message], activity: !!message.tool });
+    else groups.push({ key: message.historyDisplayKey ?? message.id ?? `${message.runId || 'legacy'}-${index}`, messages: [message], activity: !!message.tool });
   });
   // A page may prepend older calls to an already expanded Activity. Reuse its
   // identity through a surviving call, rather than changing it to the new head.

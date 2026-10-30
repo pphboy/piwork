@@ -1,19 +1,39 @@
 import { t } from './locale.js';
 import { historyMessages } from './chat-projection.js';
+import { LiveMessageSources, verifyLiveCoverage } from './live-message-sources.js';
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
 const invalid = () => { throw new Error(t('d.history.invalidRange')); };
 /** The cache contains only content explicitly read by this page. Range overlap
  * is validated by bytes, never inferred from equal messages or tool names. */
 export class HistoryProjection {
+    sources;
     entries = new Map();
     snapshotOrders = new Map();
     orderEdges = new Map();
     suppressed = new Set();
     resultTargets = new Map();
     visibleResults = new Map();
+    /** A Run range is confirmed only after one frozen snapshot was read to its start. */
+    confirmedRuns = new Map();
+    constructor(sources = new LiveMessageSources()) {
+        this.sources = sources;
+    }
+    confirmRunRange(snapshotId, runId) {
+        if (!snapshotId || !runId)
+            return;
+        const order = this.snapshotOrders.get(snapshotId);
+        if (!order || ![...order.keys()].some(id => this.entries.get(id)?.runId === runId))
+            return;
+        let runs = this.confirmedRuns.get(snapshotId);
+        if (!runs) {
+            runs = new Set();
+            this.confirmedRuns.set(snapshotId, runs);
+        }
+        runs.add(runId);
+    }
     suppress(runId) { this.suppressed.add(runId); }
     reveal(runId) { this.suppressed.delete(runId); }
-    clear() { this.entries.clear(); this.snapshotOrders.clear(); this.orderEdges.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
+    clear() { this.entries.clear(); this.snapshotOrders.clear(); this.orderEdges.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); this.confirmedRuns.clear(); }
     orderingAnchor(runId) {
         return [...this.entries.values()].findLast(entry => entry.runId && entry.runId !== runId)?.runId;
     }
@@ -113,6 +133,7 @@ export class HistoryProjection {
                 links.add(ids[i]);
             }
             this.snapshotOrders.delete(id);
+            this.confirmedRuns.delete(id);
         }
     }
     orderedEntries() {
@@ -177,6 +198,95 @@ export class HistoryProjection {
             }
         }
         return { result, uncertain };
+    }
+    /** Groups public text of one Run in the confirmed frozen range. The first
+     * block must begin the interval at byte zero; a missing or hidden predecessor
+     * is a gap, never a suffix that could pass a prefix comparison. */
+    savedGroups(saved, snapshotId, runId) {
+        const order = this.snapshotOrders.get(snapshotId);
+        if (!order)
+            return [];
+        const toolCalls = new Map();
+        const blocks = new Map();
+        for (const entryId of order.keys()) {
+            const entry = this.entries.get(entryId);
+            if (!entry || entry.runId !== runId)
+                continue;
+            const indexes = new Set();
+            for (const block of entry.blocks.values())
+                if (Number.isSafeInteger(block.value.blockIndex))
+                    indexes.add(block.value.blockIndex);
+            for (const block of entry.blocks.values()) {
+                const part = block.value;
+                if (part.type === 'tool-call' && part.toolCallId) {
+                    toolCalls.set(part.toolCallId, { entryId, blockIndex: part.blockIndex });
+                    continue;
+                }
+                if (part.type !== 'text')
+                    continue;
+                const ranges = [...block.ranges].sort((a, b) => a.offset - b.offset), value = this.text(block);
+                blocks.set(part.blockId, { entryId, blockIndex: part.blockIndex, start: ranges[0]?.offset, complete: value.complete, indexes });
+            }
+        }
+        const groups = [];
+        let boundary = null, current, append = true;
+        let lastTool;
+        const lastBlock = new Map();
+        for (const [index, message] of saved.entries()) {
+            if (message.runId !== runId || message.role === 'user')
+                continue;
+            if (message.tool) {
+                const call = message.tool.id ? toolCalls.get(message.tool.id) : undefined;
+                if (call) {
+                    if (current)
+                        current.open = false;
+                    boundary = message.tool.id;
+                    current = undefined;
+                    append = true;
+                    lastTool = call;
+                    lastBlock.clear();
+                }
+                continue;
+            }
+            if (!message.id)
+                continue;
+            const meta = blocks.get(message.id);
+            if (!meta)
+                continue;
+            if (!current) {
+                current = { boundary, text: '', startConfirmed: false, open: true, messageIndexes: [] };
+                groups.push(current);
+                append = true;
+                const beginsEntry = meta.blockIndex === 0;
+                const afterSameEntryTool = !!lastTool && lastTool.entryId === meta.entryId && meta.blockIndex > lastTool.blockIndex;
+                const startsInterval = boundary === null ? beginsEntry : beginsEntry || afterSameEntryTool;
+                if (startsInterval && meta.start === 0)
+                    current.startConfirmed = true;
+                else
+                    append = false;
+            }
+            if (!append)
+                continue;
+            const previous = lastBlock.get(meta.entryId);
+            if (previous !== undefined) {
+                for (let at = previous + 1; at < meta.blockIndex; at++)
+                    if (!meta.indexes.has(at)) {
+                        current.open = true;
+                        append = false;
+                        break;
+                    }
+                if (!append)
+                    continue;
+            }
+            current.text += message.text;
+            current.messageIndexes.push(index);
+            lastBlock.set(meta.entryId, meta.blockIndex);
+            if (!meta.complete) {
+                current.open = true;
+                append = false;
+            }
+        }
+        return groups.filter(group => group.messageIndexes.length > 0);
     }
     text(block) {
         const ranges = [...block.ranges].sort((a, b) => a.offset - b.offset);
@@ -442,6 +552,70 @@ export class HistoryProjection {
                 target.historyStored = false;
             coveredLive.add(index);
         });
+        // Paged Agents may omit optional stream coordinates. Their Run range is
+        // still trustworthy when one frozen snapshot was read to the Run's start
+        // and the live side observed the same origin; only then are bytes compared.
+        const compatDecisions = new Map();
+        const liveSegments = new Map();
+        for (const [, run] of this.sources.entries())
+            for (const source of run.messages)
+                if (source.role === 'assistant' && !source.tool && source.id)
+                    liveSegments.set(source.id, source);
+        const groupTails = new Map();
+        for (const [snapshotId, runIds] of this.confirmedRuns)
+            for (const runId of runIds) {
+                const run = this.sources.run(runId);
+                if (!run || this.suppressed.has(runId))
+                    continue;
+                const groups = this.savedGroups(saved, snapshotId, runId);
+                if (!groups.length)
+                    continue;
+                for (const [sourceId, decision] of verifyLiveCoverage(run, groups)) {
+                    if (compatDecisions.has(sourceId))
+                        continue;
+                    compatDecisions.set(sourceId, decision);
+                    for (const at of decision.messageIndexes)
+                        saved[at].historyDisplaySource = sourceId;
+                    const first = decision.messageIndexes[0];
+                    if (first !== undefined)
+                        saved[first].historyDisplayKey = sourceId;
+                    if (!decision.covered) {
+                        const at = Math.max(...decision.messageIndexes);
+                        const bucket = groupTails.get(at) ?? [];
+                        bucket.push({ id: `${sourceId}-remaining-${decision.remainingBytes}`, runId, role: 'assistant', text: decision.remaining, historyRecoveryUnconfirmed: true, historyDisplaySource: sourceId });
+                        groupTails.set(at, bucket);
+                    }
+                }
+            }
+        const seenSources = new Set();
+        previous.forEach((message, index) => {
+            if (message.historyStored || message.role !== 'assistant' || message.tool || !message.id || !message.runId)
+                return;
+            const remaining = /^(.*)-remaining-\d+$/.exec(message.id), sourceId = liveSegments.has(message.id) ? message.id : remaining && liveSegments.has(remaining[1]) ? remaining[1] : undefined;
+            if (!sourceId || liveSegments.get(sourceId).runId !== message.runId)
+                return;
+            if (streamRanges.has(JSON.stringify([message.runId, sourceId])) || unresolvedIdentity.has(index))
+                return;
+            const decision = compatDecisions.get(sourceId);
+            if (!decision) {
+                const segment = liveSegments.get(sourceId);
+                if (message.id === sourceId) {
+                    if (message.text !== segment.text)
+                        message.text = segment.text;
+                }
+                else if (!seenSources.has(sourceId)) {
+                    seenSources.add(sourceId);
+                    message.id = sourceId;
+                    message.text = segment.text;
+                    message.historyRecoveryUnconfirmed = true;
+                }
+                return;
+            }
+            coveredLive.add(index);
+            if (decision.covered || seenSources.has(sourceId))
+                return;
+            seenSources.add(sourceId);
+        });
         const savedPositions = new Map(saved.flatMap((message, index) => [
             ...(message.id ? [[`id:${identity(message)}`, index]] : []),
             ...(message.runId && message.tool?.id ? [[`tool:${message.runId}:${message.tool.id}`, index]] : []),
@@ -483,7 +657,7 @@ export class HistoryProjection {
                 before.set(target, bucket);
             }
         });
-        return [...saved.flatMap((message, index) => [...(before.get(index) ?? []), message]), ...tail];
+        return [...saved.flatMap((message, index) => [...(before.get(index) ?? []), message, ...(groupTails.get(index) ?? [])]), ...tail];
     }
 }
 //# sourceMappingURL=history-projection.js.map
