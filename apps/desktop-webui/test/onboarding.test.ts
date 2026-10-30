@@ -1,14 +1,36 @@
 import assert from 'node:assert/strict';
 import { spawn,execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import test, { after } from 'node:test';
 import { chromium, expect, type Page } from '@playwright/test';
 
-const binary=process.env.PIWORK_TEST_UNIFIED_BIN || fileURLToPath(new URL('../../../../dist/go/piwork-core',import.meta.url));
+const root=fileURLToPath(new URL('../../../../',import.meta.url));
+const fixtureRPC=!process.env.PIWORK_TEST_UNIFIED_BIN && !process.env.PIWORK_RUN_ENGINE_BROWSER;
+// Fake-engine browser cases do not need a container callback. Give their
+// fixture an ephemeral RPC listener so an unrelated running Core is safe.
+function fixtureBinary():string {
+  if (process.env.PIWORK_TEST_UNIFIED_BIN) return process.env.PIWORK_TEST_UNIFIED_BIN;
+  if (process.env.PIWORK_RUN_ENGINE_BROWSER) return join(root,'dist/go/piwork-core');
+  const directory=mkdtempSync(join(tmpdir(),'piwork-browser-core-'));
+  try {
+    const source=join(root,'internal/app/run.go'), overlaySource=join(directory,'run.go'), overlay=join(directory,'overlay.json');
+    const original=readFileSync(source,'utf8');
+    const listener='AgentGRPCListen: "0.0.0.0:7172", AgentGRPCAdvertise: "piwork-core:7172"';
+    assert.equal(original.split(listener).length,2,'fixture RPC listener source must match exactly once');
+    writeFileSync(overlaySource,original.replace(listener,'AgentGRPCListen: "127.0.0.1:" + os.Getenv("PIWORK_TEST_AGENT_RPC_PORT"), AgentGRPCAdvertise: "piwork-core:7172"'));
+    writeFileSync(overlay,JSON.stringify({Replace:{[source]:overlaySource}}));
+    const output=join(directory,'piwork-core');
+    execFileSync('go',['build','-mod=readonly','-overlay',overlay,'-o',output,'./cmd/piwork-core'],{cwd:root,env:{...process.env,CGO_ENABLED:'0',GOTOOLCHAIN:'local'},stdio:'inherit'});
+    after(()=>rmSync(directory,{recursive:true,force:true}));
+    return output;
+  } catch(error) {rmSync(directory,{recursive:true,force:true});throw error;}
+}
+const binary=fixtureBinary();
 const browserOptions=process.env.PIWORK_TEST_BROWSER_BIN ? {executablePath:process.env.PIWORK_TEST_BROWSER_BIN,headless:true,args:['--no-proxy-server']} : {headless:true,channel:'chromium' as const,args:['--no-proxy-server']};
 const serverIP=Object.entries(networkInterfaces()).filter(([name])=>/^(eth|en|wl)/.test(name)).flatMap(([,items])=>items||[]).find(item=>item.family==='IPv4'&&!item.internal)?.address || '127.0.0.1';
 
@@ -23,11 +45,17 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   const port=(reserve.address() as {port:number}).port;
   const origin=`http://${serverIP}:${port}`;
   const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith('PIWORK_')));
-  // Keep the UI port reserved while choosing Core's port, including restarts.
+  // Reserve all ports together so the fixture's RPC listener cannot take the
+  // UI or Core port between selection and process startup.
   const coreReserve=createServer();await new Promise<void>(done=>coreReserve.listen(0,'127.0.0.1',done));
-  const corePort=(coreReserve.address() as {port:number}).port;await new Promise<void>(done=>coreReserve.close(()=>done()));
+  const corePort=(coreReserve.address() as {port:number}).port;
+  const rpcReserve=fixtureRPC ? createServer() : undefined;
+  if(rpcReserve)await new Promise<void>(done=>rpcReserve.listen(0,'127.0.0.1',done));
+  const rpcPort=rpcReserve ? (rpcReserve.address() as {port:number}).port : undefined;
+  if(rpcReserve)await new Promise<void>(done=>rpcReserve.close(()=>done()));
+  await new Promise<void>(done=>coreReserve.close(()=>done()));
   await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
-  const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
+  const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,...(rpcPort ? {PIWORK_TEST_AGENT_RPC_PORT:String(rpcPort)} : {}),DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
   let output='',stderr='',exited=false;
   processHandle.stdout.on('data',data=>{output+=data.toString();});
   processHandle.stderr.on('data',data=>{stderr+=data.toString();});

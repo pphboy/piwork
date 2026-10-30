@@ -260,13 +260,13 @@ export class DesktopAdapter {
   requestReadErrors = new Map<string,string>();
   private requestCancellations = new Map<string, { phase: 'pending' | 'accepted' | 'unknown'; error: string }>();
   models = new Map<string, { loading: boolean; confirmed: boolean; error: string; models: RunModel[]; defaultModel?: RunModel; defaultUnavailableReason?:string; unavailableModels?:Array<{label:string;reason:string;recovery:string}>; checkedAt?: string }>();
-  modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; error: string; revision: number; confirmedRevision?: number }>();
-  chatCapabilities = new Map<string, 0|1|2|3>();
+  modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; profile?: string; needsThinkingConfirmation?: boolean; error: string; revision: number; confirmedRevision?: number }>();
+  chatCapabilities = new Map<string, 0|1|2|3|4>();
   cancelAndSendCapabilities = new Map<string, 0|1>();
   activeRuns = new Map<string, { confirmed: boolean; loading: boolean; visibleLoading?: boolean; run: Run|null; error: string }>();
   private activeRevisions = new Map<string,number>();
   commands = new Map<string,{loading:boolean;confirmed:boolean;error:string;items:Data[];checkedAt?:string}>();
-  chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;cancelRunId?:string;error:string;pair?:{ref:string|null;thinking:string|null;revision:number}}>();
+  chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;cancelRunId?:string;error:string;pair?:{ref:string|null;thinking:string|null;profile?:string;revision:number}}>();
   private pairSaves = new Map<string,Promise<void>>();
   private chatSelection='';
   private sessionVersions=new Map<string,number>();
@@ -1247,47 +1247,48 @@ export class DesktopAdapter {
       intent.error=localizedText('d.error.retryUnknownNoMapping');this.emit();
     } catch(error){if(epoch===this.epoch && this.requestRetries.get(key)===intent){intent.error=localizedText('d.error.retryUnknownDetail', { detail: errorText(error) });this.emit();}throw error;}
   }
-  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,resultRef:raw.resultRef,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,errorCode:typeof raw.error?.code === 'string' ? raw.error.code : undefined,errorRetryable:typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
+  private runRecord(raw: Data,sessionId: string): Run { return { id:raw.runId,sessionId,status:runStates[raw.state] ?? 'interrupted',cursor:0,resultRef:raw.resultRef,created:raw.acceptedAt ?? '',finished:raw.finishedAt,finalText:raw.finalText,error:raw.error?.message,executionError:raw.error?.message,errorCode:typeof raw.error?.code === 'string' ? raw.error.code : undefined,errorRetryable:typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined,actualModel:raw.actualModel ?? null,thinkingLevel:raw.thinkingLevel === undefined ? "off" : raw.thinkingLevel,thinkingProfile:raw.thinkingProfile,source:raw.source,adoptedExperienceVersion:raw.adoptedExperienceVersion }; }
   modelSelection(id: string,sessionId: string) {
     const key=`${id}:${sessionId}`;let state=this.modelSelections.get(key);
-    if(!state){const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);state={phase:'clean',ref:session?.modelPreference?.modelRef ?? null,thinking:session?.thinkingLevel === undefined ? (sessionId ? 'off' : this.models.get(id)?.defaultModel?.defaultThinkingLevel ?? (this.models.get(id)?.defaultModel?.thinkingAvailability==='unknown'?null:'off')) : session.thinkingLevel,error:'',revision:0};this.modelSelections.set(key,state);}return state;
+    if(!state){const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);state={phase:'clean',ref:session?.modelPreference?.modelRef ?? null,thinking:session?.thinkingLevel === undefined ? (sessionId ? 'off' : this.models.get(id)?.defaultModel?.defaultThinkingLevel ?? (this.models.get(id)?.defaultModel?.thinkingAvailability==='unknown'?null:'off')) : session.thinkingLevel,profile:session?.thinkingProfile,error:'',revision:0};this.modelSelections.set(key,state);}return state;
   }
   modelReady(id: string,sessionId: string) {
     const catalog=this.models.get(id),session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);
     const pair=this.modelSelection(id,sessionId),selected=pair.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===pair.ref);
-    return (selected?.thinkingAvailability==='unknown'?pair.thinking===null:pair.thinking!==null) && !!catalog?.confirmed && !catalog.error && (this.modelSelection(id,sessionId).ref===null?!!catalog.defaultModel:catalog.models.some(m=>m.modelRef===this.modelSelection(id,sessionId).ref)) && !this.chatSubmissions.has(id) && (this.modelSelection(id,sessionId).phase==='clean' || !sessionId && this.modelSelection(id,sessionId).phase==='dirty')
+    return (!session?.chatAvailability || session.chatAvailability==="available") && !pair.needsThinkingConfirmation && (pair.profile ? !!selected?.compatibleThinkingProfiles?.some(p=>p.profile===pair.profile && pair.thinking!==null && p.levels.includes(pair.thinking)) || session?.thinkingProfile===pair.profile && session.thinkingLevel===pair.thinking && session.modelPreference?.modelRef===pair.ref && session.modelPreference?.availability==='available' : selected?.thinkingAvailability==='unknown'?pair.thinking===null:pair.thinking!==null && ((this.chatCapabilities.get(id) ?? 0)<1 || !selected?.thinkingLevels || selected.thinkingLevels.includes(pair.thinking))) && !!catalog?.confirmed && !catalog.error && (this.modelSelection(id,sessionId).ref===null?!!catalog.defaultModel:catalog.models.some(m=>m.modelRef===this.modelSelection(id,sessionId).ref)) && !this.chatSubmissions.has(id) && (this.modelSelection(id,sessionId).phase==='clean' || !sessionId && this.modelSelection(id,sessionId).phase==='dirty')
       && (!session?.modelPreference || session.modelPreference.availability==='available');
   }
   async loadModels(id: string) {
     const epoch=this.epoch,state={loading:true,confirmed:false,error:'',models:[] as RunModel[],...this.models.get(id)};state.loading=true;this.models.set(id,state);this.emit();
     try {
-      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
+      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===4?4:capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
       catch(error) {if((error as DesktopError).code==='CONNECTION_CHANGED')throw error;if(epoch!==this.epoch)return;this.chatCapabilities.set(id,0);if(!this.cancelAndSendCapabilities.has(id))this.cancelAndSendCapabilities.set(id,0);}
       const value=await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0)>=1?'chat-models':'models'}`);
       if(value.availability==='unavailable')throw failure('MODEL_LIST_UNAVAILABLE','d.error.modelsUnconfirmed');
-      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3)throw failure('INVALID_RESPONSE','d.error.modelListIncomplete');
+      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3 && value.contractVersion!==4)throw failure('INVALID_RESPONSE','d.error.modelListIncomplete');
       if(epoch!==this.epoch)return;Object.assign(state,{confirmed:true,models:value.models,defaultModel:value.defaultModel ?? undefined,defaultUnavailableReason:value.defaultUnavailableReason,unavailableModels:value.unavailableModels,checkedAt:value.checkedAt,error:''});await this.loadCommands(id);
       const draft=this.modelSelections.get(`${id}:`);if(draft&&!draft.revision&&state.defaultModel)draft.thinking=state.defaultModel.defaultThinkingLevel===undefined?'off':state.defaultModel.defaultThinkingLevel;
       const selected=this.chatSelection?.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'';if(selected)await this.readSessionOptions(id,selected);
     } catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();if(!state.error)void this.refreshImageCapabilities(id);}}
   }
-  selectModel(id: string,sessionId: string,ref: string|null) {const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkSessionModel');state.ref=ref;const catalog=this.models.get(id),model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
+  selectModel(id: string,sessionId: string,ref: string|null) {const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkSessionModel');if(state.ref===ref)return;const previousProfile=state.profile;state.ref=ref;const catalog=this.models.get(id),model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
+    if(previousProfile){const saved=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(state.phase!=='saving' && saved?.modelPreference?.modelRef===ref && saved.modelPreference.availability==='available' && saved.thinkingProfile===previousProfile && saved.thinkingLevel===state.thinking){state.needsThinkingConfirmation=false;state.error='';state.phase='clean';state.revision++;this.emit();return;}state.needsThinkingConfirmation=true;state.error=localizedText('d.error.compatibleThinkingUnconfirmed');if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();return;}state.profile=undefined;state.needsThinkingConfirmation=false;
     if(model?.thinkingAvailability==='unknown'){
-      if(state.thinking!==null){if(!sessionId && !state.revision)state.thinking=null;else {state.error=localizedText('d.error.thinkingUnconfirmed');state.phase='dirty';state.revision++;this.emit();return;}}
+      if(state.thinking!==null){if(!sessionId && !state.revision)state.thinking=null;else {state.needsThinkingConfirmation=true;state.error=localizedText('d.error.thinkingUnconfirmed');if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();return;}}
     }else if(model?.thinkingLevels && (state.thinking===null || !model.thinkingLevels.includes(state.thinking))){state.thinking=model.defaultThinkingLevel ?? 'off';state.error=localizedText('d.error.thinkingAdjusted');}else state.error='';
     if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);}
-  selectThinking(id:string,sessionId:string,thinking:string|null) {
+  selectThinking(id:string,sessionId:string,thinking:string|null,profile?:string) {
     const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkOriginalSettings');
     const catalog=this.models.get(id),model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-    if((this.chatCapabilities.get(id) ?? 0)<1 || !(thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw failure('THINKING_LEVEL_UNSUPPORTED','d.error.chooseThinking');
-    state.thinking=thinking;if(state.phase!=='saving')state.phase='dirty';state.error='';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);
+    if((this.chatCapabilities.get(id) ?? 0)<1 || !(profile ? (this.chatCapabilities.get(id) ?? 0)>=4 && thinking!==null && model?.compatibleThinkingProfiles?.some(p=>p.profile===profile && p.levels.includes(thinking)) : thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw failure('THINKING_LEVEL_UNSUPPORTED','d.error.chooseThinking');
+    state.thinking=thinking;state.profile=profile;state.needsThinkingConfirmation=false;if(state.phase!=='saving')state.phase='dirty';state.error='';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);
   }
   private confirmSessionModel(id:string,session:Session,raw:Data,version=this.sessionVersions.get(id)||0) {
     if(version!==(this.sessionVersions.get(id)||0))return;
     if(!raw || raw.sessionId!==session.id || raw.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionModelOther');
-    session.modelPreference=raw.modelPreference ?? null;session.thinkingLevel=raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;session.source=raw.source;
+    session.modelPreference=raw.modelPreference ?? null;session.thinkingLevel=raw.thinkingLevel === undefined ? 'off' : raw.thinkingLevel;session.thinkingProfile=raw.thinkingProfile;session.source=raw.source;
     const state=this.modelSelections.get(`${id}:${session.id}`);
-    if(state && (state.phase==='clean')){state.ref=session.modelPreference?.modelRef ?? null;state.thinking=session.thinkingLevel === undefined ? 'off' : session.thinkingLevel;state.phase='clean';state.error='';}
+    if(state && (state.phase==='clean')){state.ref=session.modelPreference?.modelRef ?? null;state.thinking=session.thinkingLevel === undefined ? 'off' : session.thinkingLevel;state.profile=session.thinkingProfile;state.needsThinkingConfirmation=false;state.phase='clean';state.error='';}
   }
   private async readSessionOptions(id:string,sessionId:string) {
     if((this.chatCapabilities.get(id) ?? 0)<1)return;
@@ -1296,34 +1297,37 @@ export class DesktopAdapter {
       const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/chat-options`);
       if(epoch!==this.epoch || version!==(this.sessionVersions.get(id)||0) || raw.sessionId!==sessionId)return;
       const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(!session)return;
-      this.confirmSessionModel(id,session,{sessionId,workId:id,modelPreference:{...raw.model,availability:raw.availability},thinkingLevel:raw.thinkingLevel,source:session.source},version);
+      session.chatAvailability=raw.availability;
+      this.confirmSessionModel(id,session,{sessionId,workId:id,modelPreference:{...raw.model,availability:raw.availability},thinkingLevel:raw.thinkingLevel,thinkingProfile:raw.thinkingProfile,source:session.source},version);
+      return session.chatAvailability;
     }catch{ /* The original Session snapshot and any unknown mutation remain authoritative until explicit readback. */ }
   }
   async saveModel(id: string,sessionId: string):Promise<void> {
     this.assertCoreReady();
-    const key=`${id}:${sessionId}`,pending=this.pairSaves.get(key);if(pending)return pending;
-    const state=this.modelSelection(id,sessionId),epoch=this.epoch;
+    const key=`${id}:${sessionId}`,state=this.modelSelection(id,sessionId),epoch=this.epoch;
+    if(state.needsThinkingConfirmation)throw failure('THINKING_LEVEL_UNSUPPORTED',state.profile?'d.error.compatibleThinkingUnconfirmed':'d.error.thinkingUnconfirmed');
+    const pending=this.pairSaves.get(key);if(pending)return pending;
     if(state.phase!=='dirty')return;
     const catalog=this.models.get(id),model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
     if(!catalog?.confirmed || !model)throw failure('MODEL_UNAVAILABLE','d.error.chooseModel');
-    const revision=state.revision,ref=state.ref,thinking=state.thinking;
+    const revision=state.revision,ref=state.ref,thinking=state.thinking,profile=state.profile;
     state.phase='saving';this.emit();
     let save!:Promise<void>;save=(async()=>{try {
       const modern=(this.chatCapabilities.get(id) ?? 0)>=1;
-      const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/${modern?'chat-options':'model'}`,'PATCH',modern?{modelRef:ref,thinkingLevel:thinking}:{modelRef:ref});
+      const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/${modern?'chat-options':'model'}`,'PATCH',modern?{modelRef:ref,thinkingLevel:thinking,...((this.chatCapabilities.get(id) ?? 0)>=4?{thinkingProfile:profile ?? null}:{})}:{modelRef:ref});
       if(epoch!==this.epoch)return;
-      if(raw.sessionId!==sessionId || modern && (raw.modelRef!==ref || raw.thinkingLevel!==thinking) || !modern && raw.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionSettingsUnconfirmed');
+      if(raw.sessionId!==sessionId || modern && (raw.modelRef!==ref || raw.thinkingLevel!==thinking || (raw.thinkingProfile ?? undefined)!==profile) || !modern && raw.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionSettingsUnconfirmed');
       const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);
-      if(session){session.modelPreference=modern?{...raw.model,availability:raw.availability}:raw.modelPreference ?? null;session.thinkingLevel=modern?raw.thinkingLevel:'off';}
+      if(session){if(modern)session.chatAvailability=raw.availability;session.modelPreference=modern?{...raw.model,availability:raw.availability}:raw.modelPreference ?? null;session.thinkingLevel=modern?raw.thinkingLevel:'off';session.thinkingProfile=modern?raw.thinkingProfile:undefined;}
       this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);state.confirmedRevision=revision;state.phase=state.revision===revision?'clean':'dirty';
     }catch(error){if(epoch===this.epoch){const code=(error as DesktopError).code;state.phase=['RESULT_UNKNOWN','INVALID_RESPONSE','CORE_UNAVAILABLE','REQUEST_TIMEOUT','RUNTIME_UNAVAILABLE','CONNECTION_CHANGED'].includes(code)?'unknown':'dirty';state.error=state.phase==='unknown'?t('d.error.settingsUnconfirmed'):errorText(error);}throw error;}
-    finally {if(this.pairSaves.get(key)===save)this.pairSaves.delete(key);if(epoch===this.epoch){this.emit();if(state.phase==='dirty' && state.confirmedRevision===revision && this.chatSelection===key)void this.saveModel(id,sessionId).catch(()=>undefined);}}
+    finally {if(this.pairSaves.get(key)===save)this.pairSaves.delete(key);if(epoch===this.epoch){this.emit();if(state.phase==='dirty' && !state.needsThinkingConfirmation && state.confirmedRevision===revision && this.chatSelection===key)void this.saveModel(id,sessionId).catch(()=>undefined);}}
     })();this.pairSaves.set(key,save);return save;
   }
   async checkSessionModel(id:string,sessionId:string) {
     if(this.pairSaves.has(`${id}:${sessionId}`))return;
     const epoch=this.epoch,state=this.modelSelection(id,sessionId);
-    if((this.chatCapabilities.get(id) ?? 0)>=1){const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/chat-options`);if(epoch!==this.epoch || raw.sessionId!==sessionId)return;state.ref=raw.modelRef;state.thinking=raw.thinkingLevel;state.phase='clean';state.error='';const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(session){session.modelPreference={...raw.model,availability:raw.availability};session.thinkingLevel=raw.thinkingLevel;}}
+    if((this.chatCapabilities.get(id) ?? 0)>=1){const raw=await this.request(`works/${part(id)}/sessions/${part(sessionId)}/chat-options`);if(epoch!==this.epoch || raw.sessionId!==sessionId)return;state.ref=raw.modelRef;state.thinking=raw.thinkingLevel;state.profile=raw.thinkingProfile;state.needsThinkingConfirmation=false;state.phase='clean';state.error='';const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(session){session.chatAvailability=raw.availability;session.modelPreference={...raw.model,availability:raw.availability};session.thinkingLevel=raw.thinkingLevel;session.thinkingProfile=raw.thinkingProfile;}}
     else {const raw=await this.supportsHistory(id)?await this.historyPage(id,sessionId,new URLSearchParams({limit:'1'})):await this.request(`works/${part(id)}/sessions/${part(sessionId)}`);if(epoch!==this.epoch)return;state.phase='clean';const session=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(session)this.confirmSessionModel(id,session,raw.session);}
     this.emit();
   }
@@ -1332,10 +1336,24 @@ export class DesktopAdapter {
     try {if((this.chatCapabilities.get(id) ?? 0)<1)throw failure('CHAT_OPTIONS_UNSUPPORTED','d.error.chatControlsUnsupported');const value=await this.request(`works/${part(id)}/commands`);if(value.contractVersion!==1 || !Array.isArray(value.commands))throw failure('INVALID_RESPONSE','d.error.commandDirectoryIncomplete');Object.assign(state,{items:value.commands,confirmed:true,error:'',checkedAt:value.checkedAt});}
     catch(error){state.error=errorText(error);}finally{state.loading=false;this.emit();}
   }
+  async defaultSession(id:string):Promise<string> {
+    const work=this.getWork(id),epoch=this.epoch;
+    if(!work)return '';
+    const candidates=work.sessions.filter(session=>session.source?.kind!=='service');
+    const ordered=candidates.length?[candidates[0]!,...candidates.slice(1).reverse()]:[];
+    if((this.chatCapabilities.get(id) ?? 0)>=1)for(const session of ordered) {
+      // Recheck live admission: persisted model availability is only history metadata.
+      session.chatAvailability="unconfirmed";
+      const availability=await this.readSessionOptions(id,session.id);
+      if(epoch!==this.epoch || this.getWork(id)!==work)return '';
+      if(availability==='available')return session.id;
+    }
+    return candidates[0]?.id ?? '';
+  }
   async loadSessions(id: string) {
     const work=this.getWork(id)!,version=this.sessionVersions.get(id) || 0; (work.resourceLoading ??= {}).agent = true; this.emit(); try { const value = await this.request(`works/${part(id)}/sessions`);
-    if (!Array.isArray(value.sessions)) throw failure('INVALID_RESPONSE','d.error.sessionListingIncomplete'); (work.resourceChecked ??= {}).agent = new Date().toISOString(); const existing = new Map(work.sessions.map(session => [session.id, session])); work.sessions = value.sessions.map((raw: Data) => {const saved=existing.get(raw.sessionId),session:Session=saved??{id:raw.sessionId,title:raw.title??t('d.session.defaultTitle', { id: raw.sessionId }),messages:[],runs:[]};session.title=raw.title??t('d.session.defaultTitle', { id: raw.sessionId });if(!saved||version===(this.sessionVersions.get(id)||0)){session.modelPreference=raw.modelPreference??null;session.thinkingLevel=raw.thinkingLevel===undefined?'off':raw.thinkingLevel;session.source=raw.source;}return session;});
-    if(version!==(this.sessionVersions.get(id)||0))for(const previous of existing.values()){const current=work.sessions.find(s=>s.id===previous.id);if(!current)work.sessions.push(previous);else {current.modelPreference=previous.modelPreference;current.thinkingLevel=previous.thinkingLevel;}}
+    if (!Array.isArray(value.sessions)) throw failure('INVALID_RESPONSE','d.error.sessionListingIncomplete'); (work.resourceChecked ??= {}).agent = new Date().toISOString(); const existing = new Map(work.sessions.map(session => [session.id, session])); work.sessions = value.sessions.map((raw: Data) => {const saved=existing.get(raw.sessionId),session:Session=saved??{id:raw.sessionId,title:raw.title??t('d.session.defaultTitle', { id: raw.sessionId }),messages:[],runs:[]};session.title=raw.title??t('d.session.defaultTitle', { id: raw.sessionId });if(!saved||version===(this.sessionVersions.get(id)||0)){session.modelPreference=raw.modelPreference??null;session.thinkingLevel=raw.thinkingLevel===undefined?'off':raw.thinkingLevel;session.thinkingProfile=raw.thinkingProfile;session.source=raw.source;}return session;});
+    if(version!==(this.sessionVersions.get(id)||0))for(const previous of existing.values()){const current=work.sessions.find(s=>s.id===previous.id);if(!current)work.sessions.push(previous);else {current.modelPreference=previous.modelPreference;current.thinkingLevel=previous.thinkingLevel;current.thinkingProfile=previous.thinkingProfile;}}
     if (work.sessions[0] && !this.streams.has(id)) await this.loadSession(id, work.sessions[0].id); if (work.resourceErrors) delete work.resourceErrors.agent; this.emit();
   } catch (error) { (work.resourceErrors ??= {}).agent = errorText(error); throw error; } finally { work.resourceLoading.agent = false; this.emit(); }}
   async loadSession(id: string, sessionId: string) {
@@ -1761,13 +1779,15 @@ export class DesktopAdapter {
   }
   private acceptChatSession(id:string,value:Data) {
     const sessionId=value.sessionId ?? value.session?.sessionId;if(typeof sessionId!=='string'||!sessionId)throw failure('INVALID_RESPONSE','d.error.sessionAcceptanceNoId');
-    this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);const work=this.getWork(id)!;if(!work.sessions.some(s=>s.id===sessionId))work.sessions.unshift({id:sessionId,title:t('d.session.defaultTitle', { id: sessionId }),messages:[],modelPreference:value.modelPreference ?? null,thinkingLevel:value.thinkingLevel === undefined ? 'off' : value.thinkingLevel,source:value.source,runs:[]});this.emit();return sessionId;
+    this.sessionVersions.set(id,(this.sessionVersions.get(id)||0)+1);const work=this.getWork(id)!;if(!work.sessions.some(s=>s.id===sessionId))work.sessions.unshift({id:sessionId,title:t('d.session.defaultTitle', { id: sessionId }),messages:[],modelPreference:value.modelPreference ?? null,thinkingLevel:value.thinkingLevel === undefined ? 'off' : value.thinkingLevel,thinkingProfile:value.thinkingProfile,source:value.source,runs:[]});this.emit();return sessionId;
   }
   async newSession(id:string) {
     if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
-    const draft={...this.modelSelection(id,'')},intent={kind:'session' as const,key:randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
+    const draft={...this.modelSelection(id,'')};if(draft.needsThinkingConfirmation)throw failure('THINKING_LEVEL_UNSUPPORTED',draft.profile?'d.error.compatibleThinkingUnconfirmed':'d.error.thinkingUnconfirmed');
+    if(draft.revision && !this.modelReady(id,''))throw failure('MODEL_NOT_CONFIRMED','d.error.confirmModelBeforeSend');
+    const intent={kind:'session' as const,key:randomUUID(),error:'',pair:{ref:draft.ref,thinking:draft.thinking,profile:draft.profile,revision:draft.revision}};this.chatSubmissions.set(id,intent);this.emit();
     try {const value=await this.request(`works/${part(id)}/sessions`,'POST',{idempotencyKey:intent.key});const sessionId=this.acceptChatSession(id,value);this.chatSubmissions.delete(id);
-      const state=this.modelSelection(id,sessionId);if(draft.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==draft.ref || state.thinking!==draft.thinking)){Object.assign(state,{ref:draft.ref,thinking:draft.thinking,phase:'dirty',revision:Math.max(1,draft.revision)});void this.saveModel(id,sessionId).catch(()=>undefined);}return sessionId;
+      const state=this.modelSelection(id,sessionId);if(draft.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==draft.ref || state.thinking!==draft.thinking || state.profile!==draft.profile)){Object.assign(state,{ref:draft.ref,thinking:draft.thinking,profile:draft.profile,phase:'dirty',revision:Math.max(1,draft.revision)});void this.saveModel(id,sessionId).catch(()=>undefined);}return sessionId;
     }catch(error){const code=(error as DesktopError).code;if(!['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code))this.chatSubmissions.delete(id);if(code==='WORK_BUSY'||code==='RATE_LIMITED'){await this.loadSessions(id).catch(()=>undefined);const active=this.getWork(id)?.run;if(code==='WORK_BUSY'||active&&['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY','d.error.runAlreadyActive');}intent.error=errorText(error);throw error;}finally{this.emit();}
   }
   async recoverChatSubmission(id:string) {
@@ -1782,7 +1802,7 @@ export class DesktopAdapter {
     if(intent.kind==='session'){
       if(value.session?.workId!==id)throw failure('INVALID_RESPONSE','d.error.sessionOwnership');
       const sessionId=this.acceptChatSession(id,value.session);
-      const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:t('d.error.selectedSettingsKept')});
+      const state=this.modelSelection(id,sessionId);if(intent.pair && (intent.pair.revision || (this.chatCapabilities.get(id) ?? 0)>=1 && (state.ref!==intent.pair.ref || state.thinking!==intent.pair.thinking || state.profile!==intent.pair.profile)))Object.assign(state,{...intent.pair,revision:Math.max(1,intent.pair.revision),phase:'dirty',error:t('d.error.selectedSettingsKept')});
     }
     else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw failure('INVALID_RESPONSE','d.error.runIdentity');const work=this.getWork(id)!;work.run=this.runRecord(value.run,value.run.sessionId);await this.loadSession(id,value.run.sessionId);void this.resumeRun(id);}
     if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;

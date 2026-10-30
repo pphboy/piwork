@@ -992,7 +992,7 @@ test('UX incompatible Session settings stay unavailable while web navigation rem
   if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/chat-options'))return{json:{...chatOptions(),availability:'unavailable'}};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeDisabled();await expect(page.locator('.options-status')).toContainText('Saved settings unavailable');await page.locator('#composer').fill('keep my earlier draft');await api(page,"await adapter.loadSession('work-1','session-1');");await expect(page.locator('#composer')).toHaveValue('keep my earlier draft');
+ await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeDisabled();await expect(page.locator('.options-status')).toContainText('environment or saved settings');await page.locator('#composer').fill('keep my earlier draft');await api(page,"await adapter.loadSession('work-1','session-1');");await expect(page.locator('#composer')).toHaveValue('keep my earlier draft');
  await page.locator('#composer').fill('/resume');await page.locator('#composer').press('Escape');await expect(button(page,'send-message')).toBeEnabled();assert.equal(requests.filter(r=>['POST','PATCH'].includes(r.method)).length,0);
 });
 
@@ -3767,4 +3767,160 @@ test('Import dialog: only trustworthy receive progress is quantified, later stag
   await expect(page.locator('.import-result')).toContainText('package');
   // A finished receive is never presented as a finished import.
   await expect(page.locator('#modal')).not.toContainText('Import complete');
+});
+
+test('unknown model exposes explicit compatible Thinking choices and keeps the draft',async t=>{
+ const model={modelRef:null,label:'New model',provider:'anthropic',model:'unknown-model',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','high','max']},{profile:'messages-budget-v1',levels:['off','high'],budgets:{high:6144}}]};
+ let level:string|null=null,profile:string|undefined;
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[],defaultModel:model,availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options')){
+   if(r.method==='PATCH'){const input=JSON.parse(r.body);level=input.thinkingLevel;profile=input.thinkingProfile ?? undefined;}
+   return{json:{sessionId:'session-1',modelRef:null,model,thinkingLevel:level,...(profile?{thinkingProfile:profile}:{}),availability:'available',checkedAt:new Date().toISOString()}};
+  }
+ });
+ await page.setViewportSize({width:360,height:900});await button(page,'tab-Chat').click();await expectThinkingEditable(page);
+ await page.locator('#composer').fill('draft survives');await openResponseSettings(page,'thinking');
+ const options=page.locator('#modal [role=listbox]');await expect(options).toContainText('Adaptive');await expect(options).toContainText('6144 tokens');
+ assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
+ await page.locator('#modal [data-option-value="messages-budget-v1:high"]').click();await closeResponseSettings(page);
+ await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(1);
+ const sent=JSON.parse(requests.find(r=>r.method==='PATCH')!.body);assert.equal(sent.thinkingProfile,'messages-budget-v1');assert.equal(sent.thinkingLevel,'high');
+ await chooseModel(page,'',true);
+ const repeated=await api(page,"return adapter.modelSelection('work-1','session-1');");
+ assert.equal(repeated.profile,'messages-budget-v1');assert.equal(repeated.thinking,'high');assert.equal(repeated.phase,'clean');
+ assert.equal(requests.filter(r=>r.method==='PATCH').length,1);await closeResponseSettings(page);
+ await expect(page.locator('#composer')).toHaveValue('draft survives');await expect(page.locator('.response-thinking')).toContainText('Compatible');
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ await page.setViewportSize({width:1440,height:900});
+ await page.evaluate(async()=>{const path='/desktop/browser/locale.js';const locale=await import(path);locale.chooseLocale('zh-CN');});
+ await expect(page.locator('.response-thinking')).toContainText('兼容');await expect(page.locator('.response-thinking')).toContainText('预算');
+ await openResponseSettings(page,'thinking');
+ await expect(page.locator('#modal [role=listbox]')).toContainText('自适应');
+ await page.locator('#modal [data-option-value="messages-budget-v1:high"]').focus();
+ await expect(page.locator('#modal [data-option-value="messages-budget-v1:high"]')).toBeFocused();
+ assert.equal(requests.filter(r=>r.method==='PATCH').length,1);
+});
+
+for (const level of ['high','off'] as const) test(`saved compatible ${level} survives SDK recognition and same-model confirmation`,async t=>{
+ const unknown={modelRef:null,label:'Future model',provider:'anthropic',model:'future',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','high']}]};
+ const known={modelRef:null,label:'Future model',provider:'anthropic',model:'future',thinkingLevels:['off'],defaultThinkingLevel:'off'};
+ let recognized=false,thinking:string|null=null,profile:string|undefined;
+ const {page,requests}=await fixture(t,r=>{
+  const model=recognized?known:unknown;
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[],defaultModel:model,availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){const value=JSON.parse(r.body);thinking=value.thinkingLevel;profile=value.thinkingProfile ?? undefined;}return{json:{sessionId:'session-1',modelRef:null,model,thinkingLevel:thinking,...(profile?{thinkingProfile:profile}:{}),availability:'available'}};}
+ });
+ await button(page,'tab-Chat').click();await expectThinkingEditable(page);
+ await chooseThinking(page,`messages-adaptive-v1:${level}`);await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(1);
+ recognized=true;await api(page,"await adapter.loadModels('work-1');");
+ await expect(button(page,'send-message')).toBeEnabled();
+ await chooseModel(page,'',true);
+ const state=await api(page,"return adapter.modelSelection('work-1','session-1');");
+ assert.equal(state.profile,'messages-adaptive-v1');assert.equal(state.thinking,level);assert.equal(state.phase,'clean');
+ assert.equal(requests.filter(r=>r.method==='PATCH').length,1);
+ await expect(page.locator('#thinking-select')).toBeEnabled();
+ await chooseThinking(page,'off',true);
+ await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(2);
+ const changed=JSON.parse(requests.filter(r=>r.method==='PATCH').at(-1)!.body);
+ assert.equal(changed.thinkingLevel,'off');assert.equal(changed.thinkingProfile,null);
+ await closeResponseSettings(page);
+});
+
+test('switching models during a compatible save requires explicit confirmation of the new model',async t=>{
+ const first={modelRef:null,label:'First',provider:'openai',model:'future-first',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'responses-effort-v1',levels:['high']}]};
+ const second={...first,modelRef:'model-future-second',label:'Second',model:'future-second'};
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});t.after(async()=>release());
+ let ref:string|null=null,thinking:string|null=null,profile:string|undefined;
+ const {page,requests}=await fixture(t,async r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[second],defaultModel:first,availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){const value=JSON.parse(r.body);if(!requests.filter(x=>x.method==='PATCH' && x.path.endsWith('/chat-options')).slice(1).length)await gate;ref=value.modelRef;thinking=value.thinkingLevel;profile=value.thinkingProfile ?? undefined;}return{json:{sessionId:'session-1',modelRef:ref,model:ref?second:first,thinkingLevel:thinking,...(profile?{thinkingProfile:profile}:{}),availability:'available'}};}
+ });
+ await button(page,'tab-Chat').click();await expectThinkingEditable(page);
+ await chooseThinking(page,'responses-effort-v1:high',true);
+ await chooseModel(page,second.modelRef,true);
+ release();await expect.poll(async()=>(await api(page,"return adapter.modelSelection('work-1','session-1');")).phase).toBe('dirty');
+ assert.equal(requests.filter(r=>r.method==='PATCH').length,1);await expect(button(page,'send-message')).toBeDisabled();
+ await expect(page.locator('#modal [data-action=save-model]')).toHaveCount(0);
+ await chooseThinking(page,'responses-effort-v1:high',true);
+ await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(2);
+ const changed=JSON.parse(requests.filter(r=>r.method==='PATCH').at(-1)!.body);
+ assert.deepEqual([changed.modelRef,changed.thinkingLevel,changed.thinkingProfile],[second.modelRef,'high','responses-effort-v1']);
+ await closeResponseSettings(page);await expect(button(page,'send-message')).toBeEnabled();
+});
+
+test('a new-session model command remains until compatible Thinking is confirmed for the new model',async t=>{
+ const first={modelRef:null,label:'First',provider:'openai',model:'future-first',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'responses-effort-v1',levels:['high']}]};
+ const second={...first,modelRef:'model-future-second',label:'Second',model:'future-second'};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/sessions'))return{json:{sessions:[]}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[second],defaultModel:first,availability:'available',checkedAt:new Date().toISOString()}};
+ });
+ await button(page,'tab-Chat').click();await expect(page.locator('.session-line')).toContainText('No Session yet');
+ await chooseThinking(page,'responses-effort-v1:high');
+ await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
+ await chooseModel(page,second.modelRef,true);
+ await expect(page.locator('#composer')).toHaveValue('/model');assert.equal(await api(page,"return adapter.modelReady('work-1','');"),false);
+ assert.equal(chatWrites(requests).length,0);
+ await chooseThinking(page,'responses-effort-v1:high',true);
+ await expect(page.locator('#composer')).toHaveValue('');
+ assert.equal(chatWrites(requests).length,0);await closeResponseSettings(page);
+});
+
+test('a rejected compatible request remains visible and the user can adjust settings without resending',async t=>{
+ const model={modelRef:null,label:'New model',provider:'anthropic',model:'unknown-model',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','high']},{profile:'messages-budget-v1',levels:['off','high'],budgets:{high:6144}}]};
+ const failure={code:'MODEL_COMPATIBLE_REQUEST_REJECTED',message:'The model provider rejected the request. Check the compatible Thinking settings.',retryable:false};
+ const run={...controlRun('run-compatible-rejected',5,'session-1',{kind:'chat'}),actualModel:model,thinkingLevel:'high',thinkingProfile:'messages-adaptive-v1',error:failure};
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[],defaultModel:model,availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:null,model,thinkingLevel:'high',thinkingProfile:'messages-adaptive-v1',availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:{...model,availability:'available'},thinkingLevel:'high',thinkingProfile:'messages-adaptive-v1',source:{kind:'chat'}},messages:[{entryId:'user-rejected',runId:'run-compatible-rejected',role:'user',blocks:[{blockId:'user-rejected',type:'text',text:'Original prompt'}]}],runs:[run]}};
+  if(r.path==='works/work-1/runs/run-compatible-rejected')return{json:run};
+  return focusFixture(r);
+ });
+ await expect(page.locator('.message-execution').filter({hasText:'The model provider rejected the request'})).toBeVisible();
+ await page.locator('#composer').fill('next draft');await openResponseSettings(page,'thinking');
+ await expect(page.locator('#modal [role=listbox]')).toContainText('Adaptive');
+ await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('next draft');
+ assert.equal(requests.filter(r=>r.method==='POST' && r.path.endsWith('/runs')).length,0);
+ assert.equal(requests.filter(r=>r.method==='PATCH' && r.path.endsWith('/chat-options')).length,0);
+});
+
+for(const language of ['en','zh-CN'])test(`refresh chooses sendable user Session and keeps explicit history (${language})`,async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,defaultModel:chatModel,models:[]}};
+  if(r.path.endsWith('/sessions'))return{json:{sessions:['session-1','session-2','session-service'].map(sessionId=>({sessionId,modelPreference:{...chatModel,availability:'available'},thinkingLevel:'off',source:{kind:sessionId==='session-service'?'service':'chat'}}))}};
+  if(r.path.endsWith('/chat-options'))return{json:{sessionId:r.path.split('/')[3],modelRef:null,model:chatModel,thinkingLevel:'off',availability:r.path.includes('/session-1/')?'unavailable':'available'}};
+  const match=r.path.match(/\/sessions\/(session-[^/]+)$/);
+  if(match)return{json:{session:{workId:'work-1',sessionId:match[1],modelPreference:{...chatModel,availability:'available'},thinkingLevel:'off',source:{kind:'chat'}},messages:[{role:'user',text:match[1]==='session-1'?'Old preserved history':'New conversation'}],runs:[]}};
+ });
+ if(language==='zh-CN'){await page.evaluate(()=>localStorage.setItem('piwork.ui-locale','zh-CN'));await page.reload();}
+ await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+ await page.locator('#composer').fill('unsent draft');await expect(button(page,'send-message')).toBeEnabled();
+ await page.locator('[data-action="sessions"]').last().click();await page.locator('[data-action="select-session"][data-id="session-1"]').click();
+ await expect(page.locator('.options-status').first()).toContainText(language==='en'?'environment or saved settings':'环境或已保存设置');
+ await expect(page.locator('body')).toContainText('Old preserved history');await expect(button(page,'send-message')).toBeDisabled();
+ await expect(page.locator('body')).not.toContainText(language==='en'?'Choose an available model.':'请选择可用模型。');
+ await page.reload();await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+ assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
+ assert.equal(requests.filter(r=>r.path.includes('/session-service/chat-options')).length,0);
+});
+
+test('all unavailable Sessions retain history and expose Session recovery without creating or sending',async t=>{
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
+  if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,defaultModel:chatModel,models:[]}};
+  if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:null,model:chatModel,thinkingLevel:'off',availability:'unavailable'}};
+ });
+ await expect(page.locator('.options-status').first()).toContainText('environment or saved settings');
+ await page.locator('#composer').fill('keep this draft');await expect(button(page,'send-message')).toBeDisabled();
+ await page.locator('.options-status [data-action="sessions"]').click();await expect(button(page,'new-session')).toBeVisible();
+ await button(page,'close-modal').click();await expect(page.locator('#composer')).toHaveValue('keep this draft');
+ assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
 });

@@ -81,11 +81,13 @@ export interface Message {
   source?: string;
   tool?: { id?: string; name: string; status: string; content: string; isError?: boolean };
 }
-export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown" }
+export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown"; compatibleThinkingProfiles?: Array<{profile:string;levels:string[];budgets?:Record<string,number>}> }
 export interface Session {
+  chatAvailability?: "available" | "unavailable" | "unconfirmed";
   history?: { loading: boolean; error: string; cursor: string | null; snapshot: string; hasMore: boolean; expired?: boolean };
   imageProfile?: boolean;
   thinkingLevel?: string | null;
+  thinkingProfile?: string;
   loading?: boolean;
   checkedAt?: string;
   error?: string;
@@ -100,6 +102,7 @@ export interface Session {
 export interface Run {
   resultRef?: {workId:string;sessionId:string;runId:string;content:'result';snapshot?:string;entryId?:string;blockId?:string}|null;
   thinkingLevel?: string | null;
+  thinkingProfile?: string;
   actualModel?: RunModel | null;
   source?: Session["source"];
   adoptedExperienceVersion?: number;
