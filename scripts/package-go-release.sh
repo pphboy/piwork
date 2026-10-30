@@ -112,6 +112,10 @@ done
 test "$(wc -l < "$release_stage/image-programs.ndjson")" -eq 4
 test "$(rg -c "$release_commit" "$release_stage/image-programs.ndjson")" -eq 4
 
+# Sync tracked delivery materials only after the frozen source and binaries pass
+# validation; doing this earlier makes our own output look like dirty input.
+node scripts/sync-docker-quickstart.mjs "$PIWORK_RELEASE_METADATA"
+node scripts/check-docker-quickstart.mjs
 node scripts/stage-go-release-materials.mjs "$release_stage" "$release_commit"
 (
   cd "$release_stage"

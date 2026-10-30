@@ -34,9 +34,7 @@ try {
   run('bash',['scripts/collect-docker-release.sh',stage],env);
   const records=collectRecords(stage);verifyImageRecords(metadata,records);
   if(sourceInputHash()!==metadata.sourceInputHash)throw new Error('Release inputs changed during verification');
-  // Candidate materials are generated only after real image verification.
-  run(process.execPath,['scripts/sync-docker-quickstart.mjs',join(stage,'metadata.json')]);
-  run(process.execPath,['scripts/check-docker-quickstart.mjs']);
+  // Packaging validates the frozen clean inputs before generating tracked materials.
   writeMaterials(metadata,records,join(stage,'materials'));
   run('bash',['scripts/package-go-release.sh'],env);
  } finally {rmSync(stage,{recursive:true,force:true});}
