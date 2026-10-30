@@ -3453,7 +3453,7 @@ test('History pages: recent-only opening, earlier anchor, draft and partial Mark
   await page.locator('#composer').fill('Keep this draft');
   await page.locator('#messages').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
   await expect(page.locator('#messages a[href="https://example.test"]')).toHaveCount(0);
-  await expect(page.locator('.history-partial').first()).toBeVisible();
+  await expect(page.locator('.message-history-status').first()).toBeVisible();
   const anchor=page.locator('[data-message-key]').filter({hasText:'Recent 0'}).first();
   const before=(await anchor.boundingBox())!.y;
   await page.locator('[data-action=load-earlier-history]').click();
@@ -3879,6 +3879,7 @@ for (const level of ['high','off'] as const) test(`saved compatible ${level} sur
  await button(page,'tab-Chat').click();await expectThinkingEditable(page);
  await chooseThinking(page,`messages-adaptive-v1:${level}`);await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(1);
  recognized=true;await api(page,"await adapter.loadModels('work-1');");
+ await page.locator('#composer').fill('Use the saved compatible Thinking preference');
  await expect(button(page,'send-message')).toBeEnabled();
  await chooseModel(page,'',true);
  const state=await api(page,"return adapter.modelSelection('work-1','session-1');");
@@ -3903,6 +3904,7 @@ test('switching models during a compatible save requires explicit confirmation o
   if(r.path.endsWith('/chat-options')){if(r.method==='PATCH'){const value=JSON.parse(r.body);if(!requests.filter(x=>x.method==='PATCH' && x.path.endsWith('/chat-options')).slice(1).length)await gate;ref=value.modelRef;thinking=value.thinkingLevel;profile=value.thinkingProfile ?? undefined;}return{json:{sessionId:'session-1',modelRef:ref,model:ref?second:first,thinkingLevel:thinking,...(profile?{thinkingProfile:profile}:{}),availability:'available'}};}
  });
  await button(page,'tab-Chat').click();await expectThinkingEditable(page);
+ await page.locator('#composer').fill('Preserve this draft while changing models');
  await chooseThinking(page,'responses-effort-v1:high',true);
  await chooseModel(page,second.modelRef,true);
  release();await expect.poll(async()=>(await api(page,"return adapter.modelSelection('work-1','session-1');")).phase).toBe('dirty');
