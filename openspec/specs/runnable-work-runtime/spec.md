@@ -121,7 +121,7 @@ Agentd SHALL create, list, read, and continue Sessions through the agent protoco
 
 Agentd SHALL durably accept a prompt and submission key, execute the Run with the configured model through the Pi SDK, persist ordered mapped events and a unique terminal state, and save the resulting Session history. A client or Core observation disconnect MUST NOT abort execution; explicit cancellation MUST request SDK abort and persist the resulting state. Each Session SHALL be constructed with the active Work-owned resource loader, including every file in its copied Skills, its AGENTS content, and its resolved tool policy.
 
-每个 SDK session SHALL 获得独立的 package-aware resource runtime，按 PKGA-004 绑定 headless extension 事件，加载所绑定 context 的 enabled 包。工具实现与资源发现必须走真实 SDK，不能用 readiness 回显或 fixture 手写响应代替。已绑定旧 context 的 Session SHALL 保持既有 context mismatch 规则。
+每个 SDK session SHALL 获得独立的 package-aware resource runtime，按 PKGA-004 绑定 headless extension 事件，加载所绑定 context 的 enabled 包。工具实现与资源发现必须走真实 SDK，不能用 readiness 回显或 fixture 手写响应代替。Session SHALL 不再绑定创建时环境；每个 Run 固定受理时 active context，同一 Session 跨环境的历史不改写，不按镜像版本判断继续资格。
 
 #### Scenario: Receive a deterministic acceptance reply through the real stack
 - **WHEN** the acceptance fixture submits a prompt to a real agentd container configured with the deterministic model
@@ -205,7 +205,10 @@ Core SHALL 在路由 Session/Run 或激活候选之前核验 daemon readiness：
 
 握手 SHALL 必需报告 packageContractVersion=1 及实际加载包的名称、内部制品身份和资源/工具来源；即使 packages=[] 也不能省略契约。Core SHALL 按 PKGA-005 验证 enabled 包集合完全匹配 captured context，并区别独立 Skills 与 package Skills。旧握手缺字段返回 AGENT_CONTEXT_INCOMPATIBLE；包成员/内容/工具错误返回 AGENT_CONTEXT_MISMATCH。
 
-Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1 和 history schema=4；即使没有选择脑包或 models 列表为空也不能省略当前契约。Apply 初始化只能验证资源，不得开启自动请求执行；正式 active 当前代次才开放准入。
+Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1 和 history schema 与固定 Agent 的精确受支持声明一致（4、5、6 或 7）；即使没有选择脑包或 models 列表为空也不能省略当前契约。Apply 初始化只能验证资源，不得开启自动请求执行；正式 active 当前代次才开放准入。
+
+
+本变更新 Agent 使用 history schema 7，Core 仍识别已知 schema 4/5/6 的固定旧 Agent，并根据镜像真实能力与受控升级结果核对版本；不把不匹配的 Agent 视为 ready。
 
 #### Scenario: Verify the expected copied Skills
 - **WHEN** 当前 daemon 报告预期 context，且成功加载的 Skill 身份及工具与配置完全匹配
@@ -234,6 +237,10 @@ Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1
 #### Scenario: 不完整的当前反馈握手
 - **WHEN** 候选或被恢复容器缺少任一当前模型、反馈或历史契约
 - **THEN** Go Core 拒绝 ready 与路由，返回安全不兼容诊断，不通过兼容入口或字段缺省放行
+
+#### Scenario: 环境更新不使历史会话失效
+- **WHEN** Work 应用新 active context 并替换 Agent，用户继续同一历史 Session
+- **THEN** 资源加载器、AGENTS 和最终工具策略来自新 Run 固定的 active context，历史作为对话上下文保留，不按镜像版本或旧 Session context 增加例外规则
 
 ### Requirement: Keep Skill data independent of the agent image
 

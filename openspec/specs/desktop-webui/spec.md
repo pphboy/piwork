@@ -1116,13 +1116,13 @@ Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、
 
 **Identifier:** DWUI-MODEL-001
 
-Desktop SHALL 在现有 Chat Box 输入框底部用一个轻量摘要呈现当前 Session 的下一次手动 Run Model 与 Thinking，点击摘要在同一 Response settings 面板中编辑两项，来源为 Go Core 与实际 SDK 共同确认的可用模型，包含 Use Work default。模型与 Thinking SHALL 作为完整设置对自动保存，不要求另按 Save model；保存 Session 偏好 SHALL 不触发 Apply、重建 Session、取消 Run 或立即发送消息。已受理 Run 的实际模型与 Thinking SHALL 保持不变；自动请求 SHALL 使用该 Run 受理时 Work active 默认模型及其兼容旧行为的 Thinking，不继承手动 Session 偏好。选择器及详情 SHALL 不公开密钥、私有路径或绑定凭证。
+Desktop SHALL 在现有 Chat Box 输入框底部用一个轻量摘要呈现当前 Session 的下一次手动 Run Model 与 Thinking，点击摘要在同一 Response settings 面板中编辑两项，来源为 Go Core 与实际 SDK 共同确认的可用模型，包含 Use Work default。模型与 Thinking（含显式兼容方式）SHALL 作为完整设置自动保存，不要求另按 Save model；保存 Session 偏好 SHALL 不触发 Apply、重建 Session、取消 Run 或立即发送消息。已受理 Run 的实际模型与 Thinking SHALL 保持不变；自动请求 SHALL 使用该 Run 受理时 Work active 默认模型及其兼容旧行为的 Thinking，不继承手动 Session 偏好。选择器及详情 SHALL 不公开密钥、私有路径或绑定凭证。
 
 加载、保存、发送、错误和恢复 SHALL 沿用 DWUI-011、012、014、017、018、019 的对象归属、即时反馈、身份隔离及原 ID 规则。偏好保存尚未确认时 SHALL 不受理依赖该新选择的发送；失败保留草稿与已确认偏好，不将 UI 临时选项当作服务端事实。失效模型 SHALL 明确阻止新受理并提示选择可用项，不静默换模型。模型或偏好读取晚返回 SHALL 不覆盖切换后的 Work/Session；已受理的提交即使刷新失败也 SHALL 保留 Run ID 和 submissionKey，不重发 prompt。
 
 偏好保存响应丢失或无法确认是否已写入时 SHALL 显示结果未知并保留原 Session 和所选值；Check chat settings SHALL 读取原 Session 的实际完整偏好，不重新发送 PATCH 或 prompt。确认当前偏好之前 SHALL 禁止依赖该保存结果发送；查询失败保持未知和草稿，明确拒绝且可证明未写入时才恢复原已确认偏好。
 
-Thinking 可选档位 SHALL 仅来自当前真实模型的能力，不显示硬编码的通用档位。不能选择 Thinking 的模型 SHALL 显示 Off 和不可用原因；模型切换需要调整不兼容档位时，SHALL 在保存前显示目标模型提供的默认档位及调整说明，保存返回值才成为确认事实。模型覆盖列表为空但 Work 默认已确认可用时 SHALL 仍允许选择默认及发送。当前已保存值不可用时 SHALL 明确要求用户选择，不能静默回退。
+Thinking 可选档位 SHALL 来自后端提供的当前模型 SDK 能力或所选协议兼容方式，不由浏览器硬编码通用档位。SDK 明确不支持 Thinking 的模型 SHALL 显示 Off 和不可用原因；能力未确认的模型 SHALL 保留普通模式并提供后端声明的兼容方式及档位，不能把未确认解释为已确认 Off；模型切换需要调整不兼容档位时，SHALL 在保存前显示目标模型提供的默认档位及调整说明，保存返回值才成为确认事实。模型覆盖列表为空但 Work 默认已确认可用时 SHALL 仍允许选择默认及发送。当前已保存值不可用时 SHALL 明确要求用户选择，不能静默回退。
 
 快速连续选择 SHALL 在原 Session 内按完整设置对协调；上一请求未确认时保留最新选择，不并行提交可能互相覆盖的保存。发送 SHALL 等待最新选择可靠确认；未知结果阻止后续自动保存和发送，重查得到实际完整设置后由用户明确处理尚未保存的选择。切换 Work/Session 不丢草稿，不用晚响应覆盖新对象，也不为界面切换自动提交未开始的保存。
 
@@ -1131,9 +1131,9 @@ Thinking 可选档位 SHALL 仅来自当前真实模型的能力，不显示硬�
 打开选择器 SHALL 不立即改变设置；只有明确选择才触发保存。控件、菜单和错误恢复 SHALL 支持键盘且保持输入草稿。新聊天能力缺失时 SHALL 保留既有基础聊天与模型能力，Thinking 入口说明此 Work 不支持，不将缺失能力等同于 Off 已保存。
 合并摘要、Input options 与 Send SHALL 组成输入框内同一底栏；Model 与 Thinking 不再作为两个独立字段常驻 Composer。摘要 SHALL 按内容占宽，宽度足够时所有底栏动作同行、等高并垂直居中；长名称在摘要中截断且不能挤走发送，完整名称在设置面板内可读取。360px 下所有必要动作和错误恢复 SHALL 可达且无整页横向滚动，局部空间不足时可让摘要整组换行，不能恢复两个平铺字段。打开面板不修改，Esc 或 Close 只关闭面板并返回来源；/model 与 /thinking SHALL 打开同一面板并直接展开对应的真实选项，不能只停在一个未展开按钮。
 
-模型和档位 SHALL 以固定 Pi SDK 的已确认能力结合 Core 准入为准，不为让 Thinking 可点击而补通用档位。能力未确认、真正不支持、新契约缺失分别说明；已确认支持多个档位时必须可直接选择、保存并用于下一次真实请求，SDK/配置修订不成为默认模型标签。
+模型准入 SHALL 以 Core 与实际 Agent 为准；SDK 档位采用固定 SDK 已确认能力，兼容档位采用后端声明的协议映射，不能伪装为已确认能力。能力未确认、真正不支持、新契约缺失分别说明；已确认支持多个档位时必须可直接选择、保存并用于下一次真实请求，SDK/配置修订不成为默认模型标签。
 
-Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，一次只展开其中一项的选项列表；点击当前展开行可收起列表，切换另一行只改变展开目标，不保存。摘要直接打开时 SHALL 先显示两行当前值，不默认展开长选项列表。模型选项 SHALL 包含 Use Work default 及其真实模型名称；Thinking 档位仅来自当前所选模型的已确认能力。
+Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，一次只展开其中一项的选项列表；点击当前展开行可收起列表，切换另一行只改变展开目标，不保存。摘要直接打开时 SHALL 先显示两行当前值，不默认展开长选项列表。模型选项 SHALL 包含 Use Work default 及其真实模型名称；Thinking 档位来自当前所选模型的 SDK 能力或用户明确选择的兼容方式。
 
 明确选择不同值后 SHALL 自动保存完整设置对、收起该选项列表并保留面板，焦点返回对应当前值行；选中值与保存中状态立即可辨。选择与当前完整设置相同的值 SHALL 不产生重复保存；由 /model 或 /thinking 发起且原设置已经确认时，这种明确确认可完成对应网页命令。Close 或 Esc 在选择之后 SHALL 不撤销、取消或重新提交已经发出的保存，面板不提供暗示撤销自动保存的 Cancel 动作。保存期间仍允许按原协调规则继续选择不同值。
 
@@ -1141,9 +1141,16 @@ Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，
 
 摘要与面板 SHALL 显示同一设置状态。正常状态使用已确认值；保存中、明确未保存和结果未知时可展示保留的最新选择，但 SHALL 同时明确其未确认状态，不能据此声称下一条消息已经可以使用该值。保存中、失败、未知、模型不可用、Thinking 真正不支持或能力未确认的必要状态与原因 SHALL 在面板关闭后仍留于 Composer 附近；尚无 Session 时显示 For new session。正常已确认状态不保留永久 Saved 条。
 
-面板 SHALL 将当前展开列表的已选项作为初始焦点，未选中时使用首个可用项；从摘要直接打开时焦点进入 Model 当前值行，若该行不可编辑则进入可用的恢复入口或 Close。上下键及 Home/End 只移动当前列表的焦点，不改变设置；Enter/Space 明确选择，Tab/Shift+Tab 按面板焦点顺序导航。不可编辑项 SHALL 紧邻说明原因，不构造通用 Thinking 档位。直接摘要打开的面板关闭后焦点返回摘要，网页命令打开的面板关闭后返回 Composer；输入法组合期间 Enter 不选择或发送，Esc 只关闭面板而不同时退出专注布局。
+面板 SHALL 将当前展开列表的已选项作为初始焦点，未选中时使用首个可用项；从摘要直接打开时焦点进入 Model 当前值行，若该行不可编辑则进入可用的恢复入口或 Close。上下键及 Home/End 只移动当前列表的焦点，不改变设置；Enter/Space 明确选择，Tab/Shift+Tab 按面板焦点顺序导航。不可编辑项 SHALL 紧邻说明原因，不在浏览器自行构造 Thinking 档位。直接摘要打开的面板关闭后焦点返回摘要，网页命令打开的面板关闭后返回 Composer；输入法组合期间 Enter 不选择或发送，Esc 只关闭面板而不同时退出专注布局。
 
 面板状态 SHALL 归属打开时的 Core/账号、Work 和 Session。切换身份、Work、Session 或离开相应 Chat 时 SHALL 关闭原面板；晚结果只更新原对象，不重开旧面板或覆盖新对象草稿。/model 与 /thinking 保留 DWUI-COMMAND-001 的成功消费、取消/失败保留与原草稿比对规则；不接收额外参数，不提交 Run。Input options、Service identity 与资源命令参数边界继续遵循原规则。
+
+
+Thinking 未确认且当前 Work 支持兼容契约时，Response settings 与 `/thinking` SHALL 提供普通模式和对应协议的兼容选择。Messages 的自适应与预算方式 SHALL 在同一面板内可区分；展开或浏览某种方式不保存，明确选择档位才原子保存方式和档位。预算档位 SHALL 展示 token 数量。界面 SHALL 提供简短中英文说明：这是用户请求的兼容设置，模型服务可能拒绝；不要求用户先进入管理员页面或填写能力 JSON。
+
+已选择兼容档位时，Composer 摘要、设置面板及 Run 详情/历史 SHALL 区分兼容来源与 SDK 已确认档位。默认普通模式 SHALL 表示未请求额外推理；兼容 Off 表示请求关闭，不能表述为服务端内部推理已获证明关闭。相同档位但不同兼容方式 SHALL 视为不同完整设置，旧响应不能覆盖最新方式。切换模型导致方式/档位不兼容时 SHALL 保留原确认事实并要求用户明确选择，不暗中把兼容配置应用到另一协议。
+
+旧 Agent 未提供兼容契约时 SHALL 保留其基础聊天能力并说明兼容推理需要更新 Agent；不得丢弃兼容字段后发送旧格式保存。供应商拒绝后的恢复 SHALL 引导回同一设置面板，保留原 Run、设置及未发送草稿，不自动重发消息或修改偏好。
 
 #### Scenario: 当前执行中修改下一次模型
 - **WHEN** 当前 Run 使用模型 A，用户保存当前 Session 的模型 B 偏好
@@ -1210,8 +1217,8 @@ Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，
 - **THEN** 面板分别显示 Loading models 或读取原因与 Retry models，不显示虚构空列表；用户能关闭面板继续编辑，读恢复成功后显示真实选择，不自动发送或保存
 
 #### Scenario: 无 Thinking 能力的命令入口
-- **WHEN** 当前 Work 不支持新聊天能力、模型仅支持 Off 或 Thinking 能力未确认，用户执行 /thinking
-- **THEN** 统一面板打开并显示对应禁用原因，真正不支持时显示 Off，缺失或未确认能力不伪装成已保存 Off；命令和草稿保持，没有偏好修改或 Run，关闭后仍能看到必要原因
+- **WHEN** 当前 Work 不支持所需聊天能力，或 SDK 已确认模型仅支持 Off，用户执行 /thinking
+- **THEN** 统一面板打开并显示对应禁用原因，真正不支持时显示 Off，缺失聊天能力不伪装成已保存 Off；命令和草稿保持，没有偏好修改或 Run，关闭后仍能看到必要原因
 
 #### Scenario: 未知结果的统一入口
 - **WHEN** 保存结果未知，用户关闭并重开面板，然后执行 Check chat settings
@@ -1228,6 +1235,35 @@ Response settings SHALL 持续显示相邻的 Model 与 Thinking 当前值行，
 #### Scenario: 新 Session 的草稿配置
 - **WHEN** 尚无 Session，用户从摘要选择模型或 Thinking 后关闭面板
 - **THEN** 摘要与附近状态说明 For new session，只有本地草稿选择改变；明确 Send 或 New session 才按原规则创建并确认一次 Session，没有后台创建或立即发送
+
+#### Scenario: 未收录型号直接设置兼容推理
+- **WHEN** 用户选择未知模型，从摘要或 /thinking 打开推理选项
+- **THEN** 能看到普通模式及后端提供的兼容方式/档位，明确选择后保存并用于下一次发送，无需管理员配置；仅浏览或关闭不改变设置
+
+#### Scenario: 兼容方式不是能力认证
+- **WHEN** 用户保存兼容 High，执行成功后重新打开 Session 或历史
+- **THEN** 当前设置和该 Run 均可辨认为兼容 High，不变成 SDK 已确认 High；普通模式与兼容 Off 仍可区分
+
+#### Scenario: 相同档位切换方式
+- **WHEN** 用户将 Messages 的自适应 High 改为预算 High，随后快速选择另一档位并切换 Session
+- **THEN** 按原串行协调规则保存完整方式和档位，晚响应只更新原 Session；发送等待最新完整设置确认，草稿和当前对象不被覆盖
+
+#### Scenario: 兼容设置结果未知
+- **WHEN** 保存兼容设置后响应丢失
+- **THEN** 禁止依赖该结果的发送，只读 Check chat settings 能核对模型、方式及档位，不重复 PATCH 或 prompt，不丢失兼容方式
+
+#### Scenario: 兼容推理的窄屏与语言
+- **WHEN** 用户在中英文、360px 及桌面视口中用鼠标或键盘选择兼容方式与档位
+- **THEN** 必要说明、选中状态、预算和恢复入口可达，沿用既有焦点/关闭行为，不产生整页横向滚动或额外管理员步骤
+
+
+#### Scenario: 刷新后选择可继续的用户会话
+- **WHEN** 页面首次进入或刷新，未恢复明确会话选择，Work 存在发送资格不同的用户会话
+- **THEN** 以只读聊天设置核对发送资格，先保留可继续的原默认用户会话，否则选择最近可继续的用户会话；不按历史投影的模型可用性猜测，不选 Service 自动会话，不自动创建 Session 或发送消息；手动选择的旧会话仍可阅读且不被晚结果切走；schema 7 中仅创建环境不同不使原会话失效或要求切换会话
+
+#### Scenario: 原环境或设置已不可用
+- **WHEN** 当前会话的发送资格不可用，或全部用户会话均不可继续
+- **THEN** 保留历史与草稿，说明当前 Work 环境或保存的设置无法通过准入，并提供切换或新建会话入口；不一律要求更换模型，也不因查询失败声称已确认可继续；旧 Agent 保留原入口，其创建环境限制不作为 schema 7 的会话继续规则
 
 ### Requirement: Service 处理记录与证据在现有工作区闭环
 
