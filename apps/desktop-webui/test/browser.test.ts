@@ -880,10 +880,15 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     const roots = appRootLoads;
     await page.getByRole('button',{name:'Cancel run',exact:true}).click();
     releaseFinalRun();
-    const completedExecution = page.locator('.message-execution').filter({hasText:'succeeded'});
+    const completedExecution = page.locator('.message-execution').filter({has:page.locator('[data-action="run-details"][data-run-id="run-12345678"]')});
     await expect(completedExecution).toHaveCount(1);
     if (!await completedExecution.isVisible()) await page.locator('.unmatched-executions > details > summary').click();
     await expect(completedExecution).toBeVisible();
+    await expect(page.locator('.reply-status-slot')).toHaveCount(0);
+    await expect(completedExecution).not.toContainText('Run succeeded');
+    await completedExecution.locator('[data-action="run-details"]').click();
+    await expect(page.locator('#modal dl dd').first()).toHaveText('succeeded');
+    await page.locator('#modal').getByRole('button',{name:'Close',exact:true}).click();
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }

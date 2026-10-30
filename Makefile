@@ -57,7 +57,8 @@ native-compatibility-images: native-agent-images
 	docker build -f internal/coreapp/testdata/Dockerfile.sdk-compatibility --target unavailable-registry -t piwork-agentd:go-migration-registry-unavailable .
 
 test-go:
-	go test -mod=readonly ./...
+	# Generated bundles and local verification files in dist are not source packages.
+	go test -mod=readonly ./cmd/... ./internal/... ./scripts/...
 
 test: build test-go
 	node scripts/check-repository-docs.mjs

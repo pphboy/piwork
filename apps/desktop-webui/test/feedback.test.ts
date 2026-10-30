@@ -927,9 +927,17 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
     if(r.path==='works/work-1/runs/run-original')return{json:{run:{runId:'run-original',sessionId:'session-1',state:2}}};
   });
   await api(page,`adapter.getWork('work-1').run={id:'run-original',sessionId:'session-1',status:'${action==='cancel'?'running':'interrupted'}',cursor:3,created:'',error:'Check the original Run'};`);await button(page,'agent-menu').click();await page.keyboard.press('Escape');
-  const owner=button(page,action==='cancel'?'cancel-run':'resume-run');await owner.click();await expect(owner.locator('[role="status"]')).toContainText(action==='cancel'?'Requesting cancellation':'Reconnecting Run');gate.resolve();
-  if(action==='cancel')await expect(button(page,'cancel-run')).toHaveText('Cancelling…');else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
-  if(action==='cancel'){await expect(button(page,'cancel-run')).toBeDisabled();assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');}
+  const owner=button(page,action==='cancel'?'cancel-run':'resume-run');await owner.click();
+  if(action==='cancel'){
+    await expect(owner).toHaveAttribute('aria-busy','true');await expect(owner).toBeDisabled();await expect(owner).toHaveAccessibleName('Cancel run');await expect(owner).toHaveText('');
+    await expect.poll(()=>requests.filter(r=>r.path.endsWith('/cancel')&&r.method==='POST').length).toBe(1);
+  }else await expect(owner.locator('[role="status"]')).toContainText('Reconnecting Run');
+  gate.resolve();
+  if(action==='cancel'){
+    await expect.poll(()=>api(page,"return adapter.getWork('work-1').run.cancellationRequested")).toBe(true);
+    await expect(button(page,'cancel-run')).toBeDisabled();await expect(button(page,'cancel-run')).toHaveAttribute('aria-busy','true');assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');
+  }else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();
+  assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
 });
 
 for(const action of ['inspect','import','query','cleanup','export'] as const)test(`D17/D18 ${action} retains original transfer or acceptance identity through delayed response`,async t=>{
