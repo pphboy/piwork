@@ -22,7 +22,7 @@ docker run --detach --init \
     --stop-timeout 60 \
     --mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock \
     --volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core \
-    docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a
+    docker.io/pphboy/piwork-core:0.0.17-efadc31a58b3-c8d512cca1d1
 ```
 
 On this computer or another computer, open `http://SERVER_IP:17891` using the server’s actual IP. An empty installation shows Create administrator; an initialized installation shows normal sign-in. No terminal authorization link is required.
@@ -72,7 +72,7 @@ Open `http://desktop.localhost:17901/` locally. Desktop shares user credentials 
 The optional Compose demo uses its own `/var/lib/piwork/core` directory. Stop an installation using the same ports normally before starting. Set up the administrator and model in the browser.
 
 ```sh
-PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a \
+PIWORK_CORE_IMAGE=docker.io/pphboy/piwork-core:0.0.17-efadc31a58b3-c8d512cca1d1 \
     docker compose -f compose.core.yaml up --detach --wait --wait-timeout 600 core
 ```
 

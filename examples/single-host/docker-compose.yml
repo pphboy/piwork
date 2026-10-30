@@ -2,7 +2,7 @@ name: piwork-single-host
 # Liveness keeps first-time setup accessible; /readyz tracks runtime preparation.
 services:
   core:
-    image: docker.io/pphboy/piwork-core:0.0.16-73dbea6e5c20-102f826ec67a
+    image: docker.io/pphboy/piwork-core:0.0.17-efadc31a58b3-c8d512cca1d1
     init: true
     user: "0:0"
     network_mode: host
