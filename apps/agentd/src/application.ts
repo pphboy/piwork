@@ -193,7 +193,7 @@ export class AgentApplication {
     if (!config.deterministic) { await initializeChildAgentDirectory(); await initializeDefaultChildAgentModel(config.model); }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     if(config.historyMigration && (config.initializationOnly!==true || config.historyMigration.workId!==config.workId
-      || config.historyMigration.operationId!==config.correlationId || !([4,5].includes(config.historyMigration.fromSchema) && [5,6].includes(config.historyMigration.toSchema) && config.historyMigration.fromSchema<config.historyMigration.toSchema))) {
+      || config.historyMigration.operationId!==config.correlationId || !([4,5,6].includes(config.historyMigration.fromSchema) && config.historyMigration.toSchema===7))) {
       throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
     }
     if (config.historyMigration) {
@@ -399,10 +399,11 @@ export class AgentApplication {
         this.verifyWork(request.workId); this.assertAcceptingRuns();
         const input = parseContent(request);
         if (!Check(SetSessionChatOptionsSchema, input)) throw Object.assign(new Error("Invalid chat settings"), { code: status.INVALID_ARGUMENT });
+        if ((CHAT_CONTROLS_CONTRACT_VERSION as number) < 4 && input.thinkingProfile !== undefined) throw Object.assign(new Error("Compatible Thinking is unavailable in this Agent"), { code: status.FAILED_PRECONDITION });
         const saved = await this.sessions.setChatOptions(request.objectId, input, this.models);
         const model = JSON.parse(saved.modelPreferenceJson!) as RunModelSnapshot;
         return { valueJson: JSON.stringify({ sessionId: saved.sessionId, modelRef: model.modelRef, model: publicRunModel(model),
-          thinkingLevel: model.thinkingLevel === undefined ? "off" : model.thinkingLevel, availability: "available", checkedAt: saved.updatedAt }) };
+          thinkingLevel: model.thinkingLevel === undefined ? "off" : model.thinkingLevel, ...(model.thinkingProfile ? { thinkingProfile: model.thinkingProfile } : {}), availability: "available", checkedAt: saved.updatedAt }) };
       }),
       lookupChatSubmission: unary((request: AgentContentRequest): AgentContentResponse => {
         this.verifyWork(request.workId);
@@ -839,7 +840,7 @@ function sessionMessage(value: SessionRecord): Session {
   const preference = value.modelPreferenceJson ? JSON.parse(value.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
   return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt,
     modelPreferenceJson: preference ? JSON.stringify({ ...publicRunModel(preference), availability: preference.availability ?? "available" }) : "",
-    sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off" };
+    sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off", thinkingProfile: preference?.thinkingProfile ?? "" };
 }
 
 function runMessage(value: RunRecord, profile?:string): Run {
@@ -863,13 +864,14 @@ function runMessage(value: RunRecord, profile?:string): Run {
     sourceJson: value.sourceJson ?? "", adoptedExperienceVersion: value.adoptedExperienceVersion ?? 0,
     thinkingUnrequested: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingLevel === null : false,
     thinkingLevel: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingLevel ?? "off" : "off",
+    thinkingProfile: value.actualModelJson ? (JSON.parse(value.actualModelJson) as RunModelSnapshot).thinkingProfile ?? "" : "",
   };
 }
 
 function publicSessionLookup(value: SessionRecord) {
   const session = sessionMessage(value);
   return { workId: session.workId, sessionId: session.sessionId, createdAt: session.createdAt, updatedAt: session.updatedAt,
-    modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingUnrequested ? null : session.thinkingLevel,
+    modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingUnrequested ? null : session.thinkingLevel, ...(session.thinkingProfile ? {thinkingProfile:session.thinkingProfile} : {}),
     source: session.sourceJson ? JSON.parse(session.sourceJson) : { kind: "chat" } };
 }
 
@@ -878,7 +880,7 @@ function publicRunLookup(value: RunRecord) {
   return { workId: run.workId, sessionId: run.sessionId, runId: run.runId, submissionKey: run.submissionKey, state: run.state,
     promptDigest: run.promptDigest, finalText: run.finalText, acceptedAt: run.acceptedAt, startedAt: run.startedAt, finishedAt: run.finishedAt,
     earliestAvailableSequence: String(run.earliestAvailableSequence), latestSequence: String(run.latestSequence),
-    actualModel: run.actualModelJson ? JSON.parse(run.actualModelJson) : null, thinkingLevel: run.thinkingUnrequested ? null : run.thinkingLevel,
+    actualModel: run.actualModelJson ? JSON.parse(run.actualModelJson) : null, thinkingLevel: run.thinkingUnrequested ? null : run.thinkingLevel, ...(run.thinkingProfile ? {thinkingProfile:run.thinkingProfile} : {}),
     source: run.sourceJson ? JSON.parse(run.sourceJson) : { kind: "chat" }, adoptedExperienceVersion: run.adoptedExperienceVersion,
     ...(run.error ? { error: run.error } : {}) };
 }

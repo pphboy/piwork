@@ -213,6 +213,7 @@ export type RunModelDescription = Type.Static<typeof RunModelDescriptionSchema>;
 export interface RunModelSnapshot extends RunModelDescription {
   readonly baseUrl?: string;
   readonly thinkingLevel?: import("./chat-controls.js").ThinkingLevel | null;
+  readonly thinkingProfile?: import("./chat-controls.js").ThinkingProfile;
   readonly api?: import("./ai-model-management.js").ModelApi;
   readonly capabilities?: import("./ai-model-management.js").ModelCapabilities;
   readonly executionBindingId?: string;

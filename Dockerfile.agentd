@@ -64,7 +64,7 @@ LABEL org.opencontainers.image.revision="${PIWORK_COMMIT}" \
       io.piwork.source.input-sha256="${PIWORK_SOURCE_INPUT_HASH}"
 LABEL io.piwork.agent.protocol="v2" io.piwork.agent.version="0.1.0" \
       io.piwork.package-helper.contract="2" io.piwork.service-mcp.contract="1" \
-      io.piwork.work-history.schema="6" io.piwork.run-model.contract="1" io.piwork.work-feedback.contract="1"
+      io.piwork.work-history.schema="7" io.piwork.run-model.contract="1" io.piwork.work-feedback.contract="1"
 ARG SQLITE3_VERSION=3.40.1-2+deb12u2
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates "sqlite3=${SQLITE3_VERSION}" \
  && rm -rf /var/lib/apt/lists/*

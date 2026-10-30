@@ -1,3 +1,4 @@
+import { WORK_SCHEMA_V5_SQL } from "./schema-v5.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,25 +10,25 @@ import { upgradeWorkDatabaseToV6 } from './migrations.js';
 
 const NOW = "2026-09-20T00:00:00Z";
 
-test('schema 5 upgrades to 6 only with a scoped migration grant',async()=>{
+test('schema 5 upgrades to 7 only with a scoped migration grant',async()=>{
  const fixture=await createFixture();
  try {
   let store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());store.close();makeSchema5(fixture.databasePath);
-  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:6 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
-  store=WorkStore.open(fixture.databasePath,{workId:'work-1'});assert.equal(store.schemaVersion,5);store.close();
+  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:7 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1'}),/MIGRATION_REQUIRED/);
   assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:{...grant,workId:'foreign'}}),/MIGRATION_REQUIRED/);
-  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,6);store.close();
-  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,6);store.close();
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,7);store.close();
+  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,7);store.close();
  } finally {await fixture.cleanup();}
 });
 
-test('schema 6 upgrade refuses active Runs without changing history',async()=>{
+test('schema 7 upgrade refuses active Runs without changing history',async()=>{
  const fixture=await createFixture();
  try {
   const store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());const run=store.acceptRun(submit({submissionKey:'active-upgrade'})).run;store.close();makeSchema5(fixture.databasePath);
-  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:6 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
+  const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:7 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
   assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant}),/WORK_HISTORY_BUSY/);
-  const reopened=WorkStore.open(fixture.databasePath,{workId:'work-1'});assert.equal(reopened.schemaVersion,5);assert.equal(reopened.getRun(run.runId)?.state,'accepted');reopened.close();
+  const unchanged=new DatabaseSync(fixture.databasePath,{readOnly:true});assert.equal(unchanged.prepare('SELECT version FROM schema_migrations').get()?.version,5);assert.equal(unchanged.prepare('SELECT state FROM runs WHERE run_id=?').get(run.runId)?.state,'accepted');unchanged.close();
  } finally {await fixture.cleanup();}
 });
 
@@ -35,7 +36,7 @@ test('schema 6 event checkpoints survive compaction and reopen',async()=>{
  const fixture=await createFixture();
  try {
   let store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());store.close();
-  const db=new DatabaseSync(fixture.databasePath,{enableForeignKeyConstraints:true});upgradeWorkDatabaseToV6(db,NOW);db.close();
+
   store=WorkStore.open(fixture.databasePath,{workId:'work-1'});
   const run=store.acceptRun(submit({submissionKey:'checkpoint'})).run;
   store.appendEvent(run.runId,'text',JSON.stringify({delta:'可恢复的正文'}),NOW);
@@ -128,16 +129,19 @@ test("same submission retries reuse one Run before activity checks and changed c
   }
 });
 
-test("Sessions and accepted Runs retain an internal active context identity", async () => {
+test("Each Run captures its own context without binding the Session", async () => {
   const fixture = await createFixture();
   const store = WorkStore.open(fixture.databasePath);
   try {
-    store.createSession({ ...session(), contextIdentity: "context-a" });
+    store.createSession({ ...session(), });
     const accepted = store.acceptRun(submit({ submissionKey: "contexted", contextIdentity: "context-a" }));
-    assert.equal(store.getSession("work-1", "session-1")?.contextIdentity, "context-a");
+
     assert.equal(store.getRun(accepted.run.runId)?.contextIdentity, "context-a");
     store.completeRun(accepted.run.runId, "succeeded", "done", null);
-    assert.throws(() => store.acceptRun(submit({ submissionKey: "wrong-context", contextIdentity: "context-b" })), /context is no longer active/);
+    const next=store.acceptRun(submit({submissionKey:"next-context",contextIdentity:"context-b"}));
+    assert.equal(next.run.contextIdentity,"context-b");
+    assert.equal(store.getRun(accepted.run.runId)?.contextIdentity,"context-a");
+    assert.equal(store.acceptRun(submit({submissionKey:"contexted",contextIdentity:"context-b"})).run.runId,accepted.run.runId);
   } finally {
     store.close();
     await fixture.cleanup();
@@ -241,4 +245,4 @@ async function createFixture(): Promise<{ readonly databasePath: string; cleanup
 }
 
 // Build an isolated schema-5 input for the migration tests.
-function makeSchema5(path:string) {const db=new DatabaseSync(path);try{db.exec('DROP TABLE run_output_chunks; UPDATE schema_migrations SET version=5');}finally{db.close();}}
+function makeSchema5(path:string) {const db=new DatabaseSync(path);try{db.exec('PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE; CREATE TEMP TABLE saved_sessions AS SELECT * FROM sessions; DROP TABLE sessions;');db.exec(WORK_SCHEMA_V5_SQL.match(/CREATE TABLE sessions[\s\S]*?STRICT;/)![0]);db.exec('INSERT INTO sessions(work_id,session_id,sdk_history_path,created_at,updated_at,model_preference_json,source_json) SELECT * FROM saved_sessions; DROP TABLE run_output_chunks; UPDATE schema_migrations SET version=5; COMMIT');}finally{db.close();}}

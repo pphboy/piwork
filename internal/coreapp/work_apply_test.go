@@ -91,7 +91,7 @@ func TestMigrationGrantUsesRecordedSchemasAndRejectsInvalidPairs(t *testing.T) {
 	for _, test := range []struct {
 		from, to int64
 		want     bool
-	}{{0, 0, true}, {4, 5, true}, {4, 6, true}, {5, 6, true}, {5, 5, false}, {6, 5, false}, {6, 6, false}} {
+	}{{0, 0, true}, {4, 5, true}, {4, 6, true}, {5, 6, true}, {4, 7, true}, {5, 7, true}, {6, 7, true}, {3, 7, false}, {6, 8, false}, {5, 5, false}, {6, 5, false}, {6, 6, false}} {
 		plan := workApplyPlan{WorkID: "work-test", HistoryBackup: &applyHistoryBackup{BackupKey: "backup-test", State: "saved", SourceSchema: test.from, TargetSchema: test.to, ManifestDigest: strings.Repeat("a", 64)}}
 		grant := migrationGrant("operation-test", plan)
 		if (grant != nil) != test.want {

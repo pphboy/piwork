@@ -133,7 +133,11 @@ http.createServer((req,res)=>{
   await page.locator('[data-action=back-pi-requests]').click();await page.locator('#modal .modal-footer [data-action=close-modal]').click();
   console.log('Chat controls recovery: accepted lost Retry located by original key without new writes');
 
-  const failedManual=await submit(main,'chat-controls-fail-manual','chat-controls-failed-manual');
+  await page.locator('#composer').fill('chat-controls-fail-manual');
+  const failedResponse=page.waitForResponse(r=>new URL(r.url()).pathname===`/_desktop/api/works/${id}/runs` && r.request().method()==='POST');
+  await page.locator('[data-action=send-message]').click();
+  const failedReceipt=await failedResponse;assert.equal(failedReceipt.status(),202,await failedReceipt.text());
+  const failedManual=(await failedReceipt.json()).run;
   const failedResult=await settled(failedManual.runId);assert.equal(failedResult.state,5);assert.ok(failedResult.error?.message);
   await page.evaluate(async({id,main})=>{const {adapter}=await import('/desktop/browser/adapter.js');await adapter.loadSession(id,main);},{id,main});
   await frame.getByRole('button',{name:'Request Agent'}).click();
@@ -160,8 +164,7 @@ http.createServer((req,res)=>{
     const recovered=await page.evaluate(async({id,runId})=>{
       const {adapter}=await import('/desktop/browser/adapter.js');
       // Establish the interrupted original observer from its real readback.
-      // The fixture submitted this failure directly through Core, so the
-      // browser may currently be observing the newer background Service.
+      // The browser may currently be observing the newer background Service.
       const run=await adapter.loadRunDetails(id,runId);
       if(!run||run.id!==runId)throw new Error('Original failed Run was not confirmed');
       adapter.getWork(id).run=run;

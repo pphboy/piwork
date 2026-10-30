@@ -984,6 +984,7 @@ type Session struct {
 	SourceJson          string                 `protobuf:"bytes,7,opt,name=source_json,json=sourceJson,proto3" json:"source_json,omitempty"`
 	ThinkingLevel       string                 `protobuf:"bytes,8,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
 	ThinkingUnrequested bool                   `protobuf:"varint,9,opt,name=thinking_unrequested,json=thinkingUnrequested,proto3" json:"thinking_unrequested,omitempty"`
+	ThinkingProfile     *string                `protobuf:"bytes,10,opt,name=thinking_profile,json=thinkingProfile,proto3,oneof" json:"thinking_profile,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1079,6 +1080,13 @@ func (x *Session) GetThinkingUnrequested() bool {
 		return x.ThinkingUnrequested
 	}
 	return false
+}
+
+func (x *Session) GetThinkingProfile() string {
+	if x != nil && x.ThinkingProfile != nil {
+		return *x.ThinkingProfile
+	}
+	return ""
 }
 
 type CreateSessionRequest struct {
@@ -2000,6 +2008,7 @@ type Run struct {
 	ThinkingLevel             string                 `protobuf:"bytes,17,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
 	ThinkingUnrequested       bool                   `protobuf:"varint,18,opt,name=thinking_unrequested,json=thinkingUnrequested,proto3" json:"thinking_unrequested,omitempty"`
 	ResultRefJson             *string                `protobuf:"bytes,19,opt,name=result_ref_json,json=resultRefJson,proto3,oneof" json:"result_ref_json,omitempty"`
+	ThinkingProfile           *string                `protobuf:"bytes,20,opt,name=thinking_profile,json=thinkingProfile,proto3,oneof" json:"thinking_profile,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -2163,6 +2172,13 @@ func (x *Run) GetThinkingUnrequested() bool {
 func (x *Run) GetResultRefJson() string {
 	if x != nil && x.ResultRefJson != nil {
 		return *x.ResultRefJson
+	}
+	return ""
+}
+
+func (x *Run) GetThinkingProfile() string {
+	if x != nil && x.ThinkingProfile != nil {
+		return *x.ThinkingProfile
 	}
 	return ""
 }
@@ -3072,7 +3088,7 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x04 \x01(\rR\ttimeoutMs\")\n" +
 	"\rDrainResponse\x12\x18\n" +
-	"\adrained\x18\x01 \x01(\bR\adrained\"\xd8\x02\n" +
+	"\adrained\x18\x01 \x01(\bR\adrained\"\x9d\x03\n" +
 	"\aSession\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -3086,7 +3102,10 @@ const file_agent_proto_rawDesc = "" +
 	"\vsource_json\x18\a \x01(\tR\n" +
 	"sourceJson\x12%\n" +
 	"\x0ethinking_level\x18\b \x01(\tR\rthinkingLevel\x121\n" +
-	"\x14thinking_unrequested\x18\t \x01(\bR\x13thinkingUnrequested\"X\n" +
+	"\x14thinking_unrequested\x18\t \x01(\bR\x13thinkingUnrequested\x12.\n" +
+	"\x10thinking_profile\x18\n" +
+	" \x01(\tH\x00R\x0fthinkingProfile\x88\x01\x01B\x13\n" +
+	"\x11_thinking_profile\"X\n" +
 	"\x14CreateSessionRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12'\n" +
 	"\x0fidempotency_key\x18\x02 \x01(\tR\x0eidempotencyKey\"j\n" +
@@ -3162,7 +3181,7 @@ const file_agent_proto_rawDesc = "" +
 	"\bRunError\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
-	"\tretryable\x18\x03 \x01(\bR\tretryable\"\x91\x06\n" +
+	"\tretryable\x18\x03 \x01(\bR\tretryable\"\xd6\x06\n" +
 	"\x03Run\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -3189,8 +3208,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x1aadopted_experience_version\x18\x10 \x01(\rR\x18adoptedExperienceVersion\x12%\n" +
 	"\x0ethinking_level\x18\x11 \x01(\tR\rthinkingLevel\x121\n" +
 	"\x14thinking_unrequested\x18\x12 \x01(\bR\x13thinkingUnrequested\x12+\n" +
-	"\x0fresult_ref_json\x18\x13 \x01(\tH\x00R\rresultRefJson\x88\x01\x01B\x12\n" +
-	"\x10_result_ref_json\"\xa1\x03\n" +
+	"\x0fresult_ref_json\x18\x13 \x01(\tH\x00R\rresultRefJson\x88\x01\x01\x12.\n" +
+	"\x10thinking_profile\x18\x14 \x01(\tH\x01R\x0fthinkingProfile\x88\x01\x01B\x12\n" +
+	"\x10_result_ref_jsonB\x13\n" +
+	"\x11_thinking_profile\"\xa1\x03\n" +
 	"\x10SubmitRunRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -3462,6 +3483,7 @@ func file_agent_proto_init() {
 		return
 	}
 	file_agent_proto_msgTypes[3].OneofWrappers = []any{}
+	file_agent_proto_msgTypes[12].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[16].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[27].OneofWrappers = []any{}
 	file_agent_proto_msgTypes[28].OneofWrappers = []any{}

@@ -85,8 +85,11 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 	}
 	defer target.Close()
 	definition := schemaSQL
-	if s.SchemaVersion == 5 {
-		definition = currentSchemaSQL
+	if s.SchemaVersion >= 5 {
+		definition = schemaV5SQL
+		if s.SchemaVersion == 7 {
+			definition = currentSchemaSQL
+		}
 	}
 	if s.SchemaVersion == 6 {
 		definition = schemaV6SQL
@@ -251,12 +254,16 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 					pref["availability"] = "available"
 				} else if len(matches) == 1 {
 					thinking, hasThinking := pref["thinkingLevel"]
+					profile, hasProfile := pref["thinkingProfile"]
 					pref = map[string]any{}
 					for key, value := range matches[0] {
 						pref[key] = value
 					}
 					if hasThinking {
 						pref["thinkingLevel"] = thinking
+					}
+					if hasProfile {
+						pref["thinkingProfile"] = profile
 					}
 					pref["availability"] = "available"
 				} else {

@@ -19,7 +19,7 @@ function event(id: string, type = "agent.requested"): ServiceEvent {
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "piwork-feedback-")); const path = join(dir, "history.sqlite");
   const store = WorkStore.open(path);
-  store.createSession({ workId, sessionId: "session-test", sdkHistoryPath: "/private/session", createdAt: now, updatedAt: now, contextIdentity: "context1" });
+  store.createSession({ workId, sessionId: "session-test", sdkHistoryPath: "/private/session", createdAt: now, updatedAt: now, });
   return { store, path, cleanup: () => { store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 function accept(store: WorkStore, id: string, key = "run1", phase: "handling" | "verifying" | "adopting" = "handling") {

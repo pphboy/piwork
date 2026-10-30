@@ -121,10 +121,10 @@ func VerifyReadiness(scope internaltls.Scope, contextID string, initializationOn
 }
 
 func VerifyObservation(scope internaltls.Scope, contextID string, response *agentv1.ReadinessResponse) error {
-	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6) {
+	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7) {
 		return ErrContextIncompatible
 	}
-	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 || response.GetContextIdentity() != contextID {
+	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7 || response.GetContextIdentity() != contextID {
 		return ErrReadiness
 	}
 	return nil
@@ -141,7 +141,7 @@ func (c *Client) ChatControlCapabilities(ctx context.Context, contextID string) 
 	if err != nil {
 		return 0, 0, err
 	}
-	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 {
+	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 || version == 4 {
 		chat = version
 	}
 	if response.GetCancelAndSendContractVersion() == 1 {
@@ -384,6 +384,9 @@ func publicJSON(raw, schema string) bool {
 	return err == nil && contracts.Validate(schema, value) == nil
 }
 func validSessionMetadata(session *agentv1.Session) bool {
+	if session != nil && session.GetThinkingProfile() != "" && (session.GetThinkingUnrequested() || contracts.Validate("ThinkingProfileSchema", session.GetThinkingProfile()) != nil) {
+		return false
+	}
 	if session != nil && session.ThinkingLevel != "" && contracts.Validate("ThinkingLevelSchema", session.ThinkingLevel) != nil {
 		return false
 	}
@@ -409,6 +412,9 @@ func validSessionMetadata(session *agentv1.Session) bool {
 	return contracts.Validate("RunModelDescriptionSchema", pref) == nil
 }
 func validRunMetadata(run *agentv1.Run) bool {
+	if run != nil && run.GetThinkingProfile() != "" && (run.GetThinkingUnrequested() || contracts.Validate("ThinkingProfileSchema", run.GetThinkingProfile()) != nil) {
+		return false
+	}
 	if run != nil && run.ThinkingLevel != "" && contracts.Validate("ThinkingLevelSchema", run.ThinkingLevel) != nil {
 		return false
 	}

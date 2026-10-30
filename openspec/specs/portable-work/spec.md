@@ -86,11 +86,11 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 
 **Identifier:** PWORK-003
 
-包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、storage layout=2，history schema 为精确已知的 4 或 5 的包；schema 5 的已初始化私有历史必须同时包含并完整校验独立 Memory schema 1。不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
+包 SHALL 携带各 context 和已解析服务 revision 的实际固定镜像，去重但不省略镜像层；接收端 SHALL 校验镜像身份和运行平台，不能跟随 mutable tag、更换 agent 镜像、拉取替代镜像或自动升级。未解析的历史服务 revision SHALL 保留 unresolved 状态，不在导出时解析 tag；存在已绑定但丢失的镜像 SHALL 使导出以 SNAPSHOT_IMAGE_MISSING 失败。未解析的当前服务保留其失败/未完成准备事实，不能被宣称可离线启动。v1 SHALL 仅支持 Linux 且 OS/architecture/variant 与目标 Docker 一致、agent protocol 受支持、storage layout=2，history schema 为精确已知的 4、5、6 或 7 的包；schema 5/6/7 的已初始化私有历史必须同时包含并完整校验独立 Memory schema 1。不兼容 SHALL 在创建 Work 之前返回 PACKAGE_INCOMPATIBLE。镜像不受信任，校验/导入阶段 MUST NOT 运行包内 ENTRYPOINT、hooks、shell、MCP 或模型请求。
 
 包 SHALL 携带 Pi package 实际准备好的依赖，不在 export/import 时 npm install、Git checkout、rebuild、执行 lifecycle script 或 extension。piPackageContract、OS/architecture/variant、Node ABI 和 Pi SDK 兼容关系 SHALL 校验；不匹配返回 PACKAGE_INCOMPATIBLE。接收端 package catalog 缺失或存在同名异内容不影响恢复，也不得被覆盖。
 
-导入 SHALL 按所声明的 schema 4 或 schema 5 静态校验各自精确结构与完整引用闭包，不在导入时升级历史或替换固定 agent 镜像，不支持其他历史/Memory 版本、未知受管对象或缺字段补齐。schema 4 Work 的一次性升级仅在之后显式采用新 harness 时遵守 WMEM-005；这不是两套长期运行的 Experience/Memory 权威源。未初始化且两库与 sidecar 均缺席的合法空私有历史按 CONV-SNAPSHOT-001 保留。
+导入 SHALL 按所声明的 schema 4、5、6 或 7 静态校验各自精确结构与完整引用闭包，不在导入时升级历史或替换固定 agent 镜像，不支持其他历史/Memory 版本、未知受管对象或缺字段补齐。后续显式 Apply 新 Agent 时，schema 4/5/6 SHALL 按 WMEM-005 经完整备份后一次升级为 schema 7；旧格式静态读取与迁移不建立并行的长期 Experience/Memory 权威源。未初始化且两库与 sidecar 均缺席的合法空私有历史按 CONV-SNAPSHOT-001 保留。
 
 #### Scenario: Import without the original registry
 - **WHEN** 源固定镜像已打包且目标无法访问原 registry
@@ -113,7 +113,7 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 - **THEN** 发布 Work 前返回 PACKAGE_INCOMPATIBLE，不重新编译来掩盖不兼容
 
 #### Scenario: 当前历史契约明确不支持
-- **WHEN** 完整包声明的历史版本不是精确支持的 schema 4 或 5，或 schema 5 的 Memory 版本不受支持
+- **WHEN** 完整包声明的历史版本不是精确支持的 schema 4、5、6 或 7，或 schema 5/6/7 的 Memory 版本不受支持
 - **THEN** 导入返回 PACKAGE_INCOMPATIBLE，原文件不变，不发布 Work 或启动任何候选
 
 #### Scenario: 保留旧固定镜像的导入
@@ -121,7 +121,7 @@ Work Spec SHALL 是完整快照的清单，而不是要求用户编写的重建�
 - **THEN** 静态导入保留原镜像与原经验数据，显式 Start 不自动升级；后续显式 Apply 新 harness 才进行受控迁移
 
 #### Scenario: 新格式缺失或错配 Memory
-- **WHEN** 已初始化 schema 5 包缺少独立 Memory、store 绑定不匹配或引用不存在的 Evidence/采用版本
+- **WHEN** 已初始化 schema 5/6/7 包缺少独立 Memory、store 绑定不匹配或引用不存在的 Evidence/采用版本
 - **THEN** 整体拒绝导入，不创建空 Memory 或丢弃非法条目后发布 Work
 
 ### Requirement: Instantiate independent identity with automatic platform resolution
@@ -192,11 +192,11 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 
 **Identifier:** PWORK-BRAIN-001
 
-完整包 SHALL 在既有 workspace、agent-private、retained context 和 Pi package 制品组件内包含脑包工作区副本与候选、实际包版本/依赖、业务数据库及待发事件、Work 事实与处理进度、全部关联 Run 和证据、有效、候选、失败及失效认知历史（schema 4 的原 Experience 或 schema 5 的独立 Memory）、Session 模型偏好和 Run 非秘密实际模型描述。新增受管历史表、关系、版本、字段和空集合 SHALL 完整校验，不得把 managed 数据当作无校验普通文件，也不在 framing 中增加未声明组件。
+完整包 SHALL 在既有 workspace、agent-private、retained context 和 Pi package 制品组件内包含脑包工作区副本与候选、实际包版本/依赖、业务数据库及待发事件、Work 事实与处理进度、全部关联 Run 和证据、有效、候选、失败及失效认知历史（schema 4 的原 Experience 或 schema 5/6/7 的独立 Memory）、Session 模型偏好和 Run 非秘密实际模型描述。新增受管历史表、关系、版本、字段和空集合 SHALL 完整校验，不得把 managed 数据当作无校验普通文件，也不在 framing 中增加未声明组件。
 
 独立 Memory SHALL 包含在既有 agent-private 树中，不增加 framing 组件、第三卷或新的平台 secret 绑定。静态验证 SHALL 覆盖 Memory schema、归属绑定、版本/head、已采用条目、来源请求及 Evidence 的跨库闭包，包括真实空版本；分别导入两份后，受管 Work/store 归属按目标重建，Memory 文本、版本、entryId 与本地来源 ID 保持，原来源请求统一 historical。迁移候选或未完成持久恢复不得被导出成可运行成功包。
 
-完整闭包 SHALL 包含 WMEM-001 的最新持久发布 head 和 WMEM-003 的有效 preference 原 Chat 来源、published candidate/entry 的 kind/createdAt 等元数据一致性。history schema 5 的旧合法版本不能冒充当前 head；historical 不能豁免偏好证明。TS 与 Go 校验 SHALL 对同一合法/伪造夹具保持接受/拒绝一致，拒绝不运行源代码、不生成证明、不修复正文或数据库。
+完整闭包 SHALL 包含 WMEM-001 的最新持久发布 head 和 WMEM-003 的有效 preference 原 Chat 来源、published candidate/entry 的 kind/createdAt 等元数据一致性。history schema 5/6/7 的旧合法 Memory 版本不能冒充当前 head；historical 不能豁免偏好证明。TS 与 Go 校验 SHALL 对同一合法/伪造夹具保持接受/拒绝一致，拒绝不运行源代码、不生成证明、不修复正文或数据库。
 
 该闭包 SHALL 按 WMEM-003 校验后续快照中的复制条目与其适用候选，不仅比较候选首次发布版本。Go Open/原 snapshot helper SHALL 在重建或发布导入 Work 之前拒绝 kind、createdAt 或 rule 已与原来源不一致的非法副本，不允许静态验证与 Rebuild 成功后才由运行时发现同一错误。合法复制、合法修订/失效及无对应候选的合法迁移历史 SHALL 保留；重建后的合法数据须能通过运行时相同的来源校验，原请求仍为只读 historical。
 
@@ -205,6 +205,9 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 交互地址与身份 SHALL 在接收者显式 Start 时重新建立。Session 偏好 SHALL 通过非秘密 provider/model/baseUrl 描述唯一匹配目标已启用可用模型，不能以源 catalog ID 或凭据作为权限；没有唯一可用匹配时保留偏好不可用状态并要求明确选择，不能静默换模型。历史实际模型仅为只读证据，不增加运行依赖授权。源码、经验和业务数据的后续更新 SHALL 在各 Work 独立生效。
 
 候选的固定能力验收项和实际 SDK 行为证明 SHALL 随原目标完整保存，并校验工具、输入、必要 checks、Run/请求及候选内容的关系；受管 context 引用按声明映射，验收项中的业务 input 不递归改写。所有候选 SHALL 使用当前 MVP 结构并携带合法验收项；缺失或非法字段不得以 historical 为由接受或补造。completed 记录必须有本版要求的匹配 SDK 证明，未完成记录保持真实状态且不执行。导入不运行验证工具、检查代码或候选准备流程。
+
+
+schema 7 的受管闭包包括 schema 5 的所有关系与独立 Memory，以及已保存的兼容 Thinking 方式和档位。TS 与 Go 验证器均严格检查其协议、档位与方式的组合，静态导入和再导出不得丢弃该语义。
 
 #### Scenario: 保留全部反馈内容
 - **WHEN** 带有业务事件、等待请求、失败记录、证据、经验和脑包 pending desired 的停止 Work 导出并导入
@@ -298,9 +301,10 @@ Work 的默认网络名称、service 域名、Docker 名称及活动访问连接
 
 V1 SHALL 保留 cold-full、两个受管卷、active/desired/历史 context/包绑定/Service revision/终态控制与私有历史、固定镜像 config/非压缩层、模式/UID/GID/纳秒时间/空目录/链接及原用户字节；文件名为 POSIX 字节的 base64 段。100 GiB 包/逻辑恢复、metadata 64 MiB 单份/256 MiB 累计、一百万项、4096 字节/深度128，复用 blob 不绕过逻辑限额。临时层、进程、外部服务、平台用户/目录/秘密和活跃授权不迁移；用户自行存入的秘密不做内容过滤。
 
-原生 reader SHALL 识别 schema 4 和 schema 5/Memory1，SDK JSONL、图像 input 与用户内容沿现有传输保留，不重放 Run。schema 5 的 work.sqlite/memory.sqlite 独立重建目标身份并保留本地版本/条目/文本；未恢复联合 journal 返回 SNAPSHOT_HISTORY_BUSY。schema4 升级只由授权显式 Apply、备份/恢复完成，成功后禁止 schema4-only 降级。
+原生 reader SHALL 精确识别 schema 4 及配套 Memory schema 1 的 history schema 5/6/7，SDK JSONL、图像 input 与用户内容沿现有传输保留，不重放 Run。schema 5/6/7 的 work.sqlite/memory.sqlite 独立重建目标身份并保留本地版本/条目/文本；未恢复联合 journal 返回 SNAPSHOT_HISTORY_BUSY。新 Agent SHALL 仅写入 schema 7；schema 4/5/6 的升级仅在授权的显式 Apply 中按 WMEM-005 经备份/恢复完成，成功后拒绝仅支持 schema 4/5/6 的旧镜像直接运行 schema 7。
 
 inspect SHALL 只验证离线字节，不打开源 SQLite、不执行包代码；目标 Core 静态核验目标模型/凭据/外部 MCP/配额/平台并发布 stopped Work，显式 Start 才生成新网络证书。原请求/来源文本和业务 JSON 不为身份重建而改写。security.selinux 精确排除，不迁移宿主标签，其余不支持属性整体拒绝；hash 完整不代表发送者或包代码可信。
+
 
 #### Scenario: 按现行契约操作与核对
 - **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件

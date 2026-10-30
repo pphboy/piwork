@@ -679,7 +679,7 @@ for(const status of ['cancelled','failed','interrupted'])test(`long Run recovery
  const body='A'.repeat(600000),tailStart=body.length-15*32768;
  const chunk=(offset:number,size:number)=>({...text(`${runId}-text-2`,1,body.slice(offset,offset+size),offset,body.length),runId,blockId:`${runId}-text-2`});
  const tail=Array.from({length:15},(_,i)=>chunk(tailStart+i*32768,32768));
- const prefix=[];for(let at=0;at<tailStart;at+=32768)prefix.push(chunk(at,Math.min(32768,tailStart-at)));
+ const prefix:ReturnType<typeof chunk>[]=[];for(let at=0;at<tailStart;at+=32768)prefix.push(chunk(at,Math.min(32768,tailStart-at)));
  const ref={workId:'work-1',sessionId:'session-1',runId,content:'result',snapshot:'terminal',entryId:`${runId}-final`};
  let terminal=false;const requests:URL[]=[];
  t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{

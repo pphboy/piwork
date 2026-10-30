@@ -195,6 +195,7 @@ export interface Session {
   sourceJson: string;
   thinkingLevel: string;
   thinkingUnrequested: boolean;
+  thinkingProfile?: string | undefined;
 }
 
 export interface CreateSessionRequest {
@@ -312,6 +313,7 @@ export interface Run {
   thinkingLevel: string;
   thinkingUnrequested: boolean;
   resultRefJson?: string | undefined;
+  thinkingProfile?: string | undefined;
 }
 
 export interface SubmitRunRequest {
@@ -2145,6 +2147,7 @@ function createBaseSession(): Session {
     sourceJson: "",
     thinkingLevel: "",
     thinkingUnrequested: false,
+    thinkingProfile: undefined,
   };
 }
 
@@ -2176,6 +2179,9 @@ export const Session: MessageFns<Session> = {
     }
     if (message.thinkingUnrequested !== false) {
       writer.uint32(72).bool(message.thinkingUnrequested);
+    }
+    if (message.thinkingProfile !== undefined) {
+      writer.uint32(82).string(message.thinkingProfile);
     }
     return writer;
   },
@@ -2265,6 +2271,14 @@ export const Session: MessageFns<Session> = {
             message.thinkingUnrequested = reader.bool();
             continue;
           }
+          case 10: {
+            if (tag !== 82) {
+              break;
+            }
+
+            message.thinkingProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2324,6 +2338,11 @@ export const Session: MessageFns<Session> = {
         : isSet(object.thinking_unrequested)
         ? globalThis.Boolean(object.thinking_unrequested)
         : false,
+      thinkingProfile: isSet(object.thinkingProfile)
+        ? globalThis.String(object.thinkingProfile)
+        : isSet(object.thinking_profile)
+        ? globalThis.String(object.thinking_profile)
+        : undefined,
     };
   },
 
@@ -2356,6 +2375,9 @@ export const Session: MessageFns<Session> = {
     if (message.thinkingUnrequested !== false) {
       obj.thinkingUnrequested = message.thinkingUnrequested;
     }
+    if (message.thinkingProfile !== undefined) {
+      obj.thinkingProfile = message.thinkingProfile;
+    }
     return obj;
   },
 
@@ -2373,6 +2395,7 @@ export const Session: MessageFns<Session> = {
     message.sourceJson = object.sourceJson ?? "";
     message.thinkingLevel = object.thinkingLevel ?? "";
     message.thinkingUnrequested = object.thinkingUnrequested ?? false;
+    message.thinkingProfile = object.thinkingProfile ?? undefined;
     return message;
   },
 };
@@ -4062,6 +4085,7 @@ function createBaseRun(): Run {
     thinkingLevel: "",
     thinkingUnrequested: false,
     resultRefJson: undefined,
+    thinkingProfile: undefined,
   };
 }
 
@@ -4131,6 +4155,9 @@ export const Run: MessageFns<Run> = {
     }
     if (message.resultRefJson !== undefined) {
       writer.uint32(154).string(message.resultRefJson);
+    }
+    if (message.thinkingProfile !== undefined) {
+      writer.uint32(162).string(message.thinkingProfile);
     }
     return writer;
   },
@@ -4300,6 +4327,14 @@ export const Run: MessageFns<Run> = {
             message.resultRefJson = reader.string();
             continue;
           }
+          case 20: {
+            if (tag !== 162) {
+              break;
+            }
+
+            message.thinkingProfile = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -4401,6 +4436,11 @@ export const Run: MessageFns<Run> = {
         : isSet(object.result_ref_json)
         ? globalThis.String(object.result_ref_json)
         : undefined,
+      thinkingProfile: isSet(object.thinkingProfile)
+        ? globalThis.String(object.thinkingProfile)
+        : isSet(object.thinking_profile)
+        ? globalThis.String(object.thinking_profile)
+        : undefined,
     };
   },
 
@@ -4463,6 +4503,9 @@ export const Run: MessageFns<Run> = {
     if (message.resultRefJson !== undefined) {
       obj.resultRefJson = message.resultRefJson;
     }
+    if (message.thinkingProfile !== undefined) {
+      obj.thinkingProfile = message.thinkingProfile;
+    }
     return obj;
   },
 
@@ -4497,6 +4540,7 @@ export const Run: MessageFns<Run> = {
     message.thinkingLevel = object.thinkingLevel ?? "";
     message.thinkingUnrequested = object.thinkingUnrequested ?? false;
     message.resultRefJson = object.resultRefJson ?? undefined;
+    message.thinkingProfile = object.thinkingProfile ?? undefined;
     return message;
   },
 };

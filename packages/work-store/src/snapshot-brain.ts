@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { Check } from "typebox/value";
 import { AgentRunSourceSchema, AgentWaitRefSchema, BrainCandidateSubmissionSchema, isBrainVerificationTarget, BRAIN_LIMITS,
-  RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingSettingSchema, ServiceEventSchema, ModelApiSchema, ModelCapabilitiesSchema, ResourceIdSchema } from "@piwork/contracts";
+  RunModelDescriptionSchema, RunSubmissionSelectorSchema, ThinkingSettingSchema, ThinkingProfileSchema, ServiceEventSchema, ModelApiSchema, ModelCapabilitiesSchema, ResourceIdSchema } from "@piwork/contracts";
 import { canonicalJson, contentDigest, FeedbackStore, validBrainAdoption } from "./feedback.js";
 import { MemoryStore } from "./memory.js";
 import { validateMemoryHistory } from "./snapshot-memory.js";
@@ -15,12 +15,15 @@ const optional = (value: SQLInputValue | undefined, check: (v: unknown) => boole
 };
 function model(value: unknown): boolean {
   if (!object(value)) return false;
-  const { baseUrl, availability, thinkingLevel, api,capabilities,executionBindingId,...description } = value;
+  const { baseUrl, availability, thinkingLevel, thinkingProfile, api,capabilities,executionBindingId,...description } = value;
   if (!Check(RunModelDescriptionSchema, description)) return false;
   if(api!==undefined&&(!Check(ModelApiSchema,api)||api==='openai-responses'&&description.provider!=='openai'||api==='anthropic-messages'&&description.provider!=='anthropic'))return false;
   if(capabilities!==undefined&&!Check(ModelCapabilitiesSchema,capabilities))return false;
   if(executionBindingId!==undefined&&!Check(ResourceIdSchema,executionBindingId))return false;
   if (thinkingLevel !== undefined && !Check(ThinkingSettingSchema, thinkingLevel)) return false;
+  if (thinkingProfile !== undefined && (!Check(ThinkingProfileSchema, thinkingProfile) || thinkingLevel === null || thinkingLevel === undefined ||
+      (thinkingProfile === 'responses-effort-v1' ? (api ?? (description.provider === 'openai' ? 'openai-responses' : undefined)) !== 'openai-responses' : (api ?? (description.provider === 'anthropic' ? 'anthropic-messages' : undefined)) !== 'anthropic-messages') ||
+      thinkingProfile === 'messages-adaptive-v1' && thinkingLevel === 'minimal' || thinkingProfile === 'messages-budget-v1' && (thinkingLevel === 'xhigh' || thinkingLevel === 'max'))) return false;
   if (availability !== undefined && !["available", "unavailable"].includes(String(availability))) return false;
   if (baseUrl !== undefined) {
     if (typeof baseUrl !== "string") return false;
@@ -32,7 +35,9 @@ function model(value: unknown): boolean {
 
 /** Validate platform relationships on a read-only scratch DB. Never interpret user databases or execute source SQL. */
 export function validateBrainHistory(database: DatabaseSync, workId: string, contextIds: ReadonlySet<string>): void {
-  const current = Number(database.prepare("SELECT version FROM schema_migrations").get()?.version) >= 5;
+  const version = database.prepare("SELECT version FROM schema_migrations").get()?.version;
+  const current = version !== 4;
+  const versionedModel = (value: unknown) => model(value) && (typeof version === "number" && version >= 6 || !object(value) || !Object.hasOwn(value, "thinkingProfile"));
   const feedback = new FeedbackStore(database, current ? new MemoryStore(database) : undefined);
   const candidateFor = (id: string): Record<string, unknown> | null => {
     const row = database.prepare("SELECT package_submission_json FROM agent_requests WHERE request_id=? AND work_id=?").get(id, workId);
@@ -66,12 +71,12 @@ export function validateBrainHistory(database: DatabaseSync, workId: string, con
       contextIdentity: String(run.context_identity), artifactDigest: String(receipts[0]!.candidateArtifactDigest) });
   };
   for (const r of database.prepare("SELECT * FROM sessions").iterate() as Iterable<Row>) {
-    optional(r.model_preference_json, model);
+    optional(r.model_preference_json, versionedModel);
     optional(r.source_json, (v) => Check(AgentRunSourceSchema, v));
   }
   for (const r of database.prepare("SELECT * FROM runs").iterate() as Iterable<Row>) {
     optional(r.model_selector_json, (v) => Check(RunSubmissionSelectorSchema, v));
-    optional(r.actual_model_json, model);
+    optional(r.actual_model_json, versionedModel);
     optional(r.source_json, (v) => Check(AgentRunSourceSchema, v));
     const version = Number(r.adopted_experience_version);
     if (!Number.isSafeInteger(version) || version < 0) throw new Error("Invalid adopted experience");

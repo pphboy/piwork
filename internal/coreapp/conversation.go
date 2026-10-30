@@ -146,7 +146,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			send(w, 200, capabilities)
 			return true, nil
 		}
-		if version != 1 && version != 2 && version != 3 {
+		if version != 1 && version != 2 && version != 3 && version != 4 {
 			return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 		}
 		var result any
@@ -170,6 +170,9 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			input, readErr := readControlJSON[contracts.SetSessionChatOptions](r, "SetSessionChatOptionsSchema", false)
 			if readErr != nil {
 				return true, readErr
+			}
+			if input.ThinkingProfile.Present && version < 4 {
+				return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 			}
 			release, lockErr := a.Store.BeginTransientMutation(r.Context(), workID)
 			if lockErr != nil {
@@ -321,7 +324,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			if e != nil {
 				return true, conversationError(e)
 			}
-			if version != 1 && version != 2 && version != 3 {
+			if version != 1 && version != 2 && version != 3 && version != 4 {
 				return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 			}
 			modes = append(modes, string(input.InputMode.Value))
@@ -441,6 +444,9 @@ func sessionView(session *agentv1.Session) any {
 		return nil
 	}
 	view := map[string]any{"thinkingLevel": thinkingFact(session.GetThinkingLevel(), session.GetThinkingUnrequested()), "workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	if session.GetThinkingProfile() != "" {
+		view["thinkingProfile"] = session.GetThinkingProfile()
+	}
 	if session.GetModelPreferenceJson() != "" {
 		view["modelPreference"] = decodePublicProjection(session.GetModelPreferenceJson())
 	} else {
@@ -459,6 +465,9 @@ func runView(run *agentv1.Run) any {
 		return nil
 	}
 	view := map[string]any{"thinkingLevel": thinkingFact(run.GetThinkingLevel(), run.GetThinkingUnrequested()), "workId": run.GetWorkId(), "sessionId": run.GetSessionId(), "runId": run.GetRunId(), "submissionKey": run.GetSubmissionKey(), "state": int32(run.GetState()), "promptDigest": run.GetPromptDigest(), "finalText": run.GetFinalText(), "acceptedAt": run.GetAcceptedAt(), "startedAt": run.GetStartedAt(), "finishedAt": run.GetFinishedAt(), "earliestAvailableSequence": strconv.FormatUint(run.GetEarliestAvailableSequence(), 10), "latestSequence": strconv.FormatUint(run.GetLatestSequence(), 10)}
+	if run.GetThinkingProfile() != "" {
+		view["thinkingProfile"] = run.GetThinkingProfile()
+	}
 	if run.GetActualModelJson() != "" {
 		view["actualModel"] = decodePublicProjection(run.GetActualModelJson())
 	} else {

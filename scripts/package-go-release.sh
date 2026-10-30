@@ -84,7 +84,7 @@ for release_image in "$release_agent" "$release_file_helper" "$release_snapshot_
     "$release_agent")
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.agent.protocol"}}' "$release_image")" = v2
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.package-helper.contract"}}' "$release_image")" = 2
-      test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-history.schema"}}' "$release_image")" = 6
+      test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-history.schema"}}' "$release_image")" = 7
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.run-model.contract"}}' "$release_image")" = 1
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-feedback.contract"}}' "$release_image")" = 1
       test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.service-mcp.contract"}}' "$release_image")" = 1

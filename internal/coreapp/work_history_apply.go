@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"piwork/internal/internaltls"
 	"piwork/internal/rpc/servicesv1"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,15 +192,15 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 		if old.WorkHistorySchema > capabilities.WorkHistorySchema {
 			return contracts.NewError("CONTEXT_FORMAT_UNSUPPORTED", "")
 		}
-		if old.WorkHistorySchema == capabilities.WorkHistorySchema {
+		if old.WorkHistorySchema == capabilities.WorkHistorySchema || capabilities.WorkHistorySchema < 5 {
 			return nil
 		}
 	}
-	if capabilities.WorkHistorySchema != 5 && capabilities.WorkHistorySchema != 6 {
+	if capabilities.WorkHistorySchema != 5 && capabilities.WorkHistorySchema != 6 && capabilities.WorkHistorySchema != 7 {
 		return nil
 	}
 	if plan.HistoryBackup == nil {
-		plan.HistoryBackup = &applyHistoryBackup{BackupKey: uuid.NewString(), TargetSchema: capabilities.WorkHistorySchema, State: "planned"}
+		plan.HistoryBackup = &applyHistoryBackup{BackupKey: uuid.NewString(), State: "planned", TargetSchema: capabilities.WorkHistorySchema}
 		if err := a.saveApplyPlan(ctx, operationID, *plan); err != nil {
 			return err
 		}
@@ -215,7 +216,7 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 		plan.HistoryBackup = nil
 		return a.saveApplyPlan(ctx, operationID, *plan)
 	}
-	if (result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6)) || result.State != "saved" || len(result.ManifestDigest) != 64 {
+	if (result.SchemaVersion != 4 && result.SchemaVersion != 5 && result.SchemaVersion != 6) || result.SchemaVersion >= capabilities.WorkHistorySchema || result.State != "saved" || len(result.ManifestDigest) != 64 {
 		return corestore.ErrStorage
 	}
 	plan.HistoryBackup.State = "saved"
@@ -245,7 +246,7 @@ func (a *Application) restoreHistoryUpgrade(ctx context.Context, operationID str
 		}
 		if result.State == "not-required" {
 			plan.HistoryBackup.State = "restored"
-		} else if result.State == "saved" && (result.SchemaVersion == 4 || result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6) && len(result.ManifestDigest) == 64 {
+		} else if result.State == "saved" && (result.SchemaVersion == 4 || result.SchemaVersion == 5 || result.SchemaVersion == 6) && len(result.ManifestDigest) == 64 {
 			plan.HistoryBackup.State = "saved"
 			plan.HistoryBackup.SourceSchema = result.SchemaVersion
 			plan.HistoryBackup.ManifestDigest = result.ManifestDigest
@@ -266,7 +267,7 @@ func (a *Application) restoreHistoryUpgrade(ctx context.Context, operationID str
 	if err != nil {
 		return err
 	}
-	if result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.SourceSchema == 5) || result.State != "restored" {
+	if result.SchemaVersion != historyBackupSource(plan.HistoryBackup) || result.State != "restored" {
 		return corestore.ErrStorage
 	}
 	plan.HistoryBackup.State = "restored"
@@ -371,18 +372,60 @@ func migrationGrant(operationID string, plan workApplyPlan) *contracts.WorkHisto
 	if plan.HistoryBackup == nil || plan.HistoryBackup.State != "saved" || plan.HistoryBackup.InitializationValidated {
 		return nil
 	}
-	from, to := plan.HistoryBackup.SourceSchema, plan.HistoryBackup.TargetSchema
-	// Persisted schema-4-to-5 operations from older Core versions omit both.
-	if from == 0 {
-		from = 4
+	target := plan.HistoryBackup.TargetSchema
+	if target == 0 {
+		target = 5
 	}
-	if to == 0 {
-		to = 5
-	}
-	if from != 4 && from != 5 || to != 5 && to != 6 || from >= to {
+	source := historyBackupSource(plan.HistoryBackup)
+	if source < 4 || source > 6 || target < 5 || target > 7 || source >= target {
 		return nil
 	}
-	return &contracts.WorkHistoryMigration{OperationId: operationID, WorkId: plan.WorkID, FromSchema: float64(from), ToSchema: float64(to), StoreId: plan.HistoryBackup.BackupKey, BackupManifestDigest: contracts.WorkBlobDigest(plan.HistoryBackup.ManifestDigest)}
+	return &contracts.WorkHistoryMigration{OperationId: operationID, WorkId: plan.WorkID, FromSchema: float64(source), ToSchema: float64(target), StoreId: plan.HistoryBackup.BackupKey, BackupManifestDigest: contracts.WorkBlobDigest(plan.HistoryBackup.ManifestDigest)}
+}
+
+// A Core can stop after the initialization-only Agent was archived or
+// removed, but before the Apply plan recorded that initialization completed.
+// Never attach a replacement container to that retired log-source identity.
+func (a *Application) prepareMigrationResume(ctx context.Context, operationID string, plan *workApplyPlan) error {
+	if plan.Generation == 0 || plan.InstanceID == "" {
+		return nil
+	}
+	sourceID, ok := corestore.LogSourceID(a.Store.InstallationID(), plan.WorkID, "agent", "agentd", plan.Generation, plan.InstanceID)
+	if !ok {
+		return corestore.ErrStorage
+	}
+	source, found, err := a.Store.LogSource(ctx, sourceID)
+	if err != nil || !found || source.State == "registered" {
+		return err
+	}
+	view, err := a.dockerRuntime.InspectContainer(ctx, dockerengine.ContainerIdentity{WorkID: plan.WorkID, Kind: "agent", LogicalID: "agentd"})
+	if err != nil {
+		return err
+	}
+	if view != nil {
+		if view.Config == nil || view.State == nil || view.ID != source.ContainerID || view.Config.Labels["piwork.generation"] != strconv.FormatInt(plan.Generation, 10) || view.Config.Labels["piwork.instance_id"] != plan.InstanceID {
+			return dockerengine.ErrIdentity
+		}
+		if source.State == "bound" {
+			return nil
+		}
+		if view.State.Running {
+			return dockerengine.ErrStateUnknown
+		}
+	}
+	if err := a.removeApplyAgent(ctx, plan.WorkID); err != nil {
+		return err
+	}
+	plan.Generation = 0
+	plan.InstanceID = ""
+	return a.saveApplyPlan(ctx, operationID, *plan)
+}
+
+func historyBackupSource(backup *applyHistoryBackup) int64 {
+	if backup.SourceSchema == 0 {
+		return 4
+	}
+	return backup.SourceSchema
 }
 
 func (a *Application) clearCommittedHistory(tx *sql.Tx, operationID string, plan workApplyPlan) error {
@@ -461,7 +504,11 @@ func (a *Application) reconcileHistoryUpgradeLocked(ctx context.Context, workID 
 			return err
 		}
 		if result.State == "saved" {
-			if (result.SchemaVersion != 4 && !(result.SchemaVersion == 5 && plan.HistoryBackup.TargetSchema == 6)) || len(result.ManifestDigest) != 64 {
+			target := plan.HistoryBackup.TargetSchema
+			if target == 0 {
+				target = 5
+			}
+			if (result.SchemaVersion < 4 || result.SchemaVersion > 6 || result.SchemaVersion >= target) || len(result.ManifestDigest) != 64 {
 				return corestore.ErrStorage
 			}
 			plan.HistoryBackup.State = "saved"
@@ -532,8 +579,8 @@ func (server *serviceRPC) AuthorizeHistoryMigration(ctx context.Context, request
 		if err != nil {
 			return err
 		}
-		grant := migrationGrant(input.OperationId, plan)
-		if grant == nil || input.WorkId != scope.WorkID || input.FromSchema != grant.FromSchema || input.ToSchema != grant.ToSchema || input.StoreId != plan.HistoryBackup.BackupKey || string(input.BackupManifestDigest) != plan.HistoryBackup.ManifestDigest {
+		expected := migrationGrant(input.OperationId, plan)
+		if expected == nil || input.WorkId != scope.WorkID || input.FromSchema != expected.FromSchema || input.ToSchema != expected.ToSchema || input.StoreId != plan.HistoryBackup.BackupKey || string(input.BackupManifestDigest) != plan.HistoryBackup.ManifestDigest {
 			return internaltls.ErrIdentity
 		}
 		var pending string

@@ -593,6 +593,11 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 		var startErr error
 		for {
 			migrationOnly := plan.HistoryBackup != nil && plan.HistoryBackup.State == "saved" && !plan.HistoryBackup.InitializationValidated
+			if migrationOnly {
+				if err := a.prepareMigrationResume(ctx, operation.ID, &plan); err != nil {
+					return err
+				}
+			}
 			initializationOnly := candidate.InitializationOnly || migrationOnly
 			spec, err := a.applyGeneration(ctx, operation.ID, &plan, plan.ContextID, initializationOnly)
 			if err != nil {

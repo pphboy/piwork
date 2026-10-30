@@ -50,6 +50,7 @@ type BackupManifest struct {
 	MemoryIno         uint64       `json:"memoryIno"`
 	RootDev           uint64       `json:"rootDev"`
 	RootIno           uint64       `json:"rootIno"`
+	SourceSchema      int64        `json:"sourceSchema,omitempty"`
 }
 type BackupResult struct {
 	SchemaVersion  int64  `json:"schemaVersion"`
@@ -151,6 +152,18 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 		if manifest.OperationID != request.OperationID || manifest.WorkID != request.WorkID || manifest.BackupKey != request.BackupKey {
 			return BackupResult{}, ErrInvalid
 		}
+		if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+			if manifest.Version == 2 && verifyExistingMemory(root, manifest) != nil {
+				return BackupResult{}, ErrInvalid
+			}
+			if request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 7 {
+				return BackupResult{}, ErrInvalid
+			}
+			if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
+				return BackupResult{}, err
+			}
+			return BackupResult{manifest.SourceSchema, digest, "saved"}, nil
+		}
 		if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
 			return BackupResult{}, err
 		}
@@ -183,10 +196,10 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 	}
 	version := snapshot.SchemaVersion
 	snapshot.Close()
-	if version == 5 && request.TargetSchema == 6 {
-		return checkpointSchema5(ctx, root, spool, request)
-	}
-	if version >= 5 && version <= 6 {
+	if version >= 5 && version <= 7 {
+		if request.TargetSchema > version && request.TargetSchema <= 7 {
+			return checkpointMemoryHistory(ctx, root, spool, request, version)
+		}
 		return BackupResult{version, "", "not-required"}, nil
 	}
 	if version != 4 {
@@ -256,18 +269,18 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 }
 
 func verifyBackupFiles(ctx context.Context, spool int, manifest BackupManifest) error {
-	expected := files
-	if manifest.Version == 2 {
-		expected = append(append([]string{}, files...), "memory.sqlite")
+	names := files
+	if manifest.Version == 2 || manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+		names = append(append([]string{}, files...), "memory.sqlite")
 	}
-	if len(manifest.Files) != len(expected) {
+	if len(manifest.Files) != len(names) {
 		return ErrInvalid
 	}
 	for i, entry := range manifest.Files {
-		if entry.Name != expected[i] {
+		if entry.Name != names[i] {
 			return ErrInvalid
 		}
-		if manifest.Version == 2 && (entry.Name == "work.sqlite" || entry.Name == "memory.sqlite") && !entry.Present {
+		if len(names) > len(files) && (entry.Name == "work.sqlite" || entry.Name == "memory.sqlite") && !entry.Present {
 			return ErrInvalid
 		}
 		if !entry.Present {
@@ -291,12 +304,12 @@ func verifyBackupFiles(ctx context.Context, spool int, manifest BackupManifest) 
 // schema 6 candidate can start, and never treat that Memory file as newly
 // created by the migration. Version 2 manifests are distinct from the legacy
 // schema 4 recovery protocol.
-func checkpointSchema5(ctx context.Context, root, spool int, request BackupRequest) (BackupResult, error) {
+func checkpointMemoryHistory(ctx context.Context, root, spool int, request BackupRequest, version int64) (BackupResult, error) {
 	var attrs unix.Stat_t
 	if unix.Fstat(root, &attrs) != nil {
 		return BackupResult{}, ErrInvalid
 	}
-	manifest := BackupManifest{Version: 2, OperationID: request.OperationID, WorkID: request.WorkID, BackupKey: request.BackupKey, RootDev: uint64(attrs.Dev), RootIno: attrs.Ino, Files: []BackupFile{}}
+	manifest := BackupManifest{Version: 2, SourceSchema: version, OperationID: request.OperationID, WorkID: request.WorkID, BackupKey: request.BackupKey, RootDev: uint64(attrs.Dev), RootIno: attrs.Ino, Files: []BackupFile{}}
 	names := append(append([]string{}, files...), "memory.sqlite")
 	for _, name := range names {
 		entry := BackupFile{Name: name}
@@ -341,7 +354,7 @@ func checkpointSchema5(ctx context.Context, root, spool int, request BackupReque
 	if err != nil {
 		return BackupResult{}, err
 	}
-	return BackupResult{5, digest, "saved"}, nil
+	return BackupResult{version, digest, "saved"}, nil
 }
 
 func verifyExistingMemory(root int, manifest BackupManifest) error {
@@ -361,6 +374,10 @@ func verifyExistingMemory(root int, manifest BackupManifest) error {
 }
 
 func restoreSchema5(ctx context.Context, privateDirectory string, root, spool int, manifest BackupManifest, digest string) (BackupResult, error) {
+	sourceSchema := manifest.SourceSchema
+	if sourceSchema == 0 {
+		sourceSchema = 5
+	}
 	if manifest.Version != 2 || manifest.MemoryCreated || len(manifest.Files) != len(files)+1 {
 		return BackupResult{}, ErrInvalid
 	}
@@ -371,7 +388,7 @@ func restoreSchema5(ctx context.Context, privateDirectory string, root, spool in
 		if readErr != nil || string(raw) != digest || verifyRestoredFiles(ctx, root, manifest) != nil {
 			return BackupResult{}, ErrInvalid
 		}
-		return BackupResult{5, digest, "restored"}, nil
+		return BackupResult{sourceSchema, digest, "restored"}, nil
 	}
 	if !os.IsNotExist(err) {
 		return BackupResult{}, err
@@ -492,7 +509,7 @@ func restoreSchema5(ctx context.Context, privateDirectory string, root, spool in
 	if err != nil || closeErr != nil || unix.Renameat(spool, markerName, spool, "history-restored.json") != nil || unix.Fsync(spool) != nil {
 		return BackupResult{}, ErrInvalid
 	}
-	return BackupResult{5, digest, "restored"}, nil
+	return BackupResult{sourceSchema, digest, "restored"}, nil
 }
 func verifyBackupMemory(root int, manifest BackupManifest) error {
 	var attrs unix.Stat_t
@@ -610,6 +627,9 @@ func RestoreHistoryBackup(ctx context.Context, privateDirectory, spoolDirectory 
 	manifest, digest, err := backupManifest(spool)
 	if err != nil {
 		return BackupResult{}, err
+	}
+	if manifest.Version == 1 && (manifest.SourceSchema == 5 || manifest.SourceSchema == 6) {
+		return restoreMemoryHistory(ctx, root, spool, request, manifest, digest)
 	}
 	var attributes unix.Stat_t
 	if unix.Fstat(root, &attributes) != nil {

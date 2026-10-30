@@ -138,8 +138,20 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if status != 201 || session["sessionId"] == nil {
 		t.Fatal("Core Session HTTP route failed", status, session)
 	}
-	if status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil); status != 200 || capabilities["contractVersion"] != float64(3) {
+	status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil)
+	if status != 200 || capabilities["contractVersion"] != float64(3) && capabilities["contractVersion"] != float64(4) {
 		t.Fatal("optional chat capabilities", status, capabilities)
+	}
+	if capabilities["contractVersion"] == float64(3) {
+		for _, profile := range []any{nil, "responses-effort-v1"} {
+			level := any("off")
+			if profile != nil {
+				level = "high"
+			}
+			if code, result := httpCall(t, base, path+"/sessions/"+session["sessionId"].(string)+"/chat-options", "PATCH", authorization, map[string]any{"modelRef": nil, "thinkingLevel": level, "thinkingProfile": profile}); code < 400 || result["code"] != "CHAT_OPTIONS_UNSUPPORTED" {
+				t.Fatal("older Agent accepted a version 4 setting", code, result)
+			}
+		}
 	}
 	if status, models := httpCall(t, base, path+"/chat-models", "GET", authorization, nil); status != 200 || models["defaultModel"].(map[string]any)["defaultThinkingLevel"] != "off" {
 		t.Fatal("chat models", status, models)

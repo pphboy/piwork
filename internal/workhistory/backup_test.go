@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"piwork/internal/workpackage"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -219,6 +220,93 @@ func TestCheckpointResumesAllocatedMemoryBeforeSavedReceipt(t *testing.T) {
 				t.Fatal(saved)
 			}
 		})
+	}
+}
+
+func TestSchemaFiveBackupRestoresBothDatabases(t *testing.T) {
+	private, scope := memoryFixture(t)
+	spool := t.TempDir()
+	contexts := []string{}
+	for id := range scope.ContextIDs {
+		contexts = append(contexts, id)
+	}
+	request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: contexts, TargetSchema: 6}
+	before := fingerprint(t, private)
+	saved, err := CheckpointHistory(context.Background(), private, spool, request)
+	if err != nil || saved.SchemaVersion != 5 || saved.State != "saved" {
+		t.Fatal(saved, err)
+	}
+	if again, err := CheckpointHistory(context.Background(), private, spool, request); err != nil || again != saved {
+		t.Fatal(again, err)
+	}
+	db, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(schemaV6SQL[strings.Index(schemaV6SQL, "CREATE TABLE run_output_chunks"):] + "; UPDATE schema_migrations SET version=6"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	request.ExpectedManifestDigest = saved.ManifestDigest
+	restored, err := RestoreHistoryBackup(context.Background(), private, spool, request)
+	if err != nil || restored.SchemaVersion != 5 || restored.State != "restored" {
+		t.Fatal(restored, err)
+	}
+	if after := fingerprint(t, private); !reflect.DeepEqual(before, after) {
+		t.Fatal("schema 5 backup failed to restore both databases", before, after)
+	}
+	if again, err := RestoreHistoryBackup(context.Background(), private, spool, request); err != nil || again != restored {
+		t.Fatal(again, err)
+	}
+}
+func TestSchemaSixToSevenBackupRestoresBothDatabases(t *testing.T) {
+	private, scope := memoryFixture(t)
+	prior, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = prior.Exec(schemaV6SQL[strings.Index(schemaV6SQL, "CREATE TABLE run_output_chunks"):] + "; UPDATE schema_migrations SET version=6"); err != nil {
+		t.Fatal(err)
+	}
+	prior.Close()
+	spool := t.TempDir()
+	contexts := []string{}
+	for id := range scope.ContextIDs {
+		contexts = append(contexts, id)
+	}
+	request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: contexts, TargetSchema: 7}
+	before := fingerprint(t, private)
+	saved, err := CheckpointHistory(context.Background(), private, spool, request)
+	if err != nil || saved.SchemaVersion != 6 || saved.State != "saved" {
+		t.Fatal(saved, err)
+	}
+	if again, err := CheckpointHistory(context.Background(), private, spool, request); err != nil || again != saved {
+		t.Fatal(again, err)
+	}
+	db, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("ALTER TABLE sessions DROP COLUMN active_context_identity; UPDATE schema_migrations SET version=7"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("ATTACH DATABASE ? AS memory", filepath.Join(private, "memory.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("UPDATE memory.memory_head SET version=0"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	request.ExpectedManifestDigest = saved.ManifestDigest
+	restored, err := RestoreHistoryBackup(context.Background(), private, spool, request)
+	if err != nil || restored.SchemaVersion != 6 || restored.State != "restored" {
+		t.Fatal(restored, err)
+	}
+	if after := fingerprint(t, private); !reflect.DeepEqual(before, after) {
+		t.Fatal("schema 5 backup failed to restore both databases", before, after)
+	}
+	if again, err := RestoreHistoryBackup(context.Background(), private, spool, request); err != nil || again != restored {
+		t.Fatal(again, err)
 	}
 }
 

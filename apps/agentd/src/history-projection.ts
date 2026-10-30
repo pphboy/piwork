@@ -5,6 +5,7 @@ export function historySessionView(value: SessionRecord) {
   return { workId:value.workId,sessionId:value.sessionId,createdAt:value.createdAt,updatedAt:value.updatedAt,
     modelPreference:preference?{...publicRunModel(preference),availability:preference.availability ?? "available"}:null,
     thinkingLevel:preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel,
+    ...(preference?.thinkingProfile ? {thinkingProfile:preference.thinkingProfile} : {}),
     source:value.sourceJson?JSON.parse(value.sourceJson):{kind:"chat"} };
 }
 export function historyRunView(value: RunRecord, snapshot?: string, target?: {entryId:string;blockId?:string}): HistoryRunSummary {
@@ -16,6 +17,7 @@ export function historyRunView(value: RunRecord, snapshot?: string, target?: {en
     state:states[value.state],acceptedAt:value.acceptedAt,startedAt:value.startedAt ?? "",finishedAt:value.finishedAt ?? "",
     earliestAvailableSequence:String(value.earliestAvailableSequence),latestSequence:String(value.latestSequence),
     actualModel:model?publicRunModel(model):null,thinkingLevel:model?.thinkingLevel === undefined?"off":model.thinkingLevel,
+    ...(model?.thinkingProfile ? {thinkingProfile:model.thinkingProfile} : {}),
     source:value.sourceJson?JSON.parse(value.sourceJson):{kind:"chat"},adoptedExperienceVersion:value.adoptedExperienceVersion ?? 0,
     ...(value.errorJson?{error:JSON.parse(value.errorJson)}:{}),resultRef:available?ref:null};
 }

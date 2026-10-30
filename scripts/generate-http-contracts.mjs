@@ -32,6 +32,12 @@ schemas.AgentRequestRetryQuerySchema = AgentRequestRetryQuerySchema;
 schemas.AgentRequestRetrySubmissionSchema = AgentRequestRetrySubmissionSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.api = schemas.ModelApiSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.capabilities = schemas.ModelCapabilitiesSchema;
+// Schema 7 removes Session environment binding; known archived formats retain exact readers.
+const historyMigration = schemas.WorkHistoryMigrationSchema;
+historyMigration.properties.fromSchema = { anyOf: [4,5,6].map(value=>({type:"number",const:value})) };
+historyMigration.properties.toSchema = {anyOf:[5,6,7].map(value=>({type:"number",const:value}))};
+schemas.AgentRuntimeConfigSchema.properties.historyMigration = historyMigration;
+schemas.PortableWorkSpecSchema.properties.compatibility.properties.workHistorySchema = { anyOf: [4,5,6,7].map(value => ({type:"number",const:value})) };
 schemas.AdminRuntimeLegacyInputSchema ??= schemas.AdminRuntimeInputSchema;
 schemas.AdminRuntimeInputSchema = { anyOf: [schemas.AdminRuntimeLegacyInputSchema, schemas.AdminRuntimeSelectionSchema] };
 schemas.AdminDefaultWorkPatchSchema.properties.modelRef = schemas.ResourceIdSchema;
@@ -122,6 +128,11 @@ for (const [schema, definition] of Object.entries(named)) {
   if (!Check(definition, valid)) throw new Error(`Invalid sample ${schema}: ${JSON.stringify(valid)}`);
   const add = (caseName, value) => fixtures.push({ schema, case: caseName, json: JSON.stringify(value), valid: Check(definition, value) });
   add("baseline", valid);
+  if (schema === "HistorySegmentSchema") {
+    for (const toolCallId of ["call_fixture|fc_fixture", "provider/call+opaque=", "x".repeat(1024), "", "x".repeat(1025)]) {
+      add(`provider-call-id-${toolCallId.length}-${fixtures.length}`, { ...valid, type: "tool-call", toolCallId, toolName: "read" });
+    }
+  }
   add("null", null);
   add("empty-object", {});
   add("empty-array", []);

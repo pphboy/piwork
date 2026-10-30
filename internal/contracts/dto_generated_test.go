@@ -401,6 +401,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "CompatibleThinkingProfileSchema":
+				value, err := Decode[CompatibleThinkingProfile](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "CreateManagedModelSchema":
 				value, err := Decode[CreateManagedModel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -1237,6 +1243,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "ThinkingLevelSchema":
 				value, err := Decode[ThinkingLevel](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "ThinkingProfileSchema":
+				value, err := Decode[ThinkingProfile](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}

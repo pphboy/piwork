@@ -24,17 +24,17 @@ class Controlled implements RunExecutor {
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
 async function until(check:()=>boolean){for(let n=0;n<100;n++){if(check())return;await tick();}assert.fail("expected execution transition did not occur");}
 
-async function fixture(run:(f:{store:WorkStore;manager:RunManager;daemon:AgentDaemonControl;executor:Controlled;state:{available:boolean;binding:string;wait?:Promise<void>};path:string})=>Promise<void>){
+async function fixture(run:(f:{store:WorkStore;manager:RunManager;daemon:AgentDaemonControl;executor:Controlled;state:{available:boolean;binding:string;compatible:boolean;wait?:Promise<void>};path:string})=>Promise<void>){
  const dir=await mkdtemp(join(tmpdir(),"piwork-cancel-send-")),path=join(dir,"work.sqlite"),store=WorkStore.open(path);
  const now=new Date().toISOString();
- for(const sessionId of ["main","other"])store.createSession({workId:"work-a",sessionId,sdkHistoryPath:join(dir,sessionId+".jsonl"),contextIdentity:"context-a",createdAt:now,updatedAt:now});
+ for(const sessionId of ["main","other"])store.createSession({workId:"work-a",sessionId,sdkHistoryPath:join(dir,sessionId+".jsonl"),createdAt:now,updatedAt:now});
  const daemon=new AgentDaemonControl({workId:"work-a",generation:1,instanceId:"instance-a"});
  daemon.configure({modelCredentialStatus:"available",contextIdentity:"context-a",loadedSkills:[],resolvedTools:[],initializationComplete:true});
- const state:{available:boolean;binding:string;wait?:Promise<void>}={available:true,binding:"binding-1"};
+ const state:{available:boolean;binding:string;compatible:boolean;wait?:Promise<void>}={available:true,binding:"binding-1",compatible:false};
  const models:RunModelResolver={
   async list(){throw new Error("unused");},async credential(){return "synthetic";},
-  async resolve(ref){await state.wait;if(!state.available)throw new RunModelError("MODEL_UNAVAILABLE","Fixture model unavailable");return {modelRef:ref,label:"Fixture",provider:"fixture",model:ref??"default",executionBindingId:state.binding};},
-  async thinking(){return {thinkingLevels:["off","high"],defaultThinkingLevel:"off"};},
+  async resolve(ref){await state.wait;if(!state.available)throw new RunModelError("MODEL_UNAVAILABLE","Fixture model unavailable");return {modelRef:ref,label:"Fixture",provider:state.compatible?"openai":"fixture",model:ref??"default",...(state.compatible?{api:"openai-responses" as const}:{}),executionBindingId:state.binding};},
+  async thinking(){return state.compatible?{thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:"unknown" as const}:{thinkingLevels:["off","high"],defaultThinkingLevel:"off"};},
   async images(){return "supported";},
  };
  const executor=new Controlled(),manager=new RunManager(store,daemon,executor,undefined,models,prompt=>{if(prompt==="/missing")throw new RunModelError("SLASH_COMMAND_UNKNOWN","Missing command");});
@@ -86,6 +86,25 @@ test("cancel-and-send waits for real cleanup, coalesces a key and protects the W
   f.state.available=false;
   assert.equal((await f.manager.submitChat(input)).run.runId,first.run.runId);
   await assert.rejects(f.manager.submitChat({...input,prompt:"different"}),/different content/);
+ });
+});
+
+test("cancel-and-send rechecks the captured compatible selection without adopting a later preference",async()=>{
+ await fixture(async f=>{
+  f.state.compatible=true;
+  f.store.setSessionModelPreference('work-a','main',JSON.stringify({modelRef:null,thinkingLevel:'xhigh',thinkingProfile:'responses-effort-v1'}));
+  const old=f.manager.submit({workId:'work-a',sessionId:'other',submissionKey:'old-compatible',prompt:'original'});
+  await until(()=>f.executor.pending.has(old.run.runId));
+  const input=next(old.run.runId,'compatible-replacement'),pending=f.manager.submitChat(input);
+  await until(()=>f.executor.aborts===1);
+  f.store.setSessionModelPreference('work-a','main',JSON.stringify({modelRef:null,thinkingLevel:null}));
+  f.executor.finish(old.run.runId);
+  const accepted=await pending;
+  await until(()=>f.executor.contexts.has(accepted.run.runId));
+  const model=f.executor.contexts.get(accepted.run.runId)!.actualModel;
+  assert.equal(model?.thinkingProfile,'responses-effort-v1');assert.equal(model?.thinkingLevel,'xhigh');
+  f.state.available=false;
+  assert.equal((await f.manager.submitChat(input)).run.runId,accepted.run.runId);
  });
 });
 
@@ -236,7 +255,7 @@ test("one Work waiting for cancellation does not block a different Work",async()
   const now=new Date().toISOString();
   const directoryB=join(f.path,'..','work-b');await mkdir(directoryB);
   const storeB=WorkStore.open(join(directoryB,'work.sqlite'));
-  storeB.createSession({workId:'work-b',sessionId:'main-b',sdkHistoryPath:join(directoryB,'main-b.jsonl'),contextIdentity:'context-b',createdAt:now,updatedAt:now});
+  storeB.createSession({workId:'work-b',sessionId:'main-b',sdkHistoryPath:join(directoryB,'main-b.jsonl'),createdAt:now,updatedAt:now});
   const daemon=new AgentDaemonControl({workId:'work-b',generation:1,instanceId:'instance-b'});
   daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-b',loadedSkills:[],resolvedTools:[],initializationComplete:true});
   const executor=new Controlled(),other=new RunManager(storeB,daemon,executor);

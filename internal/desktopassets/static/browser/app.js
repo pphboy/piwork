@@ -1336,7 +1336,7 @@ function conversationHistoryControls(w, session) {
     return `<div class="history-pagination">${earlier}${error}${inline ? `<p class="history-limit" role="status">${esc(limit)}</p>` : ''}</div>`;
 }
 function agent(w, focus) {
-    const session = w.sessions.find((s) => s.id === view.session) || w.sessions[0];
+    const session = w.sessions.find((s) => s.id === view.session) || w.sessions.find(s => s.source?.kind !== 'service');
     if (session) {
         if (!view.session && view.drafts[draftKey(w, "")] && !view.drafts[draftKey(w, session.id)]) {
             view.drafts[draftKey(w, session.id)] = view.drafts[draftKey(w, "")];
@@ -1414,7 +1414,8 @@ function capturedDefaultName(model) {
 }
 function thinkingName(level) { if (level === null)
     return t('thinking.normal'); if (!level)
-    return t('thinking.unavailable'); const keys = { off: 'thinking.off', low: 'thinking.low', medium: 'thinking.medium', high: 'thinking.high' }; return keys[level] ? t(keys[level]) : level[0].toUpperCase() + level.slice(1); }
+    return t('thinking.unavailable'); const keys = { off: 'thinking.off', minimal: 'thinking.minimal', low: 'thinking.low', medium: 'thinking.medium', high: 'thinking.high', xhigh: 'thinking.xhigh', max: 'thinking.max' }; return keys[level] ? t(keys[level]) : level[0].toUpperCase() + level.slice(1); }
+function compatibleThinkingName(profile, level) { return `${t('thinking.compatible')} · ${t(profile === 'messages-budget-v1' ? 'thinking.budget' : profile === 'messages-adaptive-v1' ? 'thinking.adaptive' : 'thinking.effort')} · ${thinkingName(level)}`; }
 function chatSettings(w, sessionId) {
     const catalog = adapter.models.get(w.id), state = adapter.modelSelection(w.id, sessionId), session = w.sessions.find(s => s.id === sessionId);
     const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
@@ -1423,9 +1424,9 @@ function chatSettings(w, sessionId) {
     const name = model ? (state.ref === null ? capturedDefaultName(model) : modelDisplayName(model)) : session?.modelPreference?.modelRef === state.ref ? (state.ref === null && session.modelPreference ? capturedDefaultName(session.modelPreference) : modelDisplayName(session.modelPreference)) : state.ref === null ? t('chat.workDefault') : t('model.unavailable');
     const capability = adapter.chatCapabilities.get(w.id), levels = model?.thinkingLevels;
     const canThink = (capability ?? 0) >= 1 && (!!levels?.length || model?.thinkingAvailability === 'unknown');
-    const thinking = capability === 0 ? t('thinking.unavailable') : model?.thinkingAvailability === 'unknown' ? (state.thinking === null ? t('thinking.normalUnconfirmed') : t('thinking.confirmNormal')) : canThink ? thinkingName(state.thinking) : t('thinking.unconfirmed');
+    const thinking = state.profile ? compatibleThinkingName(state.profile, state.thinking) : capability === 0 ? t('thinking.unavailable') : model?.thinkingAvailability === 'unknown' ? (state.thinking === null ? t('thinking.normalUnconfirmed') : t('thinking.confirmNormal')) : canThink ? thinkingName(state.thinking) : t('thinking.unconfirmed');
     const editable = state.phase !== 'unknown' && !!catalog?.confirmed && !catalog.error;
-    const thinkingEditable = editable && canThink && !(levels?.length === 1 && levels[0] === state.thinking);
+    const thinkingEditable = editable && canThink && !(levels?.length === 1 && levels[0] === state.thinking && !state.profile && !state.needsThinkingConfirmation);
     const status = [];
     if (state.phase === 'saving')
         status.push(t('chat.saving'));
@@ -1447,10 +1448,16 @@ function chatSettings(w, sessionId) {
         status.push(t('model.unconfirmed'));
     if (!catalog?.confirmed || catalog.error)
         status.push(t('model.lastKnown'));
+    else if (session?.chatAvailability === 'unconfirmed')
+        status.push(t('model.unconfirmed'));
+    else if (session?.chatAvailability === 'unavailable')
+        status.push(t('chat.sessionUnavailable'));
     else if (!model || session?.modelPreference?.availability === 'unavailable')
         status.push(t('model.savedUnavailable'));
     if (capability === 0)
         status.push(t('thinking.unavailableInWork'));
+    else if ((capability ?? 0) < 4 && model?.thinkingAvailability === 'unknown')
+        status.push(t('thinking.compatibilityUpdate'));
     else if (catalog?.confirmed && !catalog.error && !canThink)
         status.push(t('thinking.capabilitiesUnconfirmed'));
     else if (levels?.length === 1 && levels[0] === 'off')
@@ -1459,7 +1466,7 @@ function chatSettings(w, sessionId) {
         status.push(t('model.legacySettings'));
     if (!sessionId)
         status.push(t('chat.forNewSession'));
-    const recovery = state.phase === 'unknown' ? { label: t('chat.checkChatSettings'), action: 'check-session-model' } : !catalog?.loading && (catalog?.error || !catalog?.confirmed) ? { label: t('model.retryModels'), action: 'load-models' } : state.phase === 'dirty' && sessionId ? { label: t('chat.retrySettings'), action: 'save-model' } : undefined;
+    const recovery = session?.chatAvailability === 'unconfirmed' ? { label: t('chat.checkChatSettings'), action: 'check-session-model' } : session?.chatAvailability === 'unavailable' ? { label: t('agent.sessions'), action: 'sessions' } : state.phase === 'unknown' ? { label: t('chat.checkChatSettings'), action: 'check-session-model' } : !catalog?.loading && (catalog?.error || !catalog?.confirmed) ? { label: t('model.retryModels'), action: 'load-models' } : state.phase === 'dirty' && sessionId && !state.needsThinkingConfirmation ? { label: t('chat.retrySettings'), action: 'save-model' } : undefined;
     return { catalog, state, model, name, thinking, editable, thinkingEditable, status: status.join(' '), recovery };
 }
 function modelFeedback(w, sessionId, inPanel = false) {
@@ -1499,7 +1506,7 @@ function confirmPendingChatCommand() {
     if (!command?.pair || !command.workId || !['model', 'thinking'].includes(command.kind))
         return;
     const state = adapter.modelSelection(command.workId, command.sessionId || '');
-    if ((state.phase === 'clean' || !command.sessionId && state.phase === 'dirty') && state.ref === command.pair.ref && state.thinking === command.pair.thinking)
+    if (!state.needsThinkingConfirmation && (state.phase === 'clean' || !command.sessionId && state.phase === 'dirty') && state.ref === command.pair.ref && state.thinking === command.pair.thinking && state.profile === command.pair.profile)
         consumeWebSelection(command.kind);
 }
 function submissionMarkup(w) {
@@ -1974,7 +1981,7 @@ function packagesSettings(w, c) {
 }
 function requestCancellable(request) { return canCancelPiRequest(request, true) || request.disposition === 'live' && request.state === 'cancelling'; }
 function runFacts(run) {
-    return `<dl><dt>${t('run.status')}</dt><dd>${badge(run.status)}</dd><dt>${t('run.actualModel')}</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>${t('run.thinking')}</dt><dd>${esc(run.thinkingLevel === null ? t('run.normalUnconfirmed') : run.thinkingLevel || t('thinking.off'))}</dd><dt>${t('run.source')}</dt><dd>${esc(run.source?.kind === 'service' ? t('run.sourceService', { name: run.source.serviceName || t('run.automatic') }) : run.source?.kind === 'chat' ? t('run.sourceChat') : t('run.sourceUnknown'))}${run.source?.requestId ? ` · ${t('run.request')} <code>${esc(run.source.requestId)}</code>` : ''}${run.source?.phase ? ` · ${esc(run.source.phase)}` : ''}</dd><dt>${t('run.submitted')}</dt><dd>${esc(run.created || t('common.unavailable'))}</dd>${run.finished ? `<dt>${t('run.finished')}</dt><dd>${esc(run.finished)}</dd>` : ''}</dl>`;
+    return `<dl><dt>${t('run.status')}</dt><dd>${badge(run.status)}</dd><dt>${t('run.actualModel')}</dt><dd>${esc(modelDisplayName(run.actualModel))}</dd><dt>${t('run.thinking')}</dt><dd>${esc(run.thinkingProfile ? compatibleThinkingName(run.thinkingProfile, run.thinkingLevel ?? null) : run.thinkingLevel === null ? t('run.normalUnconfirmed') : run.thinkingLevel || t('thinking.off'))}</dd><dt>${t('run.source')}</dt><dd>${esc(run.source?.kind === 'service' ? t('run.sourceService', { name: run.source.serviceName || t('run.automatic') }) : run.source?.kind === 'chat' ? t('run.sourceChat') : t('run.sourceUnknown'))}${run.source?.requestId ? ` · ${t('run.request')} <code>${esc(run.source.requestId)}</code>` : ''}${run.source?.phase ? ` · ${esc(run.source.phase)}` : ''}</dd><dt>${t('run.submitted')}</dt><dd>${esc(run.created || t('common.unavailable'))}</dd>${run.finished ? `<dt>${t('run.finished')}</dt><dd>${esc(run.finished)}</dd>` : ''}</dl>`;
 }
 function dismissAnchoredOverlay() {
     if (!anchoredOverlay(view.modal))
@@ -2074,7 +2081,7 @@ function modalMarkup() {
             const { catalog, state, model, name, thinking, editable, thinkingEditable } = chatSettings(target, view.data.sessionId || '');
             const expanded = view.data.expanded, levels = expanded === 'thinking';
             title = t('response.title');
-            const options = !editable || levels && !thinkingEditable ? [] : levels ? (model?.thinkingAvailability === 'unknown' ? [{ value: 'normal', name: t('thinking.normal'), note: t('response.normalNote'), selected: state.thinking === null }] : (model?.thinkingLevels || []).map(level => ({ value: level, name: thinkingName(level), note: '', selected: level === state.thinking }))) :
+            const options = !editable || levels && !thinkingEditable ? [] : levels ? (model?.thinkingAvailability === 'unknown' ? [{ value: 'normal', name: t('thinking.normal'), note: t('response.normalNote'), selected: state.thinking === null }, ...((adapter.chatCapabilities.get(target.id) ?? 0) >= 4 ? (model.compatibleThinkingProfiles ?? []).flatMap(p => p.levels.map(level => ({ value: `${p.profile}:${level}`, name: `${t('thinking.compatible')} · ${thinkingName(level)}`, note: `${t(p.profile === 'messages-budget-v1' ? 'thinking.budget' : p.profile === 'messages-adaptive-v1' ? 'thinking.adaptive' : 'thinking.effort')}${p.budgets?.[level] ? ` · ${p.budgets[level]} tokens` : ''} · ${t('thinking.compatibleNote')}`, selected: state.profile === p.profile && state.thinking === level }))) : [])] : (model?.thinkingLevels || []).map(level => ({ value: level, name: thinkingName(level), note: '', selected: !state.profile && level === state.thinking }))) :
                 [...(catalog?.defaultModel ? [catalog.defaultModel] : []), ...(catalog?.models || []).filter(m => m.modelRef !== null)].map(m => ({ value: m.modelRef || '', name: m.modelRef === null ? capturedDefaultName(m) : modelDisplayName(m), note: m.modelRef === null ? t('response.useWorkDefault') : m.model + ' · ' + m.provider + ' · ' + m.modelRef.slice(-8), selected: m.modelRef === state.ref }));
             const row = (kind, label, value, enabled, note = '') => btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note ? `<small>${note}</small>` : ''}</span>${icon('down', 14)}`, 'toggle-chat-setting', 'quiet response-setting-row', `id="${kind}-select" data-kind="${kind}" value="${esc(kind === 'model' ? state.ref || '' : state.thinking ?? 'normal')}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded === kind}" aria-haspopup="listbox" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled ? '' : 'disabled'}`);
             body = `<p class="muted response-settings-subtitle">${t('response.forNextMessage')}${view.data.sessionId ? '' : ` · ${t('response.forNewSession')}`}</p><div class="response-setting-group">${row('model', t('response.model'), name, editable, state.ref === null ? t('chat.workDefault') : '')}${row('thinking', t('response.thinking'), thinking, thinkingEditable)}</div>${modelFeedback(target, view.data.sessionId || '', true)}${expanded && options.length ? `<div class="response-setting-options"><p class="muted">${levels ? t('response.thinking') : t('response.model')}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels ? t('response.thinkingLevels') : t('response.models')}">${options.map(option => btn(`<span>${esc(option.name)}${option.note ? `<small>${esc(option.note)}</small>` : ''}</span>${option.selected ? icon('check', 16) : ''}`, 'choose-chat-setting', '', `role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>` : ''}`;
@@ -2853,15 +2860,17 @@ async function handleAction(action, el, record) {
                 const ref = el.dataset.optionValue || null, model = ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === ref);
                 if (!model)
                     break;
-                const thinking = model.thinkingLevels && (state.thinking === null || !model.thinkingLevels.includes(state.thinking)) ? model.defaultThinkingLevel ?? 'off' : state.thinking;
-                if (ref !== state.ref || thinking !== state.thinking)
+                if (ref !== state.ref)
                     adapter.selectModel(currentWork.id, view.session, ref);
             }
-            else if (el.dataset.optionValue !== state.thinking)
-                adapter.selectThinking(currentWork.id, view.session, el.dataset.optionValue === 'normal' ? null : el.dataset.optionValue);
+            else {
+                const selected = el.dataset.optionValue || 'normal', split = selected.indexOf(':'), profile = split >= 0 ? selected.slice(0, split) : undefined, level = split >= 0 ? selected.slice(split + 1) : selected === 'normal' ? null : selected;
+                if (level !== state.thinking || profile !== state.profile || state.needsThinkingConfirmation)
+                    adapter.selectThinking(currentWork.id, view.session, level, profile);
+            }
             if (pendingWebCommand && pendingWebCommand.kind === kind) {
                 const state = adapter.modelSelection(currentWork.id, view.session);
-                Object.assign(pendingWebCommand, { workId: currentWork.id, sessionId: view.session, pair: { ref: state.ref, thinking: state.thinking } });
+                Object.assign(pendingWebCommand, { workId: currentWork.id, sessionId: view.session, pair: { ref: state.ref, thinking: state.thinking, profile: state.profile } });
             }
             confirmPendingChatCommand();
             render();
@@ -5823,6 +5832,7 @@ async function loadRoute() {
         view.session = previous.session;
         view.noteLoaded = '';
     }
+    const requestedSession = view.session;
     const choices = { area: areaChoice, service: serviceChoice, session: sessionChoice, file: fileChoice, modal: modalChoice };
     const record = actions.begin({ key: `route:${r[1]}:${version}`, kind: 'read', work: r[1], label: t('actions.loadingWork'), target: r[1], view: location.hash });
     render();
@@ -5838,8 +5848,13 @@ async function loadRoute() {
             view.service = r[0] === 'app' ? r[2] : service?.id ?? '';
             view.port = r[0] === 'app' ? port : service?.ports.includes(port) ? port : service?.ports[0] ?? 0;
         }
-        if (choices.session === sessionChoice)
-            view.session = work.sessions.find(s => s.id === view.session)?.id ?? work.sessions[0]?.id ?? '';
+        if (choices.session === sessionChoice) {
+            const preferred = work.sessions.find(s => s.id === requestedSession)?.id ?? await adapter.defaultSession(work.id);
+            if (!valid())
+                return;
+            if (choices.session === sessionChoice)
+                view.session = preferred;
+        }
         if (view.session && r[0] !== 'app')
             await adapter.loadSession(work.id, view.session);
         if (!valid())

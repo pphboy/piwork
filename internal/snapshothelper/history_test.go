@@ -30,7 +30,7 @@ func TestSnapshotHelperSharedMemoryIntegrityCases(t *testing.T) {
 	if json.Unmarshal(raw, &cases) != nil {
 		t.Fatal("invalid cases")
 	}
-	mainSchema, err := os.ReadFile("../workhistory/schema.sql")
+	mainSchema, err := os.ReadFile("../workhistory/schema-v5.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

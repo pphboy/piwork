@@ -657,7 +657,7 @@ test("request expiry aborts the SDK and waits for cleanup before effect-aware go
   }
 });
 
-test("Chat-origin Job continuation uses a compatible automatic Session and retains the original user Run", async () => {
+test("Chat-origin Job continuation uses its Work automatic Session and retains the original user Run", async () => {
   const f = await fixture();
   try {
     const manualSession = f.sessions.create("user-chat");
@@ -671,7 +671,8 @@ test("Chat-origin Job continuation uses a compatible automatic Session and retai
     f.job("succeeded");f.loop.start();f.advance(5000);await f.loop.tick();await ready();
     const continuation=f.store.activeRun(WORK)!;
     assert.ok(continuation);assert.notEqual(continuation.sessionId,manualSession.sessionId);
-    assert.equal(f.store.getSession(WORK,continuation.sessionId)?.contextIdentity,"context-current");
+    assert.equal(continuation.contextIdentity,"context-current");
+
     assert.deepEqual(JSON.parse(f.store.getSession(WORK,continuation.sessionId)!.sourceJson!),{kind:"service"});
     assert.equal(JSON.parse(continuation.sourceJson!).kind,"chat");
     const current=f.store.feedback.internal(WORK,goal.request.requestId)!;

@@ -390,13 +390,13 @@ func TestStoredCapabilitiesRequireCompleteValidatedFacts(t *testing.T) {
 		t.Fatal("missing executable accepted")
 	}
 	modified = capability
-	for _, schema := range []int64{4, 5, 6} {
+	for _, schema := range []int64{4, 5, 6, 7} {
 		modified.WorkHistorySchema = schema
 		if !validStoredCapabilities(modified, capability.Identity, "agent") {
 			t.Fatal("supported history version rejected", schema)
 		}
 	}
-	modified.WorkHistorySchema = 7
+	modified.WorkHistorySchema = 8
 	if validStoredCapabilities(modified, capability.Identity, "agent") {
 		t.Fatal("unknown history version accepted")
 	}
@@ -413,7 +413,7 @@ func TestStoredCapabilitiesRequireCompleteValidatedFacts(t *testing.T) {
 }
 
 func TestImageCachePersistsAcrossInspectorRestart(t *testing.T) {
-	for _, history := range []string{"4", "5", "6"} {
+	for _, history := range []string{"4", "5", "6", "7"} {
 		t.Run("schema-"+history, func(t *testing.T) {
 			image := cacheImageWithHistory(t, "persisted", history)
 			first, engine := cachedInspector(t, []*cachedImageFixture{image}, nil, nil)

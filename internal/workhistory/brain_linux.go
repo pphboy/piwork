@@ -197,7 +197,7 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 
 	}
 	for _, r := range graph["sessions"] {
-		if v := field("sessions", r, "model_preference_json"); v != nil && !validHistoryModel(v) {
+		if v := field("sessions", r, "model_preference_json"); v != nil && (!validHistoryModel(v) || historyVersion(ctx, db) < 6 && objectValue(v)["thinkingProfile"] != nil) {
 			return ErrInvalid
 		}
 		if v := field("sessions", r, "source_json"); v != nil && contracts.Validate("AgentRunSourceSchema", v) != nil {
@@ -210,7 +210,7 @@ func validateBrainHistory(ctx context.Context, db *sql.DB, scope Scope) error {
 				return ErrInvalid
 			}
 		}
-		if v := field("runs", r, "actual_model_json"); v != nil && !validHistoryModel(v) {
+		if v := field("runs", r, "actual_model_json"); v != nil && (!validHistoryModel(v) || historyVersion(ctx, db) < 6 && objectValue(v)["thinkingProfile"] != nil) {
 			return ErrInvalid
 		}
 		if !integer(r["adopted_experience_version"], 0) {
@@ -468,7 +468,7 @@ func validHistoryModel(value any) bool {
 	}
 	description := map[string]any{}
 	for key, v := range model {
-		if key != "baseUrl" && key != "availability" && key != "thinkingLevel" && key != "api" && key != "capabilities" && key != "executionBindingId" {
+		if key != "baseUrl" && key != "availability" && key != "thinkingLevel" && key != "thinkingProfile" && key != "api" && key != "capabilities" && key != "executionBindingId" {
 			description[key] = v
 		}
 	}
@@ -491,6 +491,17 @@ func validHistoryModel(value any) bool {
 	}
 	if level, exists := model["thinkingLevel"]; exists && contracts.Validate("ThinkingSettingSchema", level) != nil {
 		return false
+	}
+	if profile, exists := model["thinkingProfile"]; exists {
+		if contracts.Validate("ThinkingProfileSchema", profile) != nil || model["thinkingLevel"] == nil {
+			return false
+		}
+		if profile == "responses-effort-v1" && model["provider"] != "openai" || profile != "responses-effort-v1" && model["provider"] != "anthropic" {
+			return false
+		}
+		if profile == "messages-adaptive-v1" && model["thinkingLevel"] == "minimal" || profile == "messages-budget-v1" && (model["thinkingLevel"] == "xhigh" || model["thinkingLevel"] == "max") {
+			return false
+		}
 	}
 	if v, exists := model["availability"]; exists && !oneOf(v, "available", "unavailable") {
 		return false

@@ -16,6 +16,7 @@ import { WorkStore } from "@piwork/work-store";
 import { createServer } from "node:http";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@piwork/pi-adapter";
+import { Type } from "typebox";
 
 test("registers an Anthropic-compatible custom model at the configured endpoint", async () => {
   const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
@@ -79,10 +80,19 @@ test("rejects an unknown model without an Anthropic-compatible endpoint", async 
 test("actual SDK continues one Session with independently authenticated Run models and no persisted override credential", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-run-model-sdk-"));
   const observed: Array<{ model: string; key: string; thinking?: unknown }> = [];
+  const requests: Array<Record<string, any>> = [];
+  let compatibleFailure = 0;
+  let toolCycle = false;
   const server = createServer(async (request, response) => {
     const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const input = JSON.parse(Buffer.concat(chunks).toString()) as { model: string; thinking?: unknown };
+    requests.push(input);
     observed.push({ model: input.model, key: String(request.headers["x-api-key"] ?? ""), ...(input.thinking?{thinking:input.thinking}:{}) });
+    if (compatibleFailure) {
+      response.writeHead(compatibleFailure, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "synthetic-provider-secret" } }));
+      return;
+    }
     if (request.headers["x-api-key"] === "invalid-private-fixture-key") {
       response.writeHead(401, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: { type: "authentication_error", code: "invalid_api_key", message: "private provider error" } }));
@@ -91,6 +101,14 @@ test("actual SDK continues one Session with independently authenticated Run mode
     response.writeHead(200, { "content-type": "text/event-stream" });
     const emit = (type: string, payload: unknown) => response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
     emit("message_start", { type: "message_start", message: { id: "fixture-message", type: "message", role: "assistant", model: input.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } });
+    if (toolCycle) {
+      toolCycle = false;
+      emit("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tool-fixture", name: "fixture_tool", input: {} } });
+      emit("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: "{}" } });
+      emit("content_block_stop", { type: "content_block_stop", index: 0 });
+      emit("message_delta", { type: "message_delta", delta: { stop_reason: "tool_use", stop_sequence: null }, usage: { output_tokens: 1 } });
+      emit("message_stop", { type: "message_stop" }); response.end(); return;
+    }
     emit("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
     emit("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: `actual-model:${input.model}` } });
     emit("content_block_stop", { type: "content_block_stop", index: 0 });
@@ -107,12 +125,16 @@ test("actual SDK continues one Session with independently authenticated Run mode
     const selected = { modelRef: "catalog-model-0002", label: "Second", provider: "anthropic", model: "claude-sonnet-4-5", baseUrl };
     const modelConfig = { provider: "anthropic", id: "fixture-model-one", baseUrl, credentialPath, deterministic: false };
     let selectedCredential = "override-private-fixture-key";
+    let defaultCredential = "default-private-fixture-key", defaultEnabled = true;
     const models = new AgentRunModels(modelConfig, {
-      async models() { throw new Error("unused"); }, async resolveModel(ref) { return ref === null ? { model: { modelRef: null, label: "Default", provider: modelConfig.provider, model: modelConfig.id, baseUrl }, credential: "default-private-fixture-key" } : { model: selected, credential: selectedCredential }; },
+      async models() { throw new Error("unused"); }, async resolveModel(ref) { if (ref === null && !defaultEnabled) throw new Error('model disabled'); return ref === null ? { model: { modelRef: null, label: "Default", provider: modelConfig.provider, model: modelConfig.id, baseUrl }, credential: defaultCredential } : { model: selected, credential: selectedCredential }; },
     });
     const sessions = new RealAgentSessions("work-model", store, workspace, join(root, "sessions"), "context-model"); const session = sessions.create();
-    const executor = new PiSdkRunExecutor(sessions, agentDirectory, modelConfig, { models, resolvedTools: [], resourceLoaderFactory: async () => {
-      const loader = new DefaultResourceLoader({ cwd: workspace, agentDir: agentDirectory, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+    let corruptBudget = false;
+    let corruptOff: 'budget' | 'effort' | undefined;
+    const executor = new PiSdkRunExecutor(sessions, agentDirectory, modelConfig, { models, resolvedTools: [], customTools:[{name:'fixture_tool',label:'Fixture',description:'Return a fixture result',parameters:Type.Object({}),async execute(){return{content:[{type:'text' as const,text:'fixture result'}],details:{}};}}], resourceLoaderFactory: async () => {
+      const loader = new DefaultResourceLoader({ cwd: workspace, agentDir: agentDirectory, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+        extensionFactories: [pi => { pi.on('before_provider_request',event=>corruptOff === 'budget' ? {...event.payload as Record<string,unknown>,thinking:{type:'disabled',budget_tokens:6144}} : corruptOff === 'effort' ? {...event.payload as Record<string,unknown>,output_config:{effort:'high'}} : corruptBudget?{...event.payload as Record<string,unknown>,max_tokens:6144}:undefined); }] });
       await loader.reload(); return loader;
     } });
     const daemon = new AgentDaemonControl({ workId: "work-model", generation: 1, instanceId: "agent-model" });
@@ -149,6 +171,80 @@ test("actual SDK continues one Session with independently authenticated Run mode
     assert.doesNotMatch(history + JSON.stringify(manager.watch(first.run.runId)) + JSON.stringify(manager.watch(second.run.runId)) + JSON.stringify(store.getRun(second.run.runId)), /private-fixture-key/);
     assert.equal(await readFile(credentialPath, "utf8"), "default-private-fixture-key\n");
     const db = await readFile(join(root, "work.sqlite")); assert.equal(db.includes(Buffer.from("override-private-fixture-key")), false);
+    for (const [thinkingProfile, thinkingLevel, expected] of [
+      ["messages-adaptive-v1", "low", {type:"adaptive"}],
+      ["messages-adaptive-v1", "medium", {type:"adaptive"}],
+      ["messages-adaptive-v1", "high", {type:"adaptive"}],
+      ["messages-adaptive-v1", "xhigh", {type:"adaptive"}],
+      ["messages-adaptive-v1", "max", {type:"adaptive"}],
+      ["messages-budget-v1", "minimal", {type:"enabled",budget_tokens:1024}],
+      ["messages-budget-v1", "low", {type:"enabled",budget_tokens:2048}],
+      ["messages-budget-v1", "medium", {type:"enabled",budget_tokens:4096}],
+      ["messages-budget-v1", "high", {type:"enabled",budget_tokens:6144}],
+      ["messages-adaptive-v1", "off", {type:"disabled"}],
+      ["messages-budget-v1", "off", {type:"disabled"}],
+    ] as const) {
+      await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel,thinkingProfile},models);
+      const run=await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:`compat-${thinkingProfile}-${thinkingLevel}`,prompt:'Compatible request'});
+      const terminal=await manager.wait(run.run.runId);
+      assert.equal(terminal.state,'succeeded',terminal.errorJson ?? '');
+      assert.equal(JSON.parse(run.run.actualModelJson!).thinkingProfile,thinkingProfile);
+      assert.equal(requests.at(-1)!.thinking?.type,expected.type);
+      if ('budget_tokens' in expected) assert.equal(requests.at(-1)!.thinking?.budget_tokens,expected.budget_tokens);
+      if (thinkingProfile === 'messages-adaptive-v1' && thinkingLevel !== 'off') assert.equal(requests.at(-1)!.output_config?.effort,thinkingLevel);
+      if (thinkingLevel === 'off') { assert.equal(requests.at(-1)!.thinking?.budget_tokens,undefined); assert.equal(requests.at(-1)!.output_config?.effort,undefined); }
+    }
+    for (const thinkingProfile of ['messages-adaptive-v1','messages-budget-v1'] as const) {
+      await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'off',thinkingProfile},models);
+      for (const field of ['budget','effort'] as const) {
+        corruptOff=field;
+        const before=requests.length;
+        const run=await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:`off-injected-${thinkingProfile}-${field}`,prompt:'Compatible request'});
+        assert.equal((await manager.wait(run.run.runId)).state,'failed');
+        assert.equal(requests.length,before,'contradictory Off parameters must fail before contacting the provider');
+      }
+    }
+    corruptOff=undefined;
+    await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'high',thinkingProfile:'messages-adaptive-v1'},models);
+    toolCycle=true;
+    const beforeTool=requests.length;
+    const toolRun=await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:'compatible-tool-cycle',prompt:'Use fixture tool'});
+    assert.equal((await manager.wait(toolRun.run.runId)).state,'succeeded');
+    assert.equal(requests.length-beforeTool,2);
+    for (const request of requests.slice(beforeTool)) {assert.equal(request.thinking?.type,'adaptive');assert.equal(request.output_config?.effort,'high');}
+    defaultCredential='rotated-compatible-private-fixture-key';
+    const rotatedCompatible=await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:'compatible-key-rotated',prompt:'Compatible request'});
+    assert.equal((await manager.wait(rotatedCompatible.run.runId)).state,'succeeded');
+    assert.equal(observed.at(-1)?.key,defaultCredential);
+    defaultEnabled=false;
+    await assert.rejects(manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:'compatible-disabled',prompt:'Compatible request'}));
+    defaultEnabled=true;defaultCredential='default-private-fixture-key';
+    await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'high',thinkingProfile:'messages-budget-v1'},models);
+    corruptBudget=true;
+    const beforeBudget=requests.length;
+    const budgetRun=await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:'budget-insufficient',prompt:'Compatible request'});
+    assert.equal((await manager.wait(budgetRun.run.runId)).state,'failed');
+    assert.equal(requests.length,beforeBudget,'insufficient answer space must fail before contacting the provider');
+    corruptBudget=false;
+    await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'high',thinkingProfile:'messages-adaptive-v1'},models);
+    for (const status of [400, 422, 401, 403]) {
+      compatibleFailure = status;
+      const before = requests.length;
+      const failed = await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:`compatible-rejected-${status}`,prompt:'Compatible request'});
+      const result = await manager.wait(failed.run.runId);
+      assert.equal(result.state,'failed');
+      const error = JSON.parse(result.errorJson!);
+      assert.equal(error.code,status===401?'MODEL_AUTHENTICATION_FAILED':status===403?'MODEL_PERMISSION_DENIED':'MODEL_COMPATIBLE_REQUEST_REJECTED');
+      assert.equal(error.retryable,false);
+      assert.equal(requests.length-before,1);
+      assert.doesNotMatch(JSON.stringify(result) + JSON.stringify(manager.watch(result.runId)),/synthetic-provider-secret|private-fixture-key/);
+      assert.equal((await sessions.chatOptions(session.sessionId,models)).thinkingProfile,'messages-adaptive-v1');
+      const replay = await manager.submitChat({workId:'work-model',sessionId:session.sessionId,submissionKey:`compatible-rejected-${status}`,prompt:'Compatible request'});
+      assert.equal(replay.run.runId,result.runId);
+      assert.equal(requests.length-before,1);
+    }
+    assert.doesNotMatch(await readFile(session.sdkHistoryPath,'utf8'),/rotated-compatible-private-fixture-key|synthetic-provider-secret/);
+    assert.equal((await readFile(join(root,'work.sqlite'))).includes(Buffer.from('rotated-compatible-private-fixture-key')),false);
   } finally { store.close(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(root, { recursive: true, force: true }); }
 });
 
@@ -422,7 +518,11 @@ test('accepted resource commands expand through the pinned SDK; text stays liter
   });await loader.reload();
   const commands=[{kind:'prompt' as const,command:'/identify',name:'identify',description:'',sourceName:'Work prompts'},{kind:'prompt' as const,command:'/arguments',name:'arguments',description:'',sourceName:'Work prompts'},{kind:'skill' as const,command:'/skill:sample',name:'sample',description:'',sourceName:'Work skills'}];
   const executor=new PiSdkRunExecutor(sessions,agentDirectory,{provider:'piwork-deterministic',id:'fixture-v1',deterministic:true},{resolvedTools:[],resourceLoaderFactory:async()=>loader,commands});
-  const execute=async(prompt:string,inputMode:'text'|'command'|undefined='command')=>executor.execute({workId:'work-command',sessionId:record.sessionId,runId:crypto.randomUUID(),prompt,inputMode,signal:new AbortController().signal,emit(){}});
+  const execute=async(prompt:string,inputMode:'text'|'command'|undefined='command')=>{
+   const run=store.acceptRun({workId:'work-command',sessionId:record.sessionId,submissionKey:crypto.randomUUID(),requestDigest:'fixture',promptDigest:'fixture',contextIdentity:'context-command',memoryEnabled:false}).run;
+   try{const result=await executor.execute({workId:'work-command',sessionId:record.sessionId,runId:run.runId,contextIdentity:run.contextIdentity,prompt,inputMode,signal:new AbortController().signal,emit(){}});store.completeRun(run.runId,'succeeded',result.finalText,null);return result;}
+   catch(error){store.completeRun(run.runId,'failed',null,'{}');throw error;}
+  };
   assert.equal((await execute('/identify')).finalText,'piwork-deterministic/fixture-v1');
   await execute('/arguments\t"first argument"  second');assert.equal(sessions.read(record.sessionId).entries.findLast(e=>e.role==='user')?.text,'first argument second');
   await execute('/identify','text');assert.equal(sessions.read(record.sessionId).entries.findLast(e=>e.role==='user')?.text,'/identify');
@@ -430,4 +530,65 @@ test('accepted resource commands expand through the pinned SDK; text stays liter
   await execute('/skill:sample\tkeep these arguments');const text=sessions.read(record.sessionId).entries.findLast(e=>e.role==='user')!.text;assert.match(text,/Skill body survives/);assert.match(text,/keep these arguments/);assert.ok(!text.includes(root));assert.ok((await readFile(record.sdkHistoryPath,'utf8')).includes(root));
   await rm(skillPath);await assert.rejects(execute('/skill:sample'),/could not be loaded/);
  }finally{store.close();await rm(root,{recursive:true,force:true});}
+});
+
+test("unknown Responses models send each explicitly selected compatibility effort", async () => {
+  const root=await mkdtemp(join(tmpdir(),'piwork-responses-compat-'));
+  const requests:Array<Record<string,any>>=[];
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    const emit=(type:string,payload:unknown)=>res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    const item={id:'synthetic-item',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:'OK',annotations:[]}]};
+    emit('response.created',{type:'response.created',response:{id:'synthetic-response',status:'in_progress',model:body.model,output:[]}});
+    emit('response.output_item.added',{type:'response.output_item.added',output_index:0,item:{...item,status:'in_progress',content:[]}});
+    emit('response.content_part.added',{type:'response.content_part.added',output_index:0,content_index:0,part:{type:'output_text',text:'',annotations:[]}});
+    emit('response.output_text.delta',{type:'response.output_text.delta',output_index:0,content_index:0,delta:'OK'});
+    emit('response.output_item.done',{type:'response.output_item.done',output_index:0,item});
+    emit('response.completed',{type:'response.completed',response:{id:'synthetic-response',status:'completed',model:body.model,output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}}}});res.end();
+  });
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const address=server.address();assert.ok(address && typeof address!=='string');
+  const baseUrl=`http://127.0.0.1:${address.port}/v1`,store=WorkStore.open(join(root,'work.sqlite'));
+  try {
+    const workspace=join(root,'workspace'),agentDirectory=join(root,'agent');await mkdir(workspace);await mkdir(agentDirectory);
+    const config={provider:'openai',id:'unknown-responses-fixture',api:'openai-responses' as const,baseUrl,deterministic:false};
+    const snapshot={modelRef:null,label:'Unknown',provider:config.provider,model:config.id,api:config.api,baseUrl};
+    const models=new AgentRunModels(config,{async models(){return{models:[],defaultModel:snapshot,checkedAt:new Date().toISOString()};},async resolveModel(){return{model:snapshot,credential:'synthetic-key'};}});
+    const sessions=new RealAgentSessions('work-responses',store,workspace,join(root,'sessions'),'ctx-responses'),session=sessions.create();
+    const executor=new PiSdkRunExecutor(sessions,agentDirectory,config,{models,resolvedTools:[],resourceLoaderFactory:async()=>{const loader=new DefaultResourceLoader({cwd:workspace,agentDir:agentDirectory,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true});await loader.reload();return loader;}});
+    const daemon=new AgentDaemonControl({workId:'work-responses',generation:1,instanceId:'agent-responses'});daemon.configure({modelCredentialStatus:'available',contextIdentity:'ctx-responses',loadedSkills:[],resolvedTools:[],initializationComplete:true});
+    const manager=new RunManager(store,daemon,executor,undefined,models);
+    for(const level of ['off','minimal','low','medium','high','xhigh','max'] as const) {
+      await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:level,thinkingProfile:'responses-effort-v1'},models);
+      const accepted=await manager.submitChat({workId:'work-responses',sessionId:session.sessionId,submissionKey:`effort-${level}`,prompt:'Reply OK'});
+      const result=await manager.wait(accepted.run.runId);assert.equal(result.state,'succeeded',result.errorJson ?? '');
+      assert.equal(requests.at(-1)!.reasoning?.effort,level==='off'?'none':level);
+    }
+    await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:null,thinkingProfile:null},models);
+    const ordinary=await manager.submitChat({workId:'work-responses',sessionId:session.sessionId,submissionKey:'ordinary',prompt:'Reply OK'});
+    assert.equal((await manager.wait(ordinary.run.runId)).state,'succeeded');assert.equal(requests.at(-1)!.reasoning,undefined);
+
+    // Simulate a later SDK recognizing a model whose previous Session already
+    // persisted a versioned compatibility selection.
+    const knownConfig={...config,id:'gpt-5.1'},knownSnapshot={...snapshot,label:'Known',model:'gpt-5.1'};
+    const knownModels=new AgentRunModels(knownConfig,{async models(){return{models:[],defaultModel:knownSnapshot,checkedAt:new Date().toISOString()};},async resolveModel(){return{model:knownSnapshot,credential:'synthetic-key'};}});
+    const knownSessions=new RealAgentSessions('work-responses',store,workspace,join(root,'sessions'),'ctx-responses');
+    const knownSession=knownSessions.create();
+    store.setSessionModelPreference('work-responses',knownSession.sessionId,JSON.stringify({...knownSnapshot,thinkingLevel:'max',thinkingProfile:'responses-effort-v1',availability:'available'}));
+    const retained=await knownSessions.chatOptions(knownSession.sessionId,knownModels);
+    assert.equal(retained.availability,'available');assert.equal(retained.thinkingProfile,'responses-effort-v1');assert.equal(retained.thinkingLevel,'max');
+    const newSession=knownSessions.create();const newOptions=await knownSessions.chatOptions(newSession.sessionId,knownModels);
+    assert.equal(newOptions.thinkingLevel,'off');assert.equal(newOptions.thinkingProfile,undefined);
+    await knownSessions.setChatOptions(knownSession.sessionId,{modelRef:null,thinkingLevel:'max',thinkingProfile:'responses-effort-v1'},knownModels);
+    const knownExecutor=new PiSdkRunExecutor(knownSessions,agentDirectory,knownConfig,{models:knownModels,resolvedTools:[],resourceLoaderFactory:async()=>{const loader=new DefaultResourceLoader({cwd:workspace,agentDir:agentDirectory,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true});await loader.reload();return loader;}});
+    const knownManager=new RunManager(store,daemon,knownExecutor,undefined,knownModels);
+    const preserved=await knownManager.submitChat({workId:'work-responses',sessionId:knownSession.sessionId,submissionKey:'known-retains-compatible',prompt:'Reply OK'});
+    assert.equal((await knownManager.wait(preserved.run.runId)).state,'succeeded');assert.equal(requests.at(-1)!.reasoning?.effort,'max');
+    assert.equal(JSON.parse(preserved.run.actualModelJson!).thinkingProfile,'responses-effort-v1');
+    await knownSessions.setChatOptions(knownSession.sessionId,{modelRef:null,thinkingLevel:'off',thinkingProfile:null},knownModels);
+    const switched=await knownManager.submitChat({workId:'work-responses',sessionId:knownSession.sessionId,submissionKey:'known-explicit-sdk',prompt:'Reply OK'});
+    assert.equal((await knownManager.wait(switched.run.runId)).state,'succeeded');assert.equal(JSON.parse(switched.run.actualModelJson!).thinkingProfile,undefined);
+  } finally {store.close();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 });

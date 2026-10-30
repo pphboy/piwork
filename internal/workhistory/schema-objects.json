@@ -31,6 +31,12 @@
   },
   {
     "type": "index",
+    "name": "sqlite_autoindex_run_output_chunks_1",
+    "tbl_name": "run_output_chunks",
+    "sql": null
+  },
+  {
+    "type": "index",
     "name": "sqlite_autoindex_runs_1",
     "tbl_name": "runs",
     "sql": null
@@ -121,6 +127,12 @@
   },
   {
     "type": "table",
+    "name": "run_output_chunks",
+    "tbl_name": "run_output_chunks",
+    "sql": "CREATE TABLE run_output_chunks (\n  run_id TEXT NOT NULL REFERENCES runs(run_id),\n  sequence INTEGER NOT NULL CHECK(sequence >= 1),\n  part INTEGER NOT NULL CHECK(part >= 0),\n  kind TEXT NOT NULL CHECK(kind IN ('text','tool-start','tool-end')),\n  payload_json TEXT NOT NULL,\n  PRIMARY KEY(run_id, sequence, part)\n) STRICT"
+  },
+  {
+    "type": "table",
     "name": "runs",
     "tbl_name": "runs",
     "sql": "CREATE TABLE runs (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      run_id TEXT PRIMARY KEY,\n      submission_key TEXT NOT NULL,\n      prompt_digest TEXT NOT NULL,\n      state TEXT NOT NULL CHECK (state IN (\n        'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'\n      )),\n      final_text TEXT,\n      error_json TEXT,\n      accepted_at TEXT NOT NULL,\n      started_at TEXT,\n      finished_at TEXT,\n      earliest_available_sequence INTEGER NOT NULL DEFAULT 1,\n      latest_sequence INTEGER NOT NULL DEFAULT 0, context_identity TEXT,\n      model_selector_json TEXT, actual_model_json TEXT, source_json TEXT,\n      adopted_experience_version INTEGER NOT NULL DEFAULT 0 CHECK(adopted_experience_version >= 0),\n      adopted_memory_selection_json TEXT,\n      FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n    ) STRICT"
@@ -147,7 +159,7 @@
     "type": "table",
     "name": "sessions",
     "tbl_name": "sessions",
-    "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL, active_context_identity TEXT,\n      model_preference_json TEXT, source_json TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
+    "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL,\n      model_preference_json TEXT, source_json TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
   },
   {
     "type": "table",

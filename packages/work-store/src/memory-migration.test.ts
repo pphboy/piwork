@@ -21,13 +21,13 @@ function legacy() {
  for(const [version,id,status,source]of [[1,"rule","effective","completed"],[2,"rule","effective","completed"],[3,"failure","failed","failed"],[4,"candidate","staged","waiting"]] as const)
   db.prepare("INSERT INTO brain_experience_revisions VALUES(?, ?,?,'work',?,?,?, ?,?)").run(work,version,id,`Rule ${id}`,JSON.stringify([`proof-${source}`]),source,status,now);
  db.prepare("INSERT INTO brain_experience_heads VALUES(?,2,?)").run(work,now);db.close();
- const grant={operationId:"operation-migration-111111",workId:work,fromSchema:4 as const,toSchema:5 as const,storeId,backupManifestDigest:"a".repeat(64)};
+ const grant={operationId:"operation-migration-111111",workId:work,fromSchema:4 as const,toSchema:7 as const,storeId,backupManifestDigest:"a".repeat(64)};
  const prepare=()=>{const memory=new DatabaseSync(join(root,"memory.sqlite"));memory.exec(MEMORY_SCHEMA_SQL);memory.prepare("INSERT INTO memory_meta VALUES(1,1,?,?)").run(work,storeId);memory.prepare("INSERT INTO memory_versions VALUES(0,?,0)").run(now);memory.prepare("INSERT INTO memory_head VALUES(1,0,?)").run(now);memory.close();};
  return{root,path,grant,prepare,close:()=>rmSync(root,{recursive:true,force:true})};
 }
 test("Core-authorized migration retains all adopted, effective, failed and staged versions without a second authority",()=>{
  const f=legacy();try{f.prepare();const store=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});try{
-  assert.equal(store.schemaVersion,5);assert.equal(store.memory.head(work),2);assert.equal(store.getRun("run")?.adoptedExperienceVersion,2);
+  assert.equal(store.schemaVersion,7);assert.equal(store.memory.head(work),2);assert.equal(store.getRun("run")?.adoptedExperienceVersion,2);
   assert.equal(store.getRun("run")?.adoptedMemorySelection,null);
   assert.deepEqual(store.memory.snapshot(work,1).entries.map(e=>e.entryId),["rule"]);
   assert.equal(store.memory.snapshot(work,2).entries[0]?.rule,"Rule rule");
@@ -43,9 +43,9 @@ test("schema 4 can migrate through 5 to 6 and resume after the first stage",()=>
  for(const resume of [false,true]) { const f=legacy();try {
   f.prepare();
   if(resume){const stage=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});stage.close();}
-  const grant={...f.grant,toSchema:6 as const};
+  const grant={...f.grant,toSchema:7 as const};
   const store=WorkStore.open(f.path,{workId:work,historyMigration:grant});
-  try {assert.equal(store.schemaVersion,6);assert.equal(store.memory.head(work),2);assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);}
+  try {assert.equal(store.schemaVersion,7);assert.equal(store.memory.head(work),2);assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);}
   finally {store.close();}
   const reopened=WorkStore.open(f.path,{workId:work,historyMigration:grant});reopened.close();
  }finally{f.close();}}

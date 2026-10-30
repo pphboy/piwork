@@ -1,12 +1,15 @@
+import { WORK_SCHEMA_SQL } from "./brain-schema.js";
 import { constants, openSync, closeSync, fstatSync, readSync, writeSync, fsyncSync, mkdtempSync, rmSync, fchmodSync, fchownSync, renameSync, unlinkSync, chownSync } from "node:fs";
 import { join, isAbsolute, normalize } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { migrateWorkDatabase, initializeMemoryDatabase } from "./migrations.js";
 import { LEGACY_SCHEMA_SQL } from "./legacy-schema.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
+import { PREVIOUS_SCHEMA_SQL } from "./previous-schema.js";
+import { WORK_SCHEMA_V5_OBJECTS } from "./schema-v5-objects.js";
+import { WORK_SCHEMA_V5_SQL } from "./schema-v5.js";
+import { PREVIOUS_SCHEMA_OBJECTS } from "./previous-schema-objects.js";
 import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
-import { WORK_SCHEMA_V6_SQL } from "./schema-v6.js";
-import { WORK_SCHEMA_V6_OBJECTS } from "./schema-v6-objects.js";
 import { randomUUID } from "node:crypto";
 import { MEMORY_TABLES } from "./snapshot-memory.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
@@ -22,7 +25,7 @@ const TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_reque
 const CURRENT_TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "work_memory_binding"] as const;
 const V6_TABLES = [...CURRENT_TABLES, "run_output_chunks"] as const;
 type Table = typeof TABLES[number] | typeof V6_TABLES[number];
-type HistoryVersion = 4 | 5 | 6;
+type HistoryVersion = 4 | 5 | 6 | 7;
 const tables = (version: HistoryVersion): readonly Table[] => version === 4 ? TABLES : version === 5 ? CURRENT_TABLES : V6_TABLES;
 type Row = Record<string, SQLInputValue>;
 const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
@@ -124,9 +127,11 @@ export class WorkHistorySnapshot {
       database = new DatabaseSync(join(scratch, FILES[0]), { readOnly: true, allowExtension: false, enableDoubleQuotedStringLiterals: false, enableForeignKeyConstraints: true });
       database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
       const actual = schema(database);
-      const version: HistoryVersion = sameSchema(actual, WORK_SCHEMA_V6_OBJECTS as unknown as SchemaRow[]) ? 6
-        : sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 5
-        : sameSchema(actual, LEGACY_SCHEMA_OBJECTS as unknown as SchemaRow[]) ? 4 : (() => { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED"); })();
+      const versionValue = database.prepare("SELECT version FROM schema_migrations").get()?.version;
+      const version: 4 | 5 | 6 | 7 = sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue===7 ? 7
+        : sameSchema(actual, WORK_SCHEMA_V5_OBJECTS as unknown as SchemaRow[]) && versionValue===5 ? 5
+        : sameSchema(actual, PREVIOUS_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue===6 ? 6
+        : sameSchema(actual, LEGACY_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue === 4 ? 4 : (() => { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED"); })();
       if (version >= 5) {
         for (const name of ["work.sqlite-journal", "memory.sqlite-journal"]) {
           try { const fd = regular(root, name); closeSync(fd); throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY"); }
@@ -166,8 +171,7 @@ export class WorkHistorySnapshot {
       target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
       if (this.schemaVersion === 4) target.exec(LEGACY_SCHEMA_SQL);
       else {
-        if (this.schemaVersion === 6) target.exec(WORK_SCHEMA_V6_SQL);
-        else migrateWorkDatabase(target, 5);
+        target.exec(this.schemaVersion === 7 ? WORK_SCHEMA_SQL : this.schemaVersion === 6 ? PREVIOUS_SCHEMA_SQL : WORK_SCHEMA_V5_SQL);
         target.prepare("ATTACH DATABASE ? AS memory").run(join(temporaryDirectory, "memory.sqlite"));
         target.exec("PRAGMA memory.journal_mode=DELETE; PRAGMA memory.synchronous=FULL");
         initializeMemoryDatabase(target);
@@ -297,7 +301,7 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
   if (database.prepare(`SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id = r.run_id GROUP BY r.run_id
     HAVING COUNT(e.sequence) != r.latest_sequence - r.earliest_available_sequence + 1
       OR (COUNT(e.sequence) > 0 AND (MIN(e.sequence) != r.earliest_available_sequence OR MAX(e.sequence) != r.latest_sequence)) LIMIT 1`).get()) invalid();
-  if (version === 6 && (database.prepare(`SELECT 1 FROM run_output_chunks c JOIN runs r ON r.run_id=c.run_id WHERE c.sequence>r.latest_sequence LIMIT 1`).get() ||
+  if (version >= 6 && (database.prepare(`SELECT 1 FROM run_output_chunks c JOIN runs r ON r.run_id=c.run_id WHERE c.sequence>r.latest_sequence LIMIT 1`).get() ||
     database.prepare(`SELECT 1 FROM run_output_chunks GROUP BY run_id,sequence HAVING MIN(part)!=0 OR MAX(part)!=COUNT(*)-1 OR COUNT(DISTINCT kind)!=1 LIMIT 1`).get())) invalid();
   validateBrainHistory(database, scope.sourceWorkId, scope.contextIds);
   return { sessions: counts.get("sessions")!, runs: counts.get("runs")!, events: counts.get("run_events")! };
@@ -311,5 +315,5 @@ function rebindPreference(encoded: string, models: readonly RunModelSnapshot[]):
     && normalizeModelBaseUrl(candidate.baseUrl) === normalizeModelBaseUrl(preference.baseUrl)
     && (!preference.api||preference.api===candidate.api)
     && (!preference.capabilities||JSON.stringify(preference.capabilities)===JSON.stringify(candidate.capabilities)));
-  return JSON.stringify(matches.length === 1 ? { ...matches[0], ...(preference.thinkingLevel === undefined ? {} : { thinkingLevel: preference.thinkingLevel }), availability: "available" } : { ...preference, availability: "unavailable" });
+  return JSON.stringify(matches.length === 1 ? { ...matches[0], ...(preference.thinkingLevel === undefined ? {} : { thinkingLevel: preference.thinkingLevel }), ...(preference.thinkingProfile === undefined ? {} : { thinkingProfile: preference.thinkingProfile }), availability: "available" } : { ...preference, availability: "unavailable" });
 }

@@ -110,7 +110,7 @@ async function fixture(change = true) {
   await writeFile(join(source, "package.json"), '{"name":"piwork-brain","version":"1.0.0"}'); await writeFile(join(source, "brain.md"), "Original cognition");
   const activeDigest = await digestPiPackageTree(source); if (change) await writeFile(join(source, "brain.md"), "Improved cognition; version stays 1.0.0");
   const sourceDigest = await digestPiPackageTree(source), store = WorkStore.open(join(root, "work.sqlite"));
-  store.createSession({ workId: WORK, sessionId: "session-one", sdkHistoryPath: join(root, "history.jsonl"), contextIdentity: "context-old", createdAt: NOW, updatedAt: NOW });
+  store.createSession({ workId: WORK, sessionId: "session-one", sdkHistoryPath: join(root, "history.jsonl"),  createdAt: NOW, updatedAt: NOW });
   const run = store.acceptRun({ workId: WORK, sessionId: "session-one", submissionKey: "improve", requestDigest: "improve", promptDigest: "improve", contextIdentity: "context-old", now: NOW }).run;
   const request = store.feedback.ensureChatRequest(WORK, run.runId, "Improve brain and prove actual adopted behavior", NOW);
   const context: RunExecutionContext = { workId: WORK, sessionId: "session-one", runId: run.runId, prompt: request.goal, contextIdentity: "context-old", signal: new AbortController().signal, emit() {} };

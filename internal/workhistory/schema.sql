@@ -8,7 +8,7 @@ CREATE TABLE sessions (
       session_id TEXT NOT NULL,
       sdk_history_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, active_context_identity TEXT,
+      updated_at TEXT NOT NULL,
       model_preference_json TEXT, source_json TEXT,
       PRIMARY KEY(work_id, session_id)
     ) STRICT;
@@ -104,4 +104,15 @@ CREATE TABLE agent_evidence (
 CREATE TABLE work_memory_binding (
   work_id TEXT PRIMARY KEY, store_id TEXT NOT NULL UNIQUE,
   memory_schema_version INTEGER NOT NULL CHECK(memory_schema_version = 1)
+) STRICT;
+
+-- Output chunks are independent of the retained event cursor. The original
+-- event sequence and part index preserve ordering across text and tool events.
+CREATE TABLE run_output_chunks (
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  sequence INTEGER NOT NULL CHECK(sequence >= 1),
+  part INTEGER NOT NULL CHECK(part >= 0),
+  kind TEXT NOT NULL CHECK(kind IN ('text','tool-start','tool-end')),
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY(run_id, sequence, part)
 ) STRICT;
