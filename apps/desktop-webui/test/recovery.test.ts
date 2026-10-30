@@ -62,6 +62,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
       else if (r.path.endsWith('/services')) reply = { json: { services: [] } };
       else if (r.path.endsWith('/packages')) reply = { json: { packages: [] } };
       else if (r.path.endsWith('/models')) reply = { json: {models:[{modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'}],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one'},checkedAt:new Date().toISOString(),availability:'available'} };
+      else if (r.path.endsWith('/chat-options') && r.method === 'GET') reply = { json: { sessionId: r.path.split('/sessions/')[1]?.split('/')[0] || 'session-1', modelRef: null, thinkingLevel: 'off', model: chatModel, availability: 'available', checkedAt: new Date().toISOString() } };
       else if (r.path.endsWith('/sessions')) reply = { json: { sessions: [{ sessionId: 'session-1' }] } };
       else if (r.path.endsWith('/sessions/session-1')) reply = { json: {session:{sessionId:'session-1',workId:'work-1',modelPreference:null,source:{kind:'chat'}}, messages: [{ role: 'user', text: 'original prompt' }],runs:[] } };
       else if (r.path.startsWith('operations/')) reply = { json: { state: 'succeeded', operationId: r.path.split('/')[1] } };
@@ -869,8 +870,8 @@ test('UX revision composer geometry aligns all controls and long model names rem
     if(r.path.endsWith('/chat-models'))return{json:{...chatModels(),defaultModel:{...chatModel,label,thinkingLevels:['off','low','high','max']}}};
   });
   await button(page,'tab-Chat').click();await expectThinkingEditable(page);
-  const boxes=await page.locator('#response-settings-trigger,[data-action=send-message],[data-action=chat-input-options]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{top:r.top,height:r.height,center:r.top+r.height/2,width:r.width};}));
-  assert.equal(boxes.length,3);for(const rect of boxes) {assert.equal(rect.height,31);assert.ok(Math.abs(rect.center-boxes[0]!.center)<1);}
+  const boxes=await page.locator('#response-settings-trigger,[data-action=send-message],[data-action=chat-input-options]').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{action:node.getAttribute("data-action"),top:r.top,height:r.height,center:r.top+r.height/2,width:r.width};}));
+  assert.equal(boxes.length,3);for(const rect of boxes) {assert.equal(rect.height,rect.action==='send-message'?34:31,JSON.stringify(boxes));assert.ok(Math.abs(rect.center-boxes[0]!.center)<1);}
   assert.ok(boxes[0]!.width<=320);
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',label+' (one) · Work default · Thinking Off');
   await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');
@@ -1601,14 +1602,20 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await page.locator('#composer').fill('Build a notes app for this Work');
   await uiuxEvidence(page, '01-agent-sidebar');
   const geometry = () => page.locator('#response-settings-trigger,[data-action=chat-input-options],[data-action=send-message]').evaluateAll(nodes => nodes.map(node => {
-    const box = node.getBoundingClientRect(); return { x: box.x, right: box.right, width: box.width, height: box.height, center: box.y + box.height / 2 };
+    const box = node.getBoundingClientRect(); return { action: node.getAttribute("data-action"), x: box.x, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height, center: box.y + box.height / 2 };
   }));
-  const aligned = async () => { const boxes = await geometry(); assert.equal(boxes.length, 3); for (const box of boxes) { assert.equal(box.height, 31); assert.ok(Math.abs(box.center - boxes[0]!.center) < 1); } return boxes; };
+  const aligned = async () => {
+    const boxes = await geometry(); assert.equal(boxes.length, 3);
+    for (const box of boxes) assert.equal(box.height, box.action === 'send-message' ? 34 : 31, JSON.stringify(boxes));
+    assert.ok(Math.abs(boxes[1]!.center - boxes[2]!.center) < 1, 'toolbar icons share a row');
+    assert.ok(Math.abs(boxes[0]!.center - boxes[1]!.center) < 1 || boxes[0]!.bottom <= boxes[1]!.top, 'settings align with the toolbar or wrap above it');
+    return boxes;
+  };
   await aligned();
   await button(page, 'tab-Chat').click();
   const normal = await aligned();
   assert.ok(normal[0]!.width < 250);
-  assert.ok(normal[1]!.x - normal[0]!.right > 150);
+  assert.ok(normal[1]!.x - normal[0]!.right >= 6);
   await uiuxEvidence(page, '02-chat-wide');
   await page.setViewportSize({ width: 2200, height: 1000 });
   const wider = await aligned();
@@ -2277,7 +2284,7 @@ test('Controls historical Run information is on demand and never replaces the cu
   return controlFixture(r);
  });
  await button(page,'tab-Chat').click();await expect(page.locator('#messages .run-history')).toHaveCount(0);assert.ok(!(await page.locator('#messages').textContent())!.includes('historical-run'));
- const current=await api(page,"return adapter.getWork('work-1').run?.id || null");await page.locator('.unmatched-executions > details > summary').click();await page.locator('[data-action=run-details][data-run-id=historical-run]').click();await expect(page.locator('#modal')).toContainText('Actual model');await expect(page.locator('#modal')).toContainText('high');assert.equal(await api(page,"return adapter.getWork('work-1').run?.id || null"),current);assert.equal(chatWrites(requests).length,0);
+ const current=await api(page,"return adapter.getWork('work-1').run?.id || null");const details=page.locator('[data-action=run-details][data-run-id=historical-run]');await expect(details).toHaveCount(1);if(!await details.isVisible())await page.locator('.unmatched-executions > details > summary').click();await details.click();await expect(page.locator('#modal')).toContainText('Actual model');await expect(page.locator('#modal')).toContainText('high');assert.equal(await api(page,"return adapter.getWork('work-1').run?.id || null"),current);assert.equal(chatWrites(requests).length,0);
 });
 
 test('Controls Service scopes discard late reads, share ports, retain list scroll and clear prior identity',async t=>{

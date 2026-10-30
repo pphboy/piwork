@@ -18,14 +18,14 @@ function extract(names: string[]) {
 }
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
-  const work: any = { id: 'one', name: 'One', services: [{ id: 'service-a', enabled: false, observed: 'Stopped' }], files: [], resourceErrors: {} };
+  const work: any = { id: 'one', name: 'One', services: [{ id: 'service-a', enabled: false, observed: 'Stopped' }], sessions: [], files: [], resourceErrors: {} };
   const c: any = {
   ...localeSandbox,
     view: { tab: 'Files', path: '/x/y', file: '', fileDraft: '', fileOriginal: '', configDirty: false, data: {}, modal: '' },
     location: { hash: '#/work/one' }, modalChoice: 0, fileChoice: 0, areaChoice: 0, serviceChoice: 0, sessionChoice: 0,
     selectionWorkId: 'one', routeLoad: 0, workspaceReturn: undefined, workSelections: new Map(), filesRestoreNotice: '',
     lastRoute: '#/work/one', serviceControls: new Map(), workControls: new Map(), importStarts: new Map(),
-    adapter: { coreGate: {blocked:false}, identityEpoch: 1, state: { signedIn: true, operations: [] }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined },
+    adapter: { coreGate: {blocked:false}, identityEpoch: 1, state: { signedIn: true, operations: [] }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined, defaultSession: async () => '', loadSession: async () => undefined },
     actions: { records: new Map(), begin: () => undefined, current: () => true, review: (r: any) => { r.blocked = false; } },
     render: () => {}, toast: () => {}, openModal: () => {}, activeService: () => work.services[0], current: () => work, targetWork: () => work,
     ViewChanged: class extends Error {}, URLSearchParams,
