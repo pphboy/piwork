@@ -110,7 +110,6 @@ export class DesktopAdapter {
     historyProjections = new Map();
     historyControllers = new Set();
     historyReads = new Map();
-    fullHistoryRuns = new Set();
     historyEventParts = new Map();
     historyProjection(id, session) { const key = `${id}:${session}`; let value = this.historyProjections.get(key); if (!value) {
         value = new HistoryProjection();
@@ -263,8 +262,24 @@ export class DesktopAdapter {
         const epoch = this.epoch, session = this.getWork(id)?.sessions.find(s => s.id === run.sessionId);
         if (!session)
             return;
-        const projection = this.historyProjection(id, run.sessionId), runKey = `${id}:${run.id}`, profile = !!this.imageCapabilities.get(id)?.value || !!session.imageProfile;
-        const query = new URLSearchParams({ direction: 'older', runId: run.id, ...(profile ? { imageProfile: 'chat-images-v1' } : {}) });
+        const projection = this.historyProjection(id, run.sessionId), profile = !!this.imageCapabilities.get(id)?.value || !!session.imageProfile;
+        const anchor = projection.orderingAnchor(run.id);
+        const latest = await this.historyPage(id, run.sessionId, new URLSearchParams({ direction: 'older', ...(profile ? { imageProfile: 'chat-images-v1' } : {}) }), signal);
+        if (epoch !== this.epoch || signal?.aborted)
+            return;
+        projection.merge(latest);
+        // A Run-only snapshot cannot establish order against the preceding turn.
+        // Share one frozen Session snapshot; for a large Run, read just one known
+        // neighbouring Run's tail page rather than walking the entire Session.
+        if (anchor && !latest.segments.some((segment) => segment.runId === anchor)) {
+            const boundary = await this.historyPage(id, run.sessionId, new URLSearchParams({ direction: 'older', runId: anchor, snapshot: latest.snapshotId, limit: '1', ...(profile ? { imageProfile: 'chat-images-v1' } : {}) }), signal);
+            if (epoch !== this.epoch || signal?.aborted)
+                return;
+            projection.merge(boundary);
+        }
+        const query = new URLSearchParams({ direction: 'older', runId: run.id, snapshot: latest.snapshotId, ...(profile ? { imageProfile: 'chat-images-v1' } : {}) });
+        // Complete this snapshot's Run range. A cached first page (including one
+        // just merged from the Session) cannot prove that earlier pages are read.
         let cursor = null;
         do {
             if (cursor)
@@ -272,13 +287,9 @@ export class DesktopAdapter {
             const page = await this.historyPage(id, run.sessionId, query, signal);
             if (epoch !== this.epoch || signal?.aborted)
                 return;
-            const covered = this.fullHistoryRuns.has(runKey) && page.segments.every((segment) => projection.covers(segment));
             projection.merge(page);
             cursor = page.nextCursor;
-            if (covered)
-                break;
         } while (cursor);
-        this.fullHistoryRuns.add(runKey);
         projection.reveal(run.id);
         if (run.resultRef) {
             const resultQuery = new URLSearchParams({ direction: 'newer', content: 'result', runId: run.id, ...(run.resultRef.snapshot ? { snapshot: run.resultRef.snapshot } : {}) });
@@ -466,6 +477,7 @@ export class DesktopAdapter {
     activeRuns = new Map();
     activeRevisions = new Map();
     commands = new Map();
+    failedChatSnapshots = new Map();
     chatSubmissions = new Map();
     pairSaves = new Map();
     chatSelection = '';
@@ -950,7 +962,6 @@ export class DesktopAdapter {
         this.cancelHistoryReads();
         this.historySupport.clear();
         this.historyProjections.clear();
-        this.fullHistoryRuns.clear();
         this.historyEventParts.clear();
         this.stopImageReads();
         for (const value of this.imageLoads.values())
@@ -966,6 +977,7 @@ export class DesktopAdapter {
         this.sessionVersions.clear();
         this.commands.clear();
         this.chatSubmissions.clear();
+        this.failedChatSnapshots.clear();
         this.pairSaves.clear();
         this.requests.clear();
         this.requestDetails.clear();
@@ -3127,6 +3139,7 @@ export class DesktopAdapter {
             return;
         message.id = `${runId}-user`;
         message.runId = runId;
+        this.failedChatSnapshots.delete(key);
         message.submission.phase = 'accepted';
         delete message.submission.error;
         delete message.pendingImages;
@@ -3216,11 +3229,50 @@ export class DesktopAdapter {
         this.emit();
         return value;
     }
+    canRetryChatSubmission(id, sessionId, key) {
+        const snapshot = this.failedChatSnapshots.get(key), message = this.submissionMessage(id, sessionId, key);
+        return !!snapshot && snapshot.epoch === this.epoch && snapshot.workId === id && snapshot.sessionId === sessionId && message?.submission?.phase === 'failed';
+    }
+    async retryChatSubmission(id, sessionId, key) {
+        this.assertCoreReady();
+        if (this.chatSubmissions.has(id))
+            throw failure('RESULT_UNKNOWN', 'd.error.checkOriginalSubmission');
+        if (!this.canRetryChatSubmission(id, sessionId, key))
+            throw failure('INVALID_REQUEST', 'd.chat.retryUnavailable');
+        const snapshot = this.failedChatSnapshots.get(key), message = this.submissionMessage(id, sessionId, key);
+        const pair = this.modelSelection(id, sessionId);
+        if (!this.modelReady(id, sessionId) || pair.ref !== snapshot.modelRef || pair.thinking !== snapshot.thinking)
+            throw failure('MODEL_NOT_CONFIRMED', 'd.chat.restoreRetrySettings');
+        // Retrying a failed attempt must not silently cancel a newly observed Run.
+        if (snapshot.cancelRunId) {
+            await this.loadActiveRun(id, true);
+            if (snapshot.epoch !== this.epoch)
+                throw failure('CONNECTION_CHANGED', 'd.error.submissionIdentity');
+            const active = this.activeRuns.get(id);
+            if (!active?.confirmed || active.error || active.run && active.run.id !== snapshot.cancelRunId)
+                throw failure('WORK_BUSY', 'd.error.runAlreadyActiveStopAndSend');
+        }
+        if (snapshot.images.length) {
+            const reason = this.imageInputReason(id, sessionId);
+            if (reason)
+                throw new Error(reason);
+        }
+        if (snapshot.inputMode === 'command') {
+            const name = /^\/([^\s]+)/.exec(snapshot.text.trim())?.[1];
+            const directory = this.commands.get(id);
+            if (!directory?.confirmed || directory.error || !directory.items.some(c => c.command === `/${name}`))
+                throw failure('INVALID_REQUEST', 'd.chat.retryCommandUnavailable');
+        }
+        if (!this.canRetryChatSubmission(id, sessionId, key))
+            throw failure('INVALID_REQUEST', 'd.chat.retryUnavailable');
+        if (!this.modelReady(id, sessionId) || pair.ref !== snapshot.modelRef || pair.thinking !== snapshot.thinking)
+            throw failure('MODEL_NOT_CONFIRMED', 'd.chat.restoreRetrySettings');
+        return this.submitChatSnapshot(snapshot, message);
+    }
     async send(id, sessionId, text, includeIdentity, inputMode, images = [], cancelRunId) {
         this.assertCoreReady();
         if (!text.trim() && !images.length)
             throw new Error(t('d.error.writeMessageFirst'));
-        const work = this.getWork(id);
         if (images.length) {
             const reason = this.imageInputReason(id, sessionId);
             if (reason)
@@ -3230,14 +3282,30 @@ export class DesktopAdapter {
         }
         if (!this.modelReady(id, sessionId))
             throw failure('MODEL_NOT_CONFIRMED', 'd.error.confirmModelBeforeSend');
-        const prompt = includeIdentity && inputMode !== 'command' ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
         if (cancelRunId && this.cancelAndSendCapabilities.get(id) !== 1)
             throw failure('CANCEL_AND_SEND_UNSUPPORTED', 'd.error.stopAndSendUnavailable');
-        const epoch = this.epoch;
+        const work = this.getWork(id), pair = this.modelSelection(id, sessionId);
+        const prompt = includeIdentity && inputMode !== 'command' ? `${text}\n\nSelected Service: ${work.services.find(s => s.id === this.selectedService)?.domain ?? ''}` : text;
+        return this.submitChatSnapshot({ epoch: this.epoch, workId: id, sessionId, text, prompt, inputMode, images: images.map(image => ({ ...image })), cancelRunId, modelRef: pair.ref, thinking: pair.thinking });
+    }
+    async submitChatSnapshot(snapshot, previous) {
+        const { workId: id, sessionId, text, prompt, inputMode, images, cancelRunId, epoch } = snapshot;
+        if (epoch !== this.epoch)
+            throw failure('CONNECTION_CHANGED', 'd.error.submissionIdentity');
+        if (this.chatSubmissions.has(id))
+            throw failure('RESULT_UNKNOWN', 'd.error.checkOriginalSubmission');
+        const work = this.getWork(id), session = work.sessions.find(item => item.id === sessionId);
+        if (!session)
+            throw failure('INVALID_REQUEST', 'd.error.sessionAcceptanceNoId');
         const intent = { kind: 'run', key: randomUUID(), sessionId, cancelRunId, error: '' };
         this.chatSubmissions.set(id, intent);
-        const session = work.sessions.find(item => item.id === sessionId);
-        session.messages.push({ id: `submission-${intent.key}`, role: 'user', text, submission: { key: intent.key, phase: 'sending', stopping: !!cancelRunId }, ...(images.length ? { pendingImages: images.map(image => ({ ...image })) } : {}) });
+        if (previous) {
+            const old = previous.submission;
+            this.failedChatSnapshots.delete(old.key);
+            previous.submission = { key: intent.key, phase: 'sending', stopping: !!cancelRunId, previousKeys: [...(old.previousKeys ?? []), old.key].slice(-16) };
+        }
+        else
+            session.messages.push({ id: `submission-${intent.key}`, role: 'user', text, submission: { key: intent.key, phase: 'sending', stopping: !!cancelRunId }, ...(images.length ? { pendingImages: images.map(image => ({ ...image })) } : {}) });
         this.emit();
         try {
             const descriptors = await Promise.all(images.map(async (image, imageIndex) => { const bytes = Uint8Array.from(atob(image.data), c => c.charCodeAt(0)); const sha256 = await sha256Hex(bytes); return { imageIndex, mimeType: image.mimeType, byteSize: bytes.length, sha256 }; }));
@@ -3281,6 +3349,11 @@ export class DesktopAdapter {
             }
             intent.error = errorText(error);
             const pending = epoch === this.epoch ? this.submissionMessage(id, sessionId, intent.key) : undefined;
+            if (pending && !unknown) {
+                this.failedChatSnapshots.set(intent.key, snapshot);
+                while (this.failedChatSnapshots.size > 16)
+                    this.failedChatSnapshots.delete(this.failedChatSnapshots.keys().next().value);
+            }
             if (pending?.submission) {
                 pending.submission.phase = unknown ? 'unknown' : 'failed';
                 pending.submission.error = intent.error;

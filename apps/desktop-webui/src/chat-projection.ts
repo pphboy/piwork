@@ -104,13 +104,29 @@ export function mergeLegacyMessages(raw: any[], previous: Message[], final?: Mes
   });
   return [...saved.flatMap((message,index)=>[...(before.get(index)??[]),message]),...(before.get(saved.length)??[])];
 }
-export function activityGroups(messages: Message[]): Array<{ key: string; messages: Message[]; activity: boolean }> {
-  const groups: Array<{ key: string; messages: Message[]; activity: boolean }> = [];
+type ActivityGroup = { key: string; messages: Message[]; activity: boolean };
+export function activityGroups(messages: Message[], previous: ActivityGroup[] = []): ActivityGroup[] {
+  const groups: ActivityGroup[] = [];
   messages.forEach((message, index) => {
     if (!message.text && !message.tool && !message.images?.length && !message.pendingImages?.length) return;
     const last = groups.at(-1);
     if (message.tool && message.runId && last?.activity && last.messages[0]?.runId === message.runId) last.messages.push(message);
     else groups.push({ key: message.id ?? `${message.runId || 'legacy'}-${index}`, messages: [message], activity: !!message.tool });
   });
+  // A page may prepend older calls to an already expanded Activity. Reuse its
+  // identity through a surviving call, rather than changing it to the new head.
+  const identity = (message: Message) => message.runId && message.tool?.id
+    ? JSON.stringify([message.runId,message.tool.id])
+    : message.id ? JSON.stringify([message.runId??null,message.id]) : undefined;
+  const prior = new Map<string,string>();
+  for(const group of previous)if(group.activity)for(const message of group.messages){const id=identity(message);if(id)prior.set(id,group.key);}
+  const used = new Set<string>();
+  for(const group of groups)if(group.activity){
+    const retained=group.messages.map(message=>{const id=identity(message);return id?prior.get(id):undefined;}).find(key=>key!==undefined&&!used.has(key));
+    if(retained!==undefined)group.key=retained;
+    const base=group.key;let suffix=0;
+    while(used.has(group.key))group.key=`${base}:activity-${++suffix}`;
+    used.add(group.key);
+  }
   return groups;
 }

@@ -155,7 +155,7 @@ export function mergeLegacyMessages(raw, previous, final) {
     });
     return [...saved.flatMap((message, index) => [...(before.get(index) ?? []), message]), ...(before.get(saved.length) ?? [])];
 }
-export function activityGroups(messages) {
+export function activityGroups(messages, previous = []) {
     const groups = [];
     messages.forEach((message, index) => {
         if (!message.text && !message.tool && !message.images?.length && !message.pendingImages?.length)
@@ -166,6 +166,31 @@ export function activityGroups(messages) {
         else
             groups.push({ key: message.id ?? `${message.runId || 'legacy'}-${index}`, messages: [message], activity: !!message.tool });
     });
+    // A page may prepend older calls to an already expanded Activity. Reuse its
+    // identity through a surviving call, rather than changing it to the new head.
+    const identity = (message) => message.runId && message.tool?.id
+        ? JSON.stringify([message.runId, message.tool.id])
+        : message.id ? JSON.stringify([message.runId ?? null, message.id]) : undefined;
+    const prior = new Map();
+    for (const group of previous)
+        if (group.activity)
+            for (const message of group.messages) {
+                const id = identity(message);
+                if (id)
+                    prior.set(id, group.key);
+            }
+    const used = new Set();
+    for (const group of groups)
+        if (group.activity) {
+            const retained = group.messages.map(message => { const id = identity(message); return id ? prior.get(id) : undefined; }).find(key => key !== undefined && !used.has(key));
+            if (retained !== undefined)
+                group.key = retained;
+            const base = group.key;
+            let suffix = 0;
+            while (used.has(group.key))
+                group.key = `${base}:activity-${++suffix}`;
+            used.add(group.key);
+        }
     return groups;
 }
 //# sourceMappingURL=chat-projection.js.map

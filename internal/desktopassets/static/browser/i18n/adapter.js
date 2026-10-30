@@ -4,6 +4,9 @@
 // English literal passed to DesktopError.
 export const adapterStrings = {
   en: {
+    "d.chat.retryUnavailable": "The original message cannot be retried in this context.",
+    "d.chat.restoreRetrySettings": "Restore and confirm the original response settings before retrying this message.",
+    "d.chat.retryCommandUnavailable": "The original command is no longer available. Check the command before sending a new message.",
     'd.error.coreNotReady': 'Core is not ready. Check its status before starting a new action.',
     'd.error.cleanupIncomplete': 'Cleanup records are incomplete.',
     'd.error.cleanupIdentity': 'Cleanup record identity is invalid.',
@@ -377,6 +380,9 @@ export const adapterStrings = {
     'd.lifecycle.workUnconfirmed': 'Work status not confirmed',
   },
   'zh-CN': {
+    "d.chat.retryUnavailable": "当前上下文无法重试原消息。",
+    "d.chat.restoreRetrySettings": "请先恢复并确认原消息的回复设置，再重试。",
+    "d.chat.retryCommandUnavailable": "原命令已不可用，请检查命令后再发送新消息。",
     'd.error.coreNotReady': 'Core 尚未就绪，请先检查状态再执行新的操作。',
     'd.error.cleanupIncomplete': '清理记录不完整。',
     'd.error.cleanupIdentity': '清理记录身份无效。',

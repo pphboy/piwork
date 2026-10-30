@@ -78,7 +78,7 @@ export interface Message {
   historyIncomplete?: boolean;
   historyOrderUnconfirmed?: boolean;
   historyRecoveryUnconfirmed?: boolean;
-  submission?: { key: string; phase: 'sending' | 'unknown' | 'failed' | 'accepted'; error?: string; stopping?: boolean };
+  submission?: { key: string; phase: 'sending' | 'unknown' | 'failed' | 'accepted'; error?: string; stopping?: boolean; previousKeys?: string[] };
   pendingImages?: import('./images.js').ImageInput[];
   images?: import('./images.js').HistoryImage[];
   id?: string;

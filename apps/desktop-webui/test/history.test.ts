@@ -34,6 +34,68 @@ test('unrelated snapshots retain content and mark uncertain relative order',()=>
  assert.equal(messages.length,2);assert.ok(messages.every((message:any)=>message.historyOrderUnconfirmed));
 });
 
+test('verified ordering survives eviction of more than sixteen snapshot coordinates',()=>{
+ const projection=new HistoryProjection();
+ for(let n=1;n<=24;n++)projection.merge({...page([text(`entry-${n-1}`,0,String(n-1)),text(`entry-${n}`,1,String(n))]),snapshotId:`snapshot-${n}`});
+ const messages=projection.project([]);
+ assert.deepEqual(messages.map((m:any)=>m.text),Array.from({length:25},(_,n)=>String(n)));
+ assert.ok(messages.every((m:any)=>!m.historyOrderUnconfirmed));
+ projection.clear();projection.merge({...page([text('fresh',0,'fresh')]),snapshotId:'fresh'});
+ assert.deepEqual(projection.project([]).map((m:any)=>m.text),['fresh']);
+});
+
+test('terminal Run reads connect consecutive turns in a frozen bounded Session page',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[]}];
+ t.after(()=>adapter.clearIdentity());
+ const requests:URL[]=[],turns:any[]=[];let snapshot=0;
+ t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{
+  assert.equal(init?.method??'GET','GET');const url=new URL(String(input),'http://desktop.test');requests.push(url);
+  if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
+  if(url.pathname.endsWith('/chat-image-capabilities'))return Response.json({code:'UNSUPPORTED'},{status:501});
+  assert.ok(url.pathname.endsWith('/history'));assert.equal(url.searchParams.has('cursor'),false,'Do not traverse earlier Session pages');
+  const runId=url.searchParams.get('runId');
+  if(runId)assert.equal(url.searchParams.get('snapshot'),`frozen-${snapshot}`);
+  else snapshot++;
+  const segments=runId?turns.filter(part=>part.runId===runId):turns.slice(-4);
+  return Response.json({...page(segments,!runId&&turns.length>4?'unread-earlier':null),snapshotId:`frozen-${snapshot}`});
+ });
+ for(let n=1;n<=20;n++){
+  const runId=`run-${n}`;
+  turns.push({...text(`${runId}-user`,n*2-2,`Question ${n}`),role:'user',runId},{...text(`${runId}-reply`,n*2-1,`Reply ${n}`),runId});
+  await adapter.loadSavedRun('work-1',{id:runId,sessionId:'session-1',status:'succeeded'});
+  const messages=adapter.getWork('work-1').sessions[0].messages;
+  assert.equal(messages.length,n*2);assert.ok(messages.every((m:any)=>!m.historyOrderUnconfirmed&&!m.historyRecoveryUnconfirmed));
+ }
+ assert.equal(requests.filter(url=>url.pathname.endsWith('/history')&&!url.searchParams.has('runId')).length,20);
+ await adapter.loadSession('work-1','session-1');
+ assert.equal(adapter.getWork('work-1').sessions[0].messages.length,40);
+});
+
+test('a large terminal Run connects to one known boundary without walking Session history',async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[]}];
+ t.after(()=>adapter.clearIdentity());
+ const old=[{...text('old-user',0,'Earlier'),role:'user',runId:'old'},{...text('old-reply',1,'Earlier reply'),runId:'old'}];
+ const fresh=[{...text('new-user',2,'Next'),role:'user',runId:'new'},...Array.from({length:3},(_,n)=>({...text(`new-${n}`,n+3,`Next part ${n}`),runId:'new'}))];
+ const projection=adapter.historyProjection('work-1','session-1');projection.merge({...page(old),snapshotId:'before'});
+ adapter.getWork('work-1').sessions[0].messages=projection.project([]);
+ const requests:URL[]=[];
+ t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{
+  assert.equal(init?.method??'GET','GET');const url=new URL(String(input),'http://desktop.test');requests.push(url);
+  const runId=url.searchParams.get('runId'),cursor=url.searchParams.get('cursor');
+  if(!runId){assert.equal(cursor,null);return Response.json({...page(fresh.slice(-2),'session-earlier'),snapshotId:'frozen'});}
+  assert.equal(url.searchParams.get('snapshot'),'frozen');
+  if(runId==='old'){assert.equal(url.searchParams.get('limit'),'1');return Response.json({...page(old.slice(-1),'unused-boundary'),snapshotId:'frozen'});}
+  assert.equal(runId,'new');return Response.json({...page(cursor?fresh.slice(0,2):fresh.slice(2),cursor?null:'run-earlier'),snapshotId:'frozen'});
+ });
+ await adapter.loadSavedRun('work-1',{id:'new',sessionId:'session-1',status:'succeeded'});
+ const messages=adapter.getWork('work-1').sessions[0].messages;
+ assert.deepEqual(messages.map((m:any)=>m.text),['Earlier','Earlier reply','Next','Next part 0','Next part 1','Next part 2']);
+ assert.ok(messages.every((m:any)=>!m.historyOrderUnconfirmed));assert.equal(requests.length,4);
+ assert.equal(requests.filter(url=>!url.searchParams.has('runId')).length,1);
+});
+
 test('terminal readback without a complete saved reply keeps live output',()=>{
  for(const segments of [[],[{...text('partial',2,'later',5,10),runId:'run-1'}]]){
   const projection=new HistoryProjection();projection.merge(page(segments));
@@ -232,7 +294,7 @@ test('Core 416 cursor recovery reads original Run ranges and stops with one fina
   if(url.pathname.endsWith('/history-capabilities'))return Response.json({contractVersion:1,profile:'session-history-v1',pageBytes:524288});
   if(url.pathname.endsWith('/events')){assert.equal(url.searchParams.get('responseProfile'),'history-v1');return Response.json({code:'CURSOR_EXPIRED'},{status:416});}
   if(url.pathname.endsWith('/runs/run-1')){assert.equal(url.searchParams.get('responseProfile'),'history-v1');return Response.json(raw);}
-  if(url.pathname.endsWith('/history')){assert.equal(url.searchParams.get('runId'),'run-1');return Response.json(page([{...text('saved',0,'Saved final answer'),runId:'run-1',streamId:'run-1-text-1',streamOffset:0}]));}
+  if(url.pathname.endsWith('/history')){if(url.searchParams.has('runId'))assert.equal(url.searchParams.get('runId'),'run-1');return Response.json(page([{...text('saved',0,'Saved final answer'),runId:'run-1',streamId:'run-1-text-1',streamOffset:0}]));}
   throw new Error(`Unexpected ${url}`);
  });
  const adapter=new DesktopAdapter();adapter.state.signedIn=true;
@@ -598,12 +660,52 @@ test('empty Run readback and result helper complete without replacing its saved 
  const requests:string[]=[];
  t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{
   assert.equal(init?.method??'GET','GET');const url=new URL(String(input),'http://desktop.test');requests.push(url.pathname+url.search);
-  assert.ok(url.pathname.endsWith('/history'));assert.equal(url.searchParams.get('runId'),runId);
+  assert.ok(url.pathname.endsWith('/history'));if(url.searchParams.has('runId'))assert.equal(url.searchParams.get('runId'),runId);
   return Response.json({...page(url.searchParams.get('content')==='result'?[result]:[tool,result]),runs:[{runId,resultRef:ref}]});
  });
  t.after(()=>adapter.clearIdentity());await adapter.loadSavedRun('work-1',run);
  assert.equal(await adapter.readRunResult('work-1',run),'');
  const messages=adapter.getWork('work-1').sessions[0].messages;
  assert.ok(messages.every((message:any)=>!message.historyIncomplete));assert.equal(messages.filter((message:any)=>message.tool).length,1);
- assert.equal(run.status,'cancelled');assert.equal(requests.length,3);
+ assert.equal(run.status,'cancelled');assert.equal(requests.length,4);
+});
+
+for(const status of ['cancelled','failed','interrupted'])test(`long Run recovery reads every frozen page after running becomes ${status}`,async t=>{
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;
+ const run:any={id:'run-1',sessionId:'session-1',status:'running',cursor:1};
+ adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',services:[],sessions:[{id:'session-1',title:'One',messages:[]}],run}];
+ t.after(()=>adapter.clearIdentity());
+ const runId=run.id,user={...text(`${runId}-user`,0,'Hi'),role:'user',runId};
+ const body='A'.repeat(600000),tailStart=body.length-15*32768;
+ const chunk=(offset:number,size:number)=>({...text(`${runId}-text-2`,1,body.slice(offset,offset+size),offset,body.length),runId,blockId:`${runId}-text-2`});
+ const tail=Array.from({length:15},(_,i)=>chunk(tailStart+i*32768,32768));
+ const prefix=[];for(let at=0;at<tailStart;at+=32768)prefix.push(chunk(at,Math.min(32768,tailStart-at)));
+ const ref={workId:'work-1',sessionId:'session-1',runId,content:'result',snapshot:'terminal',entryId:`${runId}-final`};
+ let terminal=false;const requests:URL[]=[];
+ t.mock.method(globalThis,'fetch',async(input:any,init:any)=>{
+  assert.equal(init?.method??'GET','GET');const url=new URL(String(input),'http://desktop.test');requests.push(url);
+  assert.ok(url.pathname.endsWith('/history'));
+  const snapshot=terminal?'terminal':'running';
+  if(url.searchParams.has('runId')){assert.equal(url.searchParams.get('runId'),runId);assert.equal(url.searchParams.get('snapshot'),snapshot);}
+  const response=(segments:any[],nextCursor:string|null=null)=>Response.json({...page(segments,nextCursor),snapshotId:snapshot,runs:terminal&&run.resultRef?[{runId,resultRef:ref}]:[]});
+  if(!terminal)return response([user]);
+  if(url.searchParams.get('content')==='result')return response([{...text(`${runId}-final`,2,''),runId,type:'run-result'}]);
+  if(!url.searchParams.has('runId')){assert.equal(url.searchParams.has('cursor'),false);return response(tail,'unread-session-earlier');}
+  if(url.searchParams.has('cursor')){assert.equal(url.searchParams.get('cursor'),'run-earlier');return response([user,...prefix]);}
+  return response(tail,'run-earlier');
+ });
+ await adapter.loadSavedRun('work-1',run);
+ terminal=true;run.status=status;run.resultRef=status==='interrupted'?null:ref;
+ await adapter.loadSavedRun('work-1',run);
+ const session=adapter.getWork('work-1').sessions[0];
+ assert.equal(requests.filter(url=>url.searchParams.get('cursor')==='run-earlier').length,1,'Read the available earlier Run page even when the latest page is cached');
+ assert.deepEqual(session.messages.filter((m:any)=>m.role==='user').map((m:any)=>m.text),['Hi']);
+ assert.equal(session.messages.filter((m:any)=>m.role==='assistant'&&m.text).length,1);
+ assert.equal(session.messages.find((m:any)=>m.role==='assistant'&&m.text)?.text,body);
+ assert.ok(session.messages.every((m:any)=>!m.historyIncomplete&&!m.historyOrderUnconfirmed&&!m.historyRecoveryUnconfirmed));
+ const identities=session.messages.map((m:any)=>[m.id,m.runId]);
+ await adapter.loadSavedRun('work-1',run);
+ assert.deepEqual(session.messages.map((m:any)=>[m.id,m.runId]),identities,'Repeated readback must not duplicate the reply');
+ assert.equal(requests.filter(url=>url.searchParams.get('cursor')==='run-earlier').length,2);
+ assert.equal(run.status,status);
 });

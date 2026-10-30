@@ -13,12 +13,16 @@ const invalid = (): never => { throw new Error(t('d.history.invalidRange')); };
 export class HistoryProjection {
   private entries = new Map<string, Entry>();
   private snapshotOrders = new Map<string, Map<string, number>>();
+  private orderEdges = new Map<string, Set<string>>();
   private suppressed = new Set<string>();
   private resultTargets = new Map<string,string>();
   private visibleResults = new Map<string,string>();
   suppress(runId: string) { this.suppressed.add(runId); }
   reveal(runId: string) { this.suppressed.delete(runId); }
-  clear() { this.entries.clear(); this.snapshotOrders.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
+  clear() { this.entries.clear(); this.snapshotOrders.clear(); this.orderEdges.clear(); this.suppressed.clear(); this.resultTargets.clear(); this.visibleResults.clear(); }
+  orderingAnchor(runId: string) {
+    return [...this.entries.values()].findLast(entry=>entry.runId && entry.runId!==runId)?.runId;
+  }
   covers(part: Data) {
     const block = this.entries.get(part.entryId)?.blocks.get(part.blockId);
     if (!block) return false;
@@ -69,16 +73,28 @@ export class HistoryProjection {
         order.set(part.entryId,part.entryOrder);
       }
     }
-    while(this.snapshotOrders.size>16)this.snapshotOrders.delete(this.snapshotOrders.keys().next().value!);
+    while(this.snapshotOrders.size>16){
+      const [id,order]=this.snapshotOrders.entries().next().value!;
+      // Evict the snapshot coordinates, not the verified relationships between
+      // content we still display. Otherwise ordinary long chats lose ordering.
+      const ids=[...order].sort((a,b)=>a[1]-b[1]).map(([id])=>id);
+      for(let i=1;i<ids.length;i++){
+        let links=this.orderEdges.get(ids[i-1]!);if(!links)this.orderEdges.set(ids[i-1]!,links=new Set());
+        links.add(ids[i]!);
+      }
+      this.snapshotOrders.delete(id);
+    }
   }
   private orderedEntries() {
     // entryOrder is a coordinate inside one frozen snapshot, never a global
     // sequence. Combine the ordering facts of each snapshot by entry identity.
     const values=[...this.entries.values()],rank=new Map(values.map((entry,index)=>[entry.id,index]));
     const edges=new Map(values.map(entry=>[entry.id,new Set<string>()])),indegree=new Map(values.map(entry=>[entry.id,0]));
+    const connect=(from:string,to:string)=>{const links=edges.get(from);if(links&&rank.has(to)&&from!==to&&!links.has(to)){links.add(to);indegree.set(to,indegree.get(to)!+1);}};
+    for(const [from,links]of this.orderEdges)for(const to of links)connect(from,to);
     for(const order of this.snapshotOrders.values()){
       const ids=[...order].filter(([id])=>rank.has(id)).sort((a,b)=>a[1]-b[1]).map(([id])=>id);
-      for(let i=1;i<ids.length;i++){const from=ids[i-1]!,to=ids[i]!,links=edges.get(from)!;if(from!==to&&!links.has(to)){links.add(to);indegree.set(to,indegree.get(to)!+1);}}
+      for(let i=1;i<ids.length;i++)connect(ids[i-1]!,ids[i]!);
     }
     const pending=new Set(values.map(entry=>entry.id)),result:Entry[]=[],uncertain=new Set<string>(),ready:string[]=[];
     const push=(id:string)=>{ready.push(id);let i=ready.length-1;while(i>0){const p=Math.floor((i-1)/2);if(rank.get(ready[p]!)!<=rank.get(id)!)break;ready[i]=ready[p]!;i=p;}ready[i]=id;};

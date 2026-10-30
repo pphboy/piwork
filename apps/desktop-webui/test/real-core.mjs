@@ -17,6 +17,16 @@ const fileImage = process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-fi
 const snapshotImage = process.env.PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE || 'piwork-snapshot-helper:go-migration-acceptance';
 const browserBinary = process.env.PIWORK_TEST_BROWSER_BIN || chromium.executablePath();
 
+// Completion is an observed Run fact; the chat body no longer prints success rows.
+async function waitForObservedRun(page, workId, runId) {
+  await expect.poll(() => page.evaluate(async ({workId,runId}) => {
+    const {adapter}=await import('/desktop/browser/adapter.js');
+    const work=adapter.getWork(workId);
+    return (work?.run?.id===runId?work.run:work?.sessions.flatMap(s=>s.runs||[]).find(r=>r.id===runId))?.status;
+  },{workId,runId}),{timeout:90_000}).toBe('succeeded');
+  await expect(page.locator(`[data-action=run-details][data-run-id="${runId}"]`)).toBeVisible();
+}
+
 async function freePort() {
   const listener = createServer();
   await new Promise((done) => listener.listen(0, '127.0.0.1', done));
@@ -302,7 +312,7 @@ try {
   assert.equal(accepted.request().postDataJSON().inputMode, 'command');
   assert.equal(accepted.request().postDataJSON().prompt, '/skill:workspace-review "preserved argument"');
   const acceptedRun = (await accepted.json()).run;
-  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${acceptedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  await waitForObservedRun(page, workId, acceptedRun.runId);
   let originalSessionId = acceptedRun.sessionId;
   const options = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
   assert.equal(options.status, 200); assert.equal(options.data.thinkingLevel, 'off');
@@ -419,7 +429,7 @@ try {
   await page.locator('#composer').fill('/new');await page.locator('#composer').press('Escape');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.locator('#composer')).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
   const currentAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${workId}/runs`) && response.request().method() === 'POST');
   await page.locator('#composer').fill('/skill:workspace-review "current context"');await page.locator('#composer').press('Escape');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
@@ -427,7 +437,7 @@ try {
   assert.equal(currentResponse.status(), 202, await currentResponse.text());
   const currentRun = (await currentResponse.json()).run;
   originalSessionId = currentRun.sessionId;
-  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${currentRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  await waitForObservedRun(page, workId, currentRun.runId);
   if (process.env.PIWORK_TEST_LOCAL_AUTH_RECOVERY === '1') {
     const localOrigin = new URL(launchUrl).origin;
     const readAdapter = (code) => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
@@ -490,7 +500,7 @@ try {
   const deliveryResponse = await deliveryAcceptance;
   assert.equal(deliveryResponse.status(), 202, await deliveryResponse.text());
   const deliveryRun = (await deliveryResponse.json()).run;
-  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${deliveryRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  await waitForObservedRun(page, workId, deliveryRun.runId);
   // The Agent created both files through real tools; verify the binary image link,
   // browser decode and the bytes downloaded from the same current file.
   const agentImageLink = page.locator('a.chat-file-link[data-path="/output/图片.png"]').last();
@@ -739,15 +749,15 @@ try {
   assert.equal(importedOptions.data.availability, 'available', JSON.stringify(importedOptions.data));
   await page.getByRole('button', { name: 'Sessions', exact: true }).click();
   await page.locator(`[data-action=select-session][data-id="${originalSessionId}"]`).click();
-  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
   await page.locator('#composer').fill('/skill:workspace-review "after import"');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
   await page.locator('#composer').press('Escape');
   const continuedAcceptance = page.waitForResponse(response => new URL(response.url()).pathname.endsWith(`/${imported.id}/runs`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const continuedResponse = await continuedAcceptance;
   assert.equal(continuedResponse.status(), 202, await continuedResponse.text());
   const continuedRun = (await continuedResponse.json()).run;
-  await page.locator('.message-execution').filter({ has: page.locator(`[data-action=run-details][data-run-id="${continuedRun.runId}"]`), hasText: /succeeded/ }).waitFor({ timeout: 90_000 });
+  await waitForObservedRun(page, imported.id, continuedRun.runId);
   await expect(page.locator('.activity')).toHaveCount(3); // original Skill run + delivered-file run + continued run
   console.log(JSON.stringify({ result: 'workspace UX: active Skill directory, complete settings pair, command parameters, ordered tool history, stable Focus/fullscreen, exported/imported Thinking and continued original Session', browserVersion: browser.version(), originalSessionId }));
   await page.screenshot({ path: join(screenshotDir, '04-restored-work.png'), fullPage: true });

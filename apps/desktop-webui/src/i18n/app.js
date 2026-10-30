@@ -1,6 +1,9 @@
 // Desktop app.ts product strings (rendering, state labels, dialogs).
 export const appStrings = {
   en: {
+    "chat.retryMessage": "Retry message",
+    "chat.retryUnavailable": "The original retry snapshot is no longer available. Keep or copy this message before sending a new one.",
+    "chat.rawToolResult": "Full result preview",
     "coreGate.title.checking": "Checking Core",
     "coreGate.title.recovering": "Core is starting",
     "coreGate.title.ready": "Core is ready",
@@ -533,6 +536,9 @@ export const appStrings = {
     'chat.checkOriginalSubmission': 'Check original submission',
     'chat.partialMessage': 'Part of this message is not loaded. Load earlier messages to read it.',
     'chat.orderUnconfirmed': 'Message order is not confirmed.',
+    'chat.historyStatus': 'Message history status',
+    'chat.historyUpdated': 'The history has been updated. This message no longer has an unconfirmed history status.',
+    'chat.recheckHistory': 'Check history',
     'chat.outputUnconfirmed': 'This output has not been confirmed in saved history.',
     'agent.sessions': 'Sessions',
     'agent.readingConversations': 'Reading conversations…',
@@ -1440,6 +1446,9 @@ export const appStrings = {
     'filesBrowser.copyWebdavUrl': 'Copy default WebDAV URL',
   },
   'zh-CN': {
+    "chat.retryMessage": "重试发送",
+    "chat.retryUnavailable": "原重试快照已不可用。请保留或复制原消息后再发送。",
+    "chat.rawToolResult": "完整结果预览",
     "coreGate.title.checking": "正在确认 Core 状态",
     "coreGate.title.recovering": "Core 正在启动",
     "coreGate.title.ready": "Core 已就绪",
@@ -1972,6 +1981,9 @@ export const appStrings = {
     'chat.checkOriginalSubmission': '检查原提交',
     'chat.partialMessage': '此消息的一部分尚未加载。请加载更早的消息以阅读。',
     'chat.orderUnconfirmed': '消息顺序尚未确认。',
+    'chat.historyStatus': '消息历史状态',
+    'chat.historyUpdated': '历史已更新，这条消息已没有待确认的历史状态。',
+    'chat.recheckHistory': '核对历史',
     'chat.outputUnconfirmed': '这段输出尚未在保存的历史中确认。',
     'agent.sessions': 'Sessions',
     'agent.readingConversations': '正在读取对话…',

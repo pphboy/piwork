@@ -28,6 +28,12 @@ export interface LogExportState {
 interface InspectionContext { id: string; nonce: number; core: string; localSession: string; anonymous: boolean; ready: boolean; importState: 'unsubmitted' | 'submitting' | 'unknown' | 'accepted'; xhr?: XMLHttpRequest; operationId?: string; observationSuspended?: boolean; observationGeneration?: number; autoPausedOperation?: boolean }
 interface UploadIntent { file: File; modified: string; absent: boolean }
 
+interface ChatSendSnapshot {
+  epoch:number; workId:string; sessionId:string; text:string; prompt:string;
+  inputMode?:'text'|'command'; images:ImageInput[]; cancelRunId?:string;
+  modelRef:string|null; thinking:string|null;
+}
+
 export class DesktopError extends Error {
   messageKey?: string;
   params?: Record<string, string | number>;
@@ -111,7 +117,6 @@ export class DesktopAdapter {
   private historyProjections = new Map<string, HistoryProjection>();
   private historyControllers = new Set<AbortController>();
   private historyReads = new Map<string, Promise<Data>>();
-  private fullHistoryRuns = new Set<string>();
   private historyEventParts = new Map<string, {offset:number;parts:Map<number,string>}>();
   private historyProjection(id:string,session:string) {const key=`${id}:${session}`;let value=this.historyProjections.get(key);if(!value){value=new HistoryProjection();this.historyProjections.set(key,value);}return value;}
   historyNotice(id:string) {
@@ -178,17 +183,29 @@ export class DesktopAdapter {
   }
   private async loadSavedRun(id:string,run:Run,signal?:AbortSignal) {
     const epoch=this.epoch,session=this.getWork(id)?.sessions.find(s=>s.id===run.sessionId);if(!session)return;
-    const projection=this.historyProjection(id,run.sessionId),runKey=`${id}:${run.id}`,profile=!!this.imageCapabilities.get(id)?.value||!!session.imageProfile;
-    const query=new URLSearchParams({direction:'older',runId:run.id,...(profile?{imageProfile:'chat-images-v1'}:{})});
+    const projection=this.historyProjection(id,run.sessionId),profile=!!this.imageCapabilities.get(id)?.value||!!session.imageProfile;
+    const anchor=projection.orderingAnchor(run.id);
+    const latest=await this.historyPage(id,run.sessionId,new URLSearchParams({direction:'older',...(profile?{imageProfile:'chat-images-v1'}:{})}),signal);
+    if(epoch!==this.epoch||signal?.aborted)return;
+    projection.merge(latest);
+    // A Run-only snapshot cannot establish order against the preceding turn.
+    // Share one frozen Session snapshot; for a large Run, read just one known
+    // neighbouring Run's tail page rather than walking the entire Session.
+    if(anchor&&!latest.segments.some((segment:Data)=>segment.runId===anchor)){
+      const boundary=await this.historyPage(id,run.sessionId,new URLSearchParams({direction:'older',runId:anchor,snapshot:latest.snapshotId,limit:'1',...(profile?{imageProfile:'chat-images-v1'}:{})}),signal);
+      if(epoch!==this.epoch||signal?.aborted)return;
+      projection.merge(boundary);
+    }
+    const query=new URLSearchParams({direction:'older',runId:run.id,snapshot:latest.snapshotId,...(profile?{imageProfile:'chat-images-v1'}:{})});
+    // Complete this snapshot's Run range. A cached first page (including one
+    // just merged from the Session) cannot prove that earlier pages are read.
     let cursor:string|null=null;
     do {
       if(cursor)query.set('cursor',cursor);
       const page=await this.historyPage(id,run.sessionId,query,signal);if(epoch!==this.epoch||signal?.aborted)return;
-      const covered=this.fullHistoryRuns.has(runKey)&&page.segments.every((segment:Data)=>projection.covers(segment));
       projection.merge(page);cursor=page.nextCursor;
-      if(covered)break;
     }while(cursor);
-    this.fullHistoryRuns.add(runKey);projection.reveal(run.id);
+    projection.reveal(run.id);
     if(run.resultRef){const resultQuery=new URLSearchParams({direction:'newer',content:'result',runId:run.id,...(run.resultRef.snapshot?{snapshot:run.resultRef.snapshot}:{})});
       cursor=null;do{if(cursor)resultQuery.set('cursor',cursor);const page=await this.historyPage(id,run.sessionId,resultQuery,signal);if(epoch!==this.epoch||signal?.aborted)return;projection.merge(page);cursor=page.nextCursor;}while(cursor);
     }
@@ -266,6 +283,7 @@ export class DesktopAdapter {
   activeRuns = new Map<string, { confirmed: boolean; loading: boolean; visibleLoading?: boolean; run: Run|null; error: string }>();
   private activeRevisions = new Map<string,number>();
   commands = new Map<string,{loading:boolean;confirmed:boolean;error:string;items:Data[];checkedAt?:string}>();
+  private failedChatSnapshots = new Map<string,ChatSendSnapshot>();
   chatSubmissions = new Map<string,{kind:'session'|'run';key:string;sessionId?:string;cancelRunId?:string;error:string;pair?:{ref:string|null;thinking:string|null;revision:number}}>();
   private pairSaves = new Map<string,Promise<void>>();
   private chatSelection='';
@@ -584,9 +602,9 @@ export class DesktopAdapter {
     this.terminalEvidence.clear(); this.pendingOperationHides.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
-    this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.fullHistoryRuns.clear();this.historyEventParts.clear();
+    this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.historyEventParts.clear();
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
-    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
+    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.failedChatSnapshots.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.entryVersions.clear(); this.serviceDenials.clear(); this.entryServiceGrants.clear(); this.serviceLoads.clear(); this.serviceReads.clear(); this.worksRequests.clear(); this.worksRequestSequence++; this.worksReadSequence = 0; this.logs.clear(); this.logStates.clear(); this.logRequests.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
@@ -1778,7 +1796,7 @@ export class DesktopAdapter {
     const message=this.submissionMessage(id,sessionId,key);
     if(!message)return;
     message.id=`${runId}-user`;message.runId=runId;
-    message.submission!.phase='accepted';delete message.submission!.error;delete message.pendingImages;
+    this.failedChatSnapshots.delete(key);message.submission!.phase='accepted';delete message.submission!.error;delete message.pendingImages;
     if(images?.length)message.images=images;
   }
   async newSession(id:string) {
@@ -1805,16 +1823,45 @@ export class DesktopAdapter {
     else {if(value.run?.workId!==id || value.run?.sessionId!==intent.sessionId || value.run?.submissionKey!==intent.key)throw failure('INVALID_RESPONSE','d.error.runIdentity');const work=this.getWork(id)!;const pending=this.submissionMessage(id,intent.sessionId,intent.key);const descriptors=await Promise.all((pending?.pendingImages??[]).map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256:await sha256Hex(bytes)};}));if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)return;work.run=this.runRecord(value.run,value.run.sessionId);this.acceptSubmissionMessage(id,value.run.sessionId,intent.key,value.run.runId,descriptors);await this.loadSession(id,value.run.sessionId).catch(()=>undefined);if(epoch===this.epoch)void this.resumeRun(id);}
     if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();return value;
   }
+  canRetryChatSubmission(id:string,sessionId:string,key:string) {
+    const snapshot=this.failedChatSnapshots.get(key),message=this.submissionMessage(id,sessionId,key);
+    return !!snapshot && snapshot.epoch===this.epoch && snapshot.workId===id && snapshot.sessionId===sessionId && message?.submission?.phase==='failed';
+  }
+  async retryChatSubmission(id:string,sessionId:string,key:string) {
+    this.assertCoreReady();
+    if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
+    if(!this.canRetryChatSubmission(id,sessionId,key))throw failure('INVALID_REQUEST','d.chat.retryUnavailable');
+    const snapshot=this.failedChatSnapshots.get(key)!,message=this.submissionMessage(id,sessionId,key)!;
+    const pair=this.modelSelection(id,sessionId);
+    if(!this.modelReady(id,sessionId)||pair.ref!==snapshot.modelRef||pair.thinking!==snapshot.thinking)throw failure('MODEL_NOT_CONFIRMED','d.chat.restoreRetrySettings');
+    // Retrying a failed attempt must not silently cancel a newly observed Run.
+    if(snapshot.cancelRunId){await this.loadActiveRun(id,true);if(snapshot.epoch!==this.epoch)throw failure('CONNECTION_CHANGED','d.error.submissionIdentity');const active=this.activeRuns.get(id);if(!active?.confirmed||active.error||active.run&&active.run.id!==snapshot.cancelRunId)throw failure('WORK_BUSY','d.error.runAlreadyActiveStopAndSend');}
+    if(snapshot.images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);}
+    if(snapshot.inputMode==='command'){const name=/^\/([^\s]+)/.exec(snapshot.text.trim())?.[1];const directory=this.commands.get(id);if(!directory?.confirmed||directory.error||!directory.items.some(c=>c.command===`/${name}`))throw failure('INVALID_REQUEST','d.chat.retryCommandUnavailable');}
+    if(!this.canRetryChatSubmission(id,sessionId,key))throw failure('INVALID_REQUEST','d.chat.retryUnavailable');
+    if(!this.modelReady(id,sessionId)||pair.ref!==snapshot.modelRef||pair.thinking!==snapshot.thinking)throw failure('MODEL_NOT_CONFIRMED','d.chat.restoreRetrySettings');
+    return this.submitChatSnapshot(snapshot,message);
+  }
   async send(id:string,sessionId:string,text:string,includeIdentity:boolean,inputMode?:'text'|'command',images:ImageInput[]=[],cancelRunId?:string) {
     this.assertCoreReady();
-    if(!text.trim()&&!images.length)throw new Error(t('d.error.writeMessageFirst'));const work=this.getWork(id)!;
+    if(!text.trim()&&!images.length)throw new Error(t('d.error.writeMessageFirst'));
     if(images.length){const reason=this.imageInputReason(id,sessionId);if(reason)throw new Error(reason);if(inputMode!=='text')throw new Error(t('d.error.imagesRequireText'));}
     if(!this.modelReady(id,sessionId))throw failure('MODEL_NOT_CONFIRMED','d.error.confirmModelBeforeSend');
-    const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
     if(cancelRunId && this.cancelAndSendCapabilities.get(id)!==1)throw failure('CANCEL_AND_SEND_UNSUPPORTED','d.error.stopAndSendUnavailable');
-    const epoch=this.epoch;const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);
-    const session=work.sessions.find(item=>item.id===sessionId)!;
-    session.messages.push({id:`submission-${intent.key}`,role:'user',text,submission:{key:intent.key,phase:'sending',stopping:!!cancelRunId},...(images.length?{pendingImages:images.map(image=>({...image}))}:{})});this.emit();
+    const work=this.getWork(id)!,pair=this.modelSelection(id,sessionId);
+    const prompt=includeIdentity && inputMode!=='command'?`${text}\n\nSelected Service: ${work.services.find(s=>s.id===this.selectedService)?.domain ?? ''}`:text;
+    return this.submitChatSnapshot({epoch:this.epoch,workId:id,sessionId,text,prompt,inputMode,images:images.map(image=>({...image})),cancelRunId,modelRef:pair.ref,thinking:pair.thinking});
+  }
+  private async submitChatSnapshot(snapshot:ChatSendSnapshot,previous?:import('./models.js').Message) {
+    const {workId:id,sessionId,text,prompt,inputMode,images,cancelRunId,epoch}=snapshot;
+    if(epoch!==this.epoch)throw failure('CONNECTION_CHANGED','d.error.submissionIdentity');
+    if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
+    const work=this.getWork(id)!,session=work.sessions.find(item=>item.id===sessionId);
+    if(!session)throw failure('INVALID_REQUEST','d.error.sessionAcceptanceNoId');
+    const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);
+    if(previous){const old=previous.submission!;this.failedChatSnapshots.delete(old.key);previous.submission={key:intent.key,phase:'sending',stopping:!!cancelRunId,previousKeys:[...(old.previousKeys??[]),old.key].slice(-16)};}
+    else session.messages.push({id:`submission-${intent.key}`,role:'user',text,submission:{key:intent.key,phase:'sending',stopping:!!cancelRunId},...(images.length?{pendingImages:images.map(image=>({...image}))}:{})});
+    this.emit();
     try {const descriptors=await Promise.all(images.map(async(image,imageIndex)=>{const bytes=Uint8Array.from(atob(image.data),c=>c.charCodeAt(0));const sha256=await sha256Hex(bytes);return {imageIndex,mimeType:image.mimeType,byteSize:bytes.length,sha256};}));
       if(epoch!==this.epoch||this.chatSubmissions.get(id)!==intent)throw failure('CONNECTION_CHANGED','d.error.imageSubmissionIdentity');
       const value=await this.request(`works/${part(id)}/runs`,'POST',{sessionId,prompt,submissionKey:intent.key,...(inputMode?{inputMode}:{}),...(images.length?{images}:{}),...(cancelRunId?{cancelRunId}:{})});const raw=value.run;
@@ -1824,8 +1871,9 @@ export class DesktopAdapter {
       this.activeRevisions.set(id,(this.activeRevisions.get(id) || 0)+1);
       if(this.cancelAndSendCapabilities.get(id)===1)this.activeRuns.set(id,{confirmed:true,loading:false,run:acceptedWork.run,error:''});
       this.acceptSubmissionMessage(id,sessionId,intent.key,raw.runId,descriptors);if(this.chatSubmissions.get(id)===intent)this.chatSubmissions.delete(id);this.emit();void this.resumeRun(id);return raw.runId as string;
-    }catch(error){const code=(error as DesktopError).code;const unknown=['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code);if(this.chatSubmissions.get(id)===intent&&!unknown)this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'d.error.runAlreadyActiveStopAndSend':'d.error.runAlreadyActive');}intent.error=errorText(error);const pending=epoch===this.epoch?this.submissionMessage(id,sessionId,intent.key):undefined;if(pending?.submission){pending.submission.phase=unknown?'unknown':'failed';pending.submission.error=intent.error;}throw error;}finally{this.emit();}
+    }catch(error){const code=(error as DesktopError).code;const unknown=['RESULT_UNKNOWN','INVALID_RESPONSE','RUNTIME_UNAVAILABLE','CORE_UNAVAILABLE','REQUEST_TIMEOUT'].includes(code);if(this.chatSubmissions.get(id)===intent&&!unknown)this.chatSubmissions.delete(id);if(epoch===this.epoch&&(code==='WORK_BUSY'||code==='RATE_LIMITED'||code==='CANCEL_TIMEOUT')){if(this.cancelAndSendCapabilities.get(id)===1)await this.loadActiveRun(id,true);else await this.loadSessions(id).catch(()=>undefined);const active=this.cancelAndSendCapabilities.get(id)===1?this.activeRuns.get(id)?.run:this.getWork(id)?.run;if(code==='WORK_BUSY'||code==='RATE_LIMITED' && active && ['accepted','running','cancelling'].includes(active.status))error=failure('WORK_BUSY',this.cancelAndSendCapabilities.get(id)===1?'d.error.runAlreadyActiveStopAndSend':'d.error.runAlreadyActive');}intent.error=errorText(error);const pending=epoch===this.epoch?this.submissionMessage(id,sessionId,intent.key):undefined;if(pending&&!unknown){this.failedChatSnapshots.set(intent.key,snapshot);while(this.failedChatSnapshots.size>16)this.failedChatSnapshots.delete(this.failedChatSnapshots.keys().next().value!);}if(pending?.submission){pending.submission.phase=unknown?'unknown':'failed';pending.submission.error=intent.error;}throw error;}finally{this.emit();}
   }
+
   selectedService = '';
   async cancelRun(id: string,runId=this.getWork(id)?.run?.id) {
     if(!runId)return;const epoch=this.epoch;await this.supportsHistory(id);if(epoch!==this.epoch)return;

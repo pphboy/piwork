@@ -98,3 +98,21 @@ test('legacy Run result uses known later-message anchors when the old Run is mis
  assert.deepEqual(result.map((message:any)=>message.runId),['old','old','one','four']);
  assert.equal(result.find((message:any)=>message.id==='old-final').historyOrderUnconfirmed,true);
 });
+
+test('Activity identity survives prepended and appended calls and durable message ID replacement',()=>{
+ const call=(id:string,runId='run-a'):any=>({id,runId,role:'assistant',text:'',tool:{id,name:'read',status:'Completed',content:id}});
+ const later=call('later'),before=activityGroups([later]);
+ const after=activityGroups([call('earlier'),{...later,id:'saved-later'},call('newer')],before);
+ assert.equal(after.length,1);assert.equal(after[0].key,before[0].key);assert.deepEqual(after[0].messages.map((m:any)=>m.tool.id),['earlier','later','newer']);
+ const unrelated=activityGroups([call('later','run-b')],before);assert.equal(unrelated[0].messages[0].runId,'run-b');
+ // Reuse is by Run and call identity, never by the shared tool name.
+ const independent=activityGroups([call('other')],before);assert.equal(independent[0].key,'other');
+});
+
+test('Activity groups split by real prose retain distinct keys and never merge equal tool names',()=>{
+ const call=(id:string):any=>({id,runId:'run-a',role:'assistant',text:'',tool:{id,name:'read',status:'Completed',content:id}});
+ const before=activityGroups([call('first'),call('second')]);
+ const after=activityGroups([call('second'),{id:'prose',runId:'run-a',role:'assistant',text:'Real prose'},call('first')],before);
+ assert.deepEqual(after.map((g:any)=>g.activity),[true,false,true]);assert.equal(new Set(after.map((g:any)=>g.key)).size,3);
+ assert.deepEqual(activityGroups(after.flatMap((g:any)=>g.messages),after).map((g:any)=>g.key),after.map((g:any)=>g.key));
+});

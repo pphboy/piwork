@@ -9,7 +9,7 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 const extract=(name:string)=>{const value=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];};
 test('commands, value choices and sustained Service tools have explicit bounded roles',()=>{
  for(const name of ['account','work-menu','agent-menu','service-menu','file-menu'])assert.equal(overlayRole(name),'menu');
- for(const name of ['service-picker','sessions','chat-response-settings','chat-input-options','connection','work-info','skill-detail'])assert.equal(overlayRole(name),'popover');
+ for(const name of ['service-picker','sessions','chat-response-settings','chat-input-options','connection','work-info','skill-detail','chat-submission','chat-history-status'])assert.equal(overlayRole(name),'popover');
  for(const name of ['manage-services','service-details','operations','operation','run-details','package-detail'])assert.equal(overlayRole(name),'drawer');
  for(const name of ['delete-work','stop-work','service-control','import','new-work','dirty-file','upload-overwrite','unrecognized']){assert.equal(overlayRole(name),'modal');assert.equal(anchoredOverlay(name),false);}
 });
@@ -38,7 +38,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={...localeSandbox,pendingDots,actions:{records:new Map()},overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceUnavailableReason','serviceCatalogConfirmed','serviceFacts','serviceNotice','serviceFailureTitle','serviceFailureReason','serviceStartupConfirmed','serviceStartupPlaceholder','serviceStatePlaceholder','serviceFallbackHeader','serviceViewport','services','conversationHistoryControls','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -85,7 +85,7 @@ test('cached Chat reads are silent and failures have exactly one scoped retry wi
  work.sessions[0].checkedAt='now';html=c.agent(work,false);assert.match(html,/chat-welcome/);assert.doesNotMatch(html,/read-placeholder/);
 });
 test('active Run initial checking is neutral and send stays locked; idle unknown and errors retain Check status',()=>{
- const {c,work}=rendererFixture();c.adapter.cancelAndSendCapabilities.set('a',1);c.adapter.activeRuns.set('a',{confirmed:false,loading:true,visibleLoading:true,error:''});let html=c.agent(work,false);
+ const {c,work}=rendererFixture();c.view.drafts['']='Valid draft';c.adapter.cancelAndSendCapabilities.set('a',1);c.adapter.activeRuns.set('a',{confirmed:false,loading:true,visibleLoading:true,error:''});let html=c.agent(work,false);
  assert.match(html,/aria-label="Checking conversation status" aria-busy="true"/);assert.match(html,/data-action="send-message"[^>]*disabled/);assert.doesNotMatch(html,/Checking the active Run|data-action="check-active-run"/);
  c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:''});html=c.agent(work,false);assert.match(html,/Conversation status is not confirmed/);assert.match(html,/data-action="check-active-run"/);assert.doesNotMatch(html,/aria-label="Checking conversation status"/);
  c.adapter.activeRuns.set('a',{confirmed:false,loading:false,error:'Observation lost'});html=c.agent(work,false);assert.match(html,/Observation lost/);assert.match(html,/data-action="check-active-run"/);
@@ -201,11 +201,13 @@ test('first-read reveal is CSS-only, static, and does not reintroduce modal anim
  assert.match(css,/@keyframes read-placeholder-reveal \{ from \{ opacity:0; \} to \{ opacity:1; \} \}/);
  // UIL-PENDING-001 allows one low-contrast skeleton gradient that only changes
  // brightness. Modal presentation stays immediate and no page adds its own
- // spinner/pulse of its own, except the Core starting indicator.
+ // spinner/pulse of its own, except the Core and message submission indicators.
  assert.doesNotMatch(css,/modal-in|modal-out|modal-exit-/);
  const coreSpinner = 'animation: core-starting-spin 1s linear infinite';
  assert.ok(css.includes(coreSpinner));
- assert.doesNotMatch(css.replaceAll(coreSpinner,''),/animation:[^;]*(?:pulse|spin)/);
+ const chatSpinner='animation:chat-send-spin 1s linear infinite';
+ assert.ok(css.includes(chatSpinner));
+ assert.doesNotMatch(css.replaceAll(coreSpinner,'').replaceAll(chatSpinner,''),/animation:[^;]*(?:pulse|spin)/);
  const shimmer=(css.match(/animation:[^;]*skeleton-shimmer[^;]*/g)||[]);
  assert.ok(shimmer.length<=1);assert.ok((css.match(/@keyframes skeleton-shimmer/g)||[]).length<=1);
 });

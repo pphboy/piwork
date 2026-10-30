@@ -29,6 +29,7 @@ const imageDraftErrors = new Map();
 const textDraftRevisions = new Map();
 let imageSelection = 0;
 const pendingImageSubmissions = new Map();
+const chatDraftSnapshots = new Map();
 const imageObserver = new IntersectionObserver(entries => { for (const entry of entries)
     if (entry.isIntersecting) {
         const el = entry.target;
@@ -64,8 +65,11 @@ const icon = (name, size = 18) => {
         download: '<path d="M12 3v13m-5-5 5 5 5-5M3 17v4h18v-4"/>',
         close: '<path d="m6 6 12 12M6 18 18 6"/>',
         play: '<path d="m8 4 12 8-12 8Z"/>',
+        'send-pending': '<circle cx="12" cy="12" r="8" opacity=".2"/><path d="M12 4a8 8 0 0 1 8 8"/>',
+        'send-failed': '<circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16h.01"/>',
+        'send-unknown': '<circle cx="12" cy="12" r="8"/><path d="M9.8 9a2.3 2.3 0 1 1 3.5 2c-.9.5-1.3 1-1.3 2M12 16h.01"/>',
         stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
-        'stop-send': '<rect x="7.33" y="7.33" width="9.34" height="9.34" rx="1.66" fill="currentColor" stroke="none"/>',
+        'stop-send': '<rect x="3" y="9" width="6" height="6" rx="1" fill="currentColor" stroke="none"/><path d="M16 19V5m-4 4 4-4 4 4"/>',
         check: '<path d="m4 12 5 5L20 6"/>',
         info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
         clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/>',
@@ -175,6 +179,7 @@ let view = {
 const languagePicker = createLanguagePicker({ choices: languageChoices, label: () => t('lang.menu'), onChoose: chooseLocale });
 const workspacePanels = new WorkspacePanelsStore();
 const expandedActivity = new Map();
+const activityLayouts = new Map();
 let workspaceReturn, chatReturn;
 const chatReading = new Map();
 let pendingWebCommand;
@@ -527,6 +532,7 @@ let servicePreparationScheduled = false;
 const fileSelections = new Map();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels = {
+    'retry-chat-submission': 'chat.retryMessage',
     'sign-in': 'actions.signIn', 'sign-out': 'actions.signOut', 'confirm-switch-core': 'actions.switchingCore', 'check-connection': 'actions.checkingConnection',
     'retry-works': 'actions.loadingWorks', 'create-work': 'actions.creatingWork', 'start-work': 'actions.startingWork', 'start-import-open': 'actions.startingImportedWork', 'check-work-progress': 'actions.checkingWorkProgress', 'check-service-progress': 'actions.checkingServiceProgress', 'confirm-stop': 'actions.stoppingWork', 'confirm-delete': 'actions.deletingWork',
     'retry-work-read': 'actions.loadingWork', 'open-work': 'actions.loadingWork', 'check-work': 'actions.checkingWork', settings: 'actions.readingSettings', 'tab-Services': 'actions.loadingServices', 'tab-Files': 'actions.readingWorkspace',
@@ -571,15 +577,15 @@ function actionIntent(el, action = el.dataset.action || '') {
             return;
         kind = 'service';
     }
-    else if (['new-session', 'send-message', 'cancel-run', 'save-model', 'cancel-pi-request', 'retry-pi-request'].includes(action))
+    else if (['new-session', 'send-message', 'retry-chat-submission', 'cancel-run', 'save-model', 'cancel-pi-request', 'retry-pi-request'].includes(action))
         kind = 'agent';
     else if (['confirm-import', 'download-work', 'prepare-export', 'export'].includes(action))
         kind = 'transfer';
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
     const serviceId = el.dataset.id || view.data.serviceId || view.service;
-    const resource = action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const resource = action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
-    const chatAction = ['new-session', 'send-message', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
+    const chatAction = ['new-session', 'send-message', 'retry-chat-submission', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
     const anchor = `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`;
     return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || t('target.newWork') : chatAction ? w?.name || t('target.chat') : `${w?.name || adapter.state.core.address || (adapter.hosted ? t('target.server') : t('target.localCli'))}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
         anchor, owner: el, view: location.hash, origin: view.file || view.path, sourceContext: `${view.tab}:${view.session}:${view.modal}` };
@@ -1369,6 +1375,8 @@ function agent(w, focus) {
     const imageWaiting = draftImages.length > 0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image => image.reading));
     const webDraft = !view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
     const stopAndSend = supported && active && !activeUnconfirmed && !webDraft;
+    const stopPending = [...actions.records.values()].some(r => r.work === w.id && r.action === 'cancel-run' && r.pending);
+    const stopControl = activeRun && !activeUnconfirmed && adapter.project(w).usable ? btn(icon('stop', 18), 'cancel-run', 'icon-button quiet chat-stop', `data-run-id="${esc(activeRun.id)}" aria-label="${esc(t('execution.cancelRun'))}" title="${esc(t('execution.cancelRun'))}" ${stopPending || activeRun.cancellationRequested || activeRun.status === 'cancelling' ? 'disabled aria-busy="true"' : ''}`) : '';
     // The Run wait belongs to the assistant reply it will produce. Its source is
     // the same confirmed live Run that owns Activity waits: the Work's own readback
     // first, then a confirmed, non-interrupted observation. An interrupted
@@ -1378,7 +1386,7 @@ function agent(w, focus) {
     // A reply status belongs to the last message of its own Run. A Run with
     // no messages yet gets a standalone slot in the conversation.
     const replySlot = replyRun && session && !session.messages.some(message => message.runId === replyRun.id) ? replyStatusMarkup(w, session.id, replyRun) : '';
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${conversationError ? readFailure(t('agent.conversationReadFailed'), conversationLimit ? `${conversationError} ${conversationLimit}` : conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages, replyRun)}${replySlot}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div>${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}<div class="composer-wrap">${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", `title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? t('chat.commandMode') : t('chat.sendAsText'), "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${conversationError ? readFailure(t('agent.conversationReadFailed'), conversationLimit ? `${conversationError} ${conversationLimit}` : conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages, replyRun)}${replySlot}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", `title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (!draft.trim() && !draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? t('chat.commandMode') : t('chat.sendAsText'), "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
 }
 function modelComposer(w, sessionId) {
     const { name, thinking, state, initialLoading } = chatSettings(w, sessionId);
@@ -1622,11 +1630,8 @@ function activityBusy(w, sessionId, messages) {
 function executionMarkup(w, sessionId, runId) {
     const observed = adapter.activeRuns.get(w.id), activeObserved = observed?.confirmed && observed.run?.id === runId ? observed.run : undefined;
     const run = (w.run?.id === runId ? w.run : undefined) || activeObserved || w.sessions.find(session => session.id === sessionId)?.runs?.find(item => item.id === runId) || adapter.runDetails.get(`${w.id}:${runId}`);
-    const active = adapter.cancelAndSendCapabilities.get(w.id) === 1 ? observed?.confirmed && !observed.error ? observed.run : undefined : w.run;
-    const cancellable = active?.id === runId && ['accepted', 'running', 'cancelling'].includes(active.status);
-    // The execution summary reports the real Run state. When the reply slot owns
-    // the one visible wait for this Run, the summary must not animate a second one.
-    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run ? badge(t('execution.runStatus', { status: stateText(run.status) })) : `<span>${t('execution.execution')}</span>`}${btn(t('common.details'), 'run-details', 'text-button', `data-run-id="${esc(runId)}" aria-label="${esc(t('execution.runDetails'))}"`)}${cancellable ? btn(active.cancellationRequested || active.status === 'cancelling' ? t('execution.cancelling') : t('execution.cancelRun'), 'cancel-run', 'text-button', `data-run-id="${esc(runId)}" ${active.cancellationRequested || active.status === 'cancelling' ? 'disabled' : ''}`) : ''}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn(t('execution.resume'), 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
+    // Normal progress belongs to the reply; failures retain their original Run.
+    return `<div class="message-execution" data-message-key="${esc(`${adapter.identityEpoch}:${w.id}:${sessionId}:execution:${runId}`)}"><div class="execution-summary">${run && ['failed', 'cancelled', 'interrupted'].includes(run.status) ? badge(t('execution.runStatus', { status: stateText(run.status) })) : !run ? `<span>${t('execution.execution')}</span>` : ''}${btn(icon('more', 16), 'run-details', 'icon-button quiet', `data-run-id="${esc(runId)}" aria-label="${esc(t('execution.runDetails'))}"`)}</div>${run?.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${run && run.id === w.run?.id && ['interrupted', 'accepted', 'running', 'cancelling'].includes(run.status) && (run.error || run.status === 'interrupted') ? btn(t('execution.resume'), 'resume-run', 'text-button', `data-run-id="${esc(runId)}"`) : ''}</div>`;
 }
 function modelFailureHelp(run) {
     if (!run || !['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED'].includes(run.errorCode ?? ''))
@@ -1636,7 +1641,7 @@ function modelFailureHelp(run) {
     return adapter.hosted ? `<p class="muted">${t('merge.hostedAdminBefore')} <a href="/admin">${t('merge.admin')}</a>${t('merge.hostedAdminAfter')}</p>` : `<p class="muted">${t('merge.localAdmin')}</p>`;
 }
 function unmatchedExecutions(w, sessionId, messages) {
-    const bound = new Set(messages.map(message => message.runId).filter(Boolean));
+    const bound = new Set(activityGroups(messages).flatMap(group => group.messages.map(message => message.runId)).filter(Boolean));
     const runs = [...(w.sessions.find(session => session.id === sessionId)?.runs || [])];
     if (w.run?.sessionId === sessionId && !runs.some(run => run.id === w.run.id))
         runs.push(w.run);
@@ -1656,12 +1661,37 @@ function workspaceChatToggle(w) {
     return layoutButton('panel-right', hidden ? t('focus.showChat') : t('focus.hideChat'), 'toggle-workspace-chat', `aria-expanded="${!hidden}" aria-controls="workspace-chat"`);
 }
 let preserveChatReading = false;
+function captureChatAnchor(messages) {
+    const viewport = messages.getBoundingClientRect();
+    let anchor;
+    for (const node of messages.querySelectorAll('[data-message-key], [data-activity-key]')) {
+        const rect = node.getBoundingClientRect();
+        if (!node.getClientRects().length || rect.bottom <= viewport.top || rect.top >= viewport.bottom)
+            continue;
+        if (!anchor) {
+            anchor = node;
+            continue;
+        }
+        // Keep a visible header; when it is above the viewport, follow the visible
+        // tool or raw preview inside it instead of anchoring the whole Activity.
+        if (!anchor.contains(node) || anchor.getBoundingClientRect().top >= viewport.top)
+            break;
+        anchor = node;
+    }
+    return anchor ? { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey, offset: anchor.getBoundingClientRect().top - viewport.top } : undefined;
+}
+function restoreChatAnchor(messages, anchor) {
+    if (!anchor?.key)
+        return;
+    const node = [...messages.querySelectorAll('[data-message-key], [data-activity-key]')].find(node => (node.dataset.messageKey === anchor.key || node.dataset.activityKey === anchor.key) && node.getClientRects().length);
+    if (node)
+        messages.scrollTop += node.getBoundingClientRect().top - messages.getBoundingClientRect().top - anchor.offset;
+}
 function rememberChatPosition() {
     const messages = root.querySelector('#messages');
     if (!messages?.clientHeight || !messages.dataset.readingKey)
         return;
-    const first = !view.scrollPinned ? [...messages.querySelectorAll('[data-message-key]')].find(node => node.getBoundingClientRect().bottom > messages.getBoundingClientRect().top) : undefined;
-    chatReading.set(messages.dataset.readingKey, { scroll: messages.scrollTop, pinned: view.scrollPinned, anchor: first ? { key: first.dataset.messageKey, offset: first.getBoundingClientRect().top - messages.getBoundingClientRect().top } : undefined });
+    chatReading.set(messages.dataset.readingKey, { scroll: messages.scrollTop, pinned: view.scrollPinned, anchor: view.scrollPinned ? undefined : captureChatAnchor(messages) });
 }
 function restoreChatPosition() {
     const messages = root.querySelector('#messages');
@@ -1671,11 +1701,8 @@ function restoreChatPosition() {
     if (!saved)
         return;
     messages.scrollTop = saved.pinned ? messages.scrollHeight : saved.scroll;
-    if (!saved.pinned && saved.anchor) {
-        const anchor = [...messages.querySelectorAll('[data-message-key]')].find(node => node.dataset.messageKey === saved.anchor.key);
-        if (anchor)
-            messages.scrollTop += anchor.getBoundingClientRect().top - messages.getBoundingClientRect().top - saved.anchor.offset;
-    }
+    if (!saved.pinned)
+        restoreChatAnchor(messages, saved.anchor);
 }
 function applyWorkspaceSizing() {
     const layout = root.querySelector('.service-workspace'), separator = root.querySelector('#workspace-splitter'), work = current();
@@ -1697,32 +1724,56 @@ function toolStatusText(status) {
                     : status || '';
 }
 function replyStatusMarkup(w, sessionId, run) {
-    const messages = w.sessions.find(session => session.id === sessionId)?.messages.filter(message => message.runId === run.id) ?? [];
-    const working = activityBusy(w, sessionId, messages), hasText = messages.some(message => message.role === 'assistant' && !message.tool && !!message.text);
-    const label = run.cancellationRequested || run.status === 'cancelling' ? t('execution.cancelling') : working ? t('chat.agentWorking') : hasText ? t('chat.agentReplying') : t('chat.agentPreparing');
-    return `<div class="reply-slot" role="status" aria-busy="true" data-run-id="${esc(run.id)}"><span>${esc(label)}</span>${pendingDots()}</div>`;
+    const label = run.cancellationRequested || run.status === 'cancelling' ? t('execution.cancelling') : t('chat.waitingReply');
+    return `<span class="reply-slot" role="status" aria-busy="true" aria-label="${esc(label)}" data-run-id="${esc(run.id)}">${pendingDots()}</span>`;
 }
 function messageSubmissionMarkup(w, message) {
     const submission = message.submission;
     if (!submission || submission.phase === 'accepted')
         return '';
-    const intent = adapter.chatSubmissions.get(w.id), canCheck = submission.phase === 'unknown' && intent?.key === submission.key;
     const label = submission.phase === 'sending' ? (submission.stopping ? t('chat.stoppingPreviousRun') : t('chat.sending')) : submission.phase === 'unknown' ? t('chat.sendUnknown') : t('chat.sendFailed');
-    return `<div class="message-submission ${submission.phase}" role="status"><span>${esc(label)}</span>${submission.phase === 'sending' ? pendingDots() : ''}${submission.error ? `<span>${esc(submission.error)}</span>` : ''}${canCheck ? btn(t('chat.checkOriginalSubmission'), 'check-chat-submission', 'text-button') : ''}</div>`;
+    const attributes = `aria-label="${esc(label)}" title="${esc(label)}" data-status-label="${esc(label)}"`;
+    if (submission.phase === 'sending')
+        return `<span class="message-submission sending" role="status" tabindex="0" ${attributes}>${icon('send-pending', 16)}</span>`;
+    return `<span class="message-submission ${submission.phase}">${btn(icon(submission.phase === 'failed' ? 'send-failed' : 'send-unknown', 16), 'chat-submission', 'icon-button quiet', `${attributes} data-submission-key="${esc(submission.key)}" data-session="${esc(w.sessions.find(s => s.messages.includes(message))?.id || '')}" aria-haspopup="dialog"`)}</span>`;
+}
+function inlineReplyTail(html, tail) {
+    return /<\/(?:p|li|h[1-6])>\s*(?:<\/(?:ul|ol|blockquote)>\s*)*$/.test(html) ? html.replace(/(<\/(?:p|li|h[1-6])>)(\s*(?:<\/(?:ul|ol|blockquote)>\s*)*)$/, `${tail}$1$2`) : html + tail;
+}
+function messageHistoryMarkup(sessionId, message) {
+    if (!message.historyIncomplete && !message.historyOrderUnconfirmed && !message.historyRecoveryUnconfirmed)
+        return '';
+    if (message.submission && message.submission.phase !== 'accepted')
+        return '';
+    const label = t('chat.historyStatus');
+    return btn(icon('send-unknown', 16), 'chat-history-status', 'icon-button quiet message-history-status', `data-id="${esc(message.id || '')}" data-session="${esc(sessionId)}" data-run-id="${esc(message.runId || '')}" aria-label="${esc(label)}" title="${esc(label)}" aria-haspopup="dialog"`);
 }
 function messageMarkup(w, sessionId, messages, replyRun) {
-    const groups = activityGroups(messages), anchors = executionAnchors(groups);
+    const scope = `${adapter.identityEpoch}:${w.id}:${sessionId}`;
+    const groups = activityGroups(messages, activityLayouts.get(scope)), anchors = executionAnchors(groups), seenAuthors = new Set();
+    activityLayouts.set(scope, groups.filter(group => group.activity));
+    const toolWait = replyRun ? groups.findLastIndex(group => group.activity && group.messages.some(m => m.runId === replyRun.id && m.tool?.status === 'Running')) : -1;
+    const textWait = replyRun && toolWait < 0 ? groups.findLastIndex(group => group.messages.some(m => m.runId === replyRun.id && m.role === 'assistant' && !m.tool && !!m.text)) : -1;
+    const wait = replyRun ? replyStatusMarkup(w, sessionId, replyRun) : '';
     return groups.map((group, index) => {
-        const execution = (anchors.get(index) || []).map(id => `${replyRun?.id === id ? replyStatusMarkup(w, sessionId, replyRun) : ''}${executionMarkup(w, sessionId, id)}`).join('');
-        const key = `${adapter.identityEpoch}:${w.id}:${sessionId}:${group.key}`;
+        const execution = (anchors.get(index) || []).map(id => `${replyRun?.id === id && toolWait < 0 && textWait < 0 ? wait : ''}${executionMarkup(w, sessionId, id)}`).join('');
+        const key = `${scope}:${group.key}`;
         if (group.activity) {
             const running = group.messages.some(m => m.tool?.status === 'Running'), failures = group.messages.filter(m => m.tool?.status === 'Failed'), unknown = group.messages.some(m => m.tool?.status?.includes('confirmed'));
             const busy = activityBusy(w, sessionId, group.messages);
             const activityState = failures.length ? t('activity.needsAttention') : running ? t('activity.running') : unknown ? t('activity.resultUnconfirmed') : t('activity.completed');
-            const activitySummary = t(group.messages.length === 1 ? 'activity.summaryOne' : 'activity.summaryMany', { count: group.messages.length, state: activityState }) + (busy && failures.length ? t('activity.stillRunning') : '');
-            return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key) ? 'open' : ''} aria-busy="${busy}"><summary>${icon('terminal', 14)} ${activitySummary}${failures.length ? `${t('activity.failedCount', { count: failures.length })}<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0, 160) || t('activity.toolFailed'))}</small>` : ''}${group.messages.some(m => m.historyOrderUnconfirmed) ? `<small class="history-partial">${t('chat.orderUnconfirmed')}</small>` : ''}</summary>${group.messages.map(m => `<details class="tool-event" data-message-key="${esc(`${key}:${m.tool?.id || m.id}`)}" data-activity-key="${esc(`${key}:${m.tool?.id || m.id}`)}" ${expandedActivity.get(`${key}:${m.tool?.id || m.id}`) ? "open" : ""}><summary>${esc(m.tool?.name)} · ${esc(toolStatusText(m.tool?.status))}</summary>${m.historyIncomplete ? `<small class="history-partial">${t('activity.partialResult')}</small>` : ''}<pre>${esc(m.tool?.content)}</pre></details>`).join('')}</details>${execution}`;
+            const summary = group.messages.length === 1 ? `${esc(group.messages[0]?.tool?.name)} <small>${esc(activityState)}</small>` : t('activity.summaryMany', { count: group.messages.length, state: activityState });
+            return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key) ? 'open' : ''} aria-busy="${busy}"><summary>${icon('terminal', 14)} ${summary}${busy && failures.length ? t('activity.stillRunning') : ''}${toolWait === index ? wait : ''}${failures.length ? `${t('activity.failedCount', { count: failures.length })}<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0, 160) || t('activity.toolFailed'))}</small>` : ''}</summary>${group.messages.map(m => { const toolKey = `${scope}:tool:${JSON.stringify([m.runId ?? null, m.tool?.id ?? m.id])}`, rawKey = `${toolKey}:raw`; return `<details class="tool-event" data-message-key="${esc(toolKey)}" data-activity-key="${esc(toolKey)}" ${expandedActivity.get(toolKey) ? 'open' : ''}><summary>${esc(m.tool?.name)} · ${esc(toolStatusText(m.tool?.status))}</summary>${m.historyIncomplete ? `<small class="history-partial">${t('activity.partialResult')}</small>` : ''}<div class="tool-result-preview">${esc((m.tool?.content || '').slice(0, 600))}${(m.tool?.content?.length || 0) > 600 ? '…' : ''}</div><details class="tool-raw" data-activity-key="${esc(rawKey)}" ${expandedActivity.get(rawKey) ? 'open' : ''}><summary>${t('chat.rawToolResult')}</summary><pre>${esc(m.tool?.content)}</pre></details></details>`; }).join('')}</details>${messageHistoryMarkup(sessionId, group.messages.find(m => m.historyIncomplete || m.historyOrderUnconfirmed || m.historyRecoveryUnconfirmed) || group.messages[0])}${execution}`;
         }
-        return group.messages.map(m => `<div class="message ${m.role}" data-message-key="${esc(key)}">${m.role === 'assistant' ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${m.historyIncomplete ? `<small class="history-partial">${t('chat.partialMessage')}</small>` : ''}${m.historyOrderUnconfirmed ? `<small class="history-partial">${t('chat.orderUnconfirmed')}</small>` : ''}${m.historyRecoveryUnconfirmed ? `<small class="history-partial">${t('chat.outputUnconfirmed')}</small>` : ''}${m.role === 'assistant' && !m.historyIncomplete ? renderChatMarkdown(m.text, { workId: w.id }) : esc(m.text)}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.pendingImages?.length ? `<div class="chat-message-images">${m.pendingImages.map(image => `<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>` : ''}${messageSubmissionMarkup(w, m)}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>` : ''}</div>`).join('') + execution;
+        return group.messages.map((m, messageIndex) => {
+            const author = m.role === 'assistant' && (!m.runId || !seenAuthors.has(m.runId));
+            if (m.runId && m.role === 'assistant')
+                seenAuthors.add(m.runId);
+            let body = m.role === 'assistant' && !m.historyIncomplete ? renderChatMarkdown(m.text, { workId: w.id }) : esc(m.text);
+            if (textWait === index && messageIndex === group.messages.length - 1)
+                body = inlineReplyTail(body, wait);
+            return `<div class="message ${m.role}" data-message-key="${esc(key)}">${author ? `<div class="message-author">${icon('spark', 14)} piwork</div>` : ''}<div class="message-text${m.role === 'assistant' ? ' chat-markdown' : ''}">${body}</div>${m.images?.length ? `<div class="chat-message-images">${m.images.map(image => historyImageMarkup(w, sessionId, m.runId, image)).join('')}</div>` : ''}${m.pendingImages?.length ? `<div class="chat-message-images">${m.pendingImages.map(image => `<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>` : ''}${messageSubmissionMarkup(w, m)}${messageHistoryMarkup(sessionId, m)}${m.source ? `<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>` : ''}</div>`;
+        }).join('') + execution;
     }).join('');
 }
 const webCommands = ['new', 'resume', 'model', 'thinking', 'settings'];
@@ -1998,6 +2049,25 @@ function modalMarkup() {
     const cancel = () => btn(t('common.cancel'), "close-modal");
     const close = () => btn(t('common.close'), "close-modal");
     switch (view.modal) {
+        case 'chat-history-status': {
+            const sessionId = view.data.sessionId;
+            const original = adapter.getWork(view.data.workId);
+            const message = original?.sessions.find(s => s.id === sessionId)?.messages.find(m => (m.id || '') === view.data.messageId && (m.runId || '') === view.data.runId);
+            const facts = [message?.historyIncomplete ? t('chat.partialMessage') : '', message?.historyOrderUnconfirmed ? t('chat.orderUnconfirmed') : '', message?.historyRecoveryUnconfirmed ? t('chat.outputUnconfirmed') : ''].filter(Boolean);
+            title = t('chat.historyStatus');
+            body = facts.map(fact => `<p>${esc(fact)}</p>`).join('') || `<p>${esc(t('chat.historyUpdated'))}</p>`;
+            footer = `${close()}${original && message && adapter.project(original).usable ? btn(t('chat.recheckHistory'), 'reload-history', 'primary', `data-session="${esc(sessionId)}"`) : ''}`;
+            break;
+        }
+        case 'chat-submission': {
+            const sessionId = view.data.sessionId, key = view.data.submissionKey;
+            const message = target?.sessions.find(s => s.id === sessionId)?.messages.find(m => m.submission?.key === key);
+            const submission = message?.submission;
+            title = t(submission?.phase === 'unknown' ? 'chat.sendUnknown' : submission?.phase === 'sending' ? 'chat.sending' : 'chat.sendFailed');
+            body = submission ? `<p>${esc(submission.error || title)}</p>${submission.phase === 'failed' && !adapter.canRetryChatSubmission(target.id, sessionId, key) ? `<p>${esc(t('chat.retryUnavailable'))}</p>` : ''}` : `<p>${esc(t('chat.retryUnavailable'))}</p>`;
+            footer = `${close()}${target && submission?.phase === 'unknown' ? btn(t('chat.checkOriginalSubmission'), 'check-chat-submission', 'primary') : ''}${target && submission?.phase === 'failed' && adapter.canRetryChatSubmission(target.id, sessionId, key) ? btn(t('chat.retryMessage'), 'retry-chat-submission', 'primary', `data-submission-key="${esc(key)}" data-session="${esc(sessionId)}" ${adapter.chatSubmissions.has(target.id) ? 'disabled' : ''}`) : ''}`;
+            break;
+        }
         case 'chat-response-settings': {
             if (!target)
                 break;
@@ -2367,7 +2437,8 @@ function modalMarkup() {
         body = body.replaceAll('<div class="menu-list', '<div role="group" class="menu-list').replace(/<button (?![^>]*\brole=)/g, '<button role="menuitem" tabindex="-1" ');
         return `<dialog id="modal" role="menu" aria-label="${title}" class="modal anchored-overlay command-dropdown"><div class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
     }
-    return `<dialog id="modal" aria-modal="${role !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900 ? 'false' : 'true'}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+    const submissionError = view.modal === 'chat-submission' ? target?.sessions.find(s => s.id === view.data.sessionId)?.messages.find(m => m.submission?.key === view.data.submissionKey)?.submission?.error : undefined;
+    return `<dialog id="modal" aria-modal="${role !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900 ? 'false' : 'true'}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${['chat-submission', 'chat-history-status'].includes(view.modal) ? 'chat-submission-popover' : ''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError !== submissionError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op) {
     const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
@@ -2438,7 +2509,7 @@ function focusKey(el) {
         return "#" + CSS.escape(el.id);
     const action = el.dataset.action;
     if (action)
-        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}${el.dataset.runId ? `[data-run-id="${CSS.escape(el.dataset.runId)}"]` : ""}${el.dataset.control ? `[data-control="${CSS.escape(el.dataset.control)}"]` : ""}${el.dataset.optionValue !== undefined ? `[data-option-value="${CSS.escape(el.dataset.optionValue)}"]` : ''}`;
+        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}${el.dataset.runId ? `[data-run-id="${CSS.escape(el.dataset.runId)}"]` : ""}${el.dataset.session ? `[data-session="${CSS.escape(el.dataset.session)}"]` : ""}${el.dataset.submissionKey ? `[data-submission-key="${CSS.escape(el.dataset.submissionKey)}"]` : ""}${el.dataset.control ? `[data-control="${CSS.escape(el.dataset.control)}"]` : ""}${el.dataset.optionValue !== undefined ? `[data-option-value="${CSS.escape(el.dataset.optionValue)}"]` : ''}`;
     return "";
 }
 async function guard(next) {
@@ -2685,7 +2756,7 @@ async function handleAction(action, el, record) {
     const w = targetWork(el);
     const currentWork = current();
     const s = currentWork ? activeService(currentWork) : undefined;
-    if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'cancel-pi-request', 'retry-pi-request'].includes(action))
+    if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'retry-chat-submission', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'cancel-pi-request', 'retry-pi-request'].includes(action))
         throw new Error(t('fileResults.notReadyRuntime'));
     switch (action) {
         case 'language': {
@@ -2725,6 +2796,51 @@ async function handleAction(action, el, record) {
         case 'chat-input-options':
             openModal('chat-input-options');
             break;
+        case 'chat-submission':
+            if (currentWork)
+                openModal('chat-submission', { workId: currentWork.id, sessionId: el.dataset.session || '', submissionKey: el.dataset.submissionKey || '' });
+            break;
+        case 'chat-history-status':
+            if (currentWork)
+                openModal('chat-history-status', { workId: currentWork.id, sessionId: el.dataset.session || '', messageId: el.dataset.id || '', runId: el.dataset.runId || '' });
+            break;
+        case 'retry-chat-submission': {
+            if (!currentWork)
+                break;
+            const key = el.dataset.submissionKey, sessionId = el.dataset.session, snapshot = chatDraftSnapshots.get(key);
+            const epoch = adapter.identityEpoch, origin = viewKey();
+            if (record)
+                record.businessId = `submission:${key}`;
+            if (snapshot)
+                pendingImageSubmissions.set(currentWork.id, snapshot);
+            try {
+                await stay(adapter.retryChatSubmission(currentWork.id, sessionId, key).then(result => { if (snapshot)
+                    consumeImageSubmission(currentWork.id, snapshot); return result; }));
+                chatDraftSnapshots.delete(key);
+                closeModal();
+            }
+            catch (error) {
+                if (error instanceof ViewChanged || epoch !== adapter.identityEpoch)
+                    throw new ViewChanged();
+                const message = currentWork.sessions.find(s => s.id === sessionId)?.messages.find(m => m.submission?.previousKeys?.includes(key));
+                const next = message?.submission?.key;
+                if (next) {
+                    // Retain the original attempt's recovery data even after navigation.
+                    if (snapshot) {
+                        chatDraftSnapshots.delete(key);
+                        chatDraftSnapshots.set(next, snapshot);
+                        while (chatDraftSnapshots.size > 16)
+                            chatDraftSnapshots.delete(chatDraftSnapshots.keys().next().value);
+                    }
+                    if (origin === viewKey() && view.modal === 'chat-submission' && view.data.workId === currentWork.id && view.data.sessionId === sessionId && view.data.submissionKey === key)
+                        view.data.submissionKey = next;
+                }
+                if (!adapter.chatSubmissions.has(currentWork.id) && pendingImageSubmissions.get(currentWork.id) === snapshot)
+                    pendingImageSubmissions.delete(currentWork.id);
+                throw error;
+            }
+            break;
+        }
         case 'choose-chat-setting': {
             if (!currentWork || !chatSettingsContextCurrent())
                 break;
@@ -2847,29 +2963,36 @@ async function handleAction(action, el, record) {
             view.literalSlash = !view.literalSlash;
             render();
             break;
-        case 'check-chat-submission':
-            if (currentWork) {
-                const result = await stay(adapter.recoverChatSubmission(currentWork.id));
-                if (result) {
-                    if (result.kind === 'run') {
-                        const submitted = pendingImageSubmissions.get(currentWork.id);
-                        if (submitted && submitted.epoch === adapter.identityEpoch) {
-                            consumeImageSubmission(currentWork.id, submitted);
-                        }
-                    }
-                    if (result.kind === 'session') {
-                        const original = view.drafts[draftKey(currentWork)] || '';
-                        view.session = result.session.sessionId;
-                        if (original && !view.drafts[draftKey(currentWork)])
-                            view.drafts[draftKey(currentWork)] = original;
-                    }
-                    for (const old of actions.records.values())
-                        if (old.blocked && old.work === currentWork.id && old.kind === 'agent' && (result.kind === 'session' ? old.action === 'new-session' || old.action === 'send-message' : old.action === 'send-message'))
-                            actions.review(old);
+        case 'check-chat-submission': {
+            if (!currentWork)
+                break;
+            const epoch = adapter.identityEpoch;
+            // Acceptance can remove the icon and its anchored popover before the read
+            // resolves. Commit the original draft/lock readback before view guards.
+            await stay(adapter.recoverChatSubmission(currentWork.id).then(result => {
+                if (!result || epoch !== adapter.identityEpoch)
+                    return result;
+                if (result.kind === 'run') {
+                    const submitted = pendingImageSubmissions.get(currentWork.id);
+                    if (submitted && submitted.epoch === epoch)
+                        consumeImageSubmission(currentWork.id, submitted);
                 }
-                render();
-            }
+                if (result.kind === 'session') {
+                    const original = view.drafts[draftKey(currentWork)] || '';
+                    view.session = result.session.sessionId;
+                    if (original && !view.drafts[draftKey(currentWork)])
+                        view.drafts[draftKey(currentWork)] = original;
+                }
+                for (const old of actions.records.values())
+                    if (old.blocked && old.work === currentWork.id && old.kind === 'agent' && ['send-message', 'retry-chat-submission', ...(result.kind === 'session' ? ['new-session'] : [])].includes(old.action || ''))
+                        actions.review(old);
+                return result;
+            }));
+            if (view.modal === 'chat-submission' && !adapter.chatSubmissions.has(currentWork.id))
+                closeModal();
+            render();
             break;
+        }
         case "close-modal":
             closeModal();
             break;
@@ -3002,6 +3125,7 @@ async function handleAction(action, el, record) {
             textDraftRevisions.clear();
             imageDrafts.clear();
             pendingImageSubmissions.clear();
+            chatDraftSnapshots.clear();
             imageDraftErrors.clear();
             view.config = null;
             view.configDirty = false;
@@ -3019,6 +3143,7 @@ async function handleAction(action, el, record) {
             textDraftRevisions.clear();
             imageDrafts.clear();
             pendingImageSubmissions.clear();
+            chatDraftSnapshots.clear();
             imageDraftErrors.clear();
             view.config = null;
             view.configDirty = false;
@@ -3033,8 +3158,8 @@ async function handleAction(action, el, record) {
             break;
         case 'load-earlier-history':
         case 'reload-history':
-            if (currentWork && view.session)
-                await adapter.loadEarlierHistory(currentWork.id, view.session, action === 'reload-history');
+            if (currentWork && (el.dataset.session || view.session))
+                await adapter.loadEarlierHistory(currentWork.id, el.dataset.session || view.session, action === 'reload-history');
             break;
         case 'retry-conversation':
             if (view.modal === 'sessions' && view.modalError === currentWork?.resourceErrors?.agent)
@@ -3549,7 +3674,17 @@ async function handleAction(action, el, record) {
                 pendingImageSubmissions.set(currentWork.id, submission);
                 let submittedRunId = "";
                 try {
-                    submittedRunId = await stay(adapter.send(currentWork.id, view.session, text, view.includeIdentity, text.trimStart().startsWith("/") && !view.literalSlash ? "command" : images.length || (adapter.chatCapabilities.get(currentWork.id) ?? 0) >= 1 ? "text" : undefined, images.map(i => i.input), cancelRunId).then(result => { consumeImageSubmission(currentWork.id, submission); return result; }));
+                    const sending = adapter.send(currentWork.id, view.session, text, view.includeIdentity, text.trimStart().startsWith("/") && !view.literalSlash ? "command" : images.length || (adapter.chatCapabilities.get(currentWork.id) ?? 0) >= 1 ? "text" : undefined, images.map(i => i.input), cancelRunId);
+                    const attemptKey = adapter.chatSubmissions.get(currentWork.id)?.key;
+                    if (attemptKey) {
+                        if (record)
+                            record.businessId = `submission:${attemptKey}`;
+                        chatDraftSnapshots.set(attemptKey, submission);
+                        while (chatDraftSnapshots.size > 16)
+                            chatDraftSnapshots.delete(chatDraftSnapshots.keys().next().value);
+                    }
+                    submittedRunId = await stay(sending.then(result => { consumeImageSubmission(currentWork.id, submission); if (attemptKey)
+                        chatDraftSnapshots.delete(attemptKey); return result; }));
                 }
                 catch (error) {
                     if (!adapter.chatSubmissions.has(currentWork.id))
@@ -4517,6 +4652,13 @@ async function copy(text) {
     }
 }
 function visibleActionRecord(record) {
+    if (['send-message', 'retry-chat-submission'].includes(record.action || '') && record.businessId) {
+        const work = adapter.getWork(record.work || '');
+        if (work?.sessions.some(session => session.messages.some(m => m.runId === record.businessId || record.businessId === `submission:${m.submission?.key}` || m.submission?.previousKeys?.some(key => record.businessId === `submission:${key}`))))
+            return false;
+    }
+    if (record.action === 'cancel-run' && !record.error && !record.blocked)
+        return false;
     const operation = record.businessId && adapter.getOperation(record.businessId);
     if (route()[0] === 'works' && record.kind === 'lifecycle' && operation && ['succeeded', 'failed', 'superseded'].includes(operation.state) && !operation.observationError && !record.blocked && !record.pending && record.refresh !== 'failed' && record.refresh !== 'refreshing')
         return false;
@@ -4583,8 +4725,7 @@ function render() {
     const selectionEnd = active && 'selectionEnd' in active ? active.selectionEnd : selection;
     const messages = root.querySelector("#messages");
     const scroll = messages?.scrollTop || 0;
-    const firstVisible = messages && !view.scrollPinned ? [...messages.querySelectorAll('[data-message-key]')].find(node => node.getBoundingClientRect().bottom > messages.getBoundingClientRect().top) : undefined;
-    const readingAnchor = firstVisible ? { key: firstVisible.dataset.messageKey, offset: firstVisible.getBoundingClientRect().top - messages.getBoundingClientRect().top } : undefined;
+    const readingAnchor = messages && !view.scrollPinned ? captureChatAnchor(messages) : undefined;
     if (!preserveChatReading && messages?.clientHeight && messages.dataset.readingKey)
         chatReading.set(messages.dataset.readingKey, { scroll, pinned: view.scrollPinned, anchor: readingAnchor });
     const modalScroll = root.querySelector(".modal-body")?.scrollTop || 0;
@@ -4726,11 +4867,8 @@ function render() {
             view.scrollPinned = position?.pinned ?? view.scrollPinned;
             next.scrollTop = view.scrollPinned ? next.scrollHeight : position?.scroll ?? scroll;
             const reading = position?.anchor ?? readingAnchor;
-            if (reading && !view.scrollPinned) {
-                const anchor = [...next.querySelectorAll('[data-message-key]')].find(node => node.dataset.messageKey === reading.key);
-                if (anchor)
-                    next.scrollTop += anchor.getBoundingClientRect().top - next.getBoundingClientRect().top - reading.offset;
-            }
+            if (!view.scrollPinned)
+                restoreChatAnchor(next, reading);
         }
         if (!next.dataset.scrollBound) {
             next.dataset.scrollBound = "true";
@@ -4750,7 +4888,7 @@ function render() {
                         b.className = "button back-latest";
                         b.dataset.action = "scroll-bottom";
                         b.textContent = t('chat.backToLatest');
-                        next.after(b);
+                        next.parentElement?.querySelector(".composer-wrap")?.prepend(b);
                     }
                 }
             });
@@ -4980,13 +5118,22 @@ root.addEventListener("click", (e) => {
             if (currentNameError())
                 root.querySelector(`#${view.modal === 'import' ? 'import-name-error' : 'create-name-error'}`)?.scrollIntoView({ block: 'nearest' });
         }
-        else if (!['refresh-files', 'file-path', 'open-source', 'select-session', 'retry-conversation', 'check-active-run'].includes(el.dataset.action || ''))
+        else if (![...((el.dataset.action === 'send-message' && [...actions.records.values()].some(r => r.owner === el && !visibleActionRecord(r))) ? ['send-message'] : []), 'refresh-files', 'file-path', 'open-source', 'select-session', 'retry-conversation', 'check-active-run'].includes(el.dataset.action || ''))
             toast(error instanceof Error ? error.message : String(error));
     }).finally(() => { if (menuCommand && !menuFailed && modalChoice === menuChoice && overlayRole(view.modal) === 'menu')
         closeModal();
     else
         render(); });
 });
+function positionMessageTooltip(event) {
+    const target = event.target?.closest('.message-submission [data-status-label],.message-submission[data-status-label]');
+    if (!target)
+        return;
+    const box = target.getBoundingClientRect();
+    target.style.setProperty('--chat-tooltip-offset', `${Math.max(8, Math.min(box.left, innerWidth - 218)) - box.left}px`);
+}
+root.addEventListener('pointerover', positionMessageTooltip);
+root.addEventListener('focusin', positionMessageTooltip);
 root.addEventListener("input", (e) => {
     const input = e.target;
     const value = input.value;
@@ -5562,11 +5709,13 @@ adapter.subscribe(() => {
         textDraftRevisions.clear();
         imageDrafts.clear();
         pendingImageSubmissions.clear();
+        chatDraftSnapshots.clear();
         imageDraftErrors.clear();
         resetWorkspaceFocus();
         workspacePanels.clear();
         chatReading.clear();
         expandedActivity.clear();
+        activityLayouts.clear();
         pendingWebCommand = undefined;
         fileSelections.clear();
         runtimeAvailability.clear();
@@ -5947,6 +6096,9 @@ function consumeImageSubmission(workId, submitted) {
         if (imageDraftErrors.get(key) === submitted.error)
             imageDraftErrors.delete(key);
     }
+    for (const [key, snapshot] of chatDraftSnapshots)
+        if (snapshot === submitted)
+            chatDraftSnapshots.delete(key);
     if (pendingImageSubmissions.get(workId) === submitted)
         pendingImageSubmissions.delete(workId);
     render();

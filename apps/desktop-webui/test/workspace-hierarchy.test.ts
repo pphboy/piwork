@@ -12,9 +12,9 @@ const {executionAnchors}=await import(new URL('../browser/workspace-layout.js',i
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'Work A',sessions:[{id:'session-a',messages:[],runs:[]}],services:[],files:[],resourceChecked:{services:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,actions:{records:new Map()},location:{hash:'#/work/work-a'},renderChatMarkdown,innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
+ const c:any={...localeSandbox,pendingDots,actions:{records:new Map()},location:{hash:'#/work/work-a'},renderChatMarkdown,innerWidth:1440,view:{modal:'',data:{},session:'session-a',tab:'Services',service:'',port:3000,layout:'workspace'},adapter:{identityEpoch:7,runDetails:new Map(),activeRuns:new Map(),cancelAndSendCapabilities:new Map(),requestReadErrors:new Map(),requestDetails:new Map(),requestResponses:new Map(),requestRetries:new Map(),getWork:()=>work,project:()=>({usable:true}),requestPage:()=>undefined,requestCancellation:()=>undefined},current:()=>work,route:()=>['work','work-a'],activityGroups,executionAnchors,expandedActivity:new Map(),activityLayouts:new Map(),historyImageMarkup:()=>'',requestNavigationCurrent:()=>false,requestCancellable:()=>false};
  c.overlayRole=overlayRole;vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
- vm.runInContext(extract('activityBusy','fileReadPending','isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','layoutButton','focusControls','agentLayoutControls','browserFullscreenAction','modelFailureHelp','executionMarkup','toolStatusText','replyStatusMarkup','messageSubmissionMarkup','unmatchedExecutions','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
+ vm.runInContext(extract('activityBusy','fileReadPending','isRequestInspector','nonmodalDialog','requestStateLabel','modelDisplayName','runFacts','layoutButton','focusControls','agentLayoutControls','browserFullscreenAction','modelFailureHelp','executionMarkup','toolStatusText','replyStatusMarkup','messageSubmissionMarkup','messageHistoryMarkup','unmatchedExecutions','inlineReplyTail','messageMarkup','modalMarkup','focusKey'),c);return {c,work};
 }
 test('message execution details bind each true Run once and never attach the Work active Run to legacy text',()=>{
  const {c,work}=fixture();work.run={id:'external',sessionId:'other',status:'running'};work.sessions[0].runs=[{id:'a',sessionId:'session-a',status:'failed',error:'Original failure'},{id:'b',sessionId:'session-a',status:'succeeded'}];
@@ -26,7 +26,7 @@ test('message execution details bind each true Run once and never attach the Wor
 test('known unbound Session executions remain explicit records without fabricating message associations',()=>{
  const {c,work}=fixture();work.sessions[0].runs=[{id:'old',sessionId:'session-a',status:'succeeded'}];work.run={id:'other-run',sessionId:'other',status:'running'};
  assert.match(c.unmatchedExecutions(work,'session-a',[{text:'Legacy'}]),/Session executions/);assert.doesNotMatch(c.unmatchedExecutions(work,'session-a',[]),/other-run/);
- assert.equal(c.unmatchedExecutions(work,'session-a',[{runId:'old'}]),'');
+ assert.equal(c.unmatchedExecutions(work,'session-a',[{runId:'old',text:'Visible saved reply'}]),'');
 });
 test('request inspector lists source/state and keeps Run success beneath waiting goal state',()=>{
  const {c,work}=fixture(),request={requestId:'request-a',goal:'Publish report',source:{kind:'service',serviceName:'Reports'},state:'waiting_result',disposition:'live',updatedAt:'now',runIds:['a','b'],waitRef:{kind:'job',id:'job-a',deadlineAt:'tomorrow'},result:'Job submitted'};
@@ -49,7 +49,7 @@ test('Service selection lists real state without technical ports or Start mutati
 test('confirmed externally started active Run in the selected Session has its own explicit controls',()=>{
  const {c,work}=fixture();c.adapter.cancelAndSendCapabilities.set(work.id,1);c.adapter.activeRuns.set(work.id,{confirmed:true,run:{id:'external-current',sessionId:'session-a',status:'running'}});
  const html=c.unmatchedExecutions(work,'session-a',[{text:'Legacy history without association'}]);
- assert.match(html,/data-action="run-details"[^>]*data-run-id="external-current"/);assert.match(html,/data-action="cancel-run"[^>]*data-run-id="external-current"/);assert.match(html,/Run running/);
+ assert.match(html,/data-action="run-details"[^>]*data-run-id="external-current"/);assert.doesNotMatch(html,/Run running/);assert.doesNotMatch(html,/data-action="cancel-run"/);
  c.adapter.activeRuns.set(work.id,{confirmed:false,run:{id:'unconfirmed',sessionId:'session-a',status:'running'}});assert.equal(c.unmatchedExecutions(work,'session-a',[]),'');
 });
 
@@ -109,4 +109,10 @@ test('an associated Run reply in request detail renders constrained file links f
   assert.doesNotMatch(html, /target="_blank"/);
   assert.doesNotMatch(html, /piwork-file:\/\/host/);
   assert.equal(work.id, 'work-a');
+});
+
+test('failed Run with an empty history fragment retains its error beside a different active Run',()=>{
+ const {c,work}=fixture();work.sessions[0].runs=[{id:'empty-failure',sessionId:'session-a',status:'failed',error:'Original empty-output failure'}];work.run={id:'other-active',sessionId:'other',status:'running'};
+ const html=c.unmatchedExecutions(work,'session-a',[{id:'empty',role:'assistant',runId:'empty-failure',text:''}]);
+ assert.match(html,/Original empty-output failure/);assert.match(html,/data-run-id="empty-failure"/);assert.doesNotMatch(html,/other-active/);
 });

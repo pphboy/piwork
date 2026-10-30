@@ -55,15 +55,33 @@ http.createServer((req,res)=>{
   await page.locator('#modal .modal-footer [data-action=close-modal]').click();await file('chat-controls-shutdown','DELETE');
   await expect(page.locator('#composer')).toHaveValue('Keep Main draft');assert.equal(await page.evaluate(()=>window.controlsFrame===document.querySelector('iframe') && window.controlsLoads===0),true);await expect(frame.getByLabel('Service draft')).toHaveValue('Keep Service state');
   console.log('Chat controls: Service visibility and cancellation passed');
+  const independentlyStopped=await submit(main,'wait for abort: standalone stop','chat-controls-independent-stop');
+  await page.locator('#composer').fill('');
+  const stopButton=page.locator('.chat-stop');
+  await expect(stopButton).toHaveAttribute('data-run-id',independentlyStopped.runId,{timeout:15000});
+  await expect(stopButton).toBeEnabled();
+  const stopRequests=[];const observeStop=request=>{if(request.method()==='POST'&&new URL(request.url()).pathname.endsWith('/runs'))stopRequests.push(request);};page.on('request',observeStop);
+  await stopButton.click();assert.equal((await settled(independentlyStopped.runId)).state,6);
+  page.off('request',observeStop);assert.equal(stopRequests.length,0,'Independent cancellation must not submit a replacement Run');
+  await expect(page.locator('#composer')).toHaveValue('');await page.locator('#composer').fill('Keep Main draft');
+  console.log('Chat controls: independent stop with empty draft passed');
+
   const sendReplacement=async old=>{
-    await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',old.runId,{timeout:15000});await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();await page.locator('#composer').fill('identify current model');
+    await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',old.runId,{timeout:15000});await page.locator('#composer').fill('identify current model');await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
     const response=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/runs') && r.request().method()==='POST');
     await page.getByRole('button',{name:'Stop and send',exact:true}).click();const result=await response;assert.equal(result.status(),202,await result.text());
     const input=result.request().postDataJSON(),run=(await result.json()).run;assert.equal(input.cancelRunId,old.runId);assert.equal(input.sessionId,main);assert.equal(run.sessionId,main);assert.notEqual(run.runId,old.runId);
     assert.equal((await settled(old.runId)).state,6);assert.equal((await settled(run.runId)).state,4);
     assert.equal((await call('GET',path+'/runs/submissions/'+input.submissionKey)).run.runId,run.runId);return {run,key:input.submissionKey};
   };
-  const other=await makeSession('chat-controls-other'),old=await submit(other,'wait for abort','chat-controls-old');const replacement=await sendReplacement(old);
+  const other=await makeSession('chat-controls-other'),old=await submit(other,'wait for abort','chat-controls-old');
+  // A stale authorization must never cancel the newer Work-wide active Run.
+  const conflictKey='chat-controls-stale-target';
+  const conflict=await call('POST',path+'/runs',{sessionId:main,prompt:'Must not be submitted',submissionKey:conflictKey,inputMode:'text',cancelRunId:independentlyStopped.runId},409);
+  assert.equal(conflict.code,'WORK_BUSY');assert.equal((await call('GET',path+'/runs/active')).run.runId,old.runId);
+  assert.equal((await call('GET',path+'/runs/submissions/'+conflictKey)).status,'not-found');assert.equal((await call('GET',path+'/runs/'+old.runId)).state,2);
+  console.log('Chat controls: stale target rejected without cancelling or submitting');
+  const replacement=await sendReplacement(old);
   await frame.getByRole('button',{name:'Request Agent'}).click();const second=await waitFor(async()=>{const page=await call('GET',path+'/agent-requests?serviceName=controls-service&limit=25');return page.items.find(r=>r.requestId!==requestId && r.state==='running');},'second Service request');
   const automatic=await call('GET',path+'/runs/'+second.runIds[0]);await sendReplacement(automatic);assert.equal((await call('GET',path+'/agent-requests/'+second.requestId)).request.state,'cancelled');
   console.log('Chat controls: cross-Session and Service replacement passed');
@@ -151,7 +169,7 @@ http.createServer((req,res)=>{
       return{runId:run.id,error:run.error,activeId:adapter.activeRuns.get(id)?.run?.id};
     },{id,runId:failedManual.runId});
     assert.deepEqual(recovered,{runId:failedManual.runId,error:failedResult.error.message,activeId:background.runIds.at(-1)});
-    await expect(page.locator('.message-execution').filter({has:page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)})).toContainText(failedResult.error.message);
+  await expect(page.locator('.message-execution').filter({has:page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)})).toContainText(failedResult.error.message);
     await expect(page.locator(`[data-action=run-details][data-run-id="${failedManual.runId}"]`)).toHaveAttribute('data-run-id',failedManual.runId);
     await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',background.runIds.at(-1));
     assert.equal(expiredReads,1);assert.equal(historyWrites,0);
@@ -172,7 +190,7 @@ http.createServer((req,res)=>{
 
   await file('chat-controls-hold','PUT','hold');const hanging=await submit(other,'identify current model','chat-controls-hanging');
   await waitFor(async()=>{const r=await fetch(coreUrl+path+'/files/chat-controls-shutdown',{headers:{Authorization:'Bearer '+token}});return r.ok;},'SDK shutdown held');
-  await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',hanging.runId,{timeout:15000});await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();await page.locator('#composer').fill('Timeout draft');
+  await expect(page.locator('[data-action=send-message]')).toHaveAttribute('data-cancel-run-id',hanging.runId,{timeout:15000});await page.locator('#composer').fill('Timeout draft');await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
   const response=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/runs') && r.request().method()==='POST'),start=Date.now();
   await page.getByRole('button',{name:'Stop and send',exact:true}).click();const timeout=await response,elapsed=Date.now()-start;
   assert.equal(timeout.status(),409);assert.equal((await timeout.json()).code,'CANCEL_TIMEOUT');assert.ok(elapsed>=4900&&elapsed<10000,`Cancellation wait ${elapsed}ms`);

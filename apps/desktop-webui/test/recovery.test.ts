@@ -507,7 +507,7 @@ test('multi-provider empty catalog preserves draft and saved Thinking through di
     if(r.path.endsWith('/chat-models'))return readFailure?{status:503,json:{code:'MODEL_LIST_UNAVAILABLE',message:'Fixture read failed.'}}:{json:{contractVersion:2,models:enabled?[alternative]:[],defaultModel:null,defaultUnavailableReason:'No enabled models are available. Ask an administrator to enable a provider and model in AI models.',availability:'available',checkedAt:new Date().toISOString()}};
     if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:alternative.modelRef,thinkingLevel:'high',model:alternative,availability:enabled?'available':'unavailable',checkedAt:new Date().toISOString()}};
   });
-  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('preserved across all models disabled');
+  await button(page,'tab-Chat').click();await page.locator('#composer').fill('preserved across all models disabled');await expect(button(page,'send-message')).toBeEnabled();
   enabled=false;await api(page,"await adapter.loadModels('work-1');");await openResponseSettings(page);
   await expect(page.locator('#response-settings-status')).toContainText('No enabled models');await expect(page.locator('#response-settings-status')).not.toContainText('Models are unconfirmed');await expect(button(page,'send-message')).toBeDisabled();
   const selection=await api(page,"return adapter.modelSelection('work-1','session-1');");assert.equal(selection.ref,alternative.modelRef);assert.equal(selection.thinking,'high');
@@ -551,8 +551,8 @@ test('multi-provider Chat contract retains active resource commands and explicit
     if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:null,thinkingLevel:'off',model:chatModel,availability:'available',checkedAt:new Date().toISOString()}};
     if(r.path.endsWith('/runs')&&r.method==='POST'){submitted.push(JSON.parse(r.body));return{status:409,json:{code:'WORK_BUSY',message:'Fixture rejected acceptance after checking the request.'}};}
   });
-  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();
-  await page.locator('#composer').fill('/skill:managed preserved');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect.poll(()=>submitted.length).toBe(1);assert.equal(submitted[0]!.inputMode,'command');assert.equal(submitted[0]!.prompt,'/skill:managed preserved');
+  await button(page,'tab-Chat').click();
+  await page.locator('#composer').fill('/skill:managed preserved');await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect.poll(()=>submitted.length).toBe(1);assert.equal(submitted[0]!.inputMode,'command');assert.equal(submitted[0]!.prompt,'/skill:managed preserved');
   await page.locator('#composer').fill('ordinary text');await button(page,'send-message').click();await expect.poll(()=>submitted.length).toBe(2);assert.equal(submitted[1]!.inputMode,'text');
 });
 const chatOptions=(thinkingLevel='off',model:Pick<typeof chatModel,'modelRef'|'label'|'provider'|'model'>=chatModel)=>({sessionId:'session-1',modelRef:model.modelRef,model:{modelRef:model.modelRef,label:model.label,provider:model.provider,model:model.model},thinkingLevel,availability:'available',checkedAt:new Date().toISOString()});
@@ -564,7 +564,7 @@ test('UX composer serializes complete pairs, retains latest revision, and defaul
   if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/chat-options') && r.method==='PATCH'){const pair=JSON.parse(r.body);pairs.push(pair);max=Math.max(max,++active);if(pairs.length===1)await gate;active--;return{json:chatOptions(pair.thinkingLevel)};}
  });
- await button(page,'tab-Chat').click();await expectThinkingEditable(page);await expect(button(page,'send-message')).toBeEnabled();
+ await button(page,'tab-Chat').click();await expectThinkingEditable(page);await page.locator('#composer').fill('draft survives');await expect(button(page,'send-message')).toBeEnabled();
  await page.locator('#composer').fill('draft survives');await chooseThinking(page,'low',true);await chooseThinking(page,'high',true);
  await expect(page.locator('#modal #thinking-select')).toContainText('High');await expect(page.locator('#modal .options-status')).toContainText('Saving');
  await closeResponseSettings(page);await expect(button(page,'send-message')).toBeDisabled();assert.equal(pairs.length,1);release();await expect(button(page,'send-message')).toBeEnabled();
@@ -586,7 +586,7 @@ test('UX slash menu fills on Enter, executes on next submit, preserves arguments
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands,checkedAt:new Date().toISOString()}};
   if(r.path==='works/work-1/runs' && r.method==='POST')return{json:{run:{runId:'run-command',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev');await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Enter');await expect(page.locator('#composer')).toHaveValue('/review ');assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('/rev');await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Enter');await expect(page.locator('#composer')).toHaveValue('/review ');assert.equal(requests.filter(r=>r.method==='POST').length,0);
  await page.locator('#composer').fill('/review "first argument"\tsecond');await button(page,'chat-input-options').click();await page.locator('#include-identity').check();await button(page,'close-modal').click();await page.locator('#composer').press('Enter');await expect.poll(()=>requests.filter(r=>r.path==='works/work-1/runs').length).toBe(1);
  const body=JSON.parse(requests.find(r=>r.path==='works/work-1/runs')!.body);assert.equal(body.inputMode,'command');assert.equal(body.prompt,'/review "first argument"\tsecond');assert.ok(body.submissionKey);assert.ok(!body.prompt.includes('Selected Service'));
 });
@@ -596,7 +596,7 @@ test('UX web commands open controls without a Run, reject arguments and allow li
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
   if(r.path.endsWith('/runs') && r.method==='POST')return{json:{run:{runId:'run-literal',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect(page.getByRole('heading',{name:'Response settings',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('/model');await page.keyboard.press('Escape');await expect(page.locator('#composer')).toBeFocused();
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('/model');await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect(page.getByRole('heading',{name:'Response settings',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('/model');await page.keyboard.press('Escape');await expect(page.locator('#composer')).toBeFocused();
  await page.locator('#composer').fill('/new extra');await button(page,'send-message').click();await expect(page.locator('#composer')).toHaveValue('/new extra');assert.equal(requests.filter(r=>r.method==='POST').length,0);
  await page.locator('#composer').fill('/arbitrary extension');await button(page,'toggle-slash-mode').click();await button(page,'send-message').click();const body=JSON.parse(requests.find(r=>r.path.endsWith('/runs') && r.method==='POST')!.body);assert.equal(body.inputMode,'text');assert.equal(body.prompt,'/arbitrary extension');
 });
@@ -607,7 +607,7 @@ test('UX lost creation uses its original key; not-found stays unknown and recove
   if(r.path.endsWith('/sessions')){if(r.method==='POST'){key=JSON.parse(r.body).idempotencyKey;return{abort:true};}return{json:{sessions:[]}};}
   if(r.path.includes('/sessions/submissions/'))return{json:found?{kind:'session',key,status:'accepted',session:{workId:'work-1',sessionId:'session-recovered',modelPreference:null,thinkingLevel:'off'}}:{kind:'session',key,status:'not-found'}};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await chooseThinking(page,'high');await page.locator('#composer').fill('original draft');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await button(page,'check-chat-submission').click();await expect(button(page,'send-message')).toBeDisabled();found=true;await button(page,'check-chat-submission').click();await expect.poll(()=>api(page,"return adapter.getWork('work-1').sessions.length")).toBe(1);
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('original draft');await expect(button(page,'send-message')).toBeEnabled();await chooseThinking(page,'high');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await button(page,'check-chat-submission').click();await expect(button(page,'send-message')).toBeDisabled();found=true;await button(page,'check-chat-submission').click();await expect.poll(()=>api(page,"return adapter.getWork('work-1').sessions.length")).toBe(1);
  await expect(page.locator('.response-thinking')).toHaveText('· High');await expect(page.locator('#composer')).toHaveValue('original draft');await expect(button(page,'send-message')).toBeDisabled();await expect(button(page,'save-model')).toBeVisible();assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
  assert.equal(requests.filter(r=>r.method==='POST').length,1);assert.ok(key);assert.equal(requests.filter(r=>r.path.endsWith('/runs')).length,0);assert.equal(await api(page,"return adapter.getWork('work-1').sessions[0].id"),'session-recovered');
 });
@@ -922,7 +922,7 @@ test('UX revision truly nonreasoning and unavailable capabilities show distinct 
     if(r.path.endsWith('/chat-models'))return mode==='plain'?{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off']}}}:{status:503,json:{code:'MODEL_NOT_SUPPORTED',message:'Thinking capabilities could not be confirmed'}};
   });
   await button(page,'tab-Chat').click();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await expect(page.locator('#thinking-select')).toContainText('Off');await closeResponseSettings(page);
-  await expect(page.locator('.options-status')).toContainText('Thinking is not supported by this model');await expect(button(page,'send-message')).toBeEnabled();
+  await expect(page.locator('.options-status')).toContainText('Thinking is not supported by this model');await page.locator('#composer').fill('A valid ordinary draft');await expect(button(page,'send-message')).toBeEnabled();
   mode='unknown';await api(page,"await adapter.loadModels('work-1').catch(()=>undefined);");await expect(page.locator('.options-status')).toContainText('could not be confirmed');
   await expect(button(page,'send-message')).toBeDisabled();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await closeResponseSettings(page);
   assert.equal(await page.locator('#modal [role=option]').count(),0);assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
@@ -975,12 +975,12 @@ test('UX commands preserve existing parameters and IME/Shift Enter do not execut
  const {page,requests}=await fixture(t,r=>{
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'prompt',command:'/review',name:'review',description:'Review',sourceName:'Work prompts'}],checkedAt:new Date().toISOString()}};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('/rev keep\tthese arguments');await page.locator('#composer').evaluate((input:HTMLTextAreaElement)=>{input.setSelectionRange(4,4);input.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));});await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Tab');await expect(page.locator('#composer')).toHaveValue('/review keep\tthese arguments');
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('/rev keep\tthese arguments');await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').evaluate((input:HTMLTextAreaElement)=>{input.setSelectionRange(4,4);input.dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft',bubbles:true}));});await expect(page.locator('[role=option]').filter({hasText:'/review'})).toBeVisible();await page.locator('#composer').press('Tab');await expect(page.locator('#composer')).toHaveValue('/review keep\tthese arguments');
  await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}));input.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));});await page.locator('#composer').press('Shift+Enter');assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
 
 test('UX Activity and reading anchor survive a history refresh with new preceding messages',async t=>{
- const {page}=await fixture(t,()=>undefined);await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();
+ const {page}=await fixture(t,()=>undefined);await button(page,'tab-Chat').click();await page.locator('#composer').fill('Preserved reading draft');await expect(button(page,'send-message')).toBeEnabled();
  const messages=Array.from({length:50},(_,i)=>({id:`prose-${i}`,runId:'run-history',role:'assistant',text:`Paragraph ${i}: ${'Saved conversation text. '.repeat(12)}`}));
  messages.splice(20,0,{id:'activity-anchor',runId:'run-history',role:'assistant',text:'',tool:{id:'tool-anchor',name:'read',status:'Completed',content:'<img src=x onerror="window.uxInjected=true">\n[Preview limited to 64 KiB]'}} as any);
  await api(page,`adapter.getWork('work-1').sessions[0].messages=${JSON.stringify(messages)};await adapter.loadModels('work-1');`);
@@ -998,7 +998,7 @@ test('UX runtime recovery rereads optional capabilities and replaces a stale com
   if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[{kind:'skill',command:'/skill:restored',name:'restored',description:'Restored Skill',sourceName:'Work skills'}],checkedAt:new Date().toISOString()}};
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();assert.equal(await api(page,"return adapter.chatCapabilities.get('work-1')"),0);
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('Ordinary text');await expect(button(page,'send-message')).toBeEnabled();assert.equal(await api(page,"return adapter.chatCapabilities.get('work-1')"),0);
  ready=true;await api(page,"await adapter.loadModels('work-1');");await expectThinkingEditable(page);await page.locator('#composer').fill('/skill:res');await expect(page.locator('[role=option]').filter({hasText:'/skill:restored'})).toBeVisible();
 });
 
@@ -2244,9 +2244,9 @@ for(const target of [{session:'session-1',source:{kind:'chat'}},{session:'sessio
   if(r.path.endsWith('/runs/new-run'))return{json:controlRun('new-run',4,'session-1',{kind:'chat'})};
   return controlFixture(r);
  });
- await button(page,'tab-Chat').click();await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('First message');await expect(page.getByRole('button',{name:'Stop and send',exact:true})).toBeEnabled();
  await page.locator('#composer').fill('First message');await page.locator('#composer').press('Shift+Enter');assert.equal(chatWrites(requests).length,0);await page.locator('#composer').fill('First message');
- if(target.session==='session-1')await page.locator('#composer').press('Enter');else await button(page,'send-message').click();await expect.poll(()=>submitted).toBe(true);await expect(page.locator('#app')).toContainText('Stopping the previous Run');
+ if(target.session==='session-1')await page.locator('#composer').press('Enter');else await button(page,'send-message').click();await expect.poll(()=>submitted).toBe(true);await expect(page.locator('.message-submission.sending')).toHaveAttribute('aria-label',/Stopping the previous Run/);
  await page.locator('#composer').fill('Later edit');release();await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('new-run');await expect(page.locator('#composer')).toHaveValue('Later edit');
  const posts=requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST');assert.equal(posts.length,1);assert.equal(JSON.parse(posts[0]!.body).cancelRunId,'old-run');assert.equal(JSON.parse(posts[0]!.body).sessionId,'session-1');assert.equal(JSON.parse(posts[0]!.body).prompt,'First message');assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
  assert.equal(requests.filter(r=>r.path.endsWith(`/sessions/${target.session}`)&&target.session!=='session-1').length,0);
@@ -2262,9 +2262,9 @@ test('Controls timeout preserves draft and late old completion cannot send; unkn
   if(r.path.endsWith('/runs/recovered-run'))return{json:controlRun('recovered-run',4,'session-1',{kind:'chat'})};
   return controlFixture(r);
  });
- await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').fill('Keep original');await button(page,'send-message').click();await expect(page.locator('#app')).toContainText('your message was not sent');await expect(page.locator('#composer')).toHaveValue('Keep original');await expect(page.locator('.message.user').filter({hasText:'Keep original'}).locator('.message-submission.failed')).toContainText('Message not sent');
+ await button(page,'tab-Chat').click();await page.locator('#composer').fill('Keep original');await expect(button(page,'send-message')).toBeEnabled();await button(page,'send-message').click();await page.locator('.message-submission.failed button').click();await expect(page.locator('#modal')).toContainText('your message was not sent');await page.keyboard.press('Escape');await expect(page.locator('#composer')).toHaveValue('Keep original');await expect(page.locator('.message.user').filter({hasText:'Keep original'}).locator('.message-submission.failed button')).toHaveAttribute('aria-label','Message not sent');
  active=null;await api(page,"await adapter.loadActiveRun('work-1',true)");assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,1);await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');
- mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await expect(page.locator('.message-submission.unknown')).toContainText('Message status unconfirmed');await page.locator('#composer').fill('Next draft');await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
+ mode='lost';active=controlRun();await api(page,"await adapter.loadActiveRun('work-1',true)");await button(page,'send-message').click();await page.locator('.message-submission.unknown button').click();await expect(button(page,'check-chat-submission')).toBeVisible();await expect(page.locator('.message-submission.unknown button')).toHaveAttribute('aria-label','Message status unconfirmed');await page.keyboard.press('Escape');await page.locator('#composer').fill('Next draft');await page.locator('.message-submission.unknown button').click();await button(page,'check-chat-submission').click();await expect(page.locator('#composer')).toHaveValue('Next draft');
  await expect.poll(()=>api(page,"return adapter.getWork('work-1').run?.id")).toBe('recovered-run');
  assert.equal(requests.filter(r=>r.path.endsWith('/runs')&&r.method==='POST').length,2);assert.equal(requests.filter(r=>r.path.includes('/runs/submissions/')).length,1);assert.ok(requests.some(r=>r.path.endsWith(`/runs/submissions/${originalKey}`)));
 });
@@ -2311,7 +2311,7 @@ test('Controls active read failure stays unconfirmed; empty, unknown commands an
   return controlFixture(r);
  });
  await button(page,'tab-Chat').click();await expect(button(page,'send-message')).toBeDisabled();await expect(button(page,'check-active-run')).toBeVisible();fail=false;await button(page,'check-active-run').click();await expect(button(page,'send-message')).toHaveAttribute('aria-label','Stop and send');
- await page.locator('#composer').fill('');await button(page,'send-message').click();await page.locator('#composer').fill('/unknown');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
+ await page.locator('#composer').fill('');await expect(button(page,'send-message')).toBeDisabled();await page.locator('#composer').press('Enter');await page.locator('#composer').fill('/unknown');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
  await page.locator('#composer').fill('A valid message');await page.locator('#composer').evaluate(input=>{input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});assert.equal(chatWrites(requests).length,0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
  for(const command of ['model','thinking','resume','settings']){await page.locator('#composer').fill('/'+command);await page.locator('#composer').press('Escape');await expect(button(page,'send-message')).toHaveAttribute('aria-label','Send message');}
 });
@@ -3023,6 +3023,7 @@ test('Chat composer keeps a long model name and Stop and send reachable at 360px
   });
   await page.setViewportSize({ width: 360, height: 800 });
   await button(page, 'tab-Chat').click();
+  await page.locator('#composer').fill('A valid replacement');
   await expect(page.getByRole('button', { name: 'Stop and send', exact: true })).toBeEnabled();
   const stopSend = page.getByRole('button', { name: 'Stop and send', exact: true });
   await expect(stopSend).toHaveAttribute('title', 'Stop and send');
