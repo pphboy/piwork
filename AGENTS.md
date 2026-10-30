@@ -86,3 +86,10 @@ make test
 proto、HTTP DTO 和 Work history 的生成入口为 make generate；变更契约时同步生成产物和相关跨语言测试。历史场景索引和跳过项不能替代实际测试通过。
 
 make build 的 dist/go 只包含两个宿主程序；内部 MCP/helper 由镜像独立构建。make build-cli 独立构建 Linux 客户端。make release 先冻结输入并构建生产 Agent/helper 镜像，再构建同版 Core/CLI 与 Core 镜像，核验后替换受管 dist/release 成品。当前候选只有 core、agent、fileHelper、snapshotHelper 四个镜像角色，packageHelper 复用 Agent。make release 是本机构建与打包入口。对外推送、发布或发行仅在用户明确要求时执行；不要把本地整理或验收自动扩展为发行。
+
+## Core Release 的完成条件（认知 Hook）
+
+- 用户明确要求正式发布 Core 时，默认范围为 **Core + MicroVM + 官网**：先发布同版 Core/CLI 和生产镜像，再由 `piwork-microvm` 锁定该正式发行、发布独立版本的四个 GUI/CLI 制品，最后更新并部署 `pphboy.github.io` 中的 Piwork 官网。
+- 官网须同步中英文桌面下载版本、内置 Core 版本、实际附件名/大小/SHA256/校验链接，以及服务端安装命令、Compose 和固定版本资源；核对线上页面和下载链接后，才可报告整次 Release 完成。官网同步压缩包、Git 提交、构建成功或 Pages 分支推送都不能代替线上核验。
+- 三部分分别记录真实版本、commit、digest 和已测/未测范围；任何一部分未完成，须明确报告剩余步骤，不把部分发布称为完成。保留其他未提交工作，使用隔离发布工作区，官网部署仅更新所属 `piwork/` 路径。
+- `make release` 继续仅负责本地构建和打包。上述联动以用户的正式发布指令为触发；单独编译、打包、检查或准备候选不授权外部发布。用户明确限定只发布其中一部分时，按该范围执行并说明其他部分的状态。
