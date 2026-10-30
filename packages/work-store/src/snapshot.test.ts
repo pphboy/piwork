@@ -32,7 +32,7 @@ function fixture() {
   writeFileSync(join(volume, "sessions", "one.jsonl"), sdk);
   const business = new DatabaseSync(join(volume, "business.sqlite")); business.exec("CREATE TABLE user_data(value TEXT); INSERT INTO user_data VALUES ('work-source')"); business.close();
   const store = WorkStore.open(join(volume, "work.sqlite"));
-  store.createSessionIdempotent({ workId: SOURCE, sessionId: "session-local", sdkHistoryPath: "/var/data/sessions/one.jsonl", createdAt: NOW, updatedAt: NOW, contextIdentity: CONTEXT }, "session-key");
+  store.createSessionIdempotent({ workId: SOURCE, sessionId: "session-local", sdkHistoryPath: "/var/data/sessions/one.jsonl", createdAt: NOW, updatedAt: NOW, }, "session-key");
   const accepted = store.acceptRun({ workId: SOURCE, sessionId: "session-local", submissionKey: "submit-key", requestDigest: "request-digest", promptDigest: "prompt-digest", contextIdentity: CONTEXT, now: NOW });
   store.appendEvent(accepted.run.runId, "text", '{ "text": "work-source", "workId": "user text work-source" }', NOW);
   store.completeRun(accepted.run.runId, "succeeded", "work-source context-source", null, NOW);
@@ -71,7 +71,7 @@ test("rebuild maps only Work/context identities and retains local IDs, idempoten
         const reopened = WorkStore.open(join(target, "work.sqlite"));
         try {
           assert.equal(reopened.getSession(SOURCE, "session-local"), undefined);
-          assert.equal(reopened.getSession(targetWork, "session-local")?.contextIdentity, `context-${targetWork}`);
+
           const run = reopened.getRun(f.runId); assert.ok(run); assert.equal(run.workId, targetWork); assert.equal(run.contextIdentity, `context-${targetWork}`);
           assert.equal(run.finalText, "work-source context-source");
           assert.equal(reopened.readEvents(f.runId)[0]?.payloadJson, '{ "text": "work-source", "workId": "user text work-source" }');
@@ -110,7 +110,7 @@ test("offline check refuses foreign references, cross-Work rows, unknown context
   for (const sql of [
     "PRAGMA foreign_keys = OFF; UPDATE runs SET session_id = 'missing'",
     "UPDATE submit_idempotency SET work_id = 'another-work'",
-    "UPDATE sessions SET active_context_identity = 'missing-context'",
+
     "UPDATE runs SET context_identity = 'missing-context'",
     "UPDATE runs SET latest_sequence = 10",
     "UPDATE run_events SET sequence = 5 WHERE sequence = 1",
@@ -176,7 +176,7 @@ function brainFixture() {
 test('managed model descriptors retain Thinking while imported preferences lose source execution authority',()=>{
   const f=fixture();
   const capabilities={kind:'sdk' as const,provider:'openai',model:'gpt-5.1'};
-  const source={modelRef:'model-source-12345678',label:'Original provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities,executionBindingId:'model-execution-source-00001',thinkingLevel:'high' as const,availability:'available'};
+  const source={modelRef:'model-source-12345678',label:'Original provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities,executionBindingId:'model-execution-source-00001',thinkingLevel:'high' as const,thinkingProfile:'responses-effort-v1',availability:'available'};
   f.store.setSessionModelPreference(SOURCE,'session-local',JSON.stringify(source));
   try{
     const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;
@@ -186,11 +186,24 @@ test('managed model descriptors retain Thinking while imported preferences lose 
         const candidate={modelRef:'model-target-12345678',label:'Recipient provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities};
         snapshot.rebuild(target,workId,new Map([[CONTEXT,'context-target']]),ambiguous?[candidate,{...candidate,modelRef:'model-target-87654321'}]:[candidate]);
         const imported=WorkStore.open(join(target,'work.sqlite'));
-        try{const pref=JSON.parse(imported.getSession(workId,'session-local')!.modelPreferenceJson!);assert.equal(pref.thinkingLevel,'high');assert.equal(pref.executionBindingId,undefined);assert.equal(pref.availability,ambiguous?'unavailable':'available');}
+        try{const pref=JSON.parse(imported.getSession(workId,'session-local')!.modelPreferenceJson!);assert.equal(pref.thinkingLevel,'high');assert.equal(pref.thinkingProfile,'responses-effort-v1');assert.equal(pref.executionBindingId,undefined);assert.equal(pref.availability,ambiguous?'unavailable':'available');}
         finally{imported.close();}
       }
     }finally{snapshot.close();}
   }finally{f.close();}
+});
+
+test('schema 6 history preserves compatible Thinking and schema 5 cannot claim it',()=>{
+  const f=fixture();
+  try {
+    f.store.setSessionModelPreference(SOURCE,'session-local',JSON.stringify({modelRef:null,label:'Alias',provider:'openai',model:'unknown-alias',api:'openai-responses',thinkingLevel:'high',thinkingProfile:'responses-effort-v1',availability:'available'}));
+    f.store.close();
+    edit(f.volume,'UPDATE schema_migrations SET version=5');
+    assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);
+    edit(f.volume,'UPDATE schema_migrations SET version=7');
+    const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;
+    try { assert.equal(snapshot.schemaVersion,7); } finally { snapshot.close(); }
+  } finally { f.close(); }
 });
 
 test("schema5 cold history retains verified experience and waits while imports are historical and independently rebound", () => {

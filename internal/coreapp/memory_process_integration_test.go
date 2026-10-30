@@ -64,6 +64,7 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 			if image == "" {
 				image = "piwork-memory-history4:acceptance"
 			}
+			var lastLogPath string
 			start := func() (*exec.Cmd, string) {
 				seedProcessRuntime(t, directory, image)
 				binary = processFixtureBinary(t, image, next, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
@@ -77,6 +78,7 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				lastLogPath = log.Name()
 				t.Cleanup(func() { log.Close() })
 				p.Stderr = log
 				if err := p.Start(); err != nil {
@@ -131,6 +133,9 @@ func TestNativeMemoryMigrationProcessRecoveryAndStopSupersession(t *testing.T) {
 					state := op["state"]
 					if state == "succeeded" || state == "failed" || state == "superseded" {
 						if state != want {
+							if data, err := os.ReadFile(lastLogPath); err == nil {
+								t.Log("fixture Core log:", string(data))
+							}
 							t.Fatal("operation", op)
 						}
 						return

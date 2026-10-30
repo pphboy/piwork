@@ -47,6 +47,7 @@ type modelGateway struct {
 	hold       chan struct{}
 	started    chan struct{}
 	allowedKey string
+	rejectNext int
 }
 
 func (g *modelGateway) count() int { g.mu.Lock(); defer g.mu.Unlock(); return len(g.requests) }
@@ -127,6 +128,10 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 		g.mu.Lock()
 		g.requests = append(g.requests, modelGatewayRequest{api, model, auth, thinking, reasoning, stream, r.URL.Path, body})
 		allowedKey := g.allowedKey
+		reject := 0
+		if stream && g.rejectNext != 0 {
+			reject, g.rejectNext = g.rejectNext, 0
+		}
 		var held chan struct{}
 		if stream && api == "openai-responses" && g.hold != nil {
 			held = g.hold
@@ -134,6 +139,12 @@ func nativeModelGateway(t *testing.T) (*modelGateway, string) {
 			close(g.started)
 		}
 		g.mu.Unlock()
+		if reject != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(reject)
+			_, _ = w.Write([]byte(`{"error":{"message":"synthetic-private-provider-error"}}`))
+			return
+		}
 		if held != nil {
 			select {
 			case <-held:
@@ -335,6 +346,7 @@ func TestNativeModelURLNormalizationAndErrorRecovery(t *testing.T) {
 
 func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 	node, _ := exec.LookPath("node")
+	goTool, _ := exec.LookPath("go")
 	g, image := nativeModelGateway(t)
 	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", image)
 	a, base, auth, work, _ := nativeApplyFixture(t)
@@ -353,12 +365,12 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 	r, m, rm, mm := add(base, auth, "source")
 	unknown := modelNativeCall(t, base, auth, "/api/v1/admin/models", "POST", map[string]any{"model": "custom-package-unknown", "api": "anthropic-messages", "baseUrl": g.URL + "/v1/", "credential": "synthetic-source-unknown"}, 201)
 	if os.Getenv("PIWORK_TEST_MODEL_BROWSER") == "1" {
-		if node == "" {
-			t.Fatal("Node browser build/test tool required")
+		if node == "" || goTool == "" {
+			t.Fatal("Node and Go browser build/test tools required")
 		}
 		cli, _ := filepath.Abs("../../dist/go/piwork-cli")
 		hosted := filepath.Join(t.TempDir(), "hosted-ui-fixture")
-		build := exec.CommandContext(ctx, "go", "build", "-o", hosted, "./scripts/hosted-ui-fixture")
+		build := exec.CommandContext(ctx, goTool, "build", "-buildvcs=false", "-o", hosted, "./scripts/hosted-ui-fixture")
 		build.Dir = "../.."
 		build.Env = append(os.Environ(), "CGO_ENABLED=0")
 		if output, err := build.CombinedOutput(); err != nil {
@@ -371,6 +383,28 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatal("model browser integration failed", string(output))
+		}
+		g.mu.Lock()
+		browserRequests := append([]modelGatewayRequest(nil), g.requests...)
+		g.mu.Unlock()
+		seen := map[string]bool{}
+		for _, request := range browserRequests {
+			if !request.Stream || request.Model != "browser-custom-unknown" {
+				continue
+			}
+			switch request.Key {
+			case "synthetic-browser-first":
+				seen[request.Key] = request.API == "openai-responses" && request.Reasoning["effort"] == "high"
+			case "synthetic-browser-second":
+				seen[request.Key] = request.API == "openai-responses" && request.Reasoning["effort"] == "xhigh"
+			case "synthetic-browser-messages":
+				config, _ := request.Body["output_config"].(map[string]any)
+				seen[request.Key] = seen[request.Key] || request.API == "anthropic-messages" && request.Thinking["type"] == "adaptive" && config["effort"] == "high"
+				seen["hosted-budget"] = seen["hosted-budget"] || request.API == "anthropic-messages" && request.Thinking["type"] == "enabled" && request.Thinking["budget_tokens"] == float64(6144)
+			}
+		}
+		if !seen["synthetic-browser-first"] || !seen["synthetic-browser-second"] || !seen["synthetic-browser-messages"] || !seen["hosted-budget"] {
+			t.Fatal("browser compatibility settings did not reach the selected provider", seen)
 		}
 		t.Log(strings.TrimSpace(string(output)))
 	}
@@ -425,6 +459,11 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 	ordinary := modelNativeRun(t, ctx, base, auth, work, unknownSession, "unknown-source-run")
 	if ordinary["thinkingLevel"] != nil || g.last().Thinking != nil || g.last().Reasoning != nil || g.last().Key != "synthetic-source-unknown" {
 		t.Fatal("ordinary unknown request diverged")
+	}
+	modelNativeCall(t, base, auth, path+"/sessions/"+unknownSession+"/chat-options", "PATCH", map[string]any{"modelRef": unknown["modelRef"], "thinkingLevel": "high", "thinkingProfile": "messages-adaptive-v1"}, 200)
+	compatible := modelNativeRun(t, ctx, base, auth, work, unknownSession, "compatible-source-run")
+	if compatible["thinkingProfile"] != "messages-adaptive-v1" || g.last().Thinking["type"] != "adaptive" || g.last().Key != "synthetic-source-unknown" {
+		t.Fatal("compatible source request diverged")
 	}
 	stop := modelNativeCall(t, base, auth, path+"/stop", "POST", map[string]string{"idempotencyKey": "source-stop"}, 202)
 	waitWorkOperation(t, ctx, a, stop["operationId"].(string))
@@ -491,11 +530,15 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 		t.Fatal("recipient used source authority")
 	}
 	unknownOptions := modelNativeCall(t, recipient, recipientAuth, targetPath+"/sessions/"+unknownSession+"/chat-options", "GET", nil, 200)
-	if unknownOptions["modelRef"] != recipientUnknown["modelRef"] || unknownOptions["thinkingLevel"] != nil {
+	if unknownOptions["modelRef"] != recipientUnknown["modelRef"] || unknownOptions["thinkingLevel"] != "high" || unknownOptions["thinkingProfile"] != "messages-adaptive-v1" {
 		t.Fatal("unknown imported preference lost", unknownOptions)
 	}
+	oldRun := modelNativeCall(t, recipient, recipientAuth, targetPath+"/runs/"+ordinary["runId"].(string), "GET", nil, 200)
+	if oldRun["thinkingLevel"] != nil || oldRun["thinkingProfile"] != nil {
+		t.Fatal("ordinary historical request was rewritten", oldRun)
+	}
 	modelNativeRun(t, ctx, recipient, recipientAuth, target, unknownSession, "unknown-recipient-run")
-	if g.last().Key != "synthetic-recipient-unknown" || g.last().Thinking != nil || g.last().Reasoning != nil {
+	if g.last().Key != "synthetic-recipient-unknown" || g.last().Thinking["type"] != "adaptive" || g.last().Body["output_config"].(map[string]any)["effort"] != "high" {
 		t.Fatal("unknown imported request used source authority")
 	}
 	stop = modelNativeCall(t, recipient, recipientAuth, targetPath+"/stop", "POST", map[string]string{"idempotencyKey": "recipient-stop"}, 202)
@@ -609,7 +652,11 @@ func TestNativeFlatUnknownDefaultAndDuplicateModelConnections(t *testing.T) {
 	var models []map[string]any
 	for _, api := range []string{"openai-responses", "anthropic-messages"} {
 		for _, suffix := range []string{"first", "second"} {
-			m := modelNativeCall(t, base, auth, "/api/v1/admin/models", "POST", map[string]any{"model": "custom-same-unknown", "api": api, "baseUrl": g.URL + "/v1/", "credential": "synthetic-" + api + "-" + suffix}, 201)
+			modelID := "custom-same-unknown"
+			if api == "anthropic-messages" {
+				modelID = "opus-5-5"
+			}
+			m := modelNativeCall(t, base, auth, "/api/v1/admin/models", "POST", map[string]any{"model": modelID, "api": api, "baseUrl": g.URL + "/v1/", "credential": "synthetic-" + api + "-" + suffix}, 201)
 			models = append(models, m)
 		}
 	}
@@ -625,7 +672,7 @@ func TestNativeFlatUnknownDefaultAndDuplicateModelConnections(t *testing.T) {
 		}
 		list := modelNativeCall(t, base, auth, path+"/chat-models", "GET", nil, 200)
 		def := list["defaultModel"].(map[string]any)
-		if list["contractVersion"] != float64(3) || def["thinkingAvailability"] != "unknown" || len(def["thinkingLevels"].([]any)) != 0 {
+		if list["contractVersion"] != float64(4) || def["thinkingAvailability"] != "unknown" || len(def["thinkingLevels"].([]any)) != 0 {
 			t.Fatal("unknown default hidden", list)
 		}
 		run := modelNativeRun(t, ctx, base, auth, work, created["sessionId"].(string), fmt.Sprint("unknown-default-run-", i))
@@ -634,9 +681,216 @@ func TestNativeFlatUnknownDefaultAndDuplicateModelConnections(t *testing.T) {
 			suffix = "second"
 		}
 		got := g.last()
-		if got.Model != "custom-same-unknown" || got.API != m["api"] || got.Key != "synthetic-"+m["api"].(string)+"-"+suffix || got.Thinking != nil || got.Reasoning != nil || run["thinkingLevel"] != nil {
+		if got.Model != m["model"] || got.API != m["api"] || got.Key != "synthetic-"+m["api"].(string)+"-"+suffix || got.Thinking != nil || got.Reasoning != nil || run["thinkingLevel"] != nil {
 			t.Fatal("ordinary execution mixed connection or Thinking")
+		}
+		profiles := []string{"responses-effort-v1"}
+		if m["api"] == "anthropic-messages" {
+			profiles = []string{"messages-adaptive-v1", "messages-budget-v1"}
+		}
+		for _, profile := range profiles {
+			session := created["sessionId"].(string)
+			settings := modelNativeCall(t, base, auth, path+"/sessions/"+session+"/chat-options", "PATCH", map[string]any{"modelRef": nil, "thinkingLevel": "high", "thinkingProfile": profile}, 200)
+			if settings["thinkingProfile"] != profile {
+				t.Fatal("profile not saved", settings)
+			}
+			actual := modelNativeRun(t, ctx, base, auth, work, session, fmt.Sprint("compat-", i, "-", profile))
+			request := g.last()
+			if actual["thinkingProfile"] != profile || request.Key != "synthetic-"+m["api"].(string)+"-"+suffix {
+				t.Fatal("profile or binding lost", actual)
+			}
+			switch profile {
+			case "responses-effort-v1":
+				if request.Reasoning["effort"] != "high" {
+					t.Fatal("Responses effort missing", request.Reasoning)
+				}
+			case "messages-adaptive-v1":
+				if request.Thinking["type"] != "adaptive" || request.Body["output_config"].(map[string]any)["effort"] != "high" {
+					t.Fatal("adaptive effort missing", request.Thinking)
+				}
+			case "messages-budget-v1":
+				if request.Thinking["type"] != "enabled" || request.Thinking["budget_tokens"] != float64(6144) {
+					t.Fatal("budget missing", request.Thinking)
+				}
+			}
+			if options := modelNativeCall(t, base, auth, path+"/sessions/"+session+"/chat-options", "GET", nil, 200); options["thinkingProfile"] != profile {
+				t.Fatal("profile readback lost", options)
+			}
+		}
+		sessionID := created["sessionId"].(string)
+		if i == 0 {
+			g.mu.Lock()
+			g.rejectNext = http.StatusUnprocessableEntity
+			before := len(g.requests)
+			g.mu.Unlock()
+			accepted := modelNativeCall(t, base, auth, path+"/runs", "POST", map[string]any{"sessionId": sessionID, "submissionKey": "compatible-rejected", "prompt": "Check compatible rejection"}, 202)
+			runID := accepted["run"].(map[string]any)["runId"].(string)
+			var failed map[string]any
+			for {
+				failed = modelNativeCall(t, base, auth, path+"/runs/"+runID, "GET", nil, 200)
+				if failed["state"].(float64) >= 4 {
+					break
+				}
+				if ctx.Err() != nil {
+					t.Fatal(ctx.Err())
+				}
+				time.Sleep(30 * time.Millisecond)
+			}
+			errorView, _ := failed["error"].(map[string]any)
+			if failed["state"] != float64(5) || errorView["code"] != "MODEL_COMPATIBLE_REQUEST_REJECTED" || errorView["retryable"] != false || g.count() != before+1 || strings.Contains(stringMustJSON(failed), "synthetic-private-provider-error") {
+				t.Fatal("compatible rejection was not safely retained", failed)
+			}
+			options := modelNativeCall(t, base, auth, path+"/sessions/"+sessionID+"/chat-options", "GET", nil, 200)
+			if options["thinkingProfile"] != "responses-effort-v1" || options["thinkingLevel"] != "high" {
+				t.Fatal("rejection changed preference", options)
+			}
+			modelNativeRun(t, ctx, base, auth, work, sessionID, "compatible-recovered")
+			if g.last().Reasoning["effort"] != "high" {
+				t.Fatal("recovery changed effort")
+			}
+		}
+		cleared := modelNativeCall(t, base, auth, path+"/sessions/"+sessionID+"/chat-options", "PATCH", map[string]any{"modelRef": nil, "thinkingLevel": nil, "thinkingProfile": nil}, 200)
+		if cleared["thinkingProfile"] != nil || cleared["thinkingLevel"] != nil {
+			t.Fatal("explicit clear did not restore ordinary mode", cleared)
+		}
+		ordinary := modelNativeRun(t, ctx, base, auth, work, sessionID, fmt.Sprint("compat-clear-", i))
+		if got := g.last(); ordinary["thinkingLevel"] != nil || ordinary["thinkingProfile"] != nil || got.Thinking != nil || got.Reasoning != nil {
+			t.Fatal("ordinary mode after clearing sent Thinking", ordinary)
 		}
 	}
 	t.Log("Four flat model configs, duplicate unknown IDs and new default Sessions execute both SDK protocols with independent credentials and nullable ordinary facts")
+}
+
+func TestNativeSameSessionUsesAppliedEnvironmentAndSurvivesColdImport(t *testing.T) {
+	g, image := nativeModelGateway(t)
+	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", image)
+	a, base, auth, work, ctx := nativeApplyFixture(t)
+	path := "/api/v1/works/" + work
+	m := modelNativeCall(t, base, auth, "/api/v1/admin/models", "POST", map[string]any{"model": "context-lifecycle-unlisted", "api": "openai-responses", "baseUrl": g.URL + "/v1", "credential": "synthetic-session-context-key"}, 201)
+	configure := func(marker, key string, deny bool) {
+		config := modelNativeCall(t, base, auth, path+"/configuration", "GET", nil, 200)["desired"].(map[string]any)
+		config["modelRef"] = m["modelRef"]
+		config["agentsMd"] = "# " + marker
+		denied := []string{}
+		if deny {
+			denied = append(denied, "ls")
+		}
+		config["tools"] = map[string]any{"allowed": []string{}, "denied": denied}
+		modelNativeCall(t, base, auth, path+"/configuration", "PUT", map[string]any{"configuration": config}, 200)
+		op := modelNativeCall(t, base, auth, path+"/configuration/apply", "POST", map[string]string{"idempotencyKey": key}, 202)
+		waitWorkOperation(t, ctx, a, op["operationId"].(string))
+	}
+	configure("SESSION_ENVIRONMENT_A", "session-env-a", false)
+	session := modelNativeCall(t, base, auth, path+"/sessions", "POST", map[string]string{"idempotencyKey": "same-session"}, 201)["sessionId"].(string)
+	modelNativeCall(t, base, auth, path+"/sessions/"+session+"/chat-options", "PATCH", map[string]any{"modelRef": nil, "thinkingLevel": "high", "thinkingProfile": "responses-effort-v1"}, 200)
+	first := modelNativeRun(t, ctx, base, auth, work, session, "session-before-apply")
+	raw, _ := json.Marshal(g.last().Body)
+	if !strings.Contains(string(raw), "SESSION_ENVIRONMENT_A") {
+		t.Fatal("initial AGENTS content absent from actual SDK payload")
+	}
+	hasTool := func(body map[string]any, name string) bool {
+		tools, _ := body["tools"].([]any)
+		for _, v := range tools {
+			tool, _ := v.(map[string]any)
+			if tool["name"] == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasTool(g.last().Body, "ls") {
+		t.Fatal("fixture did not expose ls before changing tool policy")
+	}
+	configure("SESSION_ENVIRONMENT_B", "session-env-b", true)
+	options := modelNativeCall(t, base, auth, path+"/sessions/"+session+"/chat-options", "GET", nil, 200)
+	if options["availability"] != "available" || options["thinkingProfile"] != "responses-effort-v1" {
+		t.Fatal("original Session lost valid settings after Apply")
+	}
+	second := modelNativeRun(t, ctx, base, auth, work, session, "session-after-apply")
+	raw, _ = json.Marshal(g.last().Body)
+	if !strings.Contains(string(raw), "SESSION_ENVIRONMENT_B") || hasTool(g.last().Body, "ls") {
+		t.Fatal("new Run did not use new AGENTS content and tool denial")
+	}
+	if first["sessionId"] != second["sessionId"] || first["runId"] == second["runId"] {
+		t.Fatal("Apply changed Session identity or reused another Run")
+	}
+	f := brainAcceptance{t: t, a: a, base: base, auth: auth, work: work, path: path, ctx: ctx, session: session}
+	var facts struct {
+		Contexts       []string `json:"contexts"`
+		SessionColumns []string `json:"sessionColumns"`
+	}
+	program := `import {DatabaseSync} from 'node:sqlite';const d=new DatabaseSync('/var/data/work.sqlite',{readOnly:true});console.log(JSON.stringify({contexts:d.prepare('SELECT context_identity FROM runs ORDER BY accepted_at').all().map(r=>r.context_identity),sessionColumns:d.prepare('PRAGMA table_info(sessions)').all().map(r=>r.name)}));d.close();`
+	if err := json.Unmarshal([]byte(f.agentEval(program)), &facts); err != nil || len(facts.Contexts) != 2 || facts.Contexts[0] == facts.Contexts[1] {
+		t.Fatal("Runs did not retain distinct accepted environments", err)
+	}
+	for _, column := range facts.SessionColumns {
+		if column == "active_context_identity" {
+			t.Fatal("Session still stores an active environment binding")
+		}
+	}
+
+	before := g.count()
+	replay := modelNativeRun(t, ctx, base, auth, work, session, "session-before-apply")
+	if replay["runId"] != first["runId"] || g.count() != before {
+		t.Fatal("old Run replay executed against new environment")
+	}
+	stop := modelNativeCall(t, base, auth, path+"/stop", "POST", map[string]string{"idempotencyKey": "session-restart-stop"}, 202)
+	waitWorkOperation(t, ctx, a, stop["operationId"].(string))
+	start := modelNativeCall(t, base, auth, path+"/start", "POST", map[string]string{"idempotencyKey": "session-restart-start"}, 202)
+	waitWorkOperation(t, ctx, a, start["operationId"].(string))
+	modelNativeRun(t, ctx, base, auth, work, session, "session-after-restart")
+	stop = modelNativeCall(t, base, auth, path+"/stop", "POST", map[string]string{"idempotencyKey": "session-export-stop"}, 202)
+	waitWorkOperation(t, ctx, a, stop["operationId"].(string))
+	archive, _ := modelNativeExport(t, ctx, a, base, auth, work, "session-export")
+	file, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.New()
+	if _, err = io.Copy(hash, file); err != nil {
+		t.Fatal(err)
+	}
+	file.Seek(0, 0)
+	request, err := http.NewRequestWithContext(ctx, "POST", base+"/api/v1/work-packages", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ContentLength = info.Size()
+	request.Header.Set("Authorization", auth)
+	request.Header.Set("Content-Type", snapshotMIME)
+	request.Header.Set("X-Piwork-SHA256", hex.EncodeToString(hash.Sum(nil)))
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upload map[string]any
+	json.NewDecoder(response.Body).Decode(&upload)
+	response.Body.Close()
+	if response.StatusCode != 201 {
+		t.Fatal("upload", response.StatusCode, upload)
+	}
+	before = g.count()
+	imported := modelNativeCall(t, base, auth, "/api/v1/work-imports", "POST", map[string]any{"packageId": upload["packageId"], "idempotencyKey": "session-import"}, 202)
+	waitWorkOperation(t, ctx, a, imported["operationId"].(string))
+	if before != g.count() {
+		t.Fatal("import replayed a model call")
+	}
+	target := imported["workId"].(string)
+	targetPath := "/api/v1/works/" + target
+	start = modelNativeCall(t, base, auth, targetPath+"/start", "POST", map[string]string{"idempotencyKey": "imported-session-start"}, 202)
+	waitWorkOperation(t, ctx, a, start["operationId"].(string))
+	final := modelNativeRun(t, ctx, base, auth, target, session, "session-after-import")
+	if final["sessionId"] != session {
+		t.Fatal("cold import changed Session identity")
+	}
+	history := modelNativeCall(t, base, auth, targetPath+"/sessions/"+session+"/history", "GET", nil, 200)
+	if len(history["runs"].([]any)) < 4 {
+		t.Fatal("cold history lost prior Runs")
+	}
+	t.Log("Same Session survived Apply, tool denial, restart and cold import; old submission replay did not execute")
 }

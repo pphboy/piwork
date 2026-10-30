@@ -64,5 +64,25 @@ test('version 3 unknown Thinking admits only explicit ordinary null without rela
  const unknown={...model,thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};
  for(const version of [1,2,3])assert.equal(Check(ChatModelListSchema,{contractVersion:version,models:[unknown],defaultModel:unknown,checkedAt,availability:'available'}),version===3);
  assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null}),true);
+ assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null,thinkingProfile:null}),true);
+ assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:'high',thinkingProfile:null}),true);
  for(const extra of [{thinkingAvailability:'unsupported'},{defaultThinkingLevel:'off'},{thinkingLevels:['off']},{credential:'synthetic-private'}])assert.equal(Check(ChatModelListSchema,{contractVersion:3,models:[{...unknown,...extra}],defaultModel:unknown,checkedAt,availability:'available'}),false);
+});
+
+test("compatible profiles require a matching non-null level and remain distinct from SDK capabilities", () => {
+ const profiles = [{profile:'messages-budget-v1',levels:['off','minimal','low','medium','high'],budgets:{minimal:1024,low:2048,medium:4096,high:6144}}];
+ const unknown={...model,thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown',compatibleThinkingProfiles:profiles};
+ const catalog={models:[unknown],defaultModel:unknown,checkedAt,availability:'available'};
+ assert.equal(Check(ChatModelListSchema,{...catalog,contractVersion:4}),true);
+ assert.equal(Check(ChatModelListSchema,{...catalog,contractVersion:3}),false);
+ assert.equal(Check(ChatModelListSchema,{...catalog,contractVersion:4,models:[{...unknown,credential:'synthetic-secret'}]}),false);
+ for(const profile of ['responses-effort-v1','messages-adaptive-v1','messages-budget-v1']) {
+   assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:'high',thinkingProfile:profile}),true);
+   assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null,thinkingProfile:profile}),false);
+ }
+ for(const [thinkingProfile,thinkingLevel] of [['messages-adaptive-v1','minimal'],['messages-budget-v1','xhigh'],['messages-budget-v1','max'],['invalid','high']]) {
+   assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel,thinkingProfile}),false);
+ }
+ assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null}),true);
+ assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:'off'}),true);
 });

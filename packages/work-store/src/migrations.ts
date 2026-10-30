@@ -1,11 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { WORK_SCHEMA_SQL } from "./brain-schema.js";
 import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
+import { PREVIOUS_SCHEMA_OBJECTS } from "./previous-schema-objects.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { MEMORY_SCHEMA_SQL } from "./memory-schema.js";
 import { MEMORY_SCHEMA_OBJECTS } from "./memory-schema-objects.js";
 
-export const WORK_SCHEMA_VERSION = 5;
+export const WORK_SCHEMA_VERSION = 7;
 
 export function sameSchema(actual: readonly Record<string, unknown>[], expected: readonly Record<string, unknown>[]): boolean {
   const normalize = (rows: readonly Record<string, unknown>[]) => JSON.stringify(rows.map((row) => ({ ...row,
@@ -30,6 +31,14 @@ export function initializeMemoryDatabase(database: DatabaseSync): void {
 }
 
 /** Exact current main schema. Legacy conversion requires separate Core authorization. */
+export function validatePreviousWorkDatabase(database: DatabaseSync): void {
+  if(!sameSchema(database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all(),PREVIOUS_SCHEMA_OBJECTS)
+    || ![5,6].includes(Number(database.prepare("SELECT version FROM schema_migrations").get()?.version))
+    || database.prepare("SELECT version FROM schema_migrations").all().length!==1
+    || database.prepare("PRAGMA integrity_check").get()?.integrity_check!=="ok"
+    || database.prepare("PRAGMA foreign_key_check").get())throw new Error("WORK_HISTORY_FORMAT_UNSUPPORTED");
+}
+
 export function migrateWorkDatabase(database: DatabaseSync): void {
   const objects = database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
   if (objects.length) {

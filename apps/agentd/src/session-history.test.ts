@@ -34,6 +34,31 @@ function content(pages:HistoryPage[]) {
  return [...blocks].map(([id,parts])=>[id,[...parts].sort(([a],[b])=>a-b).map(([,s])=>s).join("")] as const);
 }
 
+test("Responses compound tool IDs survive pagination and reopening without rewriting history",()=>{
+ const f=fixture();try{
+  const run=f.store.acceptRun({workId:"work-1",sessionId:f.session.sessionId,submissionKey:"compound-tools",requestDigest:"digest",promptDigest:"digest"}).run;
+  f.sdk.appendCustomEntry("piwork-run",{runId:run.runId});
+  const ids=["call_abc|fc_def",`call_${"x".repeat(128)}|fc_other`];
+  const usage={input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}};
+  f.sdk.appendMessage({role:"assistant",content:ids.map(id=>({type:"toolCall" as const,id,name:"read",arguments:{path:"fixture.txt"}})),api:"openai-responses",provider:"fixture",model:"unlisted",usage,stopReason:"toolUse",timestamp:1});
+  for(const [i,id] of ids.entries())f.sdk.appendMessage({role:"toolResult",toolCallId:id,toolName:"read",content:[{type:"text",text:`result-${i}`}],isError:false,timestamp:i+2});
+  appendAssistantMessage(f.sdk,"Final answer");f.store.completeRun(run.runId,"succeeded","Final answer",null);
+  const original=readFileSync(f.session.sdkHistoryPath);
+  for(const direction of ["older","newer"] as const){
+   const reader=new SessionHistoryReader("work-1",f.store);
+   const segments=readAll(reader,f.session.sessionId,{direction,limit:1}).flatMap(page=>page.segments);
+   for(const [i,id] of ids.entries()){
+    const pair=segments.filter(segment=>segment.toolCallId===id);
+    assert.equal(pair.length,2);assert.ok(pair.every(segment=>segment.runId===run.runId));
+    assert.equal(pair.find(segment=>segment.type==="tool-result")?.text,`result-${i}`);
+    assert.ok(pair.some(segment=>segment.type==="tool-call"));
+   }
+   assert.equal(segments.filter(segment=>segment.text==="Final answer").length,1);
+  }
+  assert.deepEqual(readFileSync(f.session.sdkHistoryPath),original);
+ }finally{f.close();}
+});
+
 test("454 messages / 235 tools, giant message and both directions stay bounded and preserve SDK originals",()=>{
  const f=fixture();try{
   const run=f.store.acceptRun({workId:"work-1",sessionId:f.session.sessionId,submissionKey:"original",requestDigest:"digest",promptDigest:"digest"}).run;

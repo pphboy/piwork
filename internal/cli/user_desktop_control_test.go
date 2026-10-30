@@ -115,6 +115,8 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"GET", "/_desktop/api/works/work-1/commands", "", "/api/v1/works/work-1/commands"},
 		{"GET", "/_desktop/api/works/work-1/sessions/session-1/chat-options", "", "/api/v1/works/work-1/sessions/session-1/chat-options"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"high"}`, "/api/v1/works/work-1/sessions/session-1/chat-options"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"high","thinkingProfile":"responses-effort-v1"}`, "/api/v1/works/work-1/sessions/session-1/chat-options"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":null,"thinkingProfile":null}`, "/api/v1/works/work-1/sessions/session-1/chat-options"},
 		{"GET", "/_desktop/api/works/work-1/sessions/submissions/original-key", "", "/api/v1/works/work-1/sessions/submissions/original-key"},
 		{"GET", "/_desktop/api/works/work-1/runs/submissions/original-key", "", "/api/v1/works/work-1/runs/submissions/original-key"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null}`, "/api/v1/works/work-1/sessions/session-1/model"},
@@ -139,6 +141,17 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		if last.method != item.method || last.path != item.forwarded || last.auth != "Bearer secret-core-token" {
 			t.Fatalf("wrong Core request: %+v", last)
 		}
+		if item.method == "PATCH" && strings.HasSuffix(item.path, "/chat-options") {
+			var expected map[string]any
+			if err := json.Unmarshal([]byte(item.payload), &expected); err != nil {
+				t.Fatal(err)
+			}
+			want, present := expected["thinkingProfile"]
+			got, forwarded := last.body["thinkingProfile"]
+			if forwarded != present || got != want {
+				t.Fatalf("profile was not forwarded intact: %+v", last.body)
+			}
+		}
 		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") {
 			if key, _ := last.body["idempotencyKey"].(string); !strings.HasPrefix(key, "desktop-") {
 				t.Fatalf("mutation has no idempotency key: %+v", last)
@@ -161,6 +174,9 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	for _, item := range []struct{ method, path, payload, csrf string }{
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null,"credential":"not-allowed"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"invalid"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":null,"thinkingProfile":"messages-adaptive-v1"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"max","thinkingProfile":"messages-budget-v1"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"high","thinkingProfile":"unknown"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"off","credential":"private"}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"hello","inputMode":"extension"}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1/runs", `{"sessionId":"session-1","prompt":"next","cancelRunId":""}`, "csrf"},

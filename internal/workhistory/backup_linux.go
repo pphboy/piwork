@@ -27,6 +27,7 @@ type BackupRequest struct {
 	BackupKey              string   `json:"backupKey"`
 	ContextIDs             []string `json:"contextIds"`
 	ExpectedManifestDigest string   `json:"expectedManifestDigest,omitempty"`
+	TargetSchema           int64    `json:"targetSchema,omitempty"`
 }
 type BackupFile struct {
 	Name    string `json:"name"`
@@ -49,6 +50,7 @@ type BackupManifest struct {
 	MemoryIno         uint64       `json:"memoryIno"`
 	RootDev           uint64       `json:"rootDev"`
 	RootIno           uint64       `json:"rootIno"`
+	SourceSchema      int64        `json:"sourceSchema,omitempty"`
 }
 type BackupResult struct {
 	SchemaVersion  int64  `json:"schemaVersion"`
@@ -150,6 +152,15 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 		if manifest.OperationID != request.OperationID || manifest.WorkID != request.WorkID || manifest.BackupKey != request.BackupKey {
 			return BackupResult{}, ErrInvalid
 		}
+		if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+			if request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 7 {
+				return BackupResult{}, ErrInvalid
+			}
+			if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
+				return BackupResult{}, err
+			}
+			return BackupResult{manifest.SourceSchema, digest, "saved"}, nil
+		}
 		if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
 			return BackupResult{}, err
 		}
@@ -176,8 +187,11 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 	}
 	version := snapshot.SchemaVersion
 	snapshot.Close()
-	if version == 5 {
-		return BackupResult{5, "", "not-required"}, nil
+	if version >= 5 && version <= 7 {
+		if request.TargetSchema > version && request.TargetSchema <= 7 {
+			return checkpointMemoryHistory(ctx, root, spool, request, version)
+		}
+		return BackupResult{version, "", "not-required"}, nil
 	}
 	if version != 4 {
 		return BackupResult{}, ErrUnsupported
@@ -246,11 +260,15 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 }
 
 func verifyBackupFiles(ctx context.Context, spool int, manifest BackupManifest) error {
-	if len(manifest.Files) != len(files) {
+	names := files
+	if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+		names = append(append([]string{}, files...), "memory.sqlite")
+	}
+	if len(manifest.Files) != len(names) {
 		return ErrInvalid
 	}
 	for i, entry := range manifest.Files {
-		if entry.Name != files[i] {
+		if entry.Name != names[i] {
 			return ErrInvalid
 		}
 		if !entry.Present {
@@ -385,6 +403,9 @@ func RestoreHistoryBackup(ctx context.Context, privateDirectory, spoolDirectory 
 	manifest, digest, err := backupManifest(spool)
 	if err != nil {
 		return BackupResult{}, err
+	}
+	if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+		return restoreMemoryHistory(ctx, root, spool, request, manifest, digest)
 	}
 	var attributes unix.Stat_t
 	if unix.Fstat(root, &attributes) != nil {

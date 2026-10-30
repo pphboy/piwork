@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { WORK_SCHEMA_SQL } from "./brain-schema.js";
+import { PREVIOUS_SCHEMA_SQL as WORK_SCHEMA_SQL } from "./previous-schema.js";
 import { MEMORY_SCHEMA_SQL } from "./memory-schema.js";
 import { WorkStore } from "./store.js";
 import { WorkHistorySnapshot } from "./snapshot.js";
@@ -30,8 +30,8 @@ test("runtime, TS full history and Go-shared fixtures agree on preference and pu
   if(scenario.accepted){const snapshot=WorkHistorySnapshot.open(source,scope)!;snapshot.close();}
   else assert.throws(()=>WorkHistorySnapshot.open(source,scope),scenario.name);
   assert.deepEqual(fingerprint(source),before,`${scenario.name}: static validation changed input`);
-  const runtime=join(root,'runtime');cpSync(source,runtime,{recursive:true});const runtimeBefore=fingerprint(runtime);
-  if(scenario.accepted){const store=WorkStore.open(join(runtime,'work.sqlite'),{workId});store.memory.snapshot(workId);store.close();}
-  else {assert.throws(()=>WorkStore.open(join(runtime,'work.sqlite'),{workId}),scenario.name);assert.deepEqual(fingerprint(runtime),runtimeBefore,scenario.name);}
+  const runtime=join(root,'runtime');cpSync(source,runtime,{recursive:true});const runtimeBefore=fingerprint(runtime);const historyMigration={operationId:'operation-fixture-1234',workId,fromSchema:5 as const,toSchema:7 as const,storeId:'backup-fixture-1234',backupManifestDigest:'a'.repeat(64)};
+  if(scenario.accepted){const store=WorkStore.open(join(runtime,'work.sqlite'),{workId,historyMigration});store.memory.snapshot(workId);store.close();}
+  else {assert.throws(()=>WorkStore.open(join(runtime,'work.sqlite'),{workId,historyMigration}),scenario.name);assert.deepEqual(fingerprint(runtime),runtimeBefore,scenario.name);}
  }finally{rmSync(root,{recursive:true,force:true});}}
 });

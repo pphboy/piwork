@@ -58,8 +58,9 @@ test('Chat reports safe recovery for unconfirmed capabilities and an incompatibl
   const resolver=new AgentRunModels({provider:'openai',id:'gpt-5.1',api:'openai-responses',deterministic:false},{
     async models(){return{models:[unknown,mismatch],defaultModel:model,checkedAt:new Date().toISOString()};},async resolveModel(){return{model,credential:'synthetic-private-key'};},
   });
-  const list=await resolver.chatList();assert.equal(list.contractVersion,3);assert.ok(list.defaultModel);assert.equal(list.models.length,1);assert.equal(list.models[0]!.model,'custom-unknown');assert.equal(list.models[0]!.defaultThinkingLevel,null);assert.deepEqual(list.models[0]!.thinkingLevels,[]);
-  if(list.contractVersion!==3)throw new Error('expected recovery contract');
+  const list=await resolver.chatList();assert.equal(list.contractVersion,4);assert.ok(list.defaultModel);assert.equal(list.models.length,1);assert.equal(list.models[0]!.model,'custom-unknown');assert.equal(list.models[0]!.defaultThinkingLevel,null);assert.deepEqual(list.models[0]!.thinkingLevels,[]);
+  if(list.contractVersion!==4)throw new Error('expected recovery contract');
+  assert.deepEqual(list.models[0]!.compatibleThinkingProfiles?.map(p=>p.profile),['responses-effort-v1']);
   assert.deepEqual(list.unavailableModels!.map(m=>m.reason),['sdk-unsupported']);
   assert.match(list.unavailableModels![0]!.recovery,/Agent image.*Apply/);
   assert.doesNotMatch(JSON.stringify(list),/private-fixture|executionBindingId|synthetic-private|thinkingLevelMap|capabilities"/);

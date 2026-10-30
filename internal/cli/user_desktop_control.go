@@ -537,7 +537,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			if method == http.MethodGet {
 				return create(method, path+"/"+sessionID+"/chat-options", nil, 200)
 			}
-			input, err := desktopControlInput(r, "modelRef", "thinkingLevel")
+			input, err := desktopControlInput(r, "modelRef", "thinkingLevel", "thinkingProfile")
 			if err != nil {
 				return desktopControl{}, true, err
 			}

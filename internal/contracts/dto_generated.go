@@ -425,22 +425,23 @@ type ChatModelList = json.RawMessage
 type ChatModel = json.RawMessage
 
 type ChatRunView struct {
-	WorkId                    Identifier      `json:"workId"`
-	SessionId                 Identifier      `json:"sessionId"`
-	RunId                     Identifier      `json:"runId"`
-	SubmissionKey             string          `json:"submissionKey"`
-	State                     int64           `json:"state"`
-	PromptDigest              string          `json:"promptDigest"`
-	FinalText                 string          `json:"finalText"`
-	AcceptedAt                Timestamp       `json:"acceptedAt"`
-	StartedAt                 string          `json:"startedAt"`
-	FinishedAt                string          `json:"finishedAt"`
-	EarliestAvailableSequence string          `json:"earliestAvailableSequence"`
-	LatestSequence            string          `json:"latestSequence"`
-	ActualModel               json.RawMessage `json:"actualModel"`
-	ThinkingLevel             ThinkingSetting `json:"thinkingLevel"`
-	Source                    AgentRunSource  `json:"source"`
-	AdoptedExperienceVersion  int64           `json:"adoptedExperienceVersion"`
+	WorkId                    Identifier             `json:"workId"`
+	SessionId                 Identifier             `json:"sessionId"`
+	RunId                     Identifier             `json:"runId"`
+	SubmissionKey             string                 `json:"submissionKey"`
+	State                     int64                  `json:"state"`
+	PromptDigest              string                 `json:"promptDigest"`
+	FinalText                 string                 `json:"finalText"`
+	AcceptedAt                Timestamp              `json:"acceptedAt"`
+	StartedAt                 string                 `json:"startedAt"`
+	FinishedAt                string                 `json:"finishedAt"`
+	EarliestAvailableSequence string                 `json:"earliestAvailableSequence"`
+	LatestSequence            string                 `json:"latestSequence"`
+	ActualModel               json.RawMessage        `json:"actualModel"`
+	ThinkingLevel             ThinkingSetting        `json:"thinkingLevel"`
+	ThinkingProfile           Field[ThinkingProfile] `json:"thinkingProfile,omitzero"`
+	Source                    AgentRunSource         `json:"source"`
+	AdoptedExperienceVersion  int64                  `json:"adoptedExperienceVersion"`
 	Error                     Field[struct {
 		Code      string `json:"code"`
 		Message   string `json:"message"`
@@ -449,18 +450,30 @@ type ChatRunView struct {
 }
 
 type ChatSessionView struct {
-	WorkId          Identifier      `json:"workId"`
-	SessionId       Identifier      `json:"sessionId"`
-	CreatedAt       Timestamp       `json:"createdAt"`
-	UpdatedAt       Timestamp       `json:"updatedAt"`
-	ModelPreference json.RawMessage `json:"modelPreference"`
-	ThinkingLevel   ThinkingSetting `json:"thinkingLevel"`
-	Source          AgentRunSource  `json:"source"`
+	WorkId          Identifier             `json:"workId"`
+	SessionId       Identifier             `json:"sessionId"`
+	CreatedAt       Timestamp              `json:"createdAt"`
+	UpdatedAt       Timestamp              `json:"updatedAt"`
+	ModelPreference json.RawMessage        `json:"modelPreference"`
+	ThinkingLevel   ThinkingSetting        `json:"thinkingLevel"`
+	ThinkingProfile Field[ThinkingProfile] `json:"thinkingProfile,omitzero"`
+	Source          AgentRunSource         `json:"source"`
 }
 
 type ChatSubmissionKey string
 
 type ChatSubmissionLookup = json.RawMessage
+
+type CompatibleThinkingProfile struct {
+	Profile ThinkingProfile `json:"profile"`
+	Levels  []ThinkingLevel `json:"levels"`
+	Budgets Field[struct {
+		Minimal Field[int64] `json:"minimal,omitzero"`
+		Low     Field[int64] `json:"low,omitzero"`
+		Medium  Field[int64] `json:"medium,omitzero"`
+		High    Field[int64] `json:"high,omitzero"`
+	}] `json:"budgets,omitzero"`
+}
 
 type CreateManagedModel struct {
 	Name         string                   `json:"name"`
@@ -642,21 +655,22 @@ type HistoryResultRef struct {
 }
 
 type HistoryRunSummary struct {
-	WorkId                    Identifier      `json:"workId"`
-	SessionId                 Identifier      `json:"sessionId"`
-	RunId                     Identifier      `json:"runId"`
-	SubmissionKey             string          `json:"submissionKey"`
-	State                     int64           `json:"state"`
-	PromptDigest              string          `json:"promptDigest"`
-	AcceptedAt                Timestamp       `json:"acceptedAt"`
-	StartedAt                 string          `json:"startedAt"`
-	FinishedAt                string          `json:"finishedAt"`
-	EarliestAvailableSequence string          `json:"earliestAvailableSequence"`
-	LatestSequence            string          `json:"latestSequence"`
-	ActualModel               json.RawMessage `json:"actualModel"`
-	ThinkingLevel             ThinkingSetting `json:"thinkingLevel"`
-	Source                    AgentRunSource  `json:"source"`
-	AdoptedExperienceVersion  int64           `json:"adoptedExperienceVersion"`
+	WorkId                    Identifier             `json:"workId"`
+	SessionId                 Identifier             `json:"sessionId"`
+	RunId                     Identifier             `json:"runId"`
+	SubmissionKey             string                 `json:"submissionKey"`
+	State                     int64                  `json:"state"`
+	PromptDigest              string                 `json:"promptDigest"`
+	AcceptedAt                Timestamp              `json:"acceptedAt"`
+	StartedAt                 string                 `json:"startedAt"`
+	FinishedAt                string                 `json:"finishedAt"`
+	EarliestAvailableSequence string                 `json:"earliestAvailableSequence"`
+	LatestSequence            string                 `json:"latestSequence"`
+	ActualModel               json.RawMessage        `json:"actualModel"`
+	ThinkingLevel             ThinkingSetting        `json:"thinkingLevel"`
+	ThinkingProfile           Field[ThinkingProfile] `json:"thinkingProfile,omitzero"`
+	Source                    AgentRunSource         `json:"source"`
+	AdoptedExperienceVersion  int64                  `json:"adoptedExperienceVersion"`
 	Error                     Field[struct {
 		Code      string `json:"code"`
 		Message   string `json:"message"`
@@ -666,23 +680,23 @@ type HistoryRunSummary struct {
 }
 
 type HistorySegment struct {
-	EntryId    Identifier        `json:"entryId"`
-	EntryOrder WorkByteSize      `json:"entryOrder"`
-	Role       string            `json:"role"`
-	RunId      string            `json:"runId"`
-	BlockId    Identifier        `json:"blockId"`
-	BlockIndex WorkByteSize      `json:"blockIndex"`
-	BlockCount WorkByteSize      `json:"blockCount"`
-	Type       string            `json:"type"`
-	ByteOffset WorkByteSize      `json:"byteOffset"`
-	TotalBytes WorkByteSize      `json:"totalBytes"`
-	Complete   bool              `json:"complete"`
-	Text       string            `json:"text"`
-	ToolCallId Field[Identifier] `json:"toolCallId,omitzero"`
-	ToolName   Field[string]     `json:"toolName,omitzero"`
-	ResultKind Field[string]     `json:"resultKind,omitzero"`
-	Truncated  Field[bool]       `json:"truncated,omitzero"`
-	IsError    Field[bool]       `json:"isError,omitzero"`
+	EntryId    Identifier    `json:"entryId"`
+	EntryOrder WorkByteSize  `json:"entryOrder"`
+	Role       string        `json:"role"`
+	RunId      string        `json:"runId"`
+	BlockId    Identifier    `json:"blockId"`
+	BlockIndex WorkByteSize  `json:"blockIndex"`
+	BlockCount WorkByteSize  `json:"blockCount"`
+	Type       string        `json:"type"`
+	ByteOffset WorkByteSize  `json:"byteOffset"`
+	TotalBytes WorkByteSize  `json:"totalBytes"`
+	Complete   bool          `json:"complete"`
+	Text       string        `json:"text"`
+	ToolCallId Field[string] `json:"toolCallId,omitzero"`
+	ToolName   Field[string] `json:"toolName,omitzero"`
+	ResultKind Field[string] `json:"resultKind,omitzero"`
+	Truncated  Field[bool]   `json:"truncated,omitzero"`
+	IsError    Field[bool]   `json:"isError,omitzero"`
 	Image      Field[struct {
 		MimeType   ChatImageMime  `json:"mimeType"`
 		ByteSize   int64          `json:"byteSize"`
@@ -1566,19 +1580,21 @@ type ServiceQueryResult struct {
 }
 
 type SessionChatOptions struct {
-	SessionId     Identifier          `json:"sessionId"`
-	ModelRef      json.RawMessage     `json:"modelRef"`
-	ThinkingLevel ThinkingSetting     `json:"thinkingLevel"`
-	Model         RunModelDescription `json:"model"`
-	Availability  string              `json:"availability"`
-	CheckedAt     Timestamp           `json:"checkedAt"`
+	SessionId       Identifier             `json:"sessionId"`
+	ModelRef        json.RawMessage        `json:"modelRef"`
+	ThinkingLevel   ThinkingSetting        `json:"thinkingLevel"`
+	ThinkingProfile Field[ThinkingProfile] `json:"thinkingProfile,omitzero"`
+	Model           RunModelDescription    `json:"model"`
+	Availability    string                 `json:"availability"`
+	CheckedAt       Timestamp              `json:"checkedAt"`
 }
 
 type SessionContentBlock = json.RawMessage
 
 type SetSessionChatOptions struct {
-	ModelRef      json.RawMessage `json:"modelRef"`
-	ThinkingLevel ThinkingSetting `json:"thinkingLevel"`
+	ModelRef        json.RawMessage        `json:"modelRef"`
+	ThinkingLevel   ThinkingSetting        `json:"thinkingLevel"`
+	ThinkingProfile Field[json.RawMessage] `json:"thinkingProfile,omitzero"`
 }
 
 type SetSessionModel struct {
@@ -1633,6 +1649,8 @@ type SubmitRunInput struct {
 }
 
 type ThinkingLevel string
+
+type ThinkingProfile string
 
 type ThinkingSetting = json.RawMessage
 

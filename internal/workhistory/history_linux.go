@@ -234,7 +234,7 @@ func Open(ctx context.Context, privateDirectory string, scope Scope) (returned *
 		return nil, err
 	}
 	snapshot.SchemaVersion = historyVersion(ctx, snapshot.database)
-	if snapshot.SchemaVersion == 5 {
+	if snapshot.SchemaVersion >= 5 {
 		for _, name := range []string{"work.sqlite-journal", "memory.sqlite-journal"} {
 			file, err := Regular(root, name)
 			if err == nil {
@@ -320,14 +320,14 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 		return ErrInvalid
 	}
 	normalizeSchema(actual)
-	for index, raw := range [][]byte{schemaObjects, currentSchemaObjects} {
+	for index, raw := range [][]byte{schemaObjects, previousSchemaObjects, currentSchemaObjects} {
 		var expected []schemaObject
 		if json.Unmarshal(raw, &expected) != nil {
 			return ErrUnsupported
 		}
 		normalizeSchema(expected)
 		if reflect.DeepEqual(actual, expected) {
-			if historyVersion(ctx, db) != int64(4+index) {
+			if version := historyVersion(ctx, db); !(index == 0 && version == 4 || index == 1 && (version == 5 || version == 6) || index == 2 && version == 7) {
 				return ErrUnsupported
 			}
 			return nil
@@ -470,7 +470,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			return Summary{}, ErrInvalid
 		}
 	}
-	if historyVersion(ctx, db) == 5 {
+	if historyVersion(ctx, db) >= 5 {
 		if err := validateMemoryHistory(ctx, db, scope); err != nil {
 			return Summary{}, err
 		}
@@ -483,7 +483,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 func validateRow(table string, row map[string]any, root int, scope Scope) error {
 	switch table {
 	case "schema_migrations":
-		if row["version"] != int64(4) && row["version"] != int64(5) {
+		if row["version"] != int64(4) && row["version"] != int64(5) && row["version"] != int64(6) && row["version"] != int64(7) {
 			return ErrUnsupported
 		}
 	case "sessions":

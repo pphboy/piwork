@@ -8,7 +8,7 @@ CREATE TABLE sessions (
       session_id TEXT NOT NULL,
       sdk_history_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL, active_context_identity TEXT,
+      updated_at TEXT NOT NULL,
       model_preference_json TEXT, source_json TEXT,
       PRIMARY KEY(work_id, session_id)
     ) STRICT;

@@ -75,16 +75,19 @@ test("same submission retries reuse one Run before activity checks and changed c
   }
 });
 
-test("Sessions and accepted Runs retain an internal active context identity", async () => {
+test("Each Run captures its own context without binding the Session", async () => {
   const fixture = await createFixture();
   const store = WorkStore.open(fixture.databasePath);
   try {
-    store.createSession({ ...session(), contextIdentity: "context-a" });
+    store.createSession({ ...session(), });
     const accepted = store.acceptRun(submit({ submissionKey: "contexted", contextIdentity: "context-a" }));
-    assert.equal(store.getSession("work-1", "session-1")?.contextIdentity, "context-a");
+
     assert.equal(store.getRun(accepted.run.runId)?.contextIdentity, "context-a");
     store.completeRun(accepted.run.runId, "succeeded", "done", null);
-    assert.throws(() => store.acceptRun(submit({ submissionKey: "wrong-context", contextIdentity: "context-b" })), /context is no longer active/);
+    const next=store.acceptRun(submit({submissionKey:"next-context",contextIdentity:"context-b"}));
+    assert.equal(next.run.contextIdentity,"context-b");
+    assert.equal(store.getRun(accepted.run.runId)?.contextIdentity,"context-a");
+    assert.equal(store.acceptRun(submit({submissionKey:"contexted",contextIdentity:"context-b"})).run.runId,accepted.run.runId);
   } finally {
     store.close();
     await fixture.cleanup();

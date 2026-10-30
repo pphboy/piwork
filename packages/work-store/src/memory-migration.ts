@@ -6,7 +6,7 @@ import { validateLegacyWorkDatabase, migrateWorkDatabase } from "./migrations.js
 import { validateBrainHistory } from "./snapshot-brain.js";
 
 export interface HistoryMigration {
-  readonly operationId: string; readonly workId: string; readonly fromSchema: 4; readonly toSchema: 5;
+  readonly operationId: string; readonly workId: string; readonly fromSchema: 4 | 5 | 6; readonly toSchema: 7;
   readonly storeId: string; readonly backupManifestDigest: string;
 }
 
@@ -14,7 +14,7 @@ export interface HistoryMigration {
 export function migrateExperience(database: DatabaseSync, authorization: HistoryMigration): void {
   validateLegacyWorkDatabase(database);
   const meta = database.prepare("SELECT * FROM memory.memory_meta WHERE singleton=1").get();
-  if (authorization.fromSchema !== 4 || authorization.toSchema !== 5 || !authorization.operationId
+  if (authorization.fromSchema !== 4 || authorization.toSchema !== 7 || !authorization.operationId
     || !/^[a-f0-9]{64}$/.test(authorization.backupManifestDigest) || meta?.work_id !== authorization.workId
     || meta.store_id !== authorization.storeId || meta.schema_version !== 1
     || database.prepare("SELECT version FROM memory.memory_head WHERE singleton=1").get()?.version !== 0
@@ -52,11 +52,11 @@ export function migrateExperience(database: DatabaseSync, authorization: History
     for (const table of legacyTables) database.exec(`DROP TABLE main.${table}`);
     database.exec(WORK_SCHEMA_SQL);
     for (const table of currentTables) {
-      const columns = (database.prepare(`PRAGMA temp.table_info(migration_${table})`).all() as { name: string }[]).map((v) => v.name).join(",");
+      const columns = (database.prepare(`PRAGMA main.table_info(${table})`).all() as { name: string }[]).map((v) => v.name).filter(name=> (database.prepare(`PRAGMA temp.table_info(migration_${table})`).all() as {name:string}[]).some(v=>v.name===name)).join(",");
       database.exec(`INSERT INTO main.${table}(${columns}) SELECT ${columns} FROM temp.migration_${table}`);
     }
     database.prepare("INSERT INTO main.work_memory_binding VALUES(?,?,1)").run(authorization.workId, authorization.storeId);
-    database.prepare("INSERT INTO main.schema_migrations VALUES(5,?)").run(new Date().toISOString());
+    database.prepare("INSERT INTO main.schema_migrations VALUES(?,?)").run(authorization.toSchema,new Date().toISOString());
     if (database.prepare("PRAGMA main.foreign_key_check").get() || database.prepare("PRAGMA memory.foreign_key_check").get()) throw new Error("WORK_HISTORY_INVALID");
     migrateWorkDatabase(database);
     database.exec("COMMIT");

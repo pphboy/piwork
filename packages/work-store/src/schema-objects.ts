@@ -148,7 +148,7 @@ export const WORK_SCHEMA_OBJECTS = [
     "type": "table",
     "name": "sessions",
     "tbl_name": "sessions",
-    "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL, active_context_identity TEXT,\n      model_preference_json TEXT, source_json TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
+    "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL,\n      model_preference_json TEXT, source_json TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
   },
   {
     "type": "table",

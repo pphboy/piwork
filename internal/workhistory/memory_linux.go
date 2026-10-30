@@ -20,6 +20,12 @@ var currentSchemaSQL string
 //go:embed schema-objects.json
 var currentSchemaObjects []byte
 
+//go:embed schema-v6.sql
+var previousSchemaSQL string
+
+//go:embed schema-v6-objects.json
+var previousSchemaObjects []byte
+
 //go:embed memory-schema.sql
 var memorySchemaSQL string
 

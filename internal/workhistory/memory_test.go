@@ -35,7 +35,7 @@ func memoryFixture(t *testing.T) (string, Scope) {
 			t.Fatal(err, query)
 		}
 	}
-	exec(currentSchemaSQL)
+	exec(previousSchemaSQL)
 	exec("ATTACH DATABASE ? AS memory", filepath.Join(private, "memory.sqlite"))
 	exec(strings.ReplaceAll(strings.ReplaceAll(memorySchemaSQL, "CREATE TABLE ", "CREATE TABLE memory."), "CREATE INDEX ", "CREATE INDEX memory."))
 	exec("INSERT INTO schema_migrations VALUES(5,?)", now)
@@ -89,7 +89,7 @@ func TestSharedMemoryIntegrityCases(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.Exec(currentSchemaSQL); err != nil {
+			if _, err := db.Exec(previousSchemaSQL); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := db.Exec("ATTACH DATABASE ? AS memory", filepath.Join(private, "memory.sqlite")); err != nil {
@@ -227,5 +227,57 @@ func TestMemoryHistoryRebuildRemapsOnlyManagedOwnerAndStore(t *testing.T) {
 	}
 	if db.QueryRow("SELECT disposition FROM agent_requests").Scan(&disposition) != nil || disposition != "historical" {
 		t.Fatal(disposition)
+	}
+}
+
+func TestSchemaSevenColdHistoryRetainsPerRunContextsWithoutSessionBinding(t *testing.T) {
+	private, scope := memoryFixture(t)
+	db, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("ALTER TABLE sessions DROP COLUMN active_context_identity; UPDATE schema_migrations SET version=7"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO runs(work_id,session_id,run_id,submission_key,prompt_digest,state,accepted_at,finished_at,context_identity) VALUES(?,'session','run-new','submit-new','digest-new','succeeded','2026-10-08T00:00:01Z','2026-10-08T00:00:02Z','context-new')`, scope.SourceWorkID); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	scope.ContextIDs["context-new"] = true
+	snapshot, err := Open(context.Background(), private, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshot.Close()
+	if snapshot.SchemaVersion != 7 || snapshot.Summary.Runs != 2 {
+		t.Fatal(snapshot.SchemaVersion, snapshot.Summary)
+	}
+	target := t.TempDir()
+	if err = os.MkdirAll(filepath.Join(target, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(target, "sessions", "one.jsonl"), []byte("{\"type\":\"session\"}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"work.sqlite", "memory.sqlite"} {
+		data, err := os.ReadFile(filepath.Join(private, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(target, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mapping := map[string]string{"context-memory-source": "target-old", "context-new": "target-new"}
+	if err = snapshot.Rebuild(context.Background(), target, "target-work", mapping); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := Open(context.Background(), target, Scope{SourceWorkID: "target-work", ContextIDs: map[string]bool{"target-old": true, "target-new": true}, ScratchDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer imported.Close()
+	if imported.SchemaVersion != 7 || imported.Summary.Sessions != 1 || imported.Summary.Runs != 2 {
+		t.Fatal(imported.SchemaVersion, imported.Summary)
 	}
 }

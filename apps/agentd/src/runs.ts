@@ -7,6 +7,7 @@ import { BRAIN_LIMITS } from "@piwork/contracts";
 import { RunModelError, type RunModelResolver } from "./run-models.js";
 import { CHAT_IMAGE_PROFILE, ChatImageError, chatInputDigest, validateChatImages, type ChatImageInput } from "@piwork/contracts";
 import { ModelProviderError } from "./model-provider-errors.js";
+import { thinkingApi, validThinkingSelection } from "./thinking-profiles.js";
 
 export interface RunExecutionContext {
   readonly images?: readonly ChatImageInput[];
@@ -105,7 +106,6 @@ export class RunManager {
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
     if (session === undefined) throw Object.assign(new Error(`session ${input.sessionId} does not exist in Work ${input.workId}`), {name: "SessionNotFoundError"});
-    if (session.contextIdentity && session.contextIdentity !== this.daemon.readiness().contextIdentity) throw Object.assign(new Error("Session context is unavailable"), {name: "SessionContextUnavailableError"});
     const accepted = this.store.acceptRun({
       workId: input.workId,
       sessionId: input.sessionId,
@@ -117,7 +117,7 @@ export class RunManager {
       memoryEnabled: this.memoryEnabled,
       ...(input.agentRequest && this.store.feedback.getRequest(input.workId,input.agentRequest.requestId)?.source.serviceName
         ? { memoryServiceName: this.store.feedback.getRequest(input.workId,input.agentRequest.requestId)!.source.serviceName } : {}),
-      contextIdentity: session.contextIdentity ?? null,
+      contextIdentity: this.daemon.readiness().contextIdentity || null,
       now: this.now().toISOString(),
       modelSelectorJson: JSON.stringify(selector),
       ...(input.actualModel ? { actualModelJson: JSON.stringify(input.actualModel) } : {}),
@@ -160,7 +160,6 @@ export class RunManager {
     if (!this.daemon.readiness().acceptingRuns) throw new Error("Work is not ready to accept Runs");
     const session = this.store.getSession(input.workId, input.sessionId);
     if (!session) throw Object.assign(new Error("Session not found"), {name: "SessionNotFoundError"});
-    if (session.contextIdentity && session.contextIdentity !== this.daemon.readiness().contextIdentity) throw Object.assign(new Error("Session context is unavailable"), {name: "SessionContextUnavailableError"});
     if (input.inputMode === "command") {
       if (!this.validateCommand) throw new RunModelError("SLASH_COMMAND_UNSUPPORTED", "This Work cannot execute resource commands.");
       this.validateCommand(input.prompt);
@@ -181,15 +180,16 @@ export class RunManager {
       if (availability !== "supported") throw new ChatImageError(availability === "unknown" ? "IMAGE_MODEL_UNCONFIRMED" : "IMAGE_MODEL_UNSUPPORTED", "This model cannot confirm image input. Choose an image-capable model or a new text-only Session.");
     }
     let thinkingLevel = preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel;
-    let levels: readonly string[] = ["off"];
+    let levels: readonly ThinkingLevel[] = ["off"];
     try { if (this.models.thinking) levels = (await this.models.thinking(actualModel)).thinkingLevels; }
     catch (error) {
       // Requests predating chat settings keep their legacy custom-model behavior.
       if (input.inputMode !== undefined || preference?.thinkingLevel !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
     }
     if(!preference && !levels.length) thinkingLevel=null;
-    if (!(thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
-    return { selector, actualModel: { ...actualModel, thinkingLevel } };
+    const profile = selector.kind === "session-preference" ? preference?.thinkingProfile : undefined;
+    if (!validThinkingSelection(thinkingApi(actualModel), levels, thinkingLevel, profile, !!profile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
+    return { selector, actualModel: { ...actualModel, thinkingLevel, ...(profile ? {thinkingProfile:profile} : {}) } };
   }
 
   private async replaceAndSubmit(input: ChatSubmission): Promise<AcceptedRun> {
@@ -236,7 +236,7 @@ export class RunManager {
         if (this.models.thinking) {
           const levels = (await this.models.thinking(current)).thinkingLevels;
           const thinking = prepared.actualModel.thinkingLevel;
-          if (!(thinking === null ? levels.length === 0 : levels.includes(thinking ?? "off"))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "The accepted Thinking setting is no longer available.");
+          if (!validThinkingSelection(thinkingApi(current), levels, thinking === undefined ? "off" : thinking, prepared.actualModel.thinkingProfile, !!prepared.actualModel.thinkingProfile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "The accepted Thinking setting is no longer available.");
         }
       }
       assertRuntime();

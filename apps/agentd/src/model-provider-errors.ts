@@ -2,13 +2,13 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/utils/e
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { RunExecutionContext } from "./runs.js";
 
-type ProviderErrorCode = "MODEL_AUTHENTICATION_FAILED" | "MODEL_PERMISSION_DENIED";
+type ProviderErrorCode = "MODEL_AUTHENTICATION_FAILED" | "MODEL_PERMISSION_DENIED" | "MODEL_COMPATIBLE_REQUEST_REJECTED";
 
 /** These messages are authored locally; provider responses are untrusted. */
 export class ModelProviderError extends Error {
   readonly retryable = false;
   constructor(readonly providerErrorCode: ProviderErrorCode, invalidKey = false) {
-    super(providerErrorCode === "MODEL_AUTHENTICATION_FAILED"
+    super(providerErrorCode === "MODEL_COMPATIBLE_REQUEST_REJECTED" ? "The model provider rejected the request. Check the compatible Thinking settings." : providerErrorCode === "MODEL_AUTHENTICATION_FAILED"
       ? invalidKey ? "The model API Key is invalid. Check it or ask your administrator to update it."
         : "Model authentication failed. Check the API Key or ask your administrator to update it."
       : "The model provider denied access. Check the model's permissions or ask your administrator.");
@@ -96,11 +96,13 @@ export function protectProviderStream(original: StreamFunction, accepted: RunExe
             if (selected && !options?.signal?.aborted) {
               if (status === 401) failure = new ModelProviderError("MODEL_AUTHENTICATION_FAILED", providerCode === "invalid_api_key");
               else if (status === 403) failure = new ModelProviderError("MODEL_PERMISSION_DENIED");
+              else if (accepted?.thinkingProfile && (status === 400 || status === 422)) failure = new ModelProviderError("MODEL_COMPATIBLE_REQUEST_REJECTED");
             }
             // Even unknown SDK errors may include provider text, a Key or a
             // local path. Preserve only known retry signals before persistence.
             const safeMessage = failure?.message ?? (providerCode === "insufficient_quota"
               ? "Model provider quota exceeded." : status === 429 ? "Model provider rate limit (429)."
+              : accepted?.thinkingProfile && (status === 400 || status === 422) ? "The model provider rejected the request. Check the compatible Thinking settings."
               : status && [500, 502, 503, 504, 520, 524].includes(status) ? `Model provider server error (${status}).`
               : networkFailure ? "Model provider connection error." : "Model execution failed.");
             safe.push({ ...event, error: { ...event.error, errorMessage: safeMessage } });

@@ -12,6 +12,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { RunModelResolver } from "./run-models.js";
 import { parseResourceCommand, requireResourceCommand, validateLoadedResourceCommand } from "./resource-commands.js";
 import { protectProviderStream } from "./model-provider-errors.js";
+import { THINKING_PROFILES } from "./thinking-profiles.js";
 
 const CHILD_AGENT_DIRECTORY = "/tmp/piwork-child-agent";
 
@@ -67,7 +68,7 @@ export class PiSdkRunExecutor implements RunExecutor {
       tools: [...this.context.resolvedTools],
       customTools: [...(this.context.customToolsFactory?.(context) ?? this.context.customTools ?? [])],
       resourceLoader,
-      settingsManager: SettingsManager.inMemory(),
+      settingsManager: SettingsManager.inMemory(context.actualModel?.thinkingProfile === "messages-budget-v1" ? {thinkingBudgets:THINKING_PROFILES["messages-budget-v1"].budgets} : {}),
     });
     emitRunPhase(context, "session-loaded");
     let finalText = "";
@@ -131,6 +132,27 @@ export class PiSdkRunExecutor implements RunExecutor {
           delete result.reasoning; delete result.thinking;
           if(result.output_config && typeof result.output_config === 'object') {const output={...result.output_config as Record<string,unknown>};delete output.effort;if(Object.keys(output).length)result.output_config=output;else delete result.output_config;}
           return result;
+        };
+      }
+      if (context.actualModel?.thinkingProfile) {
+        const accepted = context.actualModel;
+        const transform = session.agent.onPayload;
+        session.agent.onPayload = async (payload, requestModel) => {
+          assertAcceptedOptions();
+          if (requestModel.id !== model.id || requestModel.provider !== model.provider || requestModel.baseUrl !== model.baseUrl) throw new Error("accepted model could not be applied to the request");
+          const changed = await transform?.(payload, requestModel);
+          const value = (changed === undefined ? payload : changed) as Record<string, any>;
+          const level = accepted.thinkingLevel;
+          if (!value || value.model !== model.id || !level) throw new Error("compatible Thinking request is invalid");
+          if (accepted.thinkingProfile === "responses-effort-v1") {
+            if (value.reasoning?.effort !== (level === "off" ? "none" : level)) throw new Error("compatible Thinking effort could not be applied");
+          } else if (accepted.thinkingProfile === "messages-adaptive-v1") {
+            if (value.thinking?.type !== (level === "off" ? "disabled" : "adaptive") || value.thinking?.budget_tokens !== undefined || (level !== "off" && value.output_config?.effort !== level) || (level === "off" && value.output_config?.effort !== undefined)) throw new Error("compatible Thinking effort could not be applied");
+          } else {
+            const budget = THINKING_PROFILES["messages-budget-v1"].budgets[level as keyof typeof THINKING_PROFILES["messages-budget-v1"]["budgets"]];
+            if (value.output_config?.effort !== undefined || (level === "off" ? value.thinking?.type !== "disabled" || value.thinking?.budget_tokens !== undefined : value.thinking?.type !== "enabled" || value.thinking?.budget_tokens !== budget || typeof value.max_tokens !== "number" || value.max_tokens < budget + 1024)) throw new Error("compatible Thinking budget could not be applied");
+          }
+          return value;
         };
       }
       let prompt = context.prompt;
@@ -215,7 +237,18 @@ export class PiSdkRunExecutor implements RunExecutor {
     if (credential === "") throw new Error("model credential is invalid");
     const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
     const config = snapshot ? { provider: snapshot.provider, id: snapshot.model, ...(snapshot.baseUrl ? { baseUrl: snapshot.baseUrl } : {}), ...(snapshot.api ? {api:snapshot.api}:{}), ...(snapshot.capabilities ? {capabilities:snapshot.capabilities}:{}) } : this.modelConfig;
-    const model = resolveProductionModel(runtime, config);
+    let model = resolveProductionModel(runtime, config);
+    if (snapshot?.thinkingProfile) {
+      const profile = THINKING_PROFILES[snapshot.thinkingProfile];
+      if (!profile || profile.api !== model.api || !snapshot.thinkingLevel || !(profile.levels as readonly string[]).includes(snapshot.thinkingLevel)) throw new Error("compatible Thinking selection is invalid");
+      const thinkingLevelMap = { off: "none", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" };
+      const definition = { ...model, reasoning: true, thinkingLevelMap,
+        compat: { ...model.compat, forceAdaptiveThinking: snapshot.thinkingProfile === "messages-adaptive-v1" } };
+      runtime.registerProvider(config.provider, {baseUrl:model.baseUrl, api:model.api, models:[definition]});
+      const selected = runtime.getModel(config.provider, config.id);
+      if (!selected) throw new Error("compatible model definition is unavailable");
+      model = selected;
+    }
     await runtime.setRuntimeApiKey(config.provider, credential);
     return { runtime, model };
   }

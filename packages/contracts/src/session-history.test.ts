@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Check } from "typebox/value";
 import { ReadSessionPageRequest, SessionHistoryPage, SubmitRunRequest, TextEvent } from "./agent.js";
-import { HISTORY_LIMITS, historyCapabilities, HistoryCapabilitiesSchema, HistoryQuerySchema, historyJSON } from "./session-history.js";
+import { HISTORY_LIMITS, historyCapabilities, HistoryCapabilitiesSchema, HistoryQuerySchema, HistorySegmentSchema, historyJSON } from "./session-history.js";
+
+test("provider tool call IDs are bounded opaque values, separate from internal identifiers", () => {
+  const segment = { entryId: "entry-1", entryOrder: 0, role: "assistant", runId: "run-1", blockId: "entry-1-0", blockIndex: 0, blockCount: 1,
+    type: "tool-call", byteOffset: 0, totalBytes: 0, complete: true, text: "", toolName: "read" };
+  for (const toolCallId of ["call_abc|fc_def", "provider/call+opaque=", "x".repeat(1024)]) {
+    assert.equal(Check(HistorySegmentSchema, { ...segment, toolCallId }), true);
+  }
+  for (const toolCallId of ["", "x".repeat(1025), 123]) assert.equal(Check(HistorySegmentSchema, { ...segment, toolCallId }), false);
+  for (const field of ["entryId", "blockId"]) assert.equal(Check(HistorySegmentSchema, { ...segment, [field]: "internal|invalid" }), false);
+});
 
 test("independent history capability, strict ranges and budgets", () => {
   assert.equal(Check(HistoryCapabilitiesSchema, historyCapabilities()), true);

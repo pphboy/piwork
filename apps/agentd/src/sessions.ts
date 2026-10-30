@@ -11,6 +11,7 @@ import { WorkStore, type SessionRecord } from "@piwork/work-store";
 import type { RunModelResolver } from "./run-models.js";
 import { RunModelError } from "./run-models.js";
 import { publicRunModel, type RunModelSnapshot, type SessionChatOptions, type SetSessionChatOptions } from "@piwork/contracts";
+import { thinkingApi, validThinkingSelection } from "./thinking-profiles.js";
 
 export class AgentSessionService {
   constructor(
@@ -34,7 +35,6 @@ export class AgentSessionService {
       sdkHistoryPath: snapshot.historyPath,
       createdAt: now,
       updatedAt: now,
-      contextIdentity: this.contextIdentity ?? null,
       ...(sourceJson ? { sourceJson } : {}),
     };
     if (idempotencyKey === undefined) { this.store.createSession(record); return record; }
@@ -51,8 +51,9 @@ export class AgentSessionService {
 
   async setModelPreference(sessionId: string, modelRef: string | null, models: RunModelResolver): Promise<SessionRecord> {
     const record = this.requireRecord(sessionId);
-    const savedThinking = record.modelPreferenceJson ? (JSON.parse(record.modelPreferenceJson) as RunModelSnapshot).thinkingLevel : undefined;
-    try { return await this.setChatOptions(sessionId, { modelRef, thinkingLevel: savedThinking === undefined ? "off" : savedThinking }, models); }
+    const saved = record.modelPreferenceJson ? JSON.parse(record.modelPreferenceJson) as RunModelSnapshot : undefined;
+    const savedThinking = saved?.thinkingLevel;
+    try { return await this.setChatOptions(sessionId, { modelRef, thinkingLevel: savedThinking === undefined ? "off" : savedThinking, ...(saved?.thinkingProfile ? {thinkingProfile:saved.thinkingProfile} : {}) }, models); }
     catch (error) {
       if (savedThinking !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
       // The original model-only API can retain legacy custom models without
@@ -64,35 +65,39 @@ export class AgentSessionService {
   }
 
   async setChatOptions(sessionId: string, options: SetSessionChatOptions, models: RunModelResolver): Promise<SessionRecord> {
-    this.requireRecord(sessionId);
+    const record = this.requireRecord(sessionId);
+    const previous = record.modelPreferenceJson ? JSON.parse(record.modelPreferenceJson) as RunModelSnapshot : undefined;
     const { modelRef, thinkingLevel } = options;
+    if (previous?.thinkingProfile && options.thinkingProfile === undefined) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Use updated chat settings to change this compatible Thinking selection.");
+    const profile = options.thinkingProfile ?? undefined;
     const model = await models.resolve(modelRef);
-    const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off"];
-    if (!(thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel))) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
+    const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off" as const];
+    const retain = !!profile && previous?.thinkingProfile === profile && previous.modelRef === modelRef && previous.model === model.model && previous.api === model.api && previous.executionBindingId === model.executionBindingId;
+    if (!validThinkingSelection(thinkingApi(model), levels, thinkingLevel, profile, retain)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
     this.requireRecord(sessionId);
-    return this.store.setSessionModelPreference(this.workId, sessionId, JSON.stringify({ ...model, thinkingLevel, availability: "available" }), this.now().toISOString());
+    return this.store.setSessionModelPreference(this.workId, sessionId, JSON.stringify({ ...model, thinkingLevel, ...(profile ? {thinkingProfile:profile} : {}), availability: "available" }), this.now().toISOString());
   }
 
   async chatOptions(sessionId: string, models: RunModelResolver): Promise<SessionChatOptions> {
-    const record = this.requireRecord(sessionId, false);
+    const record = this.requireRecord(sessionId);
     const saved = record.modelPreferenceJson ? JSON.parse(record.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
     const modelRef = saved?.modelRef ?? null; let thinkingLevel = saved?.thinkingLevel === undefined ? "off" as const : saved.thinkingLevel;
     let model: RunModelSnapshot;
-    let available = saved?.availability !== "unavailable" && (!this.contextIdentity || record.contextIdentity === this.contextIdentity);
+    let available = saved?.availability !== "unavailable";
     try {
       model = await models.resolve(modelRef);
-      const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off"];
+      const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off" as const];
       if(!saved && !levels.length) thinkingLevel=null;
-      available = available && (thinkingLevel === null ? levels.length === 0 : levels.includes(thinkingLevel));
+      available = available && validThinkingSelection(thinkingApi(model), levels, thinkingLevel, saved?.thinkingProfile, true);
     } catch (error) {
       if (!saved) throw error;
       model = saved; available = false;
     }
-    return { sessionId, modelRef, model: publicRunModel(model), thinkingLevel, availability: available ? "available" : "unavailable", checkedAt: this.now().toISOString() };
+    return { sessionId, modelRef, model: publicRunModel(model), thinkingLevel, ...(saved?.thinkingProfile ? {thinkingProfile:saved.thinkingProfile} : {}), availability: available ? "available" : "unavailable", checkedAt: this.now().toISOString() };
   }
 
   read(sessionId: string): PersistentSession {
-    this.requireRecord(sessionId, false);
+    this.requireRecord(sessionId);
     try {const snapshot=readPersistentSession(loadPersistentSession({
       cwd: this.workspace,
       sessionRoot: this.sessionRoot,
@@ -139,6 +144,8 @@ export class AgentSessionService {
   }
 
   restoreImageInputs(sessionId: string, currentRun: string, sdk: SessionManager): void {
+    const current=this.store.getRun(currentRun);
+    if(!current || current.workId!==this.workId || current.sessionId!==sessionId || this.contextIdentity!==undefined && current.contextIdentity!==this.contextIdentity)throw new ChatImageError("IMAGE_HISTORY_CORRUPT","The current Run does not belong to this execution context.");
     const entries=readPersistentSession(sdk).entries;
     const runs=this.store.listSessionRuns(this.workId,sessionId).slice().sort((a,b)=>a.acceptedAt.localeCompare(b.acceptedAt));
     for(const run of runs) {
@@ -146,7 +153,6 @@ export class AgentSessionService {
       const input=this.store.privateInput(run.runId);if(!input)continue;
       const found=entries.find(e=>e.role==="user" && e.runId===run.runId);
       if(found){this.assertInput(found,run.promptDigest);continue;}
-      if((run.contextIdentity??null)!==(this.contextIdentity??null)) throw new ChatImageError("IMAGE_HISTORY_CORRUPT","The accepted image belongs to an unavailable Session context.");
       sdk.appendCustomEntry("piwork-run",{runId:run.runId});
       sdk.appendMessage({role:"user",content:[...(input.prompt?[{type:"text" as const,text:input.prompt}]:[]),...input.images.map(i=>({type:"image" as const,mimeType:i.mimeType,data:i.data}))],timestamp:Date.parse(run.acceptedAt)});
     }
@@ -174,12 +180,9 @@ export class AgentSessionService {
     return loadPersistentSession({ cwd: this.workspace, sessionRoot: this.sessionRoot, sessionId });
   }
 
-  private requireRecord(sessionId: string, requireActiveContext = true): SessionRecord {
+  private requireRecord(sessionId: string): SessionRecord {
     const record = this.store.getSession(this.workId, sessionId);
     if (record === undefined) throw Object.assign(new Error(`session ${sessionId} does not exist in Work ${this.workId}`), {name: "SessionNotFoundError"});
-    if (requireActiveContext && this.contextIdentity !== undefined && record.contextIdentity !== this.contextIdentity) {
-      throw Object.assign(new Error(`session ${sessionId} context is unavailable`), {name: "SessionContextUnavailableError"});
-    }
     return record;
   }
 }

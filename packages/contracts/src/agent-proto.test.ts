@@ -51,10 +51,11 @@ test("session and run messages survive binary serialization", () => {
     updatedAt: "2026-09-20T00:01:00Z",
     modelPreferenceJson: "",
     sourceJson: "",
-    thinkingLevel: "high", thinkingUnrequested:false,
+    thinkingLevel: "high", thinkingUnrequested:false, thinkingProfile:"responses-effort-v1",
   });
   assert.equal(session.sessionId, "session-0199e6d8abcd");
   assert.equal(session.thinkingLevel, "high");
+  assert.equal(session.thinkingProfile,"responses-effort-v1");
 
   const run = roundTrip(Run, {
     workId: session.workId,
@@ -73,9 +74,10 @@ test("session and run messages survive binary serialization", () => {
     actualModelJson: "",
     sourceJson: "",
     adoptedExperienceVersion: 0,
-    thinkingLevel: "off", thinkingUnrequested:false,
+    thinkingLevel: "off", thinkingUnrequested:false, thinkingProfile:"messages-adaptive-v1",
   });
   assert.equal(run.state, RunState.RUN_STATE_INTERRUPTED);
+  assert.equal(run.thinkingProfile,"messages-adaptive-v1");
   assert.equal(run.earliestAvailableSequence, 41n);
   assert.equal(run.latestSequence, 10_041n);
   assert.equal(run.error?.code, "DAEMON_RESTARTED");

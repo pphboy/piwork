@@ -132,6 +132,7 @@ message Session {
   string source_json = 7;
   string thinking_level = 8;
   bool thinking_unrequested = 9;
+  optional string thinking_profile = 10;
 }
 
 message CreateSessionRequest {
@@ -232,6 +233,7 @@ message Run {
   string thinking_level = 17;
   bool thinking_unrequested = 18;
   optional string result_ref_json = 19;
+  optional string thinking_profile = 20;
 }
 
 message SubmitRunRequest {

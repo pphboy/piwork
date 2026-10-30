@@ -251,18 +251,18 @@ async function withStore(run: (store: WorkStore, peerStore: WorkStore) => Promis
   finally { store.close();peerStore.close(); await rm(root, { recursive: true, force: true }); }
 }
 
-test("incompatible or missing Session refuses admission before model resolution and SDK effects", async () => {
+test("missing or cross-Work Session refuses admission before model resolution and SDK effects", async () => {
   await withStore(async store => {
     let resolves = 0, executions = 0;
     const models: RunModelResolver = { async list() { throw new Error("unused"); }, async credential() { throw new Error("unused"); },
       async resolve() { resolves++; throw new Error("must not resolve"); } };
     const daemon = new AgentDaemonControl({workId: "work-a", generation: 1, instanceId: "instance"});
     daemon.configure({modelCredentialStatus: "available", contextIdentity: "context-current", loadedSkills: [], resolvedTools: [], initializationComplete: true});
-    store.createSession({workId: "work-a", sessionId: "session-old", sdkHistoryPath: "/unused-old.jsonl", contextIdentity: "context-previous", createdAt: NOW, updatedAt: NOW});
+    store.createSession({workId: "work-a", sessionId: "session-old", sdkHistoryPath: "/unused-old.jsonl",  createdAt: NOW, updatedAt: NOW});
     const manager = new RunManager(store,daemon,{async execute(){ executions++; return {finalText:"must not execute"};}},()=>new Date(NOW),models);
     const input = {workId:"work-a",sessionId:"session-old",submissionKey:"refuse-old",prompt:"identify current model"};
-    assert.throws(()=>manager.submit(input),{name:"SessionContextUnavailableError"});
-    await assert.rejects(manager.submitChat(input),{name:"SessionContextUnavailableError"});
+    assert.throws(()=>manager.submit({...input,sessionId:"missing"}),{name:"SessionNotFoundError"});
+    await assert.rejects(manager.submitChat({...input,workId:"other-work"}),{name:"SessionNotFoundError"});
     await assert.rejects(manager.submitChat({...input,sessionId:"missing"}),{name:"SessionNotFoundError"});
     assert.equal(resolves,0); assert.equal(executions,0); assert.equal(store.activeRun("work-a"),undefined);
   });
@@ -293,6 +293,23 @@ test('unknown default automatic Runs use ordinary null independently of saved Ch
  });
 });
 
+test('compatible preference is frozen at admission and replay does not resolve it again',async()=>{
+ await withStore(async store=>{
+  let resolves=0,release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'synthetic';},async resolve(ref){resolves++;if(resolves>1)throw new Error('model changed');return {modelRef:ref,label:'Unknown',provider:'openai',model:'future-model',api:'openai-responses'};},async thinking(){return{thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};}};
+  const daemon=new AgentDaemonControl({workId:'work-a',generation:1,instanceId:'instance'});daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-a',loadedSkills:[],resolvedTools:[],initializationComplete:true});
+  const manager=new RunManager(store,daemon,{async execute(context){await gate;assert.equal(context.actualModel?.thinkingProfile,'responses-effort-v1');assert.equal(context.actualModel?.thinkingLevel,'xhigh');return{finalText:'done'};}},()=>new Date(NOW),models);
+  store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:null,thinkingLevel:'xhigh',thinkingProfile:'responses-effort-v1'}));
+  const input={workId:'work-a',sessionId:'session-a',submissionKey:'compatible-frozen',prompt:'hello'};
+  const accepted=await manager.submitChat(input);
+  store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:null,thinkingLevel:null}));
+  release();await manager.wait(accepted.run.runId);
+  assert.equal(JSON.parse(accepted.run.actualModelJson!).thinkingProfile,'responses-effort-v1');
+  assert.equal((await manager.submitChat(input)).run.runId,accepted.run.runId);assert.equal(resolves,1);
+ });
+});
+
 test("multimodal acceptance fixes bytes and order while original-key replay never runs twice",async()=>{
  await withStore(async store=>{
   const executor=new ControlledExecutor(),manager=readyManager(store,executor);
@@ -303,5 +320,19 @@ test("multimodal acceptance fixes bytes and order while original-key replay neve
   assert.equal(manager.submit(input).run.runId,first.run.runId);assert.throws(()=>manager.submit({...input,images:[jpg,png]}),/different content/);
   assert.throws(()=>manager.submit({...input,images:[jpg]}),/different content/);assert.throws(()=>manager.submit({...input,submissionKey:'empty',images:[]}),/empty/);
   executor.resolve(first.run.runId,'seen');await manager.wait(first.run.runId);assert.equal(manager.submit(input).run.runId,first.run.runId);
+ });
+});
+
+test('same Session survives environment changes while each Run and idempotent replay keep their own context',async()=>{
+ await withStore(async store=>{
+  const daemon=new AgentDaemonControl({workId:'work-a',generation:1,instanceId:'instance'});
+  const configure=(contextIdentity:string)=>daemon.configure({modelCredentialStatus:'available',contextIdentity,loadedSkills:[],resolvedTools:[],initializationComplete:true});
+  const seen:string[]=[];const manager=new RunManager(store,daemon,{async execute(context){seen.push(context.contextIdentity!);return{finalText:'ok'};}});
+  configure('context-a');const first=manager.submit({workId:'work-a',sessionId:'session-a',submissionKey:'before-update',prompt:'before'});await manager.wait(first.run.runId);
+  configure('context-b');const second=manager.submit({workId:'work-a',sessionId:'session-a',submissionKey:'after-update',prompt:'after'});await manager.wait(second.run.runId);
+  assert.equal(second.run.sessionId,first.run.sessionId);assert.deepEqual(seen,['context-a','context-b']);
+  const replay=manager.submit({workId:'work-a',sessionId:'session-a',submissionKey:'before-update',prompt:'before'});
+  assert.equal(replay.run.runId,first.run.runId);assert.equal(replay.run.contextIdentity,'context-a');assert.equal(seen.length,2);
+  assert.equal(store.listSessions('work-a').length,1);assert.equal(store.getRun(second.run.runId)?.contextIdentity,'context-b');
  });
 });

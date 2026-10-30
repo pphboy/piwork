@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { initializeMemoryDatabase, migrateWorkDatabase, sameSchema, validateLegacyWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
+import { initializeMemoryDatabase, migrateWorkDatabase, validatePreviousWorkDatabase, sameSchema, validateLegacyWorkDatabase, WORK_SCHEMA_VERSION } from "./migrations.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { FeedbackStore, type RequestPhase } from "./feedback.js";
 import { MemoryStore, type MemorySelection } from "./memory.js";
@@ -39,8 +39,6 @@ export interface SessionRecord {
   readonly sdkHistoryPath: string;
   readonly createdAt: string;
   readonly updatedAt: string;
-  /** Internal active Work context identity; never mapped to public protobuf output. */
-  readonly contextIdentity?: string | null;
   readonly modelPreferenceJson?: string | null;
   readonly sourceJson?: string | null;
 }
@@ -145,10 +143,15 @@ export class WorkStore {
       const objects = database.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
       const fresh = objects.length === 0;
       const legacy = !fresh && sameSchema(objects, LEGACY_SCHEMA_OBJECTS);
+      const previous = !fresh && !legacy ? Number(database.prepare("SELECT version FROM schema_migrations").get()?.version) : 0;
+      const needsUpgrade=previous===5||previous===6;
       if (legacy) {
         validateLegacyWorkDatabase(database);
         if (!options.historyMigration || options.historyMigration.workId !== options.workId) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
-      } else if (!fresh) migrateWorkDatabase(database);
+      } else if (!fresh) {
+        if (needsUpgrade && (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== previous || options.historyMigration.toSchema !== 7)) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        if(needsUpgrade)validatePreviousWorkDatabase(database);else migrateWorkDatabase(database);
+      }
       try { const identity=secure(memoryPath, fresh);if(fresh)createdMemory=identity; }
       catch (error) {
         if (fresh && (error as NodeJS.ErrnoException).code === "EEXIST") throw new Error("MEMORY_STORAGE_CONFLICT");
@@ -173,6 +176,16 @@ export class WorkStore {
         else store.memory.assertOwner(inferred);
         store.memory.snapshot(inferred);
       } else if (!fresh) throw new Error("WORK_MEMORY_INVALID");
+      if (needsUpgrade) {
+        const grant = options.historyMigration!;
+        if (!grant.operationId || !/^[a-f0-9]{64}$/.test(grant.backupManifestDigest) || !grant.storeId) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        database.exec("BEGIN IMMEDIATE");
+        database.exec("ALTER TABLE sessions DROP COLUMN active_context_identity");
+        const result = database.prepare("UPDATE schema_migrations SET version=7 WHERE version=?").run(previous);
+        if (result.changes !== 1) throw new Error("WORK_HISTORY_FORMAT_UNSUPPORTED");
+        migrateWorkDatabase(database);
+        database.exec("COMMIT");
+      }
       if (fresh) database.exec("COMMIT");
       return store;
     } catch (error) {
@@ -194,14 +207,13 @@ export class WorkStore {
     this.assertOpen();
     this.memory.bind(record.workId);
     this.database.prepare(`INSERT INTO sessions(
-      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
       record.workId,
       record.sessionId,
       record.sdkHistoryPath,
       record.createdAt,
       record.updatedAt,
-      record.contextIdentity ?? null,
       record.modelPreferenceJson ?? null,
       record.sourceJson ?? null,
     );
@@ -221,8 +233,8 @@ export class WorkStore {
         return { session, reused: true };
       }
       this.memory.bind(record.workId);
-      this.database.prepare(`INSERT INTO sessions(work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(record.workId, record.sessionId, record.sdkHistoryPath, record.createdAt, record.updatedAt, record.contextIdentity ?? null, record.modelPreferenceJson ?? null, record.sourceJson ?? null);
+      this.database.prepare(`INSERT INTO sessions(work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(record.workId, record.sessionId, record.sdkHistoryPath, record.createdAt, record.updatedAt, record.modelPreferenceJson ?? null, record.sourceJson ?? null);
       this.database.prepare(`INSERT INTO session_idempotency(work_id, idempotency_key, session_id, created_at)
         VALUES (?, ?, ?, ?)`).run(record.workId, idempotencyKey, record.sessionId, record.createdAt);
       this.database.exec("COMMIT");
@@ -233,7 +245,7 @@ export class WorkStore {
   getSession(workId: string, sessionId: string): SessionRecord | undefined {
     this.assertOpen();
     const row = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json
+      work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json
       FROM sessions WHERE work_id = ? AND session_id = ?`).get(workId, sessionId) as
       | Record<string, string | null>
       | undefined;
@@ -243,7 +255,7 @@ export class WorkStore {
   listSessions(workId: string): SessionRecord[] {
     this.assertOpen();
     const rows = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at, active_context_identity, model_preference_json, source_json
+      work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json
       FROM sessions WHERE work_id = ? ORDER BY created_at, session_id`).all(workId) as Array<Record<string, string>>;
     return rows.map(mapSession);
   }
@@ -270,12 +282,9 @@ export class WorkStore {
       if (activity !== undefined) throw new WorkBusyError(activity.active_run_id);
 
       const session = this.database.prepare(
-        "SELECT active_context_identity FROM sessions WHERE work_id = ? AND session_id = ?",
-      ).get(request.workId, request.sessionId) as { active_context_identity: string | null } | undefined;
+        "SELECT session_id FROM sessions WHERE work_id = ? AND session_id = ?",
+      ).get(request.workId, request.sessionId) as { session_id: string } | undefined;
       if (session === undefined) throw new Error(`session ${request.sessionId} does not exist in Work ${request.workId}`);
-      if (request.contextIdentity !== undefined && session.active_context_identity !== request.contextIdentity) {
-        throw new Error(`session ${request.sessionId} context is no longer active`);
-      }
 
       const runId = `run-${randomUUID()}`;
       const now = request.now ?? new Date().toISOString();
@@ -292,7 +301,7 @@ export class WorkStore {
         request.submissionKey,
         request.promptDigest,
         now,
-        session.active_context_identity,
+        request.contextIdentity ?? null,
         request.modelSelectorJson ?? null,
         request.actualModelJson ?? null,
         request.sourceJson ?? null,
@@ -623,7 +632,6 @@ function mapSession(row: Record<string, string | null>): SessionRecord {
     sdkHistoryPath: row.sdk_history_path ?? "",
     createdAt: row.created_at ?? "",
     updatedAt: row.updated_at ?? "",
-    contextIdentity: row.active_context_identity ?? null,
     ...(row.model_preference_json ? { modelPreferenceJson: row.model_preference_json } : {}),
     ...(row.source_json ? { sourceJson: row.source_json } : {}),
   };

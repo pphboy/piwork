@@ -36,7 +36,8 @@ export const HistorySegmentSchema = Type.Object({
   blockId: IdentifierSchema, blockIndex: position, blockCount: position,
   type: Type.Union([Type.Literal("text"), Type.Literal("tool-call"), Type.Literal("tool-result"), Type.Literal("image"), Type.Literal("empty"), Type.Literal("run-result")]),
   byteOffset: position, totalBytes: position, complete: Type.Boolean(), text: Type.String({ maxLength: HISTORY_LIMITS.fragmentBytes }),
-  toolCallId: Type.Optional(IdentifierSchema), toolName: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+  // Provider/SDK call IDs are opaque (Responses may join call and item IDs with |).
+  toolCallId: Type.Optional(Type.String({ minLength: 1, maxLength: 1024 })), toolName: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
   resultKind: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("non-text"), Type.Literal("unavailable")])),
   truncated: Type.Optional(Type.Boolean()), isError: Type.Optional(Type.Boolean()),
   image: Type.Optional(Type.Object({ ...ChatImageDescriptorSchema.properties, imageIndex: Type.Integer({ minimum: 0, maximum: 3 }) }, strict)),
