@@ -2,6 +2,38 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.17",
+      "component": "core",
+      "title": "Piwork 0.0.17 Preview",
+      "publishedAt": "2026-10-30",
+      "sections": [
+        {
+          "title": "Startup preparation and reliable sessions",
+          "items": [
+            "Reuse verified startup preparation across restarts and recover Works independently, retaining individual recovery failures.",
+            "Persist partial Run output and recover cancellation without replaying the submitted message.",
+            "Support compatible Thinking settings across persistent sessions, including OpenAI-compatible providers."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.17",
+      "component": "desktop",
+      "title": "Piwork 0.0.17 Preview",
+      "publishedAt": "2026-10-30",
+      "sections": [
+        {
+          "title": "Chat interaction and message identity",
+          "items": [
+            "Show message submission with icons, keep reply progress beside the conversation, and move normal execution details out of the message text.",
+            "Keep Send, Stop and Stop and send bound to the original Run while preserving the latest draft.",
+            "Reconcile saved and streamed messages, including paged history without source coordinates, so sending and refreshing do not duplicate replies."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.16",
       "component": "core",
       "title": "Piwork 0.0.16 Preview",
