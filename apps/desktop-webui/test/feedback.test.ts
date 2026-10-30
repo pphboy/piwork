@@ -2893,3 +2893,50 @@ for(const [width,locale]of [[1440,'en'],[360,'zh-CN']]as const)test(`Chat histor
  await expect(page.locator('#composer')).toHaveValue('Keep my new draft');
  assert.equal(requests.filter(r=>r.path.endsWith('/history')).length,1);assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
+
+test('Legacy message identity: actual send, stream and SDK readback stay single across equal consecutive turns', async t => {
+ const posts:any[]=[],completed:number[]=[];
+ const run=(n:number,state=4)=>({workId:'work-1',sessionId:'session-1',runId:`legacy-${n}`,submissionKey:posts[n-1]?.submissionKey,state,finalText:state===4?'Stable answer':'',acceptedAt:`2026-10-30T00:00:0${n}Z`});
+ const sdk=(n:number,role:string,text:string)=>({entryId:`sdk-${role}-${n}`,runId:`legacy-${n}`,role,text,blocks:[{blockId:`sdk-${role}-${n}-0`,type:'text',text}]});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{status:501,json:{code:'HISTORY_UNSUPPORTED'}};
+  if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:1}};
+  if(r.path.endsWith('/chat-models'))return{json:{models:[],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one',thinkingLevels:['off'],defaultThinkingLevel:'off'},availability:'available',checkedAt:new Date().toISOString()}};
+  if(r.path.endsWith('/chat-options'))return{json:{sessionId:'session-1',modelRef:null,thinkingLevel:'off',availability:'available',model:{modelRef:null,label:'Work model',provider:'fixture',model:'one'}}};
+  if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null,thinkingLevel:'off'},messages:completed.flatMap(n=>[sdk(n,'user',posts[n-1].prompt),sdk(n,'assistant','Stable answer')]),runs:completed.map(n=>run(n))}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){posts.push(JSON.parse(r.body));return{json:{run:run(posts.length,1)}};}
+  const match=/^works\/work-1\/runs\/legacy-(\d+)(\/events)?$/.exec(r.path);
+  if(match){const n=Number(match[1]);if(!match[2])return{json:{run:run(n)}};if(!completed.includes(n))completed.push(n);return{body:[{sequence:9,kind:{$case:'text',text:{delta:'Stable answer'}}},{sequence:40,kind:{$case:'state',state:{state:4,finalText:'Stable answer'}}}].map(e=>JSON.stringify(e)+'\n').join(''),headers:{'Content-Type':'application/x-ndjson'}};}
+ });
+ for(let n=1;n<=2;n++){
+  await page.locator('#composer').fill('Same input');await button(page,'send-message').click();
+  await expect.poll(()=>api(page,`return adapter.getWork('work-1').sessions[0].messages.some(m=>m.id==='sdk-assistant-${n}-0')`)).toBe(true);
+  await expect(page.locator('#messages .message.user')).toHaveCount(n);await expect(page.locator('#messages .message.assistant')).toHaveCount(n);
+  await api(page,`await adapter.loadSession('work-1','session-1');await adapter.loadSession('work-1','session-1');`);
+  await expect(page.locator('#messages .message.user')).toHaveCount(n);await expect(page.locator('#messages .message.assistant')).toHaveCount(n);
+ }
+ await page.reload();await expect(page.locator('#composer')).toBeVisible();await expect(page.locator('#messages .message.user')).toHaveCount(2);await expect(page.locator('#messages .message.assistant')).toHaveCount(2);
+ assert.equal(posts.length,2);assert.notEqual(posts[0].submissionKey,posts[1].submissionKey);
+ assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/runs').length,2);
+ assert.equal(requests.filter(r=>r.path.endsWith('/history')).length,0);
+});
+
+for(const state of [5,6])test(`Legacy message identity: partial output remains once after terminal state ${state}`,async t=>{
+ let accepted:any,finished=false;
+ const run=()=>({workId:'work-1',sessionId:'session-1',runId:'legacy-partial',state:finished?state:1,finalText:'',...(state===5?{error:{code:'INTERNAL_ERROR',message:'Synthetic failure'}}:{})});
+ const sdk=(id:string,role:string,text:string)=>({entryId:id,runId:'legacy-partial',role,text,blocks:[{blockId:id+'-0',type:'text',text}]});
+ const {page,requests}=await fixture(t,r=>{
+  if(r.path.endsWith('/history-capabilities'))return{status:501,json:{code:'HISTORY_UNSUPPORTED'}};
+  if(r.path==='works/work-1/sessions/session-1')return{json:{session:{workId:'work-1',sessionId:'session-1',modelPreference:null},messages:finished?[sdk('user','user',accepted.prompt),sdk('prefix','assistant','Known ')]:[],runs:finished?[run()]:[]}};
+  if(r.path==='works/work-1/runs'&&r.method==='POST'){accepted=JSON.parse(r.body);return{json:{run:run()}};}
+  if(r.path==='works/work-1/runs/legacy-partial/events'){finished=true;return{body:[{sequence:9,kind:{$case:'text',text:{delta:'Known tail'}}},{sequence:40,kind:{$case:'state',state:{state,finalText:''}}}].map(e=>JSON.stringify(e)+'\n').join(''),headers:{'Content-Type':'application/x-ndjson'}};}
+  if(r.path==='works/work-1/runs/legacy-partial')return{json:{run:run()}};
+ });
+ await page.locator('#composer').fill('Question');await button(page,'send-message').click();
+ const body=()=>api(page,`return adapter.getWork('work-1').sessions[0].messages.filter(m=>m.role==='assistant'&&!m.tool).map(m=>m.text).join('')`);
+ await expect.poll(body).toBe('Known tail');
+ await expect.poll(()=>api(page,`return adapter.getWork('work-1').sessions[0].messages.some(m=>m.id==='prefix-0')`)).toBe(true);
+ await api(page,`await adapter.loadSession('work-1','session-1');await adapter.loadSession('work-1','session-1');`);
+ assert.equal(await body(),'Known tail');await expect(page.locator('#messages .message.user')).toHaveCount(1);await expect(page.locator('#messages .message.assistant')).toHaveCount(2);
+ assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/runs').length,1);
+});

@@ -1,8 +1,9 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
-import { mergeLegacyMessages, resultText, upsertTool } from './chat-projection.js';
+import { resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
+import { LegacyHistoryProjection } from './legacy-history-projection.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
@@ -115,10 +116,14 @@ function mapService(raw: Data): Service {
 export class DesktopAdapter {
   private historySupport = new Map<string, boolean>();
   private historyProjections = new Map<string, HistoryProjection>();
+  private legacyProjections = new Map<string, LegacyHistoryProjection>();
   private historyControllers = new Set<AbortController>();
   private historyReads = new Map<string, Promise<Data>>();
   private historyEventParts = new Map<string, {offset:number;parts:Map<number,string>}>();
   private historyProjection(id:string,session:string) {const key=`${id}:${session}`;let value=this.historyProjections.get(key);if(!value){value=new HistoryProjection();this.historyProjections.set(key,value);}return value;}
+  private legacyProjection(id:string,session:string) {const key=`${id}:${session}`;let value=this.legacyProjections.get(key);if(!value){value=new LegacyHistoryProjection();this.legacyProjections.set(key,value);}return value;}
+  private stopLegacyObservation(id?:string) {for(const [key,value]of this.legacyProjections)if(!id||key.startsWith(`${id}:`))value.stop();}
+  private dropLegacyWork(id:string) {for(const key of this.legacyProjections.keys())if(key.startsWith(`${id}:`))this.legacyProjections.delete(key);}
   historyNotice(id:string) {
     return this.historySupport.get(id)===false?t('d.error.historyNotice'):'';
   }
@@ -602,7 +607,7 @@ export class DesktopAdapter {
     this.terminalEvidence.clear(); this.pendingOperationHides.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
     Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
-    this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.historyEventParts.clear();
+    this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.legacyProjections.clear();this.historyEventParts.clear();
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
     this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.failedChatSnapshots.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
@@ -653,7 +658,7 @@ export class DesktopAdapter {
     if (mutation !== (this.workMutations.get(raw.id) || 0) || sequence < (this.workReads.get(raw.id) || 0)) return old;
     if (old?.controlVersion !== undefined && raw.controlVersion !== undefined && raw.controlVersion < old.controlVersion) return old;
     this.workReads.set(raw.id, sequence);
-    if (raw.observedState === 'deleted') { this.revokeWorkEntries(raw.id); this.deletedWorks.add(raw.id); this.state.works = this.state.works.filter(work => work.id !== raw.id); return; }
+    if (raw.observedState === 'deleted') { this.revokeWorkEntries(raw.id); this.dropLegacyWork(raw.id); this.deletedWorks.add(raw.id); this.state.works = this.state.works.filter(work => work.id !== raw.id); return; }
     if (this.deletedWorks.has(raw.id)) return;
     const mapped = this.mapWork(raw, old);
     if (recoverAccess) mapped.accessRevoked = false;
@@ -953,7 +958,7 @@ export class DesktopAdapter {
       const previousWorks = this.state.works;
       this.state.works = previousWorks.filter(work => ids.has(work.id) ||
         (mutations.get(work.id) || 0) !== (this.workMutations.get(work.id) || 0) || sequence < (this.workReads.get(work.id) || 0));
-      for (const work of previousWorks) if (!this.getWork(work.id)) this.revokeWorkEntries(work.id);
+      for (const work of previousWorks) if (!this.getWork(work.id)) {this.revokeWorkEntries(work.id);this.dropLegacyWork(work.id);}
       for (const [id, sync] of this.workSync) {
         if (sync.generation !== (mutations.get(id) || 0) || sequence <= sync.after) continue;
         const raw = value.works.find((item: Data) => item.id === id), work = this.getWork(id);
@@ -1397,10 +1402,14 @@ export class DesktopAdapter {
     const work = this.getWork(id); if (work?.run?.sessionId === sessionId && ['accepted', 'running', 'cancelling'].includes(work.run.status) && this.streams.has(id)) return;
     const version=this.sessionVersions.get(id)||0;const target=this.getWork(id)?.sessions.find(s=>s.id===sessionId);if(target){target.loading=true;target.error='';this.emit();}
     const imageCheck=this.loadImageCapabilities(id),profile=this.imageCapabilities.get(id)?.value?'?imageProfile=chat-images-v1':'',epoch=this.epoch;
-    let value:Data;try{value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}${profile}`);}catch(error){if(target)target.error=errorText(error);throw error;}finally{if(target){target.loading=false;this.emit();}} const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+    let value:Data;try{value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}${profile}`);}catch(error){if(target&&epoch===this.epoch)target.error=errorText(error);throw error;}finally{if(target&&epoch===this.epoch){target.loading=false;this.emit();}}
+    if(epoch!==this.epoch||this.getWork(id)?.sessions.find(s=>s.id===sessionId)!==target)return;
+    const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
     if (session) { this.confirmSessionModel(id,session,value.session,version); session.runs=(value.runs ?? []).map((run: Data)=>this.runRecord(run,sessionId)); }
     if (session) {
-      session.messages=mergeLegacyMessages(value.messages ?? [],session.messages);session.checkedAt=new Date().toISOString();session.imageProfile=!!profile;
+      const projection=this.legacyProjection(id,sessionId),terminal=(value.runs ?? []).filter((run:Data)=>[4,5,6,7].includes(run.state));
+      for(const run of terminal)if(run.finalText)projection.result({id:`${run.runId}-final`,runId:run.runId,role:'assistant',text:run.finalText});
+      session.messages=projection.merge(value.messages ?? [],session.messages,undefined,terminal.map((run:Data)=>run.runId));session.checkedAt=new Date().toISOString();session.imageProfile=!!profile;
       const active=(value.runs ?? []).find((run:Data)=>[1,2,3].includes(run.state));
       const restore=active && work && (!work.run || !['accepted','running','cancelling'].includes(work.run.status));
       if(restore){
@@ -1816,6 +1825,7 @@ export class DesktopAdapter {
     message.id=`${runId}-user`;message.runId=runId;
     this.failedChatSnapshots.delete(key);message.submission!.phase='accepted';delete message.submission!.error;delete message.pendingImages;
     if(images?.length)message.images=images;
+    if(this.historySupport.get(id)===false)this.legacyProjection(id,sessionId).acceptInput(message);
   }
   async newSession(id:string) {
     if(this.chatSubmissions.has(id))throw failure('RESULT_UNKNOWN','d.error.checkOriginalSubmission');
@@ -1904,6 +1914,7 @@ export class DesktopAdapter {
     void this.loadActiveRun(id,true);
   }
   stopRunObservers() {
+    this.stopLegacyObservation();
     for (const controller of this.streams.values()) controller.abort(); this.streams.clear();
     for (const observer of this.historyObservers.values()) observer.controller.abort(); this.historyObservers.clear();
     for (const timer of this.reconnects.values()) clearTimeout(timer); this.reconnects.clear();
@@ -1935,7 +1946,7 @@ export class DesktopAdapter {
       if (session) {
         const final=!['accepted','running','cancelling'].includes(run.status)&&raw.finalText
           ? {id:`${run.id}-final`,runId:run.id,role:'assistant' as const,text:raw.finalText} : undefined;
-        session.messages = mergeLegacyMessages(history.messages,session.messages,final);
+        session.messages = this.legacyProjection(id,run.sessionId).merge(history.messages,session.messages,final,[run.id].filter(()=>!['accepted','running','cancelling'].includes(run.status)));
         session.imageProfile=!!profile;
       }
       observer.failures = 0;
@@ -1968,12 +1979,13 @@ export class DesktopAdapter {
     const work = this.getWork(id)!; const run = work.run; if (!run) return;
     clearTimeout(this.reconnects.get(id)); this.reconnects.delete(id); run.error = run.executionError;
     this.historyObservers.get(id)?.controller.abort(); this.historyObservers.delete(id);
-    this.streams.get(id)?.abort(); const controller = new AbortController(); this.streams.set(id, controller); const epoch = this.epoch;
+    this.streams.get(id)?.abort(); this.stopLegacyObservation(id); const controller = new AbortController(); this.streams.set(id, controller); const epoch = this.epoch;
     if (run.historyRecovery) { this.streams.delete(id); const observer = { controller, run, epoch, failures: 0 }; this.historyObservers.set(id, observer); await this.recoverRunHistory(id, observer); if (!observer.failures) connected?.(); return; }
     let retry=true;
     try {
       if(!this.historySupport.has(id))await this.supportsHistory(id);
       if(epoch!==this.epoch||controller.signal.aborted||this.streams.get(id)!==controller||this.getWork(id)?.run!==run)return;
+      if(this.historySupport.get(id)===false)this.legacyProjection(id,run.sessionId).begin(run.id,run.cursor);
       const response = await fetch(`/_desktop/api/works/${part(id)}/runs/${part(run.id)}/events?after=${run.cursor}${this.historySupport.get(id)?'&responseProfile=history-v1':''}`, { credentials: 'same-origin', signal: controller.signal });
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
       if (!response.ok) {
@@ -1993,9 +2005,11 @@ export class DesktopAdapter {
           if(offset!==pending.offset)throw new Error(t('d.error.runEventIncomplete'));pending.parts.set(offset,frame.delta??'');pending.offset+=bytes;if(frame.complete)run.cursor=sequence;
         }else run.cursor = sequence;
         const session = work.sessions.find(s => s.id === run.sessionId); if (!session) return;
-        const kind = event.kind; if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.runId!==run.id || message.role !== 'assistant' || message.tool || message.historyStored || message.historyRecoveryUnconfirmed && !message.historyLegacyReplay) { const id=`${run.id}-text-${sequence}`,duplicate=session.messages.some(item=>item.runId===run.id&&item.id===id),uncertain=duplicate || !!message && message.runId===run.id && !!(message.historyStored || message.historyRecoveryUnconfirmed);message = { id:duplicate?`${id}-replay-unconfirmed`:id,runId:run.id,role: 'assistant', text: '',...(uncertain?{historyRecoveryUnconfirmed:true,historyLegacyReplay:true}:{}) }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
-        else if (kind?.$case === 'tool') { const tool = kind.tool; upsertTool(session.messages,{id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant',text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}}); }
-        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); }
+        const kind = event.kind,legacy=this.historySupport.get(id)===false?this.legacyProjection(id,run.sessionId):undefined;
+        if(kind?.$case==='text'&&legacy){legacy.text(run.id,sequence,kind.text.delta??'');session.messages=legacy.project(session.messages);}
+        else if (kind?.$case === 'text') { let message = session.messages.at(-1); if (!message || message.runId!==run.id || message.role !== 'assistant' || message.tool || message.historyStored || message.historyRecoveryUnconfirmed && !message.historyLegacyReplay) { const id=`${run.id}-text-${sequence}`,duplicate=session.messages.some(item=>item.runId===run.id&&item.id===id),uncertain=duplicate || !!message && message.runId===run.id && !!(message.historyStored || message.historyRecoveryUnconfirmed);message = { id:duplicate?`${id}-replay-unconfirmed`:id,runId:run.id,role: 'assistant', text: '',...(uncertain?{historyRecoveryUnconfirmed:true,historyLegacyReplay:true}:{}) }; session.messages.push(message); } message.text += kind.text.delta ?? ''; }
+        else if (kind?.$case === 'tool') { const tool = kind.tool,incoming={id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant' as const,text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}};if(legacy){legacy.tool(run.id,sequence,incoming,tool.phase);session.messages=legacy.project(session.messages);}else upsertTool(session.messages,incoming); }
+        else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if(legacy&&kind.state.finalText)legacy.result({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText});if(legacy)session.messages=legacy.project(session.messages); }
         this.emit(); };
       while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error(t('d.error.runEventTooLarge')); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
@@ -2010,6 +2024,7 @@ export class DesktopAdapter {
       run.error = [run.executionError, t('d.error.resumeOriginalRun', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' '); this.emit();
     } }
     finally {
+      if(epoch===this.epoch&&this.streams.get(id)===controller)this.legacyProjections.get(`${id}:${run.sessionId}`)?.end(run.id,!['accepted','running','cancelling'].includes(run.status));
       if (this.streams.get(id) === controller) {
         this.streams.delete(id);
         if (retry && !run.historyRecovery && epoch === this.epoch && !controller.signal.aborted && this.getWork(id)?.run === run && ['accepted', 'running', 'cancelling'].includes(run.status)) {

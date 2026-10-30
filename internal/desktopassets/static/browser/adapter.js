@@ -1,8 +1,9 @@
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
-import { mergeLegacyMessages, resultText, upsertTool } from './chat-projection.js';
+import { resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
+import { LegacyHistoryProjection } from './legacy-history-projection.js';
 import { synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES } from './image-content.js';
@@ -108,6 +109,7 @@ function mapService(raw) {
 export class DesktopAdapter {
     historySupport = new Map();
     historyProjections = new Map();
+    legacyProjections = new Map();
     historyControllers = new Set();
     historyReads = new Map();
     historyEventParts = new Map();
@@ -115,6 +117,16 @@ export class DesktopAdapter {
         value = new HistoryProjection();
         this.historyProjections.set(key, value);
     } return value; }
+    legacyProjection(id, session) { const key = `${id}:${session}`; let value = this.legacyProjections.get(key); if (!value) {
+        value = new LegacyHistoryProjection();
+        this.legacyProjections.set(key, value);
+    } return value; }
+    stopLegacyObservation(id) { for (const [key, value] of this.legacyProjections)
+        if (!id || key.startsWith(`${id}:`))
+            value.stop(); }
+    dropLegacyWork(id) { for (const key of this.legacyProjections.keys())
+        if (key.startsWith(`${id}:`))
+            this.legacyProjections.delete(key); }
     historyNotice(id) {
         return this.historySupport.get(id) === false ? t('d.error.historyNotice') : '';
     }
@@ -962,6 +974,7 @@ export class DesktopAdapter {
         this.cancelHistoryReads();
         this.historySupport.clear();
         this.historyProjections.clear();
+        this.legacyProjections.clear();
         this.historyEventParts.clear();
         this.stopImageReads();
         for (const value of this.imageLoads.values())
@@ -1086,6 +1099,7 @@ export class DesktopAdapter {
         this.workReads.set(raw.id, sequence);
         if (raw.observedState === 'deleted') {
             this.revokeWorkEntries(raw.id);
+            this.dropLegacyWork(raw.id);
             this.deletedWorks.add(raw.id);
             this.state.works = this.state.works.filter(work => work.id !== raw.id);
             return;
@@ -1519,8 +1533,10 @@ export class DesktopAdapter {
             this.state.works = previousWorks.filter(work => ids.has(work.id) ||
                 (mutations.get(work.id) || 0) !== (this.workMutations.get(work.id) || 0) || sequence < (this.workReads.get(work.id) || 0));
             for (const work of previousWorks)
-                if (!this.getWork(work.id))
+                if (!this.getWork(work.id)) {
                     this.revokeWorkEntries(work.id);
+                    this.dropLegacyWork(work.id);
+                }
             for (const [id, sync] of this.workSync) {
                 if (sync.generation !== (mutations.get(id) || 0) || sequence <= sync.after)
                     continue;
@@ -2544,23 +2560,29 @@ export class DesktopAdapter {
             value = await this.request(`works/${part(id)}/sessions/${part(sessionId)}${profile}`);
         }
         catch (error) {
-            if (target)
+            if (target && epoch === this.epoch)
                 target.error = errorText(error);
             throw error;
         }
         finally {
-            if (target) {
+            if (target && epoch === this.epoch) {
                 target.loading = false;
                 this.emit();
             }
         }
+        if (epoch !== this.epoch || this.getWork(id)?.sessions.find(s => s.id === sessionId) !== target)
+            return;
         const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
         if (session) {
             this.confirmSessionModel(id, session, value.session, version);
             session.runs = (value.runs ?? []).map((run) => this.runRecord(run, sessionId));
         }
         if (session) {
-            session.messages = mergeLegacyMessages(value.messages ?? [], session.messages);
+            const projection = this.legacyProjection(id, sessionId), terminal = (value.runs ?? []).filter((run) => [4, 5, 6, 7].includes(run.state));
+            for (const run of terminal)
+                if (run.finalText)
+                    projection.result({ id: `${run.runId}-final`, runId: run.runId, role: 'assistant', text: run.finalText });
+            session.messages = projection.merge(value.messages ?? [], session.messages, undefined, terminal.map((run) => run.runId));
             session.checkedAt = new Date().toISOString();
             session.imageProfile = !!profile;
             const active = (value.runs ?? []).find((run) => [1, 2, 3].includes(run.state));
@@ -3206,6 +3228,8 @@ export class DesktopAdapter {
         delete message.pendingImages;
         if (images?.length)
             message.images = images;
+        if (this.historySupport.get(id) === false)
+            this.legacyProjection(id, sessionId).acceptInput(message);
     }
     async newSession(id) {
         if (this.chatSubmissions.has(id))
@@ -3453,6 +3477,7 @@ export class DesktopAdapter {
         void this.loadActiveRun(id, true);
     }
     stopRunObservers() {
+        this.stopLegacyObservation();
         for (const controller of this.streams.values())
             controller.abort();
         this.streams.clear();
@@ -3503,7 +3528,7 @@ export class DesktopAdapter {
                 if (session) {
                     const final = !['accepted', 'running', 'cancelling'].includes(run.status) && raw.finalText
                         ? { id: `${run.id}-final`, runId: run.id, role: 'assistant', text: raw.finalText } : undefined;
-                    session.messages = mergeLegacyMessages(history.messages, session.messages, final);
+                    session.messages = this.legacyProjection(id, run.sessionId).merge(history.messages, session.messages, final, [run.id].filter(() => !['accepted', 'running', 'cancelling'].includes(run.status)));
                     session.imageProfile = !!profile;
                 }
                 observer.failures = 0;
@@ -3550,6 +3575,7 @@ export class DesktopAdapter {
         this.historyObservers.get(id)?.controller.abort();
         this.historyObservers.delete(id);
         this.streams.get(id)?.abort();
+        this.stopLegacyObservation(id);
         const controller = new AbortController();
         this.streams.set(id, controller);
         const epoch = this.epoch;
@@ -3568,6 +3594,8 @@ export class DesktopAdapter {
                 await this.supportsHistory(id);
             if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run)
                 return;
+            if (this.historySupport.get(id) === false)
+                this.legacyProjection(id, run.sessionId).begin(run.id, run.cursor);
             const response = await fetch(`/_desktop/api/works/${part(id)}/runs/${part(run.id)}/events?after=${run.cursor}${this.historySupport.get(id) ? '&responseProfile=history-v1' : ''}`, { credentials: 'same-origin', signal: controller.signal });
             if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run)
                 return;
@@ -3624,8 +3652,12 @@ export class DesktopAdapter {
                 const session = work.sessions.find(s => s.id === run.sessionId);
                 if (!session)
                     return;
-                const kind = event.kind;
-                if (kind?.$case === 'text') {
+                const kind = event.kind, legacy = this.historySupport.get(id) === false ? this.legacyProjection(id, run.sessionId) : undefined;
+                if (kind?.$case === 'text' && legacy) {
+                    legacy.text(run.id, sequence, kind.text.delta ?? '');
+                    session.messages = legacy.project(session.messages);
+                }
+                else if (kind?.$case === 'text') {
                     let message = session.messages.at(-1);
                     if (!message || message.runId !== run.id || message.role !== 'assistant' || message.tool || message.historyStored || message.historyRecoveryUnconfirmed && !message.historyLegacyReplay) {
                         const id = `${run.id}-text-${sequence}`, duplicate = session.messages.some(item => item.runId === run.id && item.id === id), uncertain = duplicate || !!message && message.runId === run.id && !!(message.historyStored || message.historyRecoveryUnconfirmed);
@@ -3635,8 +3667,13 @@ export class DesktopAdapter {
                     message.text += kind.text.delta ?? '';
                 }
                 else if (kind?.$case === 'tool') {
-                    const tool = kind.tool;
-                    upsertTool(session.messages, { id: `${run.id}-tool-${tool.toolCallId}`, runId: run.id, role: 'assistant', text: '', tool: { id: tool.toolCallId, name: tool.toolName, status: tool.phase === 'tool-end' ? (tool.isError ? 'Failed' : 'Completed') : 'Running', isError: tool.isError, content: resultText(tool.result, tool.toolName) } });
+                    const tool = kind.tool, incoming = { id: `${run.id}-tool-${tool.toolCallId}`, runId: run.id, role: 'assistant', text: '', tool: { id: tool.toolCallId, name: tool.toolName, status: tool.phase === 'tool-end' ? (tool.isError ? 'Failed' : 'Completed') : 'Running', isError: tool.isError, content: resultText(tool.result, tool.toolName) } };
+                    if (legacy) {
+                        legacy.tool(run.id, sequence, incoming, tool.phase);
+                        session.messages = legacy.project(session.messages);
+                    }
+                    else
+                        upsertTool(session.messages, incoming);
                 }
                 else if (kind?.$case === 'state') {
                     run.status = runStates[kind.state.state] ?? 'interrupted';
@@ -3644,8 +3681,12 @@ export class DesktopAdapter {
                     run.error = run.executionError = kind.state.error?.message;
                     run.errorCode = typeof kind.state.error?.code === 'string' ? kind.state.error.code : undefined;
                     run.errorRetryable = typeof kind.state.error?.retryable === 'boolean' ? kind.state.error.retryable : undefined;
+                    if (legacy && kind.state.finalText)
+                        legacy.result({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
                     if (kind.state.finalText && !session.messages.some(m => m.runId === run.id && m.role === 'assistant' && !!m.text))
                         session.messages.push({ id: `${run.id}-final`, runId: run.id, role: 'assistant', text: kind.state.finalText });
+                    if (legacy)
+                        session.messages = legacy.project(session.messages);
                 }
                 this.emit();
             };
@@ -3705,6 +3746,8 @@ export class DesktopAdapter {
             }
         }
         finally {
+            if (epoch === this.epoch && this.streams.get(id) === controller)
+                this.legacyProjections.get(`${id}:${run.sessionId}`)?.end(run.id, !['accepted', 'running', 'cancelling'].includes(run.status));
             if (this.streams.get(id) === controller) {
                 this.streams.delete(id);
                 if (retry && !run.historyRecovery && epoch === this.epoch && !controller.signal.aborted && this.getWork(id)?.run === run && ['accepted', 'running', 'cancelling'].includes(run.status)) {

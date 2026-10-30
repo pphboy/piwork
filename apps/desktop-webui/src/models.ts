@@ -71,6 +71,8 @@ export interface WorkspaceFile {
   preview?: FilePreview;
 }
 export interface Message {
+  /** Derived live output; the original remains in the Session read model. */
+  historyLegacyProjection?: boolean;
   historyStored?: boolean;
   historyLegacySnapshot?: string;
   historyLegacyIndex?: number;
