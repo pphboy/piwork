@@ -272,7 +272,7 @@ Desktop SHALL 沿用 Serve 浅色语义令牌，包括 `#F5F8FC` 画布、`#F8FB
 
 同类控件 SHALL 使用一致的样式与状态规则：共享视觉角色调整后，所有对应 Desktop 使用处 SHALL 一致变化，局部布局及 Service 应用内部样式 SHALL 保持独立。Work 列表 SHALL 以名称摘要、状态、快捷动作、菜单的顺序组织，状态圆点与文字成组，行内垂直居中、跨行同列对齐；动作控件 SHALL 不同时触发行导航。实现 SHALL 用实际字体、长内容、键盘与窄屏核验，静态坐标不得替代验证，已知错位、遮挡和不可读问题 SHALL 在交付前修正。
 
-首版 SHALL 使用以下浅色角色，状态色始终配文字；未来主题需逐角色定义等价关系与对比度，不得简单反色或重排任务层级。
+首版 SHALL 使用以下浅色角色，除下述 Chat 提交图标例外外，状态色始终配文字；未来主题需逐角色定义等价关系与对比度，不得简单反色或重排任务层级。
 
 | 视觉角色 | 基线值 | 用途 |
 | --- | --- | --- |
@@ -312,6 +312,9 @@ Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为
 工作区 SHALL 按实际可见头部、导航与必要提示占用剩余视口高度，Service/Chat下方不保留无用途的外壳空白；最多保留一条紧凑 StatusLine。Service页面内部空间不属于该调整；内容和输入区通过所属面板滚动保持可达，不以裁掉错误或输入区实现充满。
 
 完成和警告 SHALL 沿用已有颜色角色、图标与简短可见标签，避免重复标题、长成功说明和多处 toast；不得仅凭颜色或不明确图标传义。必要影响、私有数据风险、错误原因、未知状态与安全下一步仍须可理解，不仅藏在 tooltip 或随成功提示一起消失。
+
+Chat 用户消息的发送中、明确失败和提交未知 SHALL 可用气泡外的状态图标表达，不要求常驻状态文字。此例外只适用于 Chat 消息反馈：图形形状、可访问名称、悬停／聚焦说明及点击后原因和恢复共同表达状态，不以颜色独自区分，也不取消错误与未知保护。其他页面和对象状态的文字规则保持。
+
 
 #### Scenario: 全局与Work管理分层
 - **WHEN** 用户查看Works或使用Work
@@ -400,6 +403,10 @@ Works 的 Refresh/Import/New SHALL 使用一致的图标动作组，前两者为
 #### Scenario: 能力晚结果不覆盖用户后续焦点选择
 - **WHEN** 能力读取尚未返回时用户主动移焦、关闭或更换浮层、切换Work/Session或身份
 - **THEN** 晚结果不把焦点拉回原Thinking或原浮层；仍可用控件不因普通背景刷新失焦，不新增焦点陷阱、延迟恢复或业务请求
+
+#### Scenario: Chat 图标例外保持可理解
+- **WHEN** 用户通过鼠标、触摸、键盘或辅助技术访问消息的失败／未确认图标
+- **THEN** 无需依赖颜色即可区分状态并取得原因和有效恢复动作；其他 Work、Service 等对象仍使用原状态表达
 
 ### Requirement: Work 生命周期在列表和面板中可操作且可追溯
 
@@ -546,13 +553,13 @@ New Work SHALL 默认只要求名称并使用默认配置，Advanced SHALL 覆�
 
 原型 SHALL 展示当前 Work 的 Session 列表、新建、读取/切换和对话提交，以及 accepted/running/cancelling/succeeded/failed/cancelled/interrupted。Session 标题 SHALL 来自已加载首消息摘要或创建时间/ID，不假定现有接口支持持久 title/改名。一个 Work 的活跃 Run 限制 SHALL 在其他 Session 中有 busy 说明并保留草稿，不能暗示隐藏队列。
 
-Cancel run SHALL 是明确请求，取消中保留状态直至终态；切换、关闭或断线不等于取消。观察恢复 SHALL 使用原 Run ID/游标，过期读结果/历史，未知不得自动重发 prompt。旧 context 导致 Session 不可用 SHALL 给原因和 New session，不能自动迁移或承诺仍可继续。stopped Work SHALL 不被承诺可以加载 Session/Run；之前加载的消息可标注为旧内容。
+Chat 输入区 SHALL 提供独立的 Cancel run 图标动作，不以非空草稿、合法新消息或 Stop and send 能力作为可取消已确认 Run 的前提；新消息发送仍遵守原准入。独立停止与 Stop and send 的图形、提示和可访问名称 SHALL 清楚区分，二者分别绑定取消和原子交接。Cancel run SHALL 是明确请求，取消中保留状态直至终态；切换、关闭或断线不等于取消。观察恢复 SHALL 使用原 Run ID/游标，过期读结果/历史，未知不得自动重发 prompt。旧 context 导致 Session 不可用 SHALL 给原因和 New session，不能自动迁移或承诺仍可继续。stopped Work SHALL 不被承诺可以加载 Session/Run；之前加载的消息可标注为旧内容。
 
 Chat SHALL 表达模型选择只作用于下一次新手动 Run，展示每次 Run 实际模型与用户/Service 来源。自动请求的 pending、等待、验证及终态 SHALL 与 Run 执行状态分开呈现：等待不是模型一直运行，不是手动消息隐藏队列。Cancel run 与 Cancel request SHALL 分别解释取消当前执行及直接取消请求的范围；取消有关联请求的 Run 也终止原未完成请求的后续自动处理。
 
 当前用户 Chat 有可发送的模型输入、且同 Work 存在已确认活跃 Run 时，支持该能力的 Desktop SHALL 在原发送按钮位置提供 Stop and send，目标为用户点击时明确绑定的旧 Run。用户显式提交才请求取消，取消可以针对本 Session、其他 Session 或 Service Run，仍在用户所选 Session 发送新消息。未显式执行该动作、仅切换或输入时 SHALL 保持既有 busy 与草稿规则。取消关联未完成请求后 SHALL 不自动恢复原处理，历史与已产生业务结果保持。
 
-取消等待和提交 SHALL 在当前输入区表达，失败或取消等待超过 5 秒时保留待发内容并提供原状态核对，不把请求取消当作已经停止，不在超时后自动发送。普通发送、网页 slash 动作、模型设置、输入法与观察恢复 SHALL 保持原语义；旧 Agent 未确认新能力时保留原 Cancel run 及普通聊天，不暗中替换运行镜像。
+取消等待和提交 SHALL 在所属消息与输入控制处表达，正常受理不重复铺回执；失败或取消等待超过 5 秒时保留待发内容并提供原状态核对，不把请求取消当作已经停止，不在超时后自动发送。普通发送、网页 slash 动作、模型设置、输入法与观察恢复 SHALL 保持原语义；旧 Agent 未确认新能力时保留原 Cancel run 及普通聊天，不暗中替换运行镜像。
 
 Chat 正文 SHALL 不再附加按 Run ID 罗列的 Run History 列表；每次 Run 的实际模型、Thinking、来源及必要执行诊断 SHALL 通过可确认关联的按需详情保持可查。删除该展示不删除历史、不隐藏正在执行、错误或未知结果，不把历史详情的打开变成 Session 切换或新提交。
 
@@ -589,6 +596,10 @@ Chat 正文 SHALL 不再附加按 Run ID 罗列的 Run History 列表；每次 R
 #### Scenario: 后台活动不覆盖当前对话错误
 - **WHEN** 当前用户 Session 的原 Run 失败或观察中断，同时另一个 Session 或 Service 有活跃 Run
 - **THEN** 当前 Chat 保留原错误及原对象核对入口，同时显示后台来源和指向该后台 Run 的 Stop and send，两类动作不混用目标
+
+#### Scenario: 空输入下取消与新提交分离
+- **WHEN** 原 Run 可取消但输入为空，或用户已有下一条草稿
+- **THEN** 独立停止可用且不发新消息；用户另行明确执行 Stop and send 时才原子交接，取消不消费新草稿或冒称已成功终止
 
 ### Requirement: Service 管理保留真实控制语义
 
@@ -730,7 +741,7 @@ Response settings SHALL 在同一面板中相邻呈现 Model 与 Thinking 的当
 
 所有可输入的 Chat 容器 SHALL 共用上述层级和同一 Session 草稿。面板 SHALL 可通过键盘打开、选择与关闭，Esc 优先关闭面板并返回来源，不能同时退出 Focus chat；360px 下所有动作、状态、长名称和面板 SHALL 可达，页面无横向溢出。
 
-工具执行 SHALL 以默认折叠的 Activity 表达，摘要包括调用数量、进行中或已结束状态和失败数量；成功不永久占用聊天正文，失败摘要不能被折叠隐藏。展开内容保持工具名、实际状态和可取得结果，折叠不隐藏正文回复。界面标签与无障碍名称 SHALL 为英文并沿用 DUL-007 的视觉令牌，360px 下控件可换行、弹层可达且不产生整页横向滚动。
+工具执行 SHALL 以默认折叠的 Activity 表达：单次调用可显示真实工具名和已取得的对象信息，多次调用摘要显示数量；进行中、已结束和失败数量可辨，失败摘要不能被折叠隐藏。主等待动效随正文或所属活动阶段出现一次，不新增 Agent 正在回复等独立文案行，成功不增加常驻 Run succeeded 行。展开内容先显示工具身份、实际状态与可取得结果，原始内容进一步按需查看；缺失参数不伪造、不额外读取私有数据，折叠不隐藏正文回复。用户展开、阅读位置和输入焦点不因过程更新丢失。界面标签与无障碍名称 SHALL 为英文并沿用 DUL-007 的视觉令牌，360px 下控件可换行、弹层可达且不产生整页横向滚动。
 
 #### Scenario: 打开已有内容并后台更新
 - **WHEN** 用户返回已读取的 Work 模块且后台正在更新
@@ -759,6 +770,10 @@ Response settings SHALL 在同一面板中相邻呈现 Model 与 Thinking 的当
 #### Scenario: 摘要在宽屏保持内容宽度
 - **WHEN** 用户放大 Chat，当前模型名和 Thinking 都很短
 - **THEN** 配置摘要只占其内容需要的宽度，Input options 与 Send 在底栏右侧，输入区不会出现两个随宽度拉开的配置字段
+
+#### Scenario: 工具摘要与正文分工
+- **WHEN** 一轮回复从正文生成切换到工具执行，再取得结果并继续回答
+- **THEN** 主等待动效跟随所属阶段一次出现，工具默认折叠且可展开；展开后先看实际调用与结果，正常结束不增加独立 Run 状态行
 
 ### Requirement: Focus 与新增 Chat 控件沿用现有交互语言
 
