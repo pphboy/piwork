@@ -1,3 +1,4 @@
+import { createKnownDialogRecovery, safePackageRecoverySource } from './dialog-recovery.js';
 import { retireConfirmedLoginFailure, retireLoginReadbackInfo, retirePreviousLoginFailure, signOutFailure } from './login-feedback.js';
 import { createUserRecovery } from './user-recovery.js';
 import { captureViewGuard } from './view-scope.js';
@@ -124,7 +125,7 @@ function resultFeedback(message, tone = 'info', recovery = '') {
     });
     if (notice)
         publishNotice(notice);
-    if (tone === 'success')
+    if (tone === 'success' || tone === 'info')
         return '';
     return `<div class="owned-feedback ${tone}" role="status"><span>${esc(message)}</span>${recovery ? `<div class="feedback-actions">${recovery}</div>` : ''}</div>`;
 }
@@ -1375,7 +1376,7 @@ function reviewDefaultConflicts() {
     openDialog(t('conflicts.resolveTitle'), t('conflicts.resolveDetail'), `<div class="review-list">${defaultConflicts.map((k) => `<div><h3>${esc(k)}</h3><p><span>${t('conflicts.onCore')}</span>${esc(JSON.stringify(defaults[k]))}</p><p><span>${t('conflicts.yourDraft')}</span>${esc(JSON.stringify(defaultDraft[k]))}</p></div>`).join("")}</div><p class="help">${t('conflicts.resolveHelp')}</p><div data-layout="layout-role-3">${Button(t('conflicts.useCore'), "resolve-default-conflicts-core", "secondary")}</div>`, t('conflicts.keepDraft'), () => {
         defaultConflicts = [];
         closeDialog(true);
-        feedback = localizedFeedback(() => resultFeedback(t('conflicts.keptDraft'), "warning"));
+        feedback = localizedFeedback(() => resultFeedback(t('conflicts.keptDraft'), "info"));
         renderPage();
     });
 }
@@ -1537,6 +1538,7 @@ function operationPage() {
         Section(t('operation.detailsTitle'), t('operation.detailsDetail'), `<div class="section-body"><dl class="summary-list"><dt>${t('operation.id')}</dt><dd class="inline-id"><code>${esc(o.id)}</code>${Copy(o.id)}</dd><dt>${t('operation.package')}</dt><dd>${esc(o.packageName)}</dd><dt>${t('operation.packagePhase')}</dt><dd>${esc(o.packagePhase || t('operation.phaseNotReported'))}</dd><dt>${t('operation.created')}</dt><dd>${date(o.createdAt)}</dd><dt>${t('operation.updated')}</dt><dd>${date(o.updatedAt)}</dd><dt>${t('operation.result')}</dt><dd>${esc(o.result || t('operation.noResult'))}</dd></dl>${o.diagnostic ? `<div data-layout="layout-role-4">${Feedback(o.diagnostic.message, "error")}<p class="help mono">${esc(o.diagnostic.stage)} / ${esc(o.diagnostic.code)}</p></div>` : ""}</div><div class="section-footer"><span>${t('operation.continuesNote')}</span>${o.state === "succeeded" ? NavLink(t('operation.viewPackage'), "/packages/" + encodeURIComponent(o.packageName), "btn secondary") : !running ? Button(t('operation.startNew'), "retry-operation", "secondary", `data-id="${o.id}"`) : Button(t('operation.copyId'), "copy", "secondary", `data-value="${o.id}"`)}</div>`) +
         Section(t('operation.publicTitle'), t('operation.publicDetail'), Disclosure(t('operation.viewFields'), `<pre>${esc(JSON.stringify({ id: o.id, scope: "core", state: o.state, packagePhase: o.packagePhase, packageName: o.packageName, createdAt: o.createdAt, updatedAt: o.updatedAt, result: o.result, diagnostic: o.diagnostic ?? null }, null, 2))}</pre>`)));
 }
+let registerDialogRecovery = null;
 let dialogOriginQuery = "", addDefaultDraft = false, pendingSource = null;
 function openDialog(title, description, body, submitLabel, action, kind = "primary", preserveDraft = false, readOnly = false) {
     const active = document.activeElement;
@@ -1547,6 +1549,7 @@ function openDialog(title, description, body, submitLabel, action, kind = "prima
     dialogOriginQuery = origin?.dataset.action
         ? `[data-action="${origin.dataset.action}"]${origin.dataset.id ? `[data-id="${origin.dataset.id}"]` : origin.dataset.name ? `[data-name="${CSS.escape(origin.dataset.name)}"]` : ""}`
         : origin?.dataset.modelAction ? `[data-model-action="${origin.dataset.modelAction}"]` : "";
+    registerDialogRecovery = null;
     currentModalTitleText = typeof title === 'function' ? title : () => title;
     currentModalTitle = currentModalTitleText();
     dialogAction = readOnly ? null : action;
@@ -1596,6 +1599,7 @@ function closeDialog(force = false) {
     dialog = null;
     dialogRecord = null;
     dialogAction = null;
+    registerDialogRecovery = null;
     syncNotices();
     dialogDirty = false;
     dialogOrigin = null;
@@ -1691,6 +1695,25 @@ function registerCreateUserRecovery(record, draft) {
         createUserDialog({ ...safe, record });
     }, () => dialog?.querySelector('[data-action="close-dialog"]')?.focus());
 }
+function restoreDialogFailure(record, recovery = '') {
+    if (!actions.current(record))
+        return;
+    dialogRecord = record;
+    const error = document.querySelector('#dialog-feedback');
+    if (error)
+        error.innerHTML = OwnedFeedback(`${record.targetText?.() ?? record.target} · ${record.errorText?.() ?? record.error ?? ''}`, 'error', recovery);
+}
+function registerKnownDialogRecovery(record, reopen) {
+    record.recover = createKnownDialogRecovery({ identity: adapter.identityEpoch, view: path }, () => ({ identity: adapter.identityEpoch, view: path, failed: !record.pending && !!record.error && !record.result,
+        current: actions.current(record) && !record.blocked && !['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN', 'UPLOAD_INTERRUPTED'].includes(record.errorCode || ''),
+        otherDialog: !!dialog && dialogRecord !== record }), () => {
+        if (dialog && dialogRecord === record) {
+            dialog.querySelector('#dialog-feedback')?.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+        reopen();
+    }, () => dialog?.querySelector('[data-action="close-dialog"]')?.focus());
+}
 function clearModalPasswords() {
     dialog
         ?.querySelectorAll("input[type=password]")
@@ -1710,8 +1733,8 @@ function setFieldError(id, message) {
         error.hidden = false;
     }
 }
-function userActionDialog(id, action) {
-    const u = users.find((u) => u.id === id);
+function userActionDialog(id, action, recovery) {
+    const u = recovery ? { id, account: recovery.account } : users.find((u) => u.id === id);
     if (!u)
         return;
     const title = action === "reset"
@@ -1727,7 +1750,7 @@ function userActionDialog(id, action) {
         : action === "disable"
             ? t('users.promptDisable', { name: `<strong>${esc(u.account)}</strong>` })
             : t('users.promptEnable', { name: `<strong>${esc(u.account)}</strong>` });
-    openDialog(`${title}: ${u.account}`, impact, `<p class="break">${prompt}</p>${u.id === adapter.currentUserId && action !== "enable" ? Feedback(t('users.selfChangeWarning'), "warning") : ""}${action === "reset" ? `<div data-layout="layout-role-5">${Field("reset-password", t('dialog.newPassword'), Input("reset-password", "", 'type="password" required minlength="12" maxlength="1024" autocomplete="new-password"'), t('dialog.passwordHelp'))}${Field("reset-confirm", t('field.confirmPassword'), Input("reset-confirm", "", 'type="password" required minlength="12" autocomplete="new-password"'))}</div>` : `<p class="help" data-layout="layout-role-2">${action === "disable" ? t('users.adminRemains') : impact}</p>`}`, title, async (form) => {
+    openDialog(() => `${t(action === 'reset' ? 'users.resetTitle' : action === 'disable' ? 'users.disableTitle' : 'users.enableTitle')}: ${u.account}`, impact, `<p class="break">${prompt}</p>${u.id === adapter.currentUserId && action !== "enable" ? Feedback(t('users.selfChangeWarning'), "warning") : ""}${action === "reset" ? `<div data-layout="layout-role-5">${Field("reset-password", t('dialog.newPassword'), Input("reset-password", "", 'type="password" required minlength="12" maxlength="1024" autocomplete="new-password"'), t('dialog.passwordHelp'))}${Field("reset-confirm", t('field.confirmPassword'), Input("reset-confirm", "", 'type="password" required minlength="12" autocomplete="new-password"'))}</div>` : `<p class="help" data-layout="layout-role-2">${action === "disable" ? t('users.adminRemains') : impact}</p>`}`, title, async (form) => {
         if (action === "reset" &&
             form.get("reset-password") !== form.get("reset-confirm")) {
             setFieldError("reset-confirm", t('dialog.passwordMismatch'));
@@ -1771,8 +1794,12 @@ function userActionDialog(id, action) {
                 submit.textContent = title;
         }
     }, action === "enable" ? "primary" : "danger");
+    const originalAccount = u.account;
+    registerDialogRecovery = record => registerKnownDialogRecovery(record, () => userActionDialog(id, action, { record, account: originalAccount }));
+    if (recovery)
+        restoreDialogFailure(recovery.record);
 }
-function catalogActionDialog(kind, name, action) {
+function catalogActionDialog(kind, name, action, recovery) {
     const noun = kind === "skills" ? t('catalog.skill') : t('catalog.package');
     const danger = action !== "enable";
     const verb = action === "enable"
@@ -1786,7 +1813,7 @@ function catalogActionDialog(kind, name, action) {
         : action === "disable"
             ? t('catalog.disablePrompt', { name: markedName })
             : t('catalog.enablePrompt', { name: markedName });
-    openDialog(`${verb} ${noun}`, `${name}`, `<p class="break">${prompt}</p><p class="help" data-layout="layout-role-2">${action === "enable" ? t('catalog.enableHelp') : t('catalog.changeHelp')}</p>${action === "remove" ? `<div data-layout="layout-role-5">${Field("confirm-name", t('catalog.typeName'), Input("confirm-name", "", 'required autocomplete="off"'), esc(name))}</div>` : ""}`, `${verb} ${noun}`, async (form) => {
+    openDialog(() => `${t(action === 'enable' ? 'catalog.enable' : action === 'disable' ? 'catalog.disable' : 'catalog.remove')} ${t(kind === 'skills' ? 'catalog.skill' : 'catalog.package')}`, `${name}`, `<p class="break">${prompt}</p><p class="help" data-layout="layout-role-2">${action === "enable" ? t('catalog.enableHelp') : t('catalog.changeHelp')}</p>${action === "remove" ? `<div data-layout="layout-role-5">${Field("confirm-name", t('catalog.typeName'), Input("confirm-name", "", 'required autocomplete="off"'), esc(name))}</div>` : ""}`, `${verb} ${noun}`, async (form) => {
         if (action === "remove" && form.get("confirm-name") !== name) {
             setFieldError("confirm-name", t('catalog.nameMismatch'));
             return;
@@ -1834,8 +1861,11 @@ function catalogActionDialog(kind, name, action) {
                     `${verb} ${noun}`;
         }
     }, danger ? "danger" : "primary");
+    registerDialogRecovery = record => registerKnownDialogRecovery(record, () => catalogActionDialog(kind, name, action, record));
+    if (recovery)
+        restoreDialogFailure(recovery);
 }
-function uploadChooser(type, target, keep = false) {
+function uploadChooser(type, target, keep = false, recovery) {
     if (!keep) {
         upload = null;
         packageIntent = null;
@@ -1843,6 +1873,11 @@ function uploadChooser(type, target, keep = false) {
         packageSourceDraft = "";
         addDefaultDraft = false;
         uploadKind = "npm";
+    }
+    if (recovery) {
+        uploadKind = recovery.kind;
+        packageSourceDraft = recovery.source;
+        addDefaultDraft = recovery.addDefault;
     }
     uploadType = type;
     uploadTarget = target;
@@ -1864,7 +1899,7 @@ function uploadChooser(type, target, keep = false) {
     const body = type === "skill"
         ? `${target ? `<p class="help" data-layout="layout-role-1">${t('upload.immutableSkillName')} <strong>${esc(target)}</strong></p>` : ""}<div class="upload-box">${icon("upload", 25)}<div><p>${t('upload.chooseCompleteSkillDir')}</p>${fileInput}<p class="help">${t('upload.skillDirHelp')}</p></div></div>${!directorySupported ? Feedback(t('upload.noDirectorySupport'), "warning") : ""}${selected}<ul class="file-limits"><li>${t('upload.skillLimitIdentity')}</li><li>${t('upload.skillLimitSize')}</li><li>${t('upload.skillLimitFiles')}</li></ul>`
         : `${target ? `<p class="help" data-layout="layout-role-1">${t('upload.updateTargetNote', { name: `<strong>${esc(target)}</strong>` })}</p>` : ""}<div class="source-options" role="group" aria-label="${esc(t('upload.packageSourceAria'))}">${["npm", "Git", "Local directory", "ZIP"].map((kind) => Button(sourceLabel(kind), "package-source", "source-option" + (kind === uploadKind ? " active" : ""), `data-kind="${kind}" ${intentLocked ? "disabled" : ""}`)).join("")}</div><div id="source-confirm"></div>${local ? `<div class="upload-box">${icon("upload", 24)}<div><p>${uploadKind === "ZIP" ? t('upload.choosePackageZip') : t('upload.choosePackageDir')}</p>${fileInput}<p class="help">${uploadKind === "ZIP" ? t('upload.zipHelp') : t('upload.dirHelp')}</p></div></div>${selected}` : Field("package-source", t('upload.sourceSpec'), Input("package-source", packageSourceDraft, `required placeholder="${uploadKind === "npm" ? "@scope/package@version" : "https://github.com/owner/repository.git#ref"}" ${intentLocked ? "disabled" : ""}`), uploadKind === "npm" ? t('upload.npmHelp') : t('upload.gitHelp'))}${!target ? `<label class="check-label" data-layout="layout-role-4"><input type="checkbox" id="add-default" ${addDefaultDraft ? "checked" : ""} ${intentLocked ? "disabled" : ""}><span>${t('upload.addDefault')}<br><span class="help">${t('upload.addDefaultHelp')}</span></span></label>` : ""}<ul class="file-limits"><li>${t('upload.packageLimitSize')}</li><li>${t('upload.packageLimitCount')}</li><li>${t('upload.packageLimitFiles')}</li><li>${t('upload.packageLimitMigration')}</li></ul>`;
-    openDialog(title, type === "skill"
+    openDialog(() => type === 'skill' ? t(target ? 'upload.updateSkillDirectory' : 'skills.add') : t(target ? 'packages.update' : 'packages.install'), type === "skill"
         ? t('upload.skillDetail')
         : t('upload.packageDetail'), body + `<div id="upload-stage"></div>`, type === "skill"
         ? t('upload.uploadSkill')
@@ -1873,7 +1908,26 @@ function uploadChooser(type, target, keep = false) {
             : target
                 ? t('upload.submitUpdate')
                 : t('packages.install'), type === "skill" ? submitSkill : submitPackage, "primary", keep);
-    if (intentLocked) {
+    registerDialogRecovery = record => {
+        const kind = uploadKind;
+        const source = safePackageRecoverySource(kind, document.querySelector('#package-source')?.value.trim() || '');
+        const addDefault = !!document.querySelector('#add-default')?.checked;
+        registerKnownDialogRecovery(record, () => uploadChooser(type, target, false, { record, kind, source, addDefault }));
+    };
+    if (recovery) {
+        restoreDialogFailure(recovery.record, type === 'package' ? Button(t('upload.editNewIntent'), 'new-package-intent', 'secondary') : '');
+        if (type === 'package') {
+            // This is the rejected context, not a resumable submission or a newly generated intent.
+            intentLocked = true;
+            const submit = document.querySelector('#dialog-submit');
+            if (submit) {
+                submit.disabled = true;
+                submit.textContent = t('package.resumeSubmission');
+            }
+            dialog?.querySelectorAll('input, [data-action="package-source"]').forEach(node => { node.disabled = true; });
+        }
+    }
+    if (intentLocked && !recovery) {
         const submit = document.querySelector("#dialog-submit");
         if (submit)
             submit.dataset.resumeSubmission = "true";
@@ -1927,6 +1981,8 @@ async function submitSkill() {
         const submit = document.querySelector("#dialog-submit");
         if (submit)
             submit.textContent = t('upload.uploadSkill');
+        if (unknown && dialogRecord)
+            dialogRecord.recover = undefined;
         if (unknown)
             document.querySelector("#dialog-submit").disabled =
                 true;
@@ -2014,6 +2070,8 @@ async function submitPackage(form) {
             return;
         const ambiguous = e instanceof ConsoleError &&
             ["ACCEPTANCE_UNKNOWN", "UPLOAD_INTERRUPTED"].includes(e.code);
+        if (ambiguous && dialogRecord)
+            dialogRecord.recover = undefined;
         dialogFeedback(err(e), ambiguous ? "warning" : "error", ambiguous
             ? ""
             : Button(t('upload.editNewIntent'), "new-package-intent", "secondary"));
@@ -2484,11 +2542,14 @@ document.addEventListener("submit", async (event) => {
         const submitButton = form.querySelector('button[type="submit"]');
         if (!submissionPending && !preflightPending && !submitButton?.disabled) {
             const submit = dialogAction, data = new FormData(form);
+            const registerRecovery = registerDialogRecovery;
             const titleText = currentModalTitleText;
-            const target = routeId() || String(data.get('new-account') || upload?.name || packageSourceDraft || '');
+            const packageSource = form.querySelector('#package-source') ? safePackageRecoverySource(uploadKind, String(data.get('package-source') || '')) || t('upload.sourceSpec') : '';
+            const target = routeId() || String(data.get('new-account') || upload?.name || packageSource || '');
             const targetText = () => `${titleText()} · ${target || t('term.core')}`;
             await tracked({ key: `dialog:${path}:${currentModalTitle}`, kind: 'configuration', resource: currentModalTitle, label: t('intent.submitting'), target: targetText(), targetText, anchor: '#dialog-submit', view: path }, async (record) => {
                 dialogRecord = record;
+                registerRecovery?.(record);
                 if (form.querySelector('#new-account'))
                     registerCreateUserRecovery(record, {
                         account: String(data.get('new-account') || ''), role: String(data.get('new-role')) === 'Administrator' ? 'Administrator' : 'User',

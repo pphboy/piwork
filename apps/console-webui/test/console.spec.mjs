@@ -303,15 +303,23 @@ test('R6 actual Core phase enums drive progress and raw details, including readb
   operationState = 'running'; operationPhase = 'queued';
   try {
     await login(page); await page.goto(base+'/operations/operation-0199e6d8abcd');
+    const assertNoInventedProgressOrCancel = async () => {
+      const operationView = page.locator('main');
+      await expect(operationView.getByRole('button', { name: /cancel/i })).toHaveCount(0);
+      await expect(operationView.locator('progress, [role="progressbar"][aria-valuenow]')).toHaveCount(0);
+      await expect(operationView).not.toContainText(/\b\d+(?:\.\d+)?\s*%/);
+    };
     for (const [raw,label] of [['queued','Accepted'],['source','Resolving'],['prepare','Preparing'],['validate','Validating'],['publish','Publishing']]) {
       operationPhase = raw; await page.getByRole('button',{name:'Refresh',exact:true}).click();
       await expect(page.locator('.phase-step.current')).toHaveText(label);
       await expect(page.locator('dt').filter({hasText:'Package phase'}).locator('+ dd')).toHaveText(raw);
+      await assertNoInventedProgressOrCancel();
     }
     // Find Operation / full reload uses the raw API enum, without a new install.
     await page.reload(); await expect(page.locator('.phase-step.current')).toHaveText('Publishing');
     operationPhase = 'future-phase'; await page.getByRole('button',{name:'Refresh',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Unrecognized phase: future-phase'})).toBeVisible(); await expect(page.locator('.phase-step.current')).toHaveCount(0);
+    await assertNoInventedProgressOrCancel();
     operationPhase = 'failed'; operationState = 'failed'; await page.getByRole('button',{name:'Refresh',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Operation failed',exact:true})).toBeVisible(); await expect(page.locator('.phase-step.done')).toHaveCount(0); await expect(page.getByText('Final state · Observation stopped')).toBeVisible();
     operationPhase = 'superseded'; operationState = 'superseded'; await page.getByRole('button',{name:'Refresh',exact:true}).click(); await expect(page.getByRole('heading',{name:'Operation superseded'})).toBeVisible();
