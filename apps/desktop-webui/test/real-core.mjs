@@ -854,17 +854,37 @@ try {
   const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work-2'), 'imported Work', 180_000);
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
   await recoverOnNewPage('Real Browser Work-2', importAccepted.operationId, 'operation');
+  // The other page proves recovery, not this page's observation. Returning and
+  // explicitly reading the original receipt preserves Close's pause contract.
+  await page.bringToFront();
+  const originalImportRead = page.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/operations/${encodeURIComponent(importAccepted.operationId)}` && response.request().method() === 'GET');
+  await page.locator(`#modal [data-action="check-operation"][data-id="${importAccepted.operationId}"]`).click();
+  const originalImportReceipt = await originalImportRead;
+  assert.equal(originalImportReceipt.status(), 200);
+  const originalImportResult = await originalImportReceipt.json();
+  assert.equal(originalImportResult.operationId, importAccepted.operationId);
+  assert.equal(originalImportResult.workId, imported.id);
+  assert.equal(originalImportResult.state, 'succeeded');
+  await expect(page.locator('#modal')).toContainText('Imported · Not started');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.work-row').filter({ hasText: 'Real Browser Work-2' })).toContainText('Stopped', { timeout: 180000 });
   await page.getByRole('link', { name: /^Real Browser Work-2/ }).click();
   await page.getByRole('heading', { name: 'Real Browser Work-2', exact: true }).waitFor();
   const start = page.getByRole('button', { name: 'Start Work', exact: true }).first();
   assert.equal(await start.getAttribute('data-id'), imported.id, 'Start must target the opened Work');
+  const importedStartPath = `/_desktop/api/works/${imported.id}/start`;
+  const importedStartResponse = page.waitForResponse(response => new URL(response.url()).pathname === importedStartPath && response.request().method() === 'POST');
   await start.click();
-  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  const importedStartReceipt = await importedStartResponse;
+  assert.equal(importedStartReceipt.status(), 202, await importedStartReceipt.text());
+  const importedStartAccepted = await importedStartReceipt.json();
+  assert.ok(importedStartAccepted.operationId);
+  await expect(page.locator('.work-header .work-header-status')).toBeVisible();
+  await expect(page.locator('.work-header .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await waitState(imported.id, 'ready');
+  assert.equal(lifecycleRequests.filter(path => path === importedStartPath).length, 1, 'the imported Work must start only through the original explicit action');
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor();
   await waitFor(async () => (await page.locator('#messages').innerText()).includes('skill-read:'), 'restored session history');
