@@ -200,6 +200,11 @@ try {
   await recoverOnNewPage('Real Browser Work', createAccepted.operationId, 'operation');
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
   await page.locator('#create-name').fill('Real Browser Work');
+  let duplicateCreatePosts = 0;
+  const countDuplicateCreate = request => {
+    if (new URL(request.url()).pathname === '/_desktop/api/works' && request.method() === 'POST') duplicateCreatePosts++;
+  };
+  page.on('request', countDuplicateCreate);
   const nameConflictResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/works' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Create Work', exact: true }).click();
   const nameConflict = await nameConflictResponse;
@@ -208,6 +213,19 @@ try {
   await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
   await expect(page.locator('#create-name')).toHaveValue('Real Browser Work');
   await page.screenshot({ path: join(screenshotDir, '00-create-name-conflict.png'), fullPage: true });
+  // Acknowledge this known rejection while its original field/draft still own the truth.
+  // Closing the notice must neither erase that failure nor repeat the rejected creation.
+  const duplicateNameNotice = page.locator('.notice-host .notice-error')
+    .filter({ hasText: 'Real Browser Work' })
+    .filter({ hasText: 'This Work name is already in use or reserved. Choose a different name.' });
+  await expect(duplicateNameNotice).toHaveCount(1);
+  await duplicateNameNotice.locator('.notice-close').click();
+  await expect(duplicateNameNotice).toHaveCount(0);
+  await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
+  await expect(page.locator('#create-name')).toHaveValue('Real Browser Work');
+  assert.equal(duplicateCreatePosts, 1, 'Acknowledging the known rejection must not replay Create Work');
+  assert.equal((await api(coreUrl, token, 'GET', '/api/v1/works')).data.works.length, 1);
+  page.off('request', countDuplicateCreate);
   await page.getByRole('button', { name: 'Close dialog' }).click();
   assert.equal((await api(coreUrl, token, 'GET', '/api/v1/works')).data.works.length, 1);
   await page.getByRole('link', { name: /^Real Browser Work/ }).click();
@@ -661,13 +679,24 @@ try {
   const stoppedGateway = await fetch(`${coreUrl}/api/v1/service-gateway/${stoppedService.access.hostname}/8099/`, { headers: { 'X-Piwork-Gateway-Token': token } });
   assert.equal((await stoppedGateway.json()).code, 'SERVICE_UNAVAILABLE');
   await page.screenshot({ path: join(screenshotDir, '07-work-stopped.png'), fullPage: true });
+  const startPath = `/_desktop/api/works/${workId}/start`;
+  const startResponse = page.waitForResponse(response => new URL(response.url()).pathname === startPath && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Start Work', exact: true }).first().click();
-  await expect(page.locator('.object-control-progress [data-action=operation]')).toBeVisible();
+  const startReceipt = await startResponse;
+  assert.equal(startReceipt.status(), 202, await startReceipt.text());
+  const startAccepted = await startReceipt.json();
+  assert.ok(startAccepted.operationId);
+  await expect(page.locator('.work-header .work-header-status')).toBeVisible();
+  await expect(page.locator('.work-header .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
   await waitState(workId, 'ready');
+  // Start may finish before a pending frame is painted. Recover its exact receipt
+  // through this Work's original-task entry rather than requiring a transient card.
+  await recoverOnNewPage('Real Browser Work', startAccepted.operationId, 'operation');
+  assert.equal(lifecycleRequests.filter(path => path === startPath).length, 1, 'Start recovery must not submit another Start');
   console.log('Real Desktop: original Work Start confirmed');
   const restored = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services`)).data.services;
   assert.equal(restored.find(item => item.serviceId === service.data.serviceId)?.enabled, true);
