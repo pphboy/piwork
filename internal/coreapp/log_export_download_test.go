@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -260,24 +262,82 @@ func TestLogExportDownloadStopsAfterSessionRevocation(t *testing.T) {
 	}
 }
 
+// logDownloadBarrierWriter holds a real HTTP response in its first body Write.
+// Unwrap preserves the production handler's ResponseController behavior.
+type logDownloadBarrierWriter struct {
+	http.ResponseWriter
+	entered chan<- struct{}
+	release <-chan struct{}
+	once    sync.Once
+}
+
+func (w *logDownloadBarrierWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.entered)
+		<-w.release
+	})
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *logDownloadBarrierWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func TestLogExportDownloadConcurrencyLimit(t *testing.T) {
-	a, base, admin, _, _ := logExportHTTPFixture(t)
+	a, _, admin, _, _ := logExportHTTPFixture(t)
 	exportID := "log-export-11111111111111111111111111111112"
 	content := make([]byte, 2<<20)
 	installReadyExport(t, a, string(admin.User.ID), exportID, content)
-	request, _ := http.NewRequest(http.MethodGet, base+"/api/v1/log-exports/"+exportID+"/content", nil)
-	request.Header.Set("Authorization", "Bearer "+admin.Token)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
+	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var firstRequest, releaseOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first := false
+		firstRequest.Do(func() { first = true })
+		if first {
+			defer close(finished)
+			w = &logDownloadBarrierWriter{ResponseWriter: w, entered: entered, release: release}
+		}
+		a.route(w, r)
+	}))
+	client := server.Client()
+	client.Timeout = 10 * time.Second
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		server.Close()
+	})
+	request := func() *http.Request {
+		r, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/log-exports/"+exportID+"/content", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Authorization", "Bearer "+admin.Token)
+		return r
 	}
-	defer response.Body.Close()
-	if _, err := response.Body.Read(make([]byte, 1024)); err != nil {
-		t.Fatal(err)
+	type downloadResult struct {
+		status int
+		bytes  int64
+		err    error
 	}
-	second, _ := http.NewRequest(http.MethodGet, base+"/api/v1/log-exports/"+exportID+"/content", nil)
-	second.Header.Set("Authorization", "Bearer "+admin.Token)
-	blocked, err := http.DefaultClient.Do(second)
+	firstResult := make(chan downloadResult, 1)
+	first := request()
+	go func() {
+		response, err := client.Do(first)
+		if err != nil {
+			firstResult <- downloadResult{err: err}
+			return
+		}
+		n, err := io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		firstResult <- downloadResult{status: response.StatusCode, bytes: n, err: err}
+	}()
+	// Do not infer an active handler from unread client bytes: the entire archive
+	// can fit in socket buffers. This barrier proves transmission still owns the slot.
+	select {
+	case <-entered:
+	case result := <-firstResult:
+		t.Fatalf("first download ended before the body-write barrier: %+v", result)
+	case <-time.After(10 * time.Second):
+		t.Fatal("first download did not enter the body-write barrier")
+	}
+	blocked, err := client.Do(request())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,18 +345,26 @@ func TestLogExportDownloadConcurrencyLimit(t *testing.T) {
 	if blocked.StatusCode != 409 {
 		t.Fatalf("concurrent same-user download was not rejected: %d", blocked.StatusCode)
 	}
-	response.Body.Close()
-	time.Sleep(100 * time.Millisecond)
-	third, _ := http.NewRequest(http.MethodGet, base+"/api/v1/log-exports/"+exportID+"/content", nil)
-	third.Header.Set("Authorization", "Bearer "+admin.Token)
-	allowed, err := http.DefaultClient.Do(third)
+	releaseOnce.Do(func() { close(release) })
+	// Handler return, rather than a sleep or client EOF, proves its deferred
+	// download lease release completed before the next admission attempt.
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("first download handler did not finish after release")
+	}
+	result := <-firstResult
+	if result.err != nil || result.status != 200 || result.bytes != int64(len(content)) {
+		t.Fatalf("first download did not complete: %+v", result)
+	}
+	allowed, err := client.Do(request())
 	if err != nil {
 		t.Fatal(err)
 	}
-	io.Copy(io.Discard, allowed.Body)
+	n, err := io.Copy(io.Discard, allowed.Body)
 	allowed.Body.Close()
-	if allowed.StatusCode != 200 {
-		t.Fatalf("download slot was not released: %d", allowed.StatusCode)
+	if err != nil || allowed.StatusCode != 200 || n != int64(len(content)) {
+		t.Fatalf("download slot was not released for a complete download: status=%d bytes=%d err=%v", allowed.StatusCode, n, err)
 	}
 }
 
