@@ -2667,7 +2667,8 @@ for(const supported of [false,true])test(`Chat redesign: independent stop withou
  await page.locator('#composer').fill('');const stop=page.locator('.chat-stop');await expect(stop).toBeEnabled();
  if(supported){
   await page.locator('#composer').fill('Preserved while stopping');
-  const bytes=await readFile('fixtures/chat-images/png.png');await page.locator('#chat-image-input').setInputFiles({name:'stop-draft.png',mimeType:'image/png',buffer:bytes});
+  const bytes=await readFile(new URL('../../../../fixtures/chat-images/png.png', import.meta.url));
+  await page.locator('#chat-image-input').setInputFiles({name:'stop-draft.png',mimeType:'image/png',buffer:bytes});
   await expect(page.locator('.chat-image-draft')).toHaveCount(1);await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');
   await api(page,`adapter.imageCapabilities.get('work-1').value.defaultModel.availability='unsupported';adapter.emit();`);
   await expect(page.locator('[data-action=send-message]')).toBeDisabled();await expect(stop).toBeEnabled();
@@ -2756,7 +2757,7 @@ test('Chat redesign: narrow message feedback stays readable and keyboard accessi
   await page.screenshot({path:`dist/chat-interaction-ui/message-${width}.png`});await page.keyboard.press('Escape');await expect(page.locator('#modal')).toHaveCount(0);await expect(page.locator('.message-submission.failed button')).toBeFocused();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  }
- const png=(await readFile('fixtures/chat-images/png.png')).toString('base64');
+ const png=(await readFile(new URL('../../../../fixtures/chat-images/png.png', import.meta.url))).toString('base64');
  await api(page,`const s=adapter.getWork('work-1').sessions[0];s.messages.unshift({id:'geometry-image',role:'user',text:'',pendingImages:[{mimeType:'image/png',data:${JSON.stringify(png)}}]},{id:'geometry-tool',role:'assistant',text:'',tool:{id:'geometry-read',name:'read',status:'Completed',content:'Safe public result '.repeat(80)}});adapter.emit();`);
  await page.locator('.activity > summary').click();await page.locator('.tool-event > summary').click();
  for(const layout of ['chat','focus','service']){
