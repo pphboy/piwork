@@ -438,3 +438,5 @@ Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复
 20:20父任务以正式Desktop `b5b81369` +合成HTTP实际复核status503：正常点击原通知Details打开Core连接popover，原503仍可审阅且实际startup触发点expanded；清除原status故障后在popover显式检查连接，只读恢复确认Works及Core/Runtime状态，旧notice退休、无写入。此处不是实际Core连接证明。两宿主build及OpenSpec strict随后通过。现有合成夹具没有Start/Retry业务POST，不为bbox人为制造成功；精确D02/D03几何仍交由既有真实浏览器用例执行。
 
 20:21正式`b5b81369`实际Settings有限复核：合成resourceDelay5000/configAfterSave=read-error，编辑AGENTS后一次Save，立即显示浮动“设置已保存·正在刷新”，`[data-action-status]`为空，没有重复普通成功段落；读回等待期间编辑新草稿，503之后保留已确认修改+刷新未确认的所属恢复事实和一个错误通知，新草稿不变。HTTP账本恰好一次原配置PUT、随后GET、零Apply POST。455px静态Header可访问observed状态正确中文；不称作尚未执行的360px/Start pending bbox通过。
+
+20:22父任务实际保持Response settings打开，从455×772通过原生窗口调整到CSS455×323：panel仍打开，x29.89/y8/w380/h295.27、底303.27低于视口323；header Close位于18.9–58.9，footer Close位于252.36–292.36，均可见，内容自身滚动。正常点击footer Close关闭并返回`#response-settings-trigger`。这是455px低高度真实UI证明，不冒称360px矩阵；没有为此修改生产行为或放宽panel存在/滚动断言。
