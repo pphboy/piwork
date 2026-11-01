@@ -214,3 +214,56 @@ test('upload review separates explicit overwrite consent from failed retry and p
   assert.equal(review.unknown[0], rows[3]);
   assert.deepEqual(rows, snapshot);
 });
+
+test('distinct upload selections reach exact path admission without releasing the original aggregate unknown', async () => {
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const actions = new ActionState();
+  const locks = new UnknownFileLocks();
+  const upload = (selection: number, work = 'one') => ({ key: `file-input:${work}:upload-input:${selection}`, action: 'upload-input', kind: 'files', work, resource: 'upload-input', target: 'Captured upload selection', label: 'Checking upload targets' });
+  try {
+    const original = actions.begin(upload(1));
+    const lock = locks.add('one', { source: '/unknown.bin' }, original);
+    original.blocked = true;
+    original.resultTone = 'unknown';
+    actions.confirm(original, '1 paths confirmed; 2 need review');
+    assert.equal(actions.conflict(upload(1)), original, 'reusing the original intent stays blocked');
+    assert.equal(actions.conflict(upload(2)), undefined, 'a new selection proceeds to path admission');
+    assert.equal(locks.conflict('one', [{ source: '/unknown.bin' }]), lock);
+    assert.equal(locks.conflict('one', [{ source: '/unrelated.bin' }]), undefined);
+    assert.equal(locks.conflict('other-work', [{ source: '/unknown.bin' }]), undefined);
+    const unrelated = actions.begin(upload(2));
+    actions.confirm(unrelated, 'Unrelated upload confirmed');
+    assert.equal(actions.current(original), true);
+    assert.equal(original.blocked, true);
+    assert.equal(original.result, '1 paths confirmed; 2 need review');
+    assert.equal(locks.conflict('one', [{ source: '/unknown.bin' }]), lock);
+    assert.equal(actions.conflict(upload(1)), original);
+  } finally { actions.clear(); }
+});
+
+test('upload selection identities retain pending exclusion and fence late callbacks and old lock reviews', async () => {
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const actions = new ActionState();
+  const locks = new UnknownFileLocks();
+  const upload = (selection: number, work = 'one') => ({ key: `file-input:${work}:upload-input:${selection}`, action: 'upload-input', kind: 'files', work, resource: 'upload-input', target: 'Captured upload selection', label: 'Checking upload targets' });
+  try {
+    const old = actions.begin(upload(1));
+    assert.equal(actions.conflict(upload(2)), old, 'new selection cannot bypass an in-flight write');
+    assert.equal(actions.conflict(upload(2, 'other-work')), undefined);
+    locks.add('one', { source: '/unknown.bin' }, old);
+    const oldReview = locks.reviewSnapshot('one');
+    actions.clear();
+    locks.clear();
+    const current = actions.begin(upload(2));
+    const currentLock = locks.add('one', { source: '/unknown.bin' }, current);
+    actions.confirm(old, 'Late old upload');
+    actions.fail(old, new Error('Late old failure'));
+    actions.finish(old);
+    assert.equal(current.pending, true);
+    assert.equal(current.result, undefined);
+    assert.equal(current.error, undefined);
+    assert.equal(actions.conflict(upload(3)), current);
+    assert.deepEqual(locks.completeReview(oldReview, ['/']).released, []);
+    assert.equal(locks.conflict('one', [{ source: '/unknown.bin' }]), currentLock);
+  } finally { actions.clear(); }
+});

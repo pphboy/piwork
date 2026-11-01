@@ -4927,7 +4927,7 @@ root.addEventListener("change", (e) => {
   }
   if (input instanceof HTMLInputElement && input.type === "file") {
     const selection = ++selectionRequest; fileSelections.set(input.id, selection);
-    const intent: ActionIntent = { key: `file-input:${w?.id || 'local'}:${input.id}${input.id === 'upload-input' ? '' : ':' + selection}`, action: input.id, kind: input.id === 'upload-input' ? 'files' : 'read', work: w?.id, resource: input.id,
+    const intent: ActionIntent = { key: `file-input:${w?.id || 'local'}:${input.id}:${selection}`, action: input.id, kind: input.id === 'upload-input' ? 'files' : 'read', work: w?.id, resource: input.id,
       label: input.id === 'upload-input' ? t('actions.checkingUploadTargets') : t('actions.readingSelectedFile'), target: `${w?.name || (adapter.hosted ? t('target.server') : t('target.localCli'))} · ${input.files?.[0]?.name || t('target.selectedFiles')}`, view: location.hash };
     const origin = viewKey();
     void dispatchAction(input, record => handleFiles(input, record), intent).catch((err) => {
