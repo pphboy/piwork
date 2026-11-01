@@ -17,6 +17,11 @@ export interface ExportFlow {
   phase: ExportPhase;
   paused: boolean;
   error: string;
+  /** Display-only issue evidence; pending guidance is not a failed read. */
+  feedbackIssue?: 'read' | 'delivery';
+  feedbackError?: string;
+  /** Display receipt only, advanced by an exact confirmed original transfer. */
+  transferConfirmation?: number;
   autoDeliveryConsumed: boolean;
   contentURL?: string;
   readonly terminal: boolean;
@@ -33,6 +38,8 @@ export interface ExportTransfer {
   phase?: string;
   error?: string;
   observationError?: string;
+  seen?: boolean;
+  checkedAt?: string;
 }
 export interface ExportPort {
   readonly identityEpoch: number;
@@ -66,6 +73,7 @@ interface Runtime {
   running?: Promise<void>;
   reading?: 'work' | 'stop' | 'operation' | 'snapshot' | 'transfer';
   failedRead?: 'work' | 'stop' | 'operation' | 'snapshot' | 'transfer';
+  feedbackRead?: Runtime['reading'];
   validatedGeneration?: number;
   validatedSnapshot?: string;
   validatedOperation?: string;
@@ -144,6 +152,18 @@ export class ExportFlows {
     };
     this.flows.set(flow.id, flow); this.runtime.set(flow.id, runtime);
     this.changed(); void this.run(flow, true); return flow;
+  }
+
+  /** Records only a validated manual browser handoff, not a physical disk save. */
+  confirmDelivery(id: string, snapshotId: string, transferId: string, identityEpoch: number): boolean {
+    const flow = this.get(id);
+    if (!flow || !this.authorized() || identityEpoch !== this.port.identityEpoch || flow.identityEpoch !== identityEpoch ||
+        flow.phase !== 'delivered' || !flow.autoDeliveryConsumed || flow.snapshotId !== snapshotId || flow.transferId !== transferId || flow.feedbackIssue !== 'delivery') return false;
+    delete flow.feedbackIssue;
+    delete flow.feedbackError;
+    flow.error = '';
+    this.changed();
+    return true;
   }
 
   pause(id: string) {
@@ -225,6 +245,18 @@ export class ExportFlows {
     runtime.failedRead = undefined;
     try { return await read(); } catch (error) { runtime.failedRead = kind; throw error; } finally { runtime.reading = undefined; }
   }
+  private readFeedback(flow: ExportFlow, kind: Runtime['reading'], error?: string) {
+    const runtime = this.runtime.get(flow.id)!;
+    if (error) {
+      runtime.feedbackRead = kind;
+      flow.feedbackIssue = 'read';
+      flow.feedbackError = error;
+    } else if (flow.feedbackIssue === 'read' && runtime.feedbackRead === kind) {
+      runtime.feedbackRead = undefined;
+      delete flow.feedbackIssue;
+      delete flow.feedbackError;
+    }
+  }
   private validOperation(flow: ExportFlow, operation: Operation, id: string) {
     if (operation.id !== id || operation.workId !== flow.workId || operation.checkedWorkId !== flow.workId) {
       this.fail(flow, t('d.export.originalOperationUnknown')); return false;
@@ -293,10 +325,12 @@ export class ExportFlows {
             const stop = await this.read(flow, 'stop', () => this.port.checkOperation(flow.stopOperationId!, explicit));
             if (!this.live(flow) || !this.validOperation(flow, stop, flow.stopOperationId)) return;
             if (!isStop(stop)) { this.fail(flow, t('d.export.notStop')); return; }
+            this.readFeedback(flow, 'stop', stop.observationError);
             if (failedOperation(stop)) { this.fail(flow, stop.error || t('d.export.stopState', { state: stop.state })); return; }
             const work = await this.read(flow, 'work', () => this.port.refreshWorkStatus(flow.workId, explicit));
             if (!this.live(flow)) return;
             if (!work || work.id !== flow.workId) { this.fail(flow, t('d.export.originalWorkUnavailable')); return; }
+            this.readFeedback(flow, 'work', work.statusError);
             if (!this.matchingStop(flow, work)) return;
             if (stop.state !== 'succeeded' || !this.stopped(work)) { flow.error = t('d.export.waitStop'); return; }
           } else {
@@ -304,6 +338,7 @@ export class ExportFlows {
             const work = await this.read(flow, 'work', () => this.port.refreshWorkStatus(flow.workId, explicit));
             if (!this.live(flow)) return;
             if (!work || work.id !== flow.workId) { this.fail(flow, t('d.export.originalWorkUnavailable')); return; }
+            this.readFeedback(flow, 'work', work.statusError);
             if (!this.stopped(work)) {
               if (work.desired === 'stopped' || work.statusError || this.port.project(work).action !== 'stop') {
                 flow.error = t('d.export.workNotStopped'); return;
@@ -346,6 +381,7 @@ export class ExportFlows {
           flow.phase = 'snapshot';
           snapshot = await this.read(flow, 'snapshot', () => this.port.fetchSnapshot(flow.snapshotId!, explicit));
           if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot)) return;
+          this.readFeedback(flow, 'snapshot');
           flow.exportOperationId = snapshot.operationId;
         }
         if (!flow.exportOperationId) { this.unknown(flow, t('d.export.exportNoOperation')); return; }
@@ -355,11 +391,14 @@ export class ExportFlows {
         if (failedOperation(operation)) { this.fail(flow, operation.error || t('d.export.exportState', { state: operation.state })); return; }
         if (flow.snapshotId && operation.snapshotId !== flow.snapshotId) { this.fail(flow, t('d.export.exportMismatch')); return; }
         if (!flow.snapshotId && operation.snapshotId) flow.snapshotId = operation.snapshotId;
+        this.readFeedback(flow, 'operation', operation.observationError);
         if (operation.state !== 'succeeded') { flow.phase = 'exporting'; return; }
         if (!flow.snapshotId) { this.unknown(flow, t('d.export.noSnapshotId')); return; }
         flow.phase = 'snapshot';
         snapshot = await this.read(flow, 'snapshot', () => this.port.fetchSnapshot(flow.snapshotId!, explicit));
-        if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot) || !this.available(flow, snapshot)) return;
+        if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot)) return;
+        this.readFeedback(flow, 'snapshot');
+        if (!this.available(flow, snapshot)) return;
         runtime.validatedSnapshot = flow.snapshotId; runtime.validatedOperation = flow.exportOperationId; runtime.validatedGeneration = generation;
         if (!runtime.preparationSubmitted) {
           if (!this.canAdvance(flow, generation)) return;
@@ -396,6 +435,7 @@ export class ExportFlows {
       } catch (error) {
         if (this.live(flow) && !flow.autoDeliveryConsumed && !flow.terminal) {
           flow.error = message(error);
+          if (runtime.failedRead) this.readFeedback(flow, runtime.failedRead, flow.error);
           const status = (error as { httpStatus?: number })?.httpStatus;
           if (runtime.failedRead === 'transfer') this.unknown(flow, t('d.export.transferUnconfirmedDetail', { detail: message(error) }));
           else if (status === 404 || status === 410) this.fail(flow, t('d.export.resourceUnavailable', { detail: message(error) }));
@@ -437,6 +477,8 @@ export class ExportFlows {
   }
   private acceptTransfer(flow: ExportFlow, transfer: ExportTransfer, generation: number) {
     if (transfer.transferId !== flow.transferId || transfer.snapshotId !== flow.snapshotId || transfer.workId !== flow.workId) { this.fail(flow, t('d.export.transferWrong')); return; }
+    if (!transfer.error && !transfer.observationError && !transfer.terminalFailure && (transfer.ready || transfer.seen && transfer.checkedAt)) flow.transferConfirmation = (flow.transferConfirmation || 0) + 1;
+    this.readFeedback(flow, 'transfer', transfer.observationError);
     if (transfer.terminalFailure) { this.fail(flow, transfer.error || t('d.export.preparationFailed')); return; }
     if (!transfer.ready) { flow.phase = transfer.error && !transfer.pending ? 'unknown' : 'preparing'; flow.error = transfer.observationError || transfer.error || ''; return; }
     const snapshot = this.port.getSnapshot(flow.snapshotId!);
@@ -445,7 +487,11 @@ export class ExportFlows {
     if (!this.canAdvance(flow, generation) || flow.autoDeliveryConsumed) return;
     flow.autoDeliveryConsumed = true; flow.phase = 'delivered';
     try { this.options.deliver(flow, flow.contentURL); }
-    catch (error) { flow.error = t('d.export.saveAgain', { detail: message(error) }); }
+    catch (error) {
+      flow.error = t('d.export.saveAgain', { detail: message(error) });
+      flow.feedbackIssue = 'delivery';
+      flow.feedbackError = flow.error;
+    }
     this.changed();
   }
   private deliverLateReady(flow: ExportFlow) {

@@ -3989,3 +3989,37 @@ test('all unavailable Sessions retain history and expose Session recovery withou
  await button(page,'close-modal').click();await expect(page.locator('#composer')).toHaveValue('keep this draft');
  assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
 });
+
+for (const code of ['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED']) {
+  test(`hosted ${code} retains original Run recovery and Administration only in Account`, async t => {
+    const failure = { code, message: 'Synthetic model access failure', retryable: false };
+    const run = { ...controlRun('hosted-model-failure', 5, 'session-1', { kind: 'chat' }), error: failure };
+    const { page, requests } = await fixture(t, r => {
+      if (r.path === 'session') return { json: { state: 'authenticated', generation: 1, csrf: 'synthetic-hosted', coreUrl: 'http://core.test', user: { account: 'fixture', role: 'admin' } } };
+      if (r.path === 'works/work-1/sessions/session-1') return { json: {
+        session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null, source: { kind: 'chat' } },
+        messages: [{ entryId: 'hosted-original', runId: 'hosted-model-failure', role: 'user', blocks: [{ blockId: 'hosted-text', type: 'text', text: 'Original hosted prompt' }] }],
+        runs: [run],
+      } };
+      if (r.path === 'works/work-1/runs/hosted-model-failure') return { json: run };
+      return focusFixture(r);
+    }, false, true, async page => {
+      await page.route(base + '/', async route => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: (await response.text()).replace('<head>', '<head><meta name="piwork-mode" content="hosted">') });
+      });
+    });
+    const execution = page.locator('.message-execution').filter({ hasText: 'Synthetic model access failure' });
+    await expect(execution).toContainText('Account menu');
+    await expect(execution).toContainText('Administration');
+    await expect(page.locator('a[href="/admin"]')).toHaveCount(0);
+    await execution.locator('[data-action="run-details"]').click();
+    await expect(page.locator('#modal')).toContainText('Synthetic model access failure');
+    await expect(page.locator('#modal')).toContainText('Account menu');
+    await expect(page.locator('a[href="/admin"]')).toHaveCount(0);
+    await button(page, 'close-modal').click();
+    await button(page, 'account').click();
+    await expect(page.getByRole('menuitem', { name: 'Administration', exact: true })).toHaveAttribute('href', '/admin');
+    assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+  });
+}

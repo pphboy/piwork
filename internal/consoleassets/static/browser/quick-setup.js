@@ -1,6 +1,9 @@
-import { esc, Field, Feedback, StatusLabel, icon } from './components.js';
+import { createQuickSetupPort, SetupRequestError as RequestError } from './quick-setup-port.js';
+import { preparationComponents, preparationIsReady } from './setup-readiness.js';
+import { resultNotice } from './feedback-policy.js';
+import { esc, Field, OwnedFeedback, StatusLabel, icon } from './components.js';
 import { pendingDots } from './pending.js';
-import { blankModel, modelDraftIssue, modelErrors, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
+import { blankModel, modelDraftIssue, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
 import { t, currentLocale, onLocaleChange, LocalizedMessage } from './locale.js';
 export function mountQuickSetup(root, options) {
     /** A message that joins independently localized pieces when it is displayed. */
@@ -21,66 +24,24 @@ export function mountQuickSetup(root, options) {
     }
     const noticeText = (value) => value == null ? '' : String(value);
     let stage = 'loading', notice = '', noticeError = false, modelReadError = '', disposed = false;
-    let noticeNode = null, noticeMarkup = '';
+    let noticeNode = null, noticeMarkup = '', noticeSequence = 0;
     let snapshot = {}, models = [], catalogError = '', selectedRef = '', mode = 'add';
     let draft = blankModel(), revision = 0, view = 0, identity = 0, reading = false, writing = false, testing = false;
     let modelUnknown = false, runtimeUnknown = false, confirmedModel = '', pendingRuntime = null;
     let pendingModel = null, beforeModels = new Set();
     let timer, readGeneration = 0, readLock = null, polling = false;
     let testResult = null, leaveAction = null, leaveGeneration = 0;
+    let readNoticeOwner = null, catalogNoticeOwner = null;
     let preparationReadError = '', preparationReadAt = '', advancedOpen = false, baselineReady = false;
     let baselineDraft = blankModel(), baselineRef = '', confirmedReadGeneration = -1;
     let slowTimer, busySince = 0, busyPhase = '';
     let preparationTimer, preparationSince = 0;
     let autoEnter = null;
     const firstModel = () => ({ ...blankModel(), model: 'deepseek-flash', api: 'anthropic-messages', baseUrl: 'https://api.deepseek.com/anthropic' });
-    const preparationNames = ['docker', 'agent', 'packageHelper', 'defaultContext', 'fileHelper', 'snapshotHelper'];
+    const preparationNames = preparationComponents;
     const preparationKeys = { docker: 'docker', agent: 'agent', packageHelper: 'packages', defaultContext: 'defaultContext', fileHelper: 'files', snapshotHelper: 'snapshots' };
     const preparationLabel = (name) => t('setup.component.' + (preparationKeys[name] || name));
-    class RequestError extends Error {
-        status;
-        unknown;
-        field;
-        code;
-        feedback;
-        constructor(message, status = 0, unknown = false, field = '', code = '') {
-            super(noticeText(message));
-            this.status = status;
-            this.unknown = unknown;
-            this.field = field;
-            this.code = code;
-            this.feedback = message;
-            if (message != null && typeof message !== 'string')
-                Object.defineProperty(this, 'message', { get: () => String(message), configurable: true });
-        }
-    }
-    async function request(path, method = 'GET', body, setup = false) {
-        let response;
-        try {
-            response = await fetch(path, { method, credentials: 'same-origin', headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(method === 'GET' ? {} : { 'X-Piwork-Csrf': options.csrf(), 'X-Csrf-Token': options.csrf() }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-        }
-        catch {
-            throw new RequestError(new LocalizedMessage(method === 'GET' ? 'net.offlineRead' : 'net.offlineWrite'), 0, method !== 'GET');
-        }
-        const value = await response.json().catch(() => null);
-        if (!value || typeof value !== 'object')
-            throw new RequestError(new LocalizedMessage('net.response'), response.status, method !== 'GET');
-        if (!response.ok) {
-            let message = value.code === 'INVALID_REQUEST' ? modelErrors[value.field?.split('.')[0]] : undefined;
-            if (!message)
-                message = new LocalizedMessage('net.requestFailed');
-            if (value.code === 'AUTHENTICATION_FAILED')
-                message = new LocalizedMessage('net.auth');
-            if (value.code === 'RATE_LIMITED')
-                message = new LocalizedMessage('net.rate', { seconds: Math.max(1, Math.ceil(Number(value.retryAfterMs || 60000) / 1000)) });
-            if (value.code === 'RELEASE_DEFAULTS_UNAVAILABLE')
-                message = new LocalizedMessage('net.release');
-            throw new RequestError(message, response.status, method !== 'GET' && response.status >= 500 && value.code !== 'RELEASE_DEFAULTS_UNAVAILABLE', String(value.field || ''), String(value.code || ''));
-        }
-        return value;
-    }
-    const web = (path, method = 'GET', body, setup = false) => request('/_web/api/' + path, method, body, setup);
-    const admin = (path, method = 'GET', body) => request('/console/api/admin/' + path, method, body);
+    const port = options.port || createQuickSetupPort(options.csrf);
     const message = (error) => error instanceof RequestError ? error.feedback : error instanceof Error ? error.message : new LocalizedMessage('net.unconfirmed');
     const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
     function current(ticket) { return !disposed && options.current() && ticket.view === view && ticket.identity === identity; }
@@ -121,7 +82,7 @@ export function mountQuickSetup(root, options) {
         return `<option value="">${esc(t('setup.model.choosePlaceholder'))}</option>${models.map(model => `<option value="${esc(model.modelRef)}" ${model.modelRef === selectedRef ? 'selected' : ''} ${!model.enabled || !model.credentialAvailable ? 'disabled' : ''}>${esc(model.name || model.model)}${!model.enabled ? t('setup.model.disabledSuffix') : !model.credentialAvailable ? t('setup.model.keyUnavailableSuffix') : ''}</option>`).join('')}`;
     }
     function catalogNotice() {
-        return catalogError ? Feedback(noticeText(new NoticeParts([new LocalizedMessage('setup.model.catalogUnavailable'), noticeText(catalogError), new LocalizedMessage('setup.model.catalogRetry')])), 'warning') : '';
+        return catalogError ? OwnedFeedback(noticeText(new NoticeParts([new LocalizedMessage('setup.model.catalogUnavailable'), noticeText(catalogError), new LocalizedMessage('setup.model.catalogRetry')])), 'warning') : '';
     }
     function apiGuidance() {
         const link = `<a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer" aria-label="${esc(t('setup.model.deepseekAria'))}">platform.deepseek.com${icon('external', 14)}</a>`;
@@ -129,18 +90,20 @@ export function mountQuickSetup(root, options) {
     }
     function modelPage() {
         const unavailable = selectedRef && !models.some(model => model.modelRef === selectedRef && model.enabled && model.credentialAvailable);
-        return `<p class="setup-description">${t('setup.model.description')}</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogNotice()}</div>${confirmedModel ? Feedback(t('setup.model.savedContinue'), 'success') : ''}${models.length && !modelUnknown ? `<div class="setup-mode" aria-label="${esc(t('setup.model.configAria'))}"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode === 'choose'}">${t('setup.model.chooseSaved')}</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode === 'add'}">${icon('plus', 14)} ${t('setup.model.add')}</button></div>` : ''}${mode === 'add' ? `<form id="model-form" class="form-grid" data-setup-model novalidate>${apiGuidance()}${modelFields(draft, false, { open: advancedOpen })}<div class="form-actions"><button type="submit" class="btn primary" data-continue>${t('setup.model.saveContinue')}<span class="pending-slot">${icon('arrow', 16)}</span></button><button type="button" class="btn secondary" data-model-action="test">${t('setup.model.test')}</button></div><p class="help">${t('setup.model.testHelp')}</p></form><div id="model-test-result">${modelTestSummary(testResult, revision)}</div>` : `<form id="choose-form" class="form-grid" novalidate>${Field('saved-model', t('setup.model.savedModel'), `<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`, t('setup.model.savedModelHelp'))}${unavailable ? Feedback(t('setup.model.unavailable'), 'warning') : ''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>${t('setup.model.saveContinue')}<span class="pending-slot">${icon('arrow', 16)}</span></button></div></form>`}<div id="release-note">${snapshot.releaseError ? Feedback(t('setup.model.releaseIncomplete'), 'warning') : ''}</div>`;
+        return `<p class="setup-description">${t('setup.model.description')}</p><div id="setup-docker" class="setup-dependency"></div><div id="catalog-note">${catalogNotice()}</div>${confirmedModel ? OwnedFeedback(t('setup.model.savedContinue'), 'success') : ''}${models.length && !modelUnknown ? `<div class="setup-mode" aria-label="${esc(t('setup.model.configAria'))}"><button class="btn small" type="button" data-action="choose-model" aria-pressed="${mode === 'choose'}">${t('setup.model.chooseSaved')}</button><button class="btn small" type="button" data-action="add-model" aria-pressed="${mode === 'add'}">${icon('plus', 14)} ${t('setup.model.add')}</button></div>` : ''}${mode === 'add' ? `<form id="model-form" class="form-grid" data-setup-model novalidate>${apiGuidance()}${modelFields(draft, false, { open: advancedOpen })}<div class="form-actions"><button type="submit" class="btn primary" data-continue>${t('setup.model.saveContinue')}<span class="pending-slot">${icon('arrow', 16)}</span></button><button type="button" class="btn secondary" data-model-action="test">${t('setup.model.test')}</button></div><p class="help">${t('setup.model.testHelp')}</p></form><div id="model-test-result">${modelTestSummary(testResult, revision)}</div>` : `<form id="choose-form" class="form-grid" novalidate>${Field('saved-model', t('setup.model.savedModel'), `<select id="saved-model" name="modelRef" required>${modelOptions()}</select>`, t('setup.model.savedModelHelp'))}${unavailable ? OwnedFeedback(t('setup.model.unavailable'), 'warning') : ''}<div class="form-actions"><button type="submit" class="btn primary" data-continue>${t('setup.model.saveContinue')}<span class="pending-slot">${icon('arrow', 16)}</span></button></div></form>`}<div id="release-note">${snapshot.releaseError ? OwnedFeedback(t('setup.model.releaseIncomplete'), 'warning') : ''}</div>`;
     }
     function render() {
         const title = stage === 'model' ? t('setup.title.model') : stage === 'preparation' ? t('setup.title.preparation') : stage === 'error' ? t('setup.title.error') : t('setup.title.loading');
         let content = '';
+        if (stage === 'loading')
+            content = `<section class="console-read-skeleton" aria-busy="true" aria-label="${esc(t('setup.title.loading'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>`;
         if (stage === 'model')
             content = modelPage();
         if (stage === 'preparation')
             content = `<p class="setup-description">${t('setup.preparation.description')}</p><div id="preparation-answer" class="preparation-state" aria-live="polite" aria-atomic="true"></div><div id="preparation-failures"></div><details class="disclosure" id="preparation-details"><summary>${t('setup.preparation.details')}</summary><ul id="preparation-components" class="preparation-list" aria-label="${esc(t('setup.preparation.componentsAria'))}"></ul></details><div class="form-actions"><a class="btn secondary" id="workbench-exit" role="link" tabindex="0" aria-disabled="true" aria-describedby="preparation-exit-help">${t('setup.preparation.openWorkbench')}${icon('arrow', 16)}</a>${button(icon('refresh', 15) + ' ' + t('setup.preparation.readState'), 'refresh')}</div><p id="preparation-exit-help" class="help"></p>${diagnostics()}`;
         if (stage === 'error')
             content = `<p>${t('onboarding.error.body')}</p>${button(t('setup.preparation.readState'), 'refresh', true)}`;
-        root.innerHTML = `${steps()}<div class="setup-heading"><h2 id="setup-title">${title}</h2></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}<dialog id="test-dialog" class="setup-dialog" aria-labelledby="test-title"><div class="dialog-heading"><div><h2 id="test-title">${t('setup.dialog.testTitle')}</h2><p>${t('setup.dialog.testDescription')}</p></div><button class="btn icon-button" type="button" data-action="close-test" aria-label="${esc(t('setup.dialog.closeTestAria'))}">${icon('close')}</button></div><div id="test-body" class="dialog-body"></div><div class="dialog-footer"><button class="btn secondary" type="button" data-action="close-test">${t('setup.dialog.close')}</button></div></dialog><dialog id="leave-dialog" class="setup-dialog" aria-labelledby="leave-title"><div class="dialog-heading"><h2 id="leave-title">${t('setup.dialog.leaveTitle')}</h2></div><div class="dialog-body"><p>${t('setup.dialog.leaveBody')}</p></div><div class="dialog-footer">${button(t('setup.dialog.keepEditing'), 'keep-editing')}${button(t('setup.dialog.discard'), 'discard-draft')}${button(t('setup.model.saveContinue'), 'save-leave', true)}</div></dialog>`;
+        root.innerHTML = `${steps()}<div class="setup-heading"><h2 id="setup-title" ${stage === 'loading' ? 'class="sr-only"' : ''}>${title}</h2></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}<dialog id="test-dialog" class="setup-dialog" aria-labelledby="test-title"><div class="dialog-heading"><div><h2 id="test-title">${t('setup.dialog.testTitle')}</h2><p>${t('setup.dialog.testDescription')}</p></div><button class="btn icon-button" type="button" data-action="close-test" aria-label="${esc(t('setup.dialog.closeTestAria'))}">${icon('close')}</button></div><div id="test-body" class="dialog-body"></div><div class="dialog-footer"><button class="btn secondary" type="button" data-action="close-test">${t('setup.dialog.close')}</button></div></dialog><dialog id="leave-dialog" class="setup-dialog" aria-labelledby="leave-title"><div class="dialog-heading"><h2 id="leave-title">${t('setup.dialog.leaveTitle')}</h2></div><div class="dialog-body"><p>${t('setup.dialog.leaveBody')}</p></div><div class="dialog-footer">${button(t('setup.dialog.keepEditing'), 'keep-editing')}${button(t('setup.dialog.discard'), 'discard-draft')}${button(t('setup.model.saveContinue'), 'save-leave', true)}</div></dialog>`;
         updateNotice();
         updatePreparation();
         updateLocks();
@@ -160,7 +123,7 @@ export function mountQuickSetup(root, options) {
         const unresolvedText = noticeText(unresolved);
         const recovery = unresolvedText ? `<a href="/admin/models">${t('setup.unknown.review')}</a>` : '';
         const currentNotice = noticeText(notice);
-        const markup = (modelReadError ? Feedback(noticeText(modelReadError), 'warning') : '') + (notice ? Feedback(currentNotice, noticeError ? 'warning' : 'success', unresolvedText && currentNotice.includes(unresolvedText) ? recovery : '') : '') + (unresolved && !currentNotice.includes(unresolvedText) ? Feedback(unresolvedText, 'warning', recovery) : '');
+        const markup = (modelReadError ? OwnedFeedback(noticeText(modelReadError), 'warning') : '') + (notice && noticeError ? `<div class="owned-feedback warning" role="status"><span>${esc(currentNotice)}</span>${unresolvedText && currentNotice.includes(unresolvedText) ? recovery : ''}</div>` : '') + (unresolved && !currentNotice.includes(unresolvedText) ? OwnedFeedback(unresolvedText, 'warning', recovery) : '');
         // A repeated read must not replace the focused exceptional recovery link.
         if (node !== noticeNode || markup !== noticeMarkup) {
             node.innerHTML = markup;
@@ -168,7 +131,21 @@ export function mountQuickSetup(root, options) {
             noticeMarkup = markup;
         }
     }
-    function tell(text, error = false) { notice = text; noticeError = error; updateNotice(); }
+    function tell(text, error = false) {
+        notice = text;
+        noticeError = error;
+        updateNotice();
+        if (!text || !options.notify)
+            return;
+        const ticket = context(), ownerIdentity = options.identity?.() || String(identity);
+        const event = resultNotice({ identity: ownerIdentity, object: 'quick-setup', task: stage, generation: view }, {
+            phase: String(++noticeSequence), message: () => noticeText(text), error, unknown: modelUnknown || runtimeUnknown,
+            ...(error ? { recovery: { label: () => t('common.retry'), run: () => { if (current(ticket))
+                        void readCurrent(true); } } } : {}),
+        });
+        if (event)
+            options.notify(event);
+    }
     function updateLocks() {
         if (disposed || !options.current())
             return;
@@ -196,17 +173,31 @@ export function mountQuickSetup(root, options) {
         options.dirty(dirty());
         const status = root.querySelector('#setup-status');
         if (status)
-            status.innerHTML = writing ? (slow ? t('setup.status.slowSave') : t('setup.status.saving')) : reading ? `${stage === 'preparation' && preparationPresentation().busy ? '' : pendingDots()} ${slow ? t('setup.status.slowRead') : t('setup.status.reading')}` : '';
+            status.innerHTML = stage === 'loading' ? '' : writing ? (slow ? t('setup.status.slowSave') : t('setup.status.saving')) : reading ? `${stage === 'preparation' && preparationPresentation().busy ? '' : pendingDots()} ${slow ? t('setup.status.slowRead') : t('setup.status.reading')}` : '';
         root.querySelectorAll('[data-continue]').forEach(node => { const markup = `${t('setup.model.saveContinue')}<span class="pending-slot">${writing ? pendingDots() : icon('arrow', 16)}</span>`; if (node.innerHTML !== markup)
             node.innerHTML = markup; });
         root.querySelectorAll('[data-action="refresh"]').forEach(node => node.setAttribute('aria-busy', String(reading)));
         const testButton = root.querySelector('[data-model-action="test"]');
-        if (testButton)
+        if (testButton) {
             testButton.setAttribute('aria-busy', String(testing));
+            const markup = `<span class="button-pending-content${testing ? ' is-pending' : ''}"><span>${esc(t('setup.model.test'))}</span><span class="button-pending-indicator">${testing ? pendingDots() : ''}</span></span>`;
+            if (testButton.innerHTML !== markup)
+                testButton.innerHTML = markup;
+        }
+        root.querySelectorAll('[data-action="refresh"]').forEach(node => {
+            const pending = reading || polling;
+            const markup = `<span class="button-pending-content${pending ? ' is-pending' : ''}"><span>${icon('refresh')} ${esc(t('setup.preparation.readState'))}</span><span class="button-pending-indicator">${pending ? pendingDots() : ''}</span></span>`;
+            if (node.innerHTML !== markup)
+                node.innerHTML = markup;
+        });
     }
     function acceptSnapshot(value, generation) {
         snapshot = value;
         confirmedReadGeneration = generation;
+        if (readNoticeOwner) {
+            options.resolve?.(readNoticeOwner);
+            readNoticeOwner = null;
+        }
         if (modelReadError) {
             modelReadError = '';
             updateNotice();
@@ -217,8 +208,7 @@ export function mountQuickSetup(root, options) {
         preparationReadAt = new Date().toLocaleTimeString(currentLocale() === 'zh-CN' ? 'zh-CN' : 'en-US');
     }
     function preparationReady() {
-        return !preparationReadError && snapshot.status?.ready === true && snapshot.preparation?.ready === true &&
-            preparationNames.every(name => snapshot.preparation.components?.[name]?.state === 'ready');
+        return preparationIsReady(snapshot, !!preparationReadError);
     }
     function preparationRecovery(value) {
         switch (value.code) {
@@ -293,8 +283,15 @@ export function mountQuickSetup(root, options) {
     }
     function preparationReadFailed(error) {
         autoEnter = null;
+        readNoticeOwner = { identity: options.identity?.() || String(identity), object: 'quick-setup', task: 'read-status', generation: view };
+        const detail = message(error), readIdentity = identity;
+        const event = resultNotice(readNoticeOwner, { phase: 'failed', error: true, message: () => noticeText(detail),
+            recovery: { label: () => t('common.retry'), run: () => { if (!disposed && options.current() && identity === readIdentity)
+                    void readCurrent(stage !== 'error'); } } });
+        if (event)
+            options.notify?.(event);
         if (stage === 'preparation') {
-            preparationReadError = message(error);
+            preparationReadError = detail;
             updatePreparation();
         }
         else {
@@ -313,6 +310,28 @@ export function mountQuickSetup(root, options) {
         if (!answer)
             return;
         const ready = preparationReady(), presentation = preparationPresentation();
+        for (const name of preparationNames) {
+            const value = snapshot.preparation?.components?.[name];
+            const owner = { identity: options.identity?.() || String(identity), object: 'quick-setup', task: `preparation:${name}`, generation: view };
+            if (value?.state === 'ready')
+                options.resolve?.(owner);
+            if (value?.state === 'failed' || value?.state === 'unconfigured') {
+                const ticket = context();
+                const event = resultNotice(owner, { phase: `${value.state}:${value.code || ''}`, error: true,
+                    message: () => `${preparationLabel(name)} · ${preparationRecovery(value)}`,
+                    recovery: { label: () => t('common.details'), run: () => {
+                            if (!current(ticket))
+                                return;
+                            const details = root.querySelector('#preparation-details');
+                            if (details)
+                                details.open = true;
+                            root.querySelector(`[data-component="${name}"]`)?.focus();
+                        } },
+                });
+                if (event)
+                    options.notify?.(event);
+            }
+        }
         if (presentation.busy && !preparationSince) {
             preparationSince = Date.now();
             preparationTimer = setTimeout(() => { if (!disposed && options.current())
@@ -323,7 +342,7 @@ export function mountQuickSetup(root, options) {
             clearTimeout(preparationTimer);
         }
         const slow = preparationSince && Date.now() - preparationSince >= 10000 ? ' ' + t('setup.preparation.slow') : '';
-        const markup = `<div class="feedback ${presentation.tone}" role="status">${presentation.busy ? pendingDots() : icon(presentation.symbol, 17)}<div><strong>${esc(presentation.summary)}</strong><p>${esc(presentation.description + slow)}</p></div></div>`;
+        const markup = `<div class="owned-feedback ${presentation.tone}" role="status">${presentation.busy ? pendingDots() : icon(presentation.symbol, 17)}<div><strong>${esc(presentation.summary)}</strong><p>${esc(presentation.description + slow)}</p></div></div>`;
         if (answer.innerHTML !== markup)
             answer.innerHTML = markup;
         root.querySelector('#setup-title').textContent = presentation.title;
@@ -350,7 +369,7 @@ export function mountQuickSetup(root, options) {
         if (failures) {
             const markup = preparationNames.filter(name => ['failed', 'unconfigured'].includes(snapshot.preparation?.components?.[name]?.state)).map(name => {
                 const value = snapshot.preparation.components[name];
-                return `<div class="feedback warning"><div><strong>${esc(t('setup.failure.needsAttention', { name: preparationLabel(name) }))}</strong><p>${esc(preparationRecovery(value))}</p><button class="btn secondary small" type="button" data-action="show-component" data-component-target="${name}">${t('setup.failure.viewDetails', { name: esc(preparationLabel(name)) })}</button></div></div>`;
+                return `<div class="owned-feedback warning"><div><strong>${esc(t('setup.failure.needsAttention', { name: preparationLabel(name) }))}</strong><p>${esc(preparationRecovery(value))}</p><button class="btn secondary small" type="button" data-action="show-component" data-component-target="${name}">${t('setup.failure.viewDetails', { name: esc(preparationLabel(name)) })}</button></div></div>`;
             }).join('');
             if (failures.innerHTML !== markup)
                 failures.innerHTML = markup;
@@ -430,20 +449,20 @@ export function mountQuickSetup(root, options) {
                 modelUnknown = false;
                 mode = 'choose';
                 draft = blankModel();
-                tell(t('setup.modelSave.confirmed'));
+                tell(new LocalizedMessage('setup.modelSave.confirmed'));
             }
             else if (matches.length > 1) {
                 modelUnknown = false;
                 pendingModel = null;
                 mode = 'choose';
                 selectedRef = '';
-                tell(t('setup.modelSave.ambiguous'), true);
+                tell(new LocalizedMessage('setup.modelSave.ambiguous'), true);
             }
         }
         if (runtimeUnknown && pendingRuntime && snapshot.runtime?.configured && snapshot.runtime.modelRef === pendingRuntime.modelRef && snapshot.runtime.agentImage === pendingRuntime.agentImage) {
             runtimeUnknown = false;
             pendingRuntime = null;
-            tell(t('setup.runtimeSave.confirmed'));
+            tell(new LocalizedMessage('setup.runtimeSave.confirmed'));
         }
     }
     async function readCurrent(preserve = true) {
@@ -456,7 +475,7 @@ export function mountQuickSetup(root, options) {
         const generation = ++readGeneration, ticket = context();
         updateLocks();
         try {
-            const currentState = await web('onboarding');
+            const currentState = await port.readSnapshot();
             if (!current(ticket) || generation !== readGeneration)
                 return;
             acceptSnapshot(currentState, generation);
@@ -466,19 +485,28 @@ export function mountQuickSetup(root, options) {
                 return;
             }
             try {
-                const result = await admin('models');
+                const result = await port.readModels();
                 if (!current(ticket) || generation !== readGeneration)
                     return;
                 if (!Array.isArray(result.models))
                     throw new Error(t('setup.catalog.incomplete'));
                 models = result.models;
                 catalogError = '';
+                if (catalogNoticeOwner) {
+                    options.resolve?.(catalogNoticeOwner);
+                    catalogNoticeOwner = null;
+                }
             }
             catch (error) {
                 if (!current(ticket) || generation !== readGeneration || sessionFailure(error))
                     return;
                 catalogError = message(error);
                 autoEnter = null;
+                catalogNoticeOwner = { identity: options.identity?.() || String(identity), object: 'quick-setup', task: 'read-catalog', generation: view };
+                const detail = catalogError, event = resultNotice(catalogNoticeOwner, { phase: 'failed', error: true, message: () => noticeText(detail), recovery: { label: () => t('common.retry'), run: () => { if (!disposed && options.current() && identity === ticket.identity)
+                            void readCurrent(stage !== 'error'); } } });
+                if (event)
+                    options.notify?.(event);
             }
             const modelWasUnknown = modelUnknown, runtimeWasUnknown = runtimeUnknown;
             resolveUnknown();
@@ -516,7 +544,7 @@ export function mountQuickSetup(root, options) {
                 updatePreparation();
                 const release = root.querySelector('#release-note');
                 if (release)
-                    release.innerHTML = snapshot.releaseError ? Feedback(t('setup.model.releaseIncomplete'), 'warning') : '';
+                    release.innerHTML = snapshot.releaseError ? OwnedFeedback(t('setup.model.releaseIncomplete'), 'warning') : '';
                 const select = root.querySelector('#saved-model');
                 if (select)
                     select.innerHTML = modelOptions();
@@ -561,7 +589,7 @@ export function mountQuickSetup(root, options) {
             polling = true;
             updateLocks();
             try {
-                const value = await web('onboarding');
+                const value = await port.readSnapshot();
                 if (!current(ticket) || generation !== readGeneration)
                     return;
                 if (!value.administrator) {
@@ -599,7 +627,7 @@ export function mountQuickSetup(root, options) {
         if (mode === 'choose' && snapshot.runtime?.configured && snapshot.runtime.modelRef === selectedRef && snapshot.runtime.agentImage === snapshot.defaultAgentImage) {
             confirmedModel = '';
             changeStage('preparation');
-            tell(t('setup.runtime.exists'));
+            tell(new LocalizedMessage('setup.runtime.exists'));
             render();
             scheduleStatus();
             return true;
@@ -621,7 +649,7 @@ export function mountQuickSetup(root, options) {
             if (mode === 'add') {
                 beforeModels = new Set(models.map(model => model.id));
                 pendingModel = { name: submitted.name.trim(), model: submitted.model.trim(), api: submitted.api, baseUrl: submitted.baseUrl.trim() };
-                const value = await admin('models', 'POST', { ...pendingModel, credential: submitted.key });
+                const value = await port.createModel({ name: submitted.name.trim(), model: submitted.model.trim(), api: submitted.api, baseUrl: submitted.baseUrl.trim(), credential: submitted.key });
                 if (!current(ticket))
                     return false;
                 if (typeof value.modelRef !== 'string')
@@ -633,11 +661,11 @@ export function mountQuickSetup(root, options) {
                 const key = root.querySelector('#model-key');
                 if (key && key.value === submitted.key)
                     key.value = '';
-                tell(t('setup.modelSaved.binding'));
+                tell(new LocalizedMessage('setup.modelSaved.binding'));
             }
             pendingRuntime = { modelRef: selectedRef, agentImage: snapshot.defaultAgentImage || '' };
             binding = true;
-            const value = await admin('runtime', 'PUT', { modelRef: pendingRuntime.modelRef });
+            const value = await port.bindRuntime(pendingRuntime.modelRef);
             if (!current(ticket))
                 return false;
             if (!value.runtime?.configured || value.runtime.modelRef !== pendingRuntime.modelRef)
@@ -715,7 +743,7 @@ export function mountQuickSetup(root, options) {
         updateLocks();
         openTest();
         try {
-            const value = await admin('model-tests', 'POST', { model: submitted.model.trim(), api: submitted.api, baseUrl: submitted.baseUrl.trim(), credential: submitted.key });
+            const value = await port.testModel({ model: submitted.model.trim(), api: submitted.api, baseUrl: submitted.baseUrl.trim(), credential: submitted.key });
             if (!validModelTest(value))
                 throw new Error(t('setup.test.incomplete'));
             if (current(ticket) && testResult === record)
@@ -782,7 +810,6 @@ export function mountQuickSetup(root, options) {
         if (action === 'refresh') {
             if (polling)
                 return;
-            tell('');
             await readCurrent(stage !== 'error');
             return;
         }

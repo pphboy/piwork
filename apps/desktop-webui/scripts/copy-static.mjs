@@ -23,3 +23,7 @@ cpSync(new URL("../../../apps/ui-shared/i18n.js", import.meta.url), new URL("../
 cpSync(new URL("../../../apps/ui-shared/boot.js", import.meta.url), new URL("../dist/browser/boot.js", import.meta.url));
 cpSync(new URL("../../../apps/ui-shared/read-deadline.js", import.meta.url), new URL("../dist/browser/read-deadline.js", import.meta.url));
 cpSync(new URL("../src/i18n", import.meta.url), new URL("../dist/browser/i18n", import.meta.url), { recursive: true });
+
+for (const name of ["notices.js", "feedback-primitives.js"]) {
+  cpSync(new URL(`../../ui-shared/${name}`, import.meta.url), new URL(`../dist/browser/${name}`, import.meta.url));
+}

@@ -1,3 +1,7 @@
+import { createUserRecovery } from './user-recovery.js';
+import { captureViewGuard } from './view-scope.js';
+import { NoticeStore, createNoticeHost } from './notices.js';
+import { resultNotice, readFailureNotice } from './feedback-policy.js';
 import { createLanguagePicker } from './i18n.js';
 import { readWithDeadline } from './read-deadline.js';
 import { pendingDots } from './pending.js';
@@ -8,8 +12,25 @@ import { ModelManagement } from './model-management.js';
 import { ActionState, renderActionStates } from './action-state.js';
 import { adapter, ConsoleError, inspectSkillFiles, inspectPackageFiles, } from "./adapter.js";
 import { t, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatDateTime, formatNumber, } from './locale.js';
-import { esc, icon, Button, NavLink, StatusLabel, Feedback, PageHeader, Section, Field, Input, DataTable, date, bytes, Disclosure, Copy, Empty, UploadProgress, } from "./components.js";
+import { esc, icon, Button, NavLink, StatusLabel, Feedback, OwnedFeedback, PageHeader, Section, Field, Input, DataTable, date, bytes, Disclosure, Copy, Empty, UploadProgress, } from "./components.js";
 const app = document.querySelector("#app");
+let noticeHost;
+const notices = new NoticeStore({ onChange: () => noticeHost?.render() });
+noticeHost = createNoticeHost(notices, { document, closeLabel: () => t('common.close') });
+document.body.append(noticeHost.element);
+function syncNotices() {
+    notices.setIdentity(String(adapter.identityEpoch));
+    const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
+    const parent = modal || document.body;
+    if (noticeHost.element.parentElement !== parent)
+        parent.append(noticeHost.element);
+    noticeHost.render();
+}
+function publishNotice(notice) {
+    notices.setIdentity(String(adapter.identityEpoch));
+    notices.publish(notice);
+    syncNotices();
+}
 const hosted = document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
 const routePath = (value) => hosted && (value === '/admin' || value.startsWith('/admin/')) ? value.slice(6) || '/' : value;
 const publicPath = (value) => hosted ? '/admin' + (value === '/' ? '' : value) : value;
@@ -41,6 +62,8 @@ onLocaleChange(() => {
     else
         statusErrorRenderer = null;
     renderPage();
+    refreshAccountMenu();
+    syncNotices();
     const input = document.querySelector('#login-form #password');
     if (input && password !== undefined)
         input.value = password;
@@ -56,15 +79,61 @@ let feedbackRenderer = null;
 let renderedFeedback = '';
 let statusErrorRenderer = null;
 let renderedStatusError = '';
+let feedbackSequence = 0;
+let activeFeedback = null;
 function localizedFeedback(render) {
-    feedbackRenderer = render;
-    return renderedFeedback = render();
+    // Generic page results cannot borrow a pending/blocked mutation's identity.
+    // ActionRecord failures are projected separately by renderConsoleActions.
+    const sequence = ++feedbackSequence;
+    const context = {
+        owner: { identity: String(adapter.identityEpoch), object: path, task: 'page-result', generation: sequence },
+        key: sequence,
+        text: '',
+    };
+    feedbackRenderer = () => {
+        const previous = activeFeedback;
+        activeFeedback = context;
+        try {
+            return render();
+        }
+        finally {
+            activeFeedback = previous;
+        }
+    };
+    return renderedFeedback = feedbackRenderer();
+}
+/** Explicit action results only; safety instructions continue to use Feedback. */
+function resultFeedback(message, tone = 'info', recovery = '') {
+    if (!activeFeedback)
+        return localizedFeedback(() => resultFeedback(message, tone, recovery));
+    const context = activeFeedback;
+    context.text = message;
+    const notice = resultNotice(context.owner, {
+        phase: String(context.key), error: tone === 'error',
+        warning: tone === 'warning' || tone === 'info', message: () => context.text,
+        ...(recovery ? { recovery: { label: () => t('common.details'), run: () => {
+                    if (String(adapter.identityEpoch) !== context.owner.identity)
+                        return;
+                    if (path !== context.owner.object) {
+                        navigate(publicPath(context.owner.object));
+                        return;
+                    }
+                    document.querySelector('.owned-feedback button, .owned-feedback a')?.focus();
+                } } } : {}),
+    });
+    if (notice)
+        publishNotice(notice);
+    if (tone === 'success')
+        return '';
+    return `<div class="owned-feedback ${tone}" role="status"><span>${esc(message)}</span>${recovery ? `<div class="feedback-actions">${recovery}</div>` : ''}</div>`;
 }
 function localizedStatusError(render) {
     statusErrorRenderer = render;
     return renderedStatusError = render();
 }
-let dirty = false, saving = false, readbackRequired = false, expandedUser = "", pollTimer, statusTimer, toastTimer;
+let dirty = false, saving = false, readbackRequired = false, expandedUser = "", pollTimer, statusTimer;
+let dialogRecord = null;
+let currentModalTitleText = () => currentModalTitle;
 let dialog = null, dialogOrigin = null, dialogAction = null, dialogDirty = false, upload = null, uploadKind = "npm", uploadTarget, uploadType = "skill", packageIntent = null, packageSourceDraft = "", intentLocked = false, rateUntil = 0, loginAccount = "";
 let defaultConflicts = [];
 let setupJourney = null;
@@ -74,7 +143,7 @@ let pendingNavigation = null, modalError = "", currentModalTitle = "", submissio
 let preflightPending = false, selectionVersion = 0, signingIn = false, loginOutcomeUnknown = false, loginRecoverySequence = 0;
 const actions = new ActionState(() => renderConsoleActions());
 const modelManagement = new ModelManagement(() => { if (path === '/models' || path.startsWith('/models/'))
-    renderPage(); }, value => { dirty = value; }, (error, identity) => isCurrentSessionError(error, identity), openModelTestDialog);
+    renderPage(); }, value => { dirty = value; }, (error, identity) => isCurrentSessionError(error, identity), openModelTestDialog, publishNotice, undefined, owner => notices.resolve(owner));
 let modelCatalogError = '';
 let shellView = '', pageConfirmedAt = '', preparation = null;
 let pageRead = null;
@@ -94,19 +163,66 @@ function consoleIntent(button) {
         return { key: 'save-defaults', kind: 'configuration', resource: 'defaults', label, target: t('term.defaultWork'), anchor: '[data-action="save-defaults"]', view: path };
     return { key: name === 'sign-out' ? `manual:${path}:${name}` : `read:${path}`, kind: name === 'sign-out' ? 'identity' : 'read', label, target: path.startsWith('/operations/') ? routeId() : name === 'sign-out' ? adapter.account : path === '/runtime' ? t('term.runtime') : path === '/default-work' ? t('term.defaultWork') : t('term.core'), anchor: `[data-action="${name}"]`, view: path };
 }
+function reportReadFailure(error, identity, origin, view) {
+    publishNotice(readFailureNotice({ identity: String(identity), object: origin, generation: view }, error?.code || 'READ_FAILED', () => err(error), { label: () => t('common.retry'), run: () => {
+            if (identity === adapter.identityEpoch && origin === path && view === loadId)
+                void loadPage(true);
+        } }));
+}
 function renderConsoleActions() {
     if (actionIdentity !== adapter.identityEpoch) {
         actionIdentity = adapter.identityEpoch;
         actions.clear();
         return;
     }
-    renderActionStates(document.body, actions, path, consoleIntent);
+    renderActionStates(document.body, actions, path, consoleIntent, record => !record.recover || record.pending || record.blocked || record.refresh === 'failed'
+        || ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(record.errorCode || '')
+        || !dialog || dialogRecord === record);
+    for (const record of actions.records.values()) {
+        if (record.view !== path || record.pending || (!record.error && record.refresh !== 'failed'))
+            continue;
+        if (record.kind === 'read') {
+            const identity = String(actionIdentity), origin = path, view = loadId;
+            publishNotice(readFailureNotice({ identity, object: origin, generation: view }, record.errorCode || 'READ_FAILED', () => `${record.target} · ${record.errorText?.() ?? record.error ?? ''}`, { label: () => t('common.retry'), run: () => {
+                    if (identity === String(adapter.identityEpoch) && origin === path && view === loadId)
+                        void loadPage(true);
+                } }));
+            continue;
+        }
+        const notice = resultNotice({ identity: String(actionIdentity), object: record.view || path,
+            task: record.key, generation: record.token }, {
+            phase: record.refresh === 'failed' ? 'refresh-failed' : 'failed',
+            unknown: record.blocked, error: true,
+            message: () => record.refresh === 'failed'
+                ? t('refresh.notConfirmed', { message: record.resultText?.() ?? record.result ?? '', error: record.refreshErrorText?.() ?? record.refreshError ?? '' })
+                : `${record.targetText?.() ?? record.target} · ${record.errorText?.() ?? record.error ?? ''}`,
+            recovery: { label: () => t('common.details'), run: () => {
+                    if (!actions.current(record) || actionIdentity !== adapter.identityEpoch || record.view !== path)
+                        return;
+                    if (record.recover && !record.blocked && record.refresh !== 'failed'
+                        && !['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(record.errorCode || '')) {
+                        record.recover();
+                        return;
+                    }
+                    const anchor = record.anchor ? document.querySelector(record.anchor) : null;
+                    const region = anchor?.closest('dialog,main') || document.querySelector('main');
+                    const target = region?.querySelector('.owned-feedback button:not([disabled]), .owned-feedback a, [data-action="readback"], [data-action="refresh"]') || anchor;
+                    target?.scrollIntoView({ block: 'nearest' });
+                    target?.focus();
+                } },
+        });
+        if (notice)
+            publishNotice(notice);
+    }
+    syncNotices();
 }
 class ConsoleViewChanged extends Error {
 }
 function currentView(includeDialog = true, allowIdentityChange = false) {
-    const originalPath = path, originalLoad = loadId, originalDialog = dialog, identity = adapter.identityEpoch;
-    return () => originalPath === path && originalLoad === loadId && (!includeDialog || originalDialog === dialog) && (allowIdentityChange || identity === adapter.identityEpoch);
+    return captureViewGuard(() => ({ path, load: loadId, dialog, identity: adapter.identityEpoch }), {
+        includeDialog,
+        allowIdentityChange,
+    });
 }
 async function awaitCurrent(promise, allowIdentityChange = false) {
     const valid = currentView(true, allowIdentityChange);
@@ -130,7 +246,7 @@ async function tracked(intent, perform) {
         previous.blocked = false;
     const conflict = actions.conflict(intent);
     if (conflict) {
-        showToast(t('conflict.waiting', { target: conflict.target }));
+        showToast(() => t('conflict.waiting', { target: conflict.target }));
         return;
     }
     const record = actions.begin(intent);
@@ -146,8 +262,14 @@ async function tracked(intent, perform) {
         const explained = feedback.includes(err(error)) || statusError === err(error);
         actions.fail(record, error);
         if (record.view === path && actions.current(record)) {
-            if (!isSessionError(error) && !explained)
-                showError(error);
+            if (!isSessionError(error) && !explained) {
+                if (record.kind === 'read') {
+                    feedback = localizedFeedback(() => OwnedFeedback(err(error), 'error', Button(t('common.retry'), 'refresh')));
+                    renderPage();
+                }
+                else
+                    showError(error);
+            }
         }
     }
 }
@@ -163,13 +285,13 @@ async function refreshConfirmed(message, read, destination = path, translate = (
     const record = confirmedMutation(message) || [...actions.records.values()].find(record => record.result === message);
     if (record)
         record.resultText = translate;
-    feedback = localizedFeedback(() => Feedback(translate(), 'success'));
+    feedback = localizedFeedback(() => resultFeedback(translate(), 'success'));
     renderPage();
     if (record) {
         await actions.refresh(record, read);
         if (destination === path && actions.current(record)) {
             if (record.refresh === 'failed') {
-                feedback = localizedFeedback(() => Feedback(t('refresh.notConfirmed', { message: translate(), error: record.refreshErrorText?.() ?? record.refreshError ?? '' }), 'warning', Button(t('refresh.retry'), 'readback', 'secondary')));
+                feedback = localizedFeedback(() => resultFeedback(t('refresh.notConfirmed', { message: translate(), error: record.refreshErrorText?.() ?? record.refreshError ?? '' }), 'warning', Button(t('refresh.retry'), 'readback', 'secondary')));
             }
             renderPage();
         }
@@ -182,7 +304,7 @@ async function refreshConfirmed(message, read, destination = path, translate = (
         }
         catch (error) {
             if (destination === path && !isSessionError(error)) {
-                feedback = localizedFeedback(() => Feedback(t('refresh.notConfirmed', { message: translate(), error: err(error) }), 'warning', Button(t('refresh.retry'), 'readback', 'secondary')));
+                feedback = localizedFeedback(() => resultFeedback(t('refresh.notConfirmed', { message: translate(), error: err(error) }), 'warning', Button(t('refresh.retry'), 'readback', 'secondary')));
                 renderPage();
             }
         }
@@ -217,7 +339,7 @@ function shell(body) {
         [t('shell.navWorkSetup'), "/default-work", workSetup],
         [t('shell.navModels'), "/models", path === '/models' || path.startsWith('/models/')],
     ];
-    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('term.core')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} ${t('shell.findOperation')}</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer><div id="toast-root" aria-live="polite"></div>`;
+    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${name}</a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}">${icon("search", 14)} ${t('shell.findOperation')}</a><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
     if (preserve)
         reconcileConsoleHTML(app, html);
     else
@@ -361,6 +483,9 @@ function renderQuickSetup() {
         `<div id="quick-feedback">${feedback}</div><section class="section quick-setup-section" aria-label="${t('module.quickSetup')}"><div id="quick-setup" class="setup-main quick-setup"></div></section>`);
     const epoch = adapter.identityEpoch, ticket = loadId;
     quickSetup = mountQuickSetup(document.querySelector('#quick-setup'), {
+        notify: publishNotice,
+        resolve: owner => notices.resolve(owner),
+        identity: () => String(epoch),
         csrf: () => adapter.csrfToken,
         current: () => adapter.session && epoch === adapter.identityEpoch && path === '/setup' && ticket === loadId,
         expired: () => { dirty = false; location.assign('/login'); },
@@ -399,8 +524,16 @@ function closeAccountMenu(restore = false) {
     if (restore)
         trigger?.focus({ preventScroll: true });
 }
+function refreshAccountMenu() {
+    const menu = document.querySelector('#account-dropdown');
+    if (!menu)
+        return;
+    menu.innerHTML = accountMenuContent();
+    menu.setAttribute('aria-label', t('shell.accountMenu'));
+}
 function openAccountMenu(last = false) {
     languagePicker.close();
+    refreshAccountMenu();
     const menu = document.querySelector('#account-dropdown'), trigger = document.querySelector('#account-trigger');
     if (!menu || !trigger)
         return;
@@ -453,14 +586,8 @@ document.addEventListener('keydown', event => {
     }
 });
 function showToast(message) {
-    const el = document.querySelector("#toast-root");
-    if (el) {
-        el.innerHTML = `<div class="toast">${esc(message)}</div>`;
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => {
-            el.innerHTML = "";
-        }, 3000);
-    }
+    publishNotice({ identity: String(adapter.identityEpoch), object: path, task: 'local-result',
+        generation: loadId, key: `local:${++feedbackSequence}`, tone: 'success', message });
 }
 function clearPolling() {
     clearTimeout(pollTimer);
@@ -520,7 +647,7 @@ function isSessionError(e) {
             path = '/login';
             history.pushState({ path }, '', publicPath(path));
         }
-        feedback = localizedFeedback(() => Feedback(e.message, "warning"));
+        feedback = localizedFeedback(() => resultFeedback(e.message, "warning"));
         renderPage();
         return true;
     }
@@ -549,7 +676,10 @@ function showError(e) {
             actions.fail(record, e);
     if (isSessionError(e))
         return;
-    feedback = localizedFeedback(() => Feedback(err(e), "error", recoveryActions(e)));
+    const owned = [...actions.records.values()].some(record => record.view === path && record.error === err(e));
+    feedback = localizedFeedback(() => owned
+        ? OwnedFeedback(err(e), "error", recoveryActions(e))
+        : resultFeedback(err(e), "error", recoveryActions(e)));
     renderPage();
 }
 function routeId() {
@@ -764,6 +894,7 @@ async function readPage(preserve, ticket) {
                 if (e instanceof ConsoleViewChanged || isCurrentSessionError(e, identity))
                     return;
                 statusError = localizedStatusError(() => err(e));
+                reportReadFailure(e, identity, originalPath, ticket);
                 health = adapter.lastHealth;
             }
             if (!statusError) {
@@ -814,6 +945,7 @@ async function readPage(preserve, ticket) {
                 if (e instanceof ConsoleViewChanged || isCurrentSessionError(e, identity))
                     return;
                 statusError = localizedStatusError(() => err(e));
+                reportReadFailure(e, identity, originalPath, ticket);
             }
             if (!preserve || !dirty)
                 runtimeDraft = runtime
@@ -900,10 +1032,12 @@ async function readPage(preserve, ticket) {
         }
         if (ticket !== loadId)
             return;
-        if (path !== '/' || !statusError)
+        if (!['/', '/runtime'].includes(path) || !statusError) {
             pageConfirmedAt = new Date().toISOString();
+            notices.resolve({ identity: String(identity), object: originalPath, task: 'read', generation: ticket });
+        }
         if (preserve && !statusError && !readbackRequired && ![...actions.records.values()].some(record => record.view === path && record.blocked))
-            feedback = localizedFeedback(() => Feedback(t('read.confirmed'), 'success'));
+            feedback = '';
         renderPage();
         if (path === '/' && statusError)
             schedulePageRetry(ticket, originalPath, identity);
@@ -920,12 +1054,12 @@ async function readPage(preserve, ticket) {
         schedulePageRetry(ticket, originalPath, identity);
         if (!initial) {
             const confirmedAt = pageConfirmedAt, needsReadback = readbackRequired, readbackKey = path === '/runtime' ? 'recovery.readRuntime' : 'recovery.readDefaults';
-            feedback = localizedFeedback(() => Feedback(t('read.unconfirmed', { from: confirmedAt ? t('read.from', { time: date(confirmedAt) }) : '', error: err(e), note: needsReadback ? t('read.note') : '' }), 'warning', (needsReadback ? Button(t(readbackKey), 'readback', 'secondary') : '') + Button(t('refresh.retry'), 'refresh', 'secondary')));
+            feedback = localizedFeedback(() => OwnedFeedback(t('read.unconfirmed', { from: confirmedAt ? t('read.from', { time: date(confirmedAt) }) : '', error: err(e), note: needsReadback ? t('read.note') : '' }), 'warning', (needsReadback ? Button(t(readbackKey), 'readback', 'secondary') : '') + Button(t('refresh.retry'), 'refresh', 'secondary')));
             renderPage();
             return;
         }
         shell(PageHeader(moduleTitle(path, t('title.details')), t('read.manageCore'), Button(`${icon("refresh", 15)} ${t('common.refresh')}`, "refresh")) +
-            Feedback(err(e), "error") +
+            OwnedFeedback(err(e), "error") +
             Section(t('read.dataUnavailable'), "", Empty(t('read.couldNotLoad'), t('read.failedNotEmpty'), Button(t('read.tryAgain'), "refresh", "primary"))));
     }
     finally {
@@ -985,7 +1119,7 @@ function loginPage() {
     const unavailable = adapter.availability?.reachable === false;
     const unknown = adapter.availability === null;
     const bootstrap = adapter.availability?.administratorInitialized === false;
-    return `<div class="login"><div class="login-heading"><img class="brand-logo" src="/piwork-logo.png" alt="${t('login.logoAlt')}" width="64" height="64"><h1>${t('login.title')}</h1><p class="muted">${t('login.subtitle')}</p><div class="core-login-status">${StatusLabel(unknown ? t('common.notConfirmed') : unavailable ? t('login.coreUnreachable') : t('login.coreAvailable'), unknown ? "neutral" : unavailable ? "warning" : "success")}<span class="muted">piwork-core</span></div></div>${feedback}${bootstrap ? Feedback(t('login.bootstrap'), "warning") : ""}<section class="section"><form id="login-form">${Field("account", t('login.account'), Input("account", loginAccount, `autocomplete="username" required placeholder="${t('login.accountPlaceholder')}"`))}${Field("password", t('login.password'), Input("password", "", `type="password" autocomplete="current-password" required placeholder="${t('login.passwordPlaceholder')}"`))}<div id="login-error">${loginOutcomeUnknown ? Feedback(t('login.outcomeUnknown'), 'warning', Button(t('common.retry'), 'check-login', 'secondary')) : ''}</div><button class="btn primary" type="submit" ${bootstrap || loginOutcomeUnknown ? "disabled" : ""}>${t('login.signIn')} ${icon("arrow", 15)}</button></form></section>${unavailable ? Button(t('login.retryConnection'), "retry-connection", "secondary") : ""}<p class="login-note">${t('login.note1')}<br>${t('login.note2')}</p></div>`;
+    return `<div class="login"><div class="login-heading"><img class="brand-logo" src="/piwork-logo.png" alt="${t('login.logoAlt')}" width="64" height="64"><h1>${t('login.title')}</h1><p class="muted">${t('login.subtitle')}</p><div class="core-login-status">${StatusLabel(unknown ? t('common.notConfirmed') : unavailable ? t('login.coreUnreachable') : t('login.coreAvailable'), unknown ? "neutral" : unavailable ? "warning" : "success")}<span class="muted">piwork-core</span></div></div>${feedback}${bootstrap ? Feedback(t('login.bootstrap'), "warning") : ""}<section class="section"><form id="login-form">${Field("account", t('login.account'), Input("account", loginAccount, `autocomplete="username" required placeholder="${t('login.accountPlaceholder')}"`))}${Field("password", t('login.password'), Input("password", "", `type="password" autocomplete="current-password" required placeholder="${t('login.passwordPlaceholder')}"`))}<div id="login-error">${loginOutcomeUnknown ? OwnedFeedback(t('login.outcomeUnknown'), 'warning', Button(t('common.retry'), 'check-login', 'secondary')) : ''}</div><button class="btn primary" type="submit" ${bootstrap || loginOutcomeUnknown ? "disabled" : ""}>${t('login.signIn')} ${icon("arrow", 15)}</button></form></section>${unavailable ? Button(t('login.retryConnection'), "retry-connection", "secondary") : ""}<p class="login-note">${t('login.note1')}<br>${t('login.note2')}</p></div>`;
 }
 async function checkConsoleLogin() {
     if (!loginOutcomeUnknown)
@@ -1004,7 +1138,7 @@ async function checkConsoleLogin() {
         }
         if (!authenticated) {
             loginOutcomeUnknown = false;
-            feedback = localizedFeedback(() => Feedback(t('login.noSessionAfterUnknown'), 'warning'));
+            feedback = localizedFeedback(() => resultFeedback(t('login.noSessionAfterUnknown'), 'warning'));
         }
     }
     catch { /* Keep the unknown result and its explicit readback action. */ }
@@ -1064,7 +1198,7 @@ function statusPage() {
     const progress = stale || ready
         ? ""
         : `<div class="setup-progress" aria-label="${t('status.setupProgress')}"><span class="${hasRuntime ? "done" : "active"}"><i>${hasRuntime ? icon("check", 12) : "1"}</i> ${hasRuntime ? t('status.runtimeSaved') : t('status.saveRuntime')}</span><span class="progress-connector"></span><span class="${ready ? "done" : hasRuntime ? "active" : ""}"><i>${ready ? icon("check", 12) : "2"}</i> ${ready ? t('status.readinessConfirmed') : t('status.confirmReadiness')}</span></div>`;
-    return `<div class="overview-heading"><div><p class="eyebrow">${t('status.eyebrow')}</p><h1>${t('status.heading')}</h1><p>${t('status.intro')}</p></div><div class="overview-check"><span>${health ? t('status.checkedAt', { time: date(health.checkedAt) }) : t('status.noConfirmedCheck')}</span>${Button(icon("refresh", 14), "refresh-status", "icon-button", `aria-label="${t('status.refreshAria')}"`)}</div></div>${feedback}<section class="task-lead ${tone}" data-testid="overview-next-task"><div class="task-lead-content"><p class="eyebrow">${label}</p><h2>${esc(title)}</h2><p class="task-lead-description">${esc(description)}</p>${progress}<div class="task-lead-actions">${action}</div></div><div class="task-lead-aside"><span class="lead-symbol">${icon(ready ? "check" : stale ? "warning" : "server", 29)}</span><p>${esc(next)}</p></div></section><div class="task-section-label"><h2>${ready ? t('status.chooseTask') : t('status.alsoPrepare')}</h2><span>${ready ? t('status.startWithOutcome') : t('status.optionalNote')}</span></div><section class="task-actions" aria-label="${t('status.adminTasks')}">${hosted && !primaryIsSetup ? taskAction('settings', t('module.quickSetup'), t('status.quickSetupDetail'), t('status.modelPreparation'), '/setup') : ''}${hasRuntime ? taskAction('settings', t('status.maintainRuntime'), t('status.maintainRuntimeDetail'), t('status.futureWorkOnly'), '/runtime') : ''}${known ? taskAction('clock', t('status.continueOperation'), known.packageName + ' · ' + known.packagePhase, t('status.knownOperation'), '/operations/' + encodeURIComponent(known.id)) : ''}${taskAction("users", t('status.giveAccess'), t('status.giveAccessDetail'), overviewDataConfirmed ? t('status.enabledAccounts', { count: users.filter((u) => u.enabled).length }) : t('status.manageAccounts'), "/users")}${taskAction("settings", t('status.shapeWork'), t('status.shapeWorkDetail'), defaults ? `${t(defaults.skills.length === 1 ? 'status.skillCountOne' : 'status.skillCountMany', { count: defaults.skills.length })} · ${t(defaults.packages.length === 1 ? 'status.packageCountOne' : 'status.packageCountMany', { count: defaults.packages.length })}` : t('status.chooseStartingPoint'), "/default-work")}${taskAction("box", t('status.addCapability'), t('status.addCapabilityDetail'), t('status.openLibrary'), "/skills")}${taskAction("search", t('status.findOperation'), t('status.findOperationDetail'), t('status.operationIdRequired'), "/operations")}</section><details class="core-diagnostics" id="core-checks"><summary><span>${icon("server", 16)} ${t('status.diagnostics')}</span><span>${StatusLabel(stale ? t('status.unconfirmed') : ready ? t('status.ready') : t('status.notReady'), stale || !ready ? "warning" : "success")}${icon("down", 14)}</span></summary><div class="diagnostics-body"><div class="diagnostic-facts"><div><span>${t('status.coreConnection')}</span><strong>${stale ? t('status.unreachable') : health ? t('status.reachable') : t('status.unknown')}</strong></div><div><span>${t('status.processHealth')}</span><strong>${health ? (stale ? t('status.lastKnownHealthy') : t('status.healthy')) : t('status.unknown')}</strong></div><div><span>${t('status.runtimeReadiness')}</span><strong>${health ? (stale ? t('status.lastKnown') : "") + (health.ready ? t('status.ready') : t('status.notReady')) : t('status.unknown')}</strong></div></div>${stale ? Feedback(statusError + " " + t('status.staleSuffix'), "warning") : ""}${health ? health.checks.map((c) => `<div class="check-row">${icon(c.state === true ? "check" : "warning", 15)}<span class="check-name">${esc(c.name)}</span><span class="check-note">${esc(c.detail)}</span>${StatusLabel(stale ? t('status.stale') : t(c.state === true ? 'adapter.health.ready' : c.state === false ? 'adapter.health.notReady' : 'adapter.health.unknown'), stale ? "neutral" : c.state === true ? "success" : "warning")}</div>`).join("") : Empty(t('status.noConfirmedChecks'), t('status.noConfirmedChecksDetail'))}<div class="section-footer"><span>${t('status.administratorValue', { account: esc(adapter.account) })}</span><span>${t('status.refreshInterval')}</span></div>${Disclosure(t('status.publicTechnicalFields'), `<pre>${esc(JSON.stringify({ core: "piwork-core", connection: "Console to Core loopback", health: health?.healthy ?? null, ready: health?.ready ?? null, reason: health?.reason ?? null, lastChecked: health?.checkedAt ?? null }, null, 2))}</pre>`)}</div></details>`;
+    return `<div class="overview-heading"><div><p class="eyebrow">${t('status.eyebrow')}</p><h1>${t('status.heading')}</h1><p>${t('status.intro')}</p></div><div class="overview-check"><span>${health ? t('status.checkedAt', { time: date(health.checkedAt) }) : t('status.noConfirmedCheck')}</span>${Button(icon("refresh", 14), "refresh-status", "icon-button", `aria-label="${t('status.refreshAria')}"`)}</div></div>${feedback}<section class="task-lead ${tone}" data-testid="overview-next-task"><div class="task-lead-content"><p class="eyebrow">${label}</p><h2>${esc(title)}</h2><p class="task-lead-description">${esc(description)}</p>${progress}<div class="task-lead-actions">${action}</div></div><div class="task-lead-aside"><span class="lead-symbol">${icon(ready ? "check" : stale ? "warning" : "server", 29)}</span><p>${esc(next)}</p></div></section><div class="task-section-label"><h2>${ready ? t('status.chooseTask') : t('status.alsoPrepare')}</h2><span>${ready ? t('status.startWithOutcome') : t('status.optionalNote')}</span></div><section class="task-actions" aria-label="${t('status.adminTasks')}">${hosted && !primaryIsSetup ? taskAction('settings', t('module.quickSetup'), t('status.quickSetupDetail'), t('status.modelPreparation'), '/setup') : ''}${hasRuntime ? taskAction('settings', t('status.maintainRuntime'), t('status.maintainRuntimeDetail'), t('status.futureWorkOnly'), '/runtime') : ''}${known ? taskAction('clock', t('status.continueOperation'), known.packageName + ' · ' + known.packagePhase, t('status.knownOperation'), '/operations/' + encodeURIComponent(known.id)) : ''}${taskAction("users", t('status.giveAccess'), t('status.giveAccessDetail'), overviewDataConfirmed ? t('status.enabledAccounts', { count: users.filter((u) => u.enabled).length }) : t('status.manageAccounts'), "/users")}${taskAction("settings", t('status.shapeWork'), t('status.shapeWorkDetail'), defaults ? `${t(defaults.skills.length === 1 ? 'status.skillCountOne' : 'status.skillCountMany', { count: defaults.skills.length })} · ${t(defaults.packages.length === 1 ? 'status.packageCountOne' : 'status.packageCountMany', { count: defaults.packages.length })}` : t('status.chooseStartingPoint'), "/default-work")}${taskAction("box", t('status.addCapability'), t('status.addCapabilityDetail'), t('status.openLibrary'), "/skills")}${taskAction("search", t('status.findOperation'), t('status.findOperationDetail'), t('status.operationIdRequired'), "/operations")}</section><details class="core-diagnostics" id="core-checks"><summary><span>${icon("server", 16)} ${t('status.diagnostics')}</span><span>${StatusLabel(stale ? t('status.unconfirmed') : ready ? t('status.ready') : t('status.notReady'), stale || !ready ? "warning" : "success")}${icon("down", 14)}</span></summary><div class="diagnostics-body"><div class="diagnostic-facts"><div><span>${t('status.coreConnection')}</span><strong>${stale ? t('status.unreachable') : health ? t('status.reachable') : t('status.unknown')}</strong></div><div><span>${t('status.processHealth')}</span><strong>${health ? (stale ? t('status.lastKnownHealthy') : t('status.healthy')) : t('status.unknown')}</strong></div><div><span>${t('status.runtimeReadiness')}</span><strong>${health ? (stale ? t('status.lastKnown') : "") + (health.ready ? t('status.ready') : t('status.notReady')) : t('status.unknown')}</strong></div></div>${stale ? OwnedFeedback(statusError + " " + t('status.staleSuffix'), "warning") : ""}${health ? health.checks.map((c) => `<div class="check-row">${icon(c.state === true ? "check" : "warning", 15)}<span class="check-name">${esc(c.name)}</span><span class="check-note">${esc(c.detail)}</span>${StatusLabel(stale ? t('status.stale') : t(c.state === true ? 'adapter.health.ready' : c.state === false ? 'adapter.health.notReady' : 'adapter.health.unknown'), stale ? "neutral" : c.state === true ? "success" : "warning")}</div>`).join("") : Empty(t('status.noConfirmedChecks'), t('status.noConfirmedChecksDetail'))}<div class="section-footer"><span>${t('status.administratorValue', { account: esc(adapter.account) })}</span><span>${t('status.refreshInterval')}</span></div>${Disclosure(t('status.publicTechnicalFields'), `<pre>${esc(JSON.stringify({ core: "piwork-core", connection: "Console to Core loopback", health: health?.healthy ?? null, ready: health?.ready ?? null, reason: health?.reason ?? null, lastChecked: health?.checkedAt ?? null }, null, 2))}</pre>`)}</div></details>`;
 }
 function runtimePage() {
     const ready = !!health?.ready && !statusError;
@@ -1096,7 +1230,7 @@ function runtimePage() {
         ? `<dl class="summary-list"><dt>${t('runtime.aiModel')}</dt><dd>${esc(model?.name || runtime.modelId)}</dd><dt>${t('runtime.protocol')}</dt><dd>${esc(model?.api || runtime.provider)}</dd><dt>${t('runtime.modelId')}</dt><dd><code>${esc(runtime.modelId)}</code></dd><dt>${t('runtime.customBaseUrl')}</dt><dd>${model?.baseUrl || runtime.baseUrl ? `<code>${esc(model?.baseUrl || runtime.baseUrl)}</code>` : t('runtime.providerDefault')}</dd><dt>${t('runtime.credential')}</dt><dd>${StatusLabel(runtime.credentialAvailable ? t('runtime.available') : t('shell.unavailable'), runtime.credentialAvailable ? "success" : "warning")}</dd><dt>${t('runtime.updated')}</dt><dd>${date(runtime.updatedAt)}</dd></dl>`
         : Empty(t('runtime.noRuntime'), t('runtime.noRuntimeDetail'));
     const body = runtimeEditing
-        ? Section(configured ? t('runtime.editTitle') : t('runtime.configure'), t('runtime.configureDetail'), `<div class="section-body"><form id="runtime-form" class="form-grid">${runtimeDefaultsError ? Feedback(runtimeDefaultsError, "warning") : ""}${Field("modelRef", t('runtime.aiModel'), `<select id="modelRef" name="modelRef" required><option value="">${t('runtime.chooseModel')}</option>${modelManagement.models.map(m => `<option ${!m.enabled || !m.credentialAvailable ? 'disabled' : ''} value="${esc(m.modelRef)}" ${m.modelRef === runtimeDraft.modelRef ? 'selected' : ''}>${esc(m.api + ' / ' + m.name + ' (' + m.model + ') · ' + m.id.slice(-8) + (!m.enabled ? t('runtime.optionDisabled') : !m.credentialAvailable ? t('runtime.optionKeyUnavailable') : ''))}</option>`).join('')}${runtimeDraft.modelRef && !modelManagement.models.some(m => m.modelRef === runtimeDraft.modelRef) ? `<option selected disabled value="${esc(runtimeDraft.modelRef)}">${t('runtime.savedModelOption')}</option>` : ''}</select>`, t('runtime.modelHelp'))}${NavLink(t('runtime.manageModels'), "/models")}${modelCatalogError ? Feedback(t('runtime.modelListFailed', { error: modelCatalogError }), "warning") : !modelManagement.models.length ? Feedback(t('runtime.noModels'), "info") : ''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired || !releaseAgentImage ? "disabled" : ""}>${saving ? t('common.saving') : t('status.saveRuntime')}</button>${Button(t('runtime.cancelEditing'), "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">${t('runtime.saveNote')}</p></form></div>${configured ? Disclosure(t('runtime.compareSaved'), summary) : ""}`)
+        ? Section(configured ? t('runtime.editTitle') : t('runtime.configure'), t('runtime.configureDetail'), `<div class="section-body"><form id="runtime-form" class="form-grid">${runtimeDefaultsError ? OwnedFeedback(runtimeDefaultsError, "warning") : ""}${Field("modelRef", t('runtime.aiModel'), `<select id="modelRef" name="modelRef" required><option value="">${t('runtime.chooseModel')}</option>${modelManagement.models.map(m => `<option ${!m.enabled || !m.credentialAvailable ? 'disabled' : ''} value="${esc(m.modelRef)}" ${m.modelRef === runtimeDraft.modelRef ? 'selected' : ''}>${esc(m.api + ' / ' + m.name + ' (' + m.model + ') · ' + m.id.slice(-8) + (!m.enabled ? t('runtime.optionDisabled') : !m.credentialAvailable ? t('runtime.optionKeyUnavailable') : ''))}</option>`).join('')}${runtimeDraft.modelRef && !modelManagement.models.some(m => m.modelRef === runtimeDraft.modelRef) ? `<option selected disabled value="${esc(runtimeDraft.modelRef)}">${t('runtime.savedModelOption')}</option>` : ''}</select>`, t('runtime.modelHelp'))}${NavLink(t('runtime.manageModels'), "/models")}${modelCatalogError ? OwnedFeedback(t('runtime.modelListFailed', { error: modelCatalogError }), "warning") : !modelManagement.models.length ? OwnedFeedback(t('runtime.noModels'), "info") : ''}<div class="form-actions"><button type="submit" class="btn primary" ${saving || readbackRequired || !releaseAgentImage ? "disabled" : ""}>${saving ? t('common.saving') : t('status.saveRuntime')}</button>${Button(t('runtime.cancelEditing'), "cancel-runtime-edit", "secondary")}</div><p class="help form-notice">${t('runtime.saveNote')}</p></form></div>${configured ? Disclosure(t('runtime.compareSaved'), summary) : ""}`)
         : Section(t('runtime.configurationTitle'), t('runtime.configurationDetail'), `<div class="section-body">${summary}</div><div class="section-footer"><span>${t('runtime.keyNeverShown')}</span>${Button(t('runtime.editTitle'), "edit-runtime", "secondary")}</div>`) +
             Section(t('runtime.readiness'), t('runtime.readinessDetail'), `<div class="section-body"><div class="readiness-answer"><span class="system-icon ${ready ? "" : "warning"}">${icon(ready ? "check" : "warning", 19)}</span><div><h3>${ready ? t('runtime.readyForWork') : statusError ? t('runtime.readinessUnconfirmed') : t('runtime.savedNotReady')}</h3><p>${esc(statusError || health?.reason || t('runtime.readinessNeeded'))}</p><small>${health ? t('runtime.lastChecked', { time: date(health.checkedAt) }) : t('runtime.notChecked')}</small></div></div></div><div class="section-footer"><span>${t('runtime.existingWorkKeeps')}</span>${Button(t('runtime.verify'), "verify-runtime", "secondary")}</div>`);
     return (PageHeader(configured ? t('module.runtime') : t('runtime.configure'), t('runtime.pageDetail'), Button(`${icon("refresh", 15)} ${t('common.refresh')}`, "refresh"), NavLink(t('shell.navOverview'), "/") + " / " + t('module.runtime')) +
@@ -1225,7 +1359,7 @@ function reviewDefaultConflicts() {
     openDialog(t('conflicts.resolveTitle'), t('conflicts.resolveDetail'), `<div class="review-list">${defaultConflicts.map((k) => `<div><h3>${esc(k)}</h3><p><span>${t('conflicts.onCore')}</span>${esc(JSON.stringify(defaults[k]))}</p><p><span>${t('conflicts.yourDraft')}</span>${esc(JSON.stringify(defaultDraft[k]))}</p></div>`).join("")}</div><p class="help">${t('conflicts.resolveHelp')}</p><div data-layout="layout-role-3">${Button(t('conflicts.useCore'), "resolve-default-conflicts-core", "secondary")}</div>`, t('conflicts.keepDraft'), () => {
         defaultConflicts = [];
         closeDialog(true);
-        feedback = localizedFeedback(() => Feedback(t('conflicts.keptDraft'), "warning"));
+        feedback = localizedFeedback(() => resultFeedback(t('conflicts.keptDraft'), "warning"));
         renderPage();
     });
 }
@@ -1397,13 +1531,14 @@ function openDialog(title, description, body, submitLabel, action, kind = "prima
     dialogOriginQuery = origin?.dataset.action
         ? `[data-action="${origin.dataset.action}"]${origin.dataset.id ? `[data-id="${origin.dataset.id}"]` : origin.dataset.name ? `[data-name="${CSS.escape(origin.dataset.name)}"]` : ""}`
         : origin?.dataset.modelAction ? `[data-model-action="${origin.dataset.modelAction}"]` : "";
-    currentModalTitle = title;
+    currentModalTitleText = typeof title === 'function' ? title : () => title;
+    currentModalTitle = currentModalTitleText();
     dialogAction = readOnly ? null : action;
     if (!preserveDraft)
         dialogDirty = false;
     dialog = document.createElement("dialog");
     dialog.setAttribute("aria-labelledby", "dialog-title");
-    dialog.innerHTML = `<form id="dialog-form"><div class="dialog-heading"><div><h2 id="dialog-title">${esc(title)}</h2><p>${esc(description)}</p></div>${Button(icon("close", 17), "close-dialog", "icon-button", `aria-label="${esc(t('dialog.closeAria'))}"`)}</div><div class="dialog-body"><div id="dialog-feedback"></div>${body}</div><div class="dialog-footer">${readOnly ? Button(t('common.close'), "close-dialog", "secondary") : `${Button(t('common.cancel'), "close-dialog", "secondary")}<button type="submit" class="btn ${kind}" id="dialog-submit">${esc(submitLabel)}</button>`}</div></form>`;
+    dialog.innerHTML = `<form id="dialog-form"><div class="dialog-heading"><div><h2 id="dialog-title">${esc(currentModalTitle)}</h2><p>${esc(description)}</p></div>${Button(icon("close", 17), "close-dialog", "icon-button", `aria-label="${esc(t('dialog.closeAria'))}"`)}</div><div class="dialog-body"><div id="dialog-feedback"></div>${body}</div><div class="dialog-footer">${readOnly ? Button(t('common.close'), "close-dialog", "secondary") : `${Button(t('common.cancel'), "close-dialog", "secondary")}<button type="submit" class="btn ${kind}" id="dialog-submit">${esc(submitLabel)}</button>`}</div></form>`;
     document.body.append(dialog);
     dialog.addEventListener("cancel", (event) => {
         if (submissionPending) {
@@ -1415,6 +1550,7 @@ function openDialog(title, description, body, submitLabel, action, kind = "prima
     });
     trapDialogFocus(dialog);
     dialog.showModal();
+    syncNotices();
     const focus = kind === "danger" || readOnly
         ? dialog.querySelector('[data-action="close-dialog"]')
         : dialog.querySelector("input:not([type=hidden]),select,textarea,button[type=submit]");
@@ -1442,7 +1578,9 @@ function closeDialog(force = false) {
     dialog?.close();
     dialog?.remove();
     dialog = null;
+    dialogRecord = null;
     dialogAction = null;
+    syncNotices();
     dialogDirty = false;
     dialogOrigin = null;
     modalError = "";
@@ -1463,7 +1601,7 @@ function dialogFeedback(message, tone = "error", buttons = "", cause) {
             actions.fail(record, cause ?? new Error(message));
     const el = document.querySelector("#dialog-feedback");
     if (el) {
-        el.innerHTML = Feedback(message, tone, buttons);
+        el.innerHTML = `<div class="owned-feedback ${tone}" role="alert"><span>${esc(message)}</span>${buttons ? `<div class="feedback-actions">${buttons}</div>` : ''}</div>`;
         el.scrollIntoView({ block: "nearest" });
     }
 }
@@ -1476,8 +1614,8 @@ function dialogBusy(busy, label = t('common.saving')) {
     if (submit && busy)
         submit.title = label;
 }
-function createUserDialog() {
-    openDialog(t('users.createUser'), t('dialog.createDetail'), `<div class="form-grid">${Field("new-account", t('login.account'), Input("new-account", "", `required maxlength="128" autocomplete="off" placeholder="${esc(t('dialog.accountPlaceholder'))}"`), t('dialog.accountHelp'))}${Field("new-password", t('login.password'), Input("new-password", "", 'type="password" required minlength="12" maxlength="1024" autocomplete="new-password"'), t('dialog.passwordHelp'))}${Field("confirm-password", t('field.confirmPassword'), Input("confirm-password", "", 'type="password" required minlength="12" autocomplete="new-password"'))}${Field("new-role", t('users.colRole'), '<select id="new-role" name="new-role"><option>User</option><option>Administrator</option></select>', t('dialog.roleHelp'))}</div>`, t('users.createUser'), async (form) => {
+function createUserDialog(recovery) {
+    openDialog(() => t('users.createUser'), t('dialog.createDetail'), `<div class="form-grid">${Field("new-account", t('login.account'), Input("new-account", recovery?.account || "", `required maxlength="128" autocomplete="off" placeholder="${esc(t('dialog.accountPlaceholder'))}"`), t('dialog.accountHelp'))}${Field("new-password", t('login.password'), Input("new-password", "", 'type="password" required minlength="12" maxlength="1024" autocomplete="new-password"'), t('dialog.passwordHelp'))}${Field("confirm-password", t('field.confirmPassword'), Input("confirm-password", "", 'type="password" required minlength="12" autocomplete="new-password"'))}${Field("new-role", t('users.colRole'), `<select id="new-role" name="new-role"><option ${recovery?.role === 'User' ? 'selected' : ''}>User</option><option ${recovery?.role === 'Administrator' ? 'selected' : ''}>Administrator</option></select>`, t('dialog.roleHelp'))}</div>`, t('users.createUser'), async (form) => {
         const password = String(form.get("new-password"));
         if (password !== form.get("confirm-password")) {
             setFieldError("confirm-password", t('dialog.passwordMismatch'));
@@ -1498,7 +1636,6 @@ function createUserDialog() {
                 account: u.account,
                 hint: u.role === "Administrator" ? t('dialog.adminSignIn') : t('dialog.userSignIn'),
             });
-            feedback = Feedback(created, "success");
             renderPage();
             void refreshConfirmed(created, async () => { users = await awaitCurrent(adapter.users()); }, path, () => t('dialog.accountCreated', { account: u.account, hint: u.role === 'Administrator' ? t('dialog.adminSignIn') : t('dialog.userSignIn') }));
         }
@@ -1522,6 +1659,21 @@ function createUserDialog() {
                 setFieldError("new-account", e.message);
         }
     });
+    if (recovery && actions.current(recovery.record)) {
+        dialogRecord = recovery.record;
+        const error = document.querySelector('#dialog-feedback');
+        if (error)
+            error.innerHTML = OwnedFeedback(`${recovery.record.targetText?.() ?? recovery.record.target} · ${recovery.record.errorText?.() ?? recovery.record.error ?? ''}`, 'error');
+    }
+}
+function registerCreateUserRecovery(record, draft) {
+    record.recover = createUserRecovery(draft, { identity: adapter.identityEpoch, view: path }, () => ({ identity: adapter.identityEpoch, view: path, current: actions.current(record) && !record.blocked && !['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(record.errorCode || ''), otherDialog: !!dialog && dialogRecord !== record }), safe => {
+        if (dialogRecord === record && dialog) {
+            dialog.querySelector('#dialog-feedback')?.scrollIntoView({ block: 'nearest' });
+            return;
+        }
+        createUserDialog({ ...safe, record });
+    }, () => dialog?.querySelector('[data-action="close-dialog"]')?.focus());
 }
 function clearModalPasswords() {
     dialog
@@ -1575,7 +1727,7 @@ function userActionDialog(id, action) {
                 dirty = false;
                 path = "/login";
                 history.pushState({ path }, "", publicPath(path));
-                feedback = localizedFeedback(() => Feedback(t('users.selfRevoked'), "success"));
+                feedback = localizedFeedback(() => resultFeedback(t('users.selfRevoked'), "success"));
                 renderPage();
                 return;
             }
@@ -1585,7 +1737,6 @@ function userActionDialog(id, action) {
                     ? t('users.outcomeDisabled')
                     : t('users.outcomeEnabled');
             const message = t('users.actionOutcome', { account: u.account, outcome, impact });
-            feedback = Feedback(message, "success");
             renderPage();
             void refreshConfirmed(message, async () => { users = await awaitCurrent(adapter.users(), true); }, path, () => t('users.actionOutcome', { account: u.account, outcome: t(action === 'reset' ? 'users.outcomeReset' : action === 'disable' ? 'users.outcomeDisabled' : 'users.outcomeEnabled'), impact: t(action === 'enable' ? 'users.oldSessionsImpact' : 'users.revokeImpact') }));
         }
@@ -1637,7 +1788,6 @@ function catalogActionDialog(kind, name, action) {
                     ? t('catalog.outcomeDisabled')
                     : t('catalog.outcomeEnabled');
             const message = t('catalog.outcome', { name, outcome });
-            feedback = Feedback(message, "success");
             confirmedMutation(message);
             if (action === "remove") {
                 path = "/" + kind;
@@ -1723,8 +1873,11 @@ async function submitSkill() {
     }
     dialogBusy(true, t('upload.uploading'));
     const selection = upload;
+    const uploadCurrent = currentView();
     try {
         const s = await awaitCurrent(adapter.uploadSkill(selection, uploadTarget, (sent, total) => {
+            if (!uploadCurrent())
+                return;
             const el = document.querySelector("#upload-stage");
             if (el)
                 el.innerHTML =
@@ -1741,7 +1894,6 @@ async function submitSkill() {
         confirmedMutation(confirmed);
         path = "/skills/" + encodeURIComponent(s.name);
         history.pushState({ path }, "", publicPath(path));
-        feedback = Feedback(confirmed, "success");
         renderPage();
         void refreshConfirmed(confirmed, async () => { skills = await awaitCurrent(adapter.skills()); defaults = await awaitCurrent(adapter.defaults()); }, path, () => t('upload.skillConfirmed', { name: s.name }));
     }
@@ -1807,11 +1959,14 @@ async function submitPackage(form) {
         intentLocked = true;
     }
     dialogBusy(true, t('upload.submitting'));
+    const uploadCurrent = currentView();
     dialog
         ?.querySelectorAll("input")
         .forEach((i) => (i.disabled = true));
     try {
         const op = await awaitCurrent(adapter.submitPackage(packageIntent, (sent, total) => {
+            if (!uploadCurrent())
+                return;
             const el = document.querySelector("#upload-stage");
             if (el)
                 el.innerHTML =
@@ -1831,7 +1986,7 @@ async function submitPackage(form) {
         history.pushState({ path }, "", publicPath(path));
         operation = op;
         rememberedOperation = structuredClone(op);
-        feedback = localizedFeedback(() => Feedback(t('upload.submissionAccepted'), "success"));
+        feedback = localizedFeedback(() => resultFeedback(t('upload.submissionAccepted'), "success"));
         renderPage();
         scheduleOperation();
     }
@@ -1895,8 +2050,9 @@ async function refreshHealth(showNotice = true) {
             health = fresh;
             preparation = prepared;
             statusError = '';
+            notices.resolve({ identity: String(identity), object: origin, task: 'read', generation: task.view });
             if (showNotice)
-                feedback = localizedFeedback(() => Feedback(t('status.refreshed'), 'success'));
+                feedback = localizedFeedback(() => resultFeedback(t('status.refreshed'), 'success'));
             if (path === '/' || path === '/runtime')
                 renderPage();
         }
@@ -1904,6 +2060,8 @@ async function refreshHealth(showNotice = true) {
             if (isCurrentSessionError(e, identity) || !valid())
                 return;
             statusError = localizedStatusError(() => err(e));
+            publishNotice(readFailureNotice({ identity: String(identity), object: origin, generation: task.view }, e?.code || 'READ_FAILED', () => err(e), { label: () => t('common.retry'), run: () => { if (identity === adapter.identityEpoch && origin === path)
+                    void refreshHealth(false); } }));
             if (path === '/' || path === '/runtime')
                 renderPage();
             if (showNotice)
@@ -1957,7 +2115,7 @@ async function refreshOperation(manual = false) {
                 return;
             clearTimeout(pollTimer);
             interruptedOperation = id;
-            feedback = localizedFeedback(() => Feedback(t('operation.interruptedWith', { error: err(e) }), 'warning', Button(t('operation.resumeObservation'), 'resume-observation', 'secondary')));
+            feedback = localizedFeedback(() => resultFeedback(t('operation.interruptedWith', { error: err(e) }), 'warning', Button(t('operation.resumeObservation'), 'resume-observation', 'secondary')));
             renderPage();
             if (manual)
                 throw e;
@@ -2024,7 +2182,7 @@ async function readback() {
             readbackRequired = false;
             const matches = runtime &&
                 Object.entries(draft).every(([k, v]) => runtime[k] === v);
-            feedback = localizedFeedback(() => Feedback(matches
+            feedback = localizedFeedback(() => resultFeedback(matches
                 ? t('runtime.readbackMatches')
                 : t('runtime.readbackDiffers'), matches ? "success" : "warning"));
             renderPage();
@@ -2043,7 +2201,7 @@ async function readback() {
             readbackRequired = false;
             dirty = changedDefaults();
             const hasUnsaved = dirty;
-            feedback = localizedFeedback(() => Feedback(hasUnsaved
+            feedback = localizedFeedback(() => resultFeedback(hasUnsaved
                 ? t('defaults.readbackUnsaved')
                 : t('defaults.readbackMatch'), hasUnsaved ? "warning" : "success"));
             renderPage();
@@ -2062,7 +2220,7 @@ async function readback() {
 async function saveRuntime(form) {
     const agentImage = releaseAgentImage, modelRef = String(form.get('modelRef') || '');
     if (!agentImage) {
-        feedback = localizedFeedback(() => Feedback(t('runtime.releaseUnavailable'), 'warning'));
+        feedback = localizedFeedback(() => resultFeedback(t('runtime.releaseUnavailable'), 'warning'));
         renderPage();
         return;
     }
@@ -2088,19 +2246,19 @@ async function saveRuntime(form) {
         if (!dirty)
             runtimeDraft = { agentImage: runtime.agentImage, provider: runtime.provider, modelId: runtime.modelId, baseUrl: runtime.baseUrl, modelRef: runtime.modelRef || '' };
         confirmedMutation(t('runtime.savedLabel'));
-        feedback = localizedFeedback(() => Feedback(t('runtime.savedVerifying'), 'success'));
+        feedback = localizedFeedback(() => resultFeedback(t('runtime.savedVerifying'), 'success'));
         renderPage();
         try {
             health = await awaitCurrent(adapter.health());
             statusError = '';
             const result = health;
-            feedback = localizedFeedback(() => Feedback(result.ready ? t('runtime.savedReady') : t('runtime.savedNotReadyWithReason', { reason: result.reason || t('adapter.health.unknown') }), result.ready ? 'success' : 'warning'));
+            feedback = result.ready ? '' : localizedFeedback(() => resultFeedback(t('runtime.savedNotReadyWithReason', { reason: result.reason || t('adapter.health.unknown') }), 'warning'));
         }
         catch (error) {
             if (error instanceof ConsoleViewChanged)
                 return;
             statusError = localizedStatusError(() => t('runtime.readinessUnconfirmedValue'));
-            feedback = localizedFeedback(() => Feedback(t('runtime.savedReadinessUnconfirmed'), 'warning'));
+            feedback = localizedFeedback(() => resultFeedback(t('runtime.savedReadinessUnconfirmed'), 'warning'));
         }
     }
     catch (error) {
@@ -2108,7 +2266,10 @@ async function saveRuntime(form) {
             return;
         readbackRequired = error instanceof ConsoleError && error.code === 'RESULT_UNKNOWN';
         const unknown = readbackRequired;
-        feedback = localizedFeedback(() => Feedback(err(error), unknown ? 'warning' : 'error', unknown ? Button(t('recovery.readRuntime'), 'readback') : ''));
+        const record = actions.records.get('save-runtime');
+        if (record?.pending)
+            actions.fail(record, error);
+        feedback = localizedFeedback(() => OwnedFeedback(err(error), unknown ? 'unknown' : 'error', unknown ? Button(t('recovery.readRuntime'), 'readback') : ''));
     }
     finally {
         if (valid()) {
@@ -2148,7 +2309,7 @@ async function saveDefaults() {
         defaultLastSaved = true;
         dirty = changedDefaults();
         readbackRequired = false;
-        feedback = localizedFeedback(() => Feedback(t('defaults.savedOutcome'), "success"));
+        feedback = localizedFeedback(() => resultFeedback(t('defaults.savedOutcome'), "success"));
     }
     catch (e) {
         if (e instanceof ConsoleViewChanged)
@@ -2160,7 +2321,7 @@ async function saveDefaults() {
                 actions.fail(record, e);
         readbackRequired = e instanceof ConsoleError && e.code === "RESULT_UNKNOWN";
         const unknown = readbackRequired;
-        feedback = localizedFeedback(() => Feedback(err(e), unknown ? "warning" : "error", unknown ? Button(t('recovery.readDefaults'), "readback") : ""));
+        feedback = localizedFeedback(() => OwnedFeedback(err(e), unknown ? "unknown" : "error", unknown ? Button(t('recovery.readDefaults'), "readback") : ""));
     }
     finally {
         if (valid())
@@ -2173,7 +2334,7 @@ async function importAgents(file, stillCurrent = () => true) {
     if (!defaultDraft)
         return;
     if (file.size > 262144) {
-        feedback = localizedFeedback(() => Feedback(t('defaults.importTooLarge'), "error"));
+        feedback = localizedFeedback(() => resultFeedback(t('defaults.importTooLarge'), "error"));
         renderPage();
         return;
     }
@@ -2182,7 +2343,7 @@ async function importAgents(file, stillCurrent = () => true) {
         text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
     }
     catch {
-        feedback = localizedFeedback(() => Feedback(t('defaults.importNotUtf8'), "error"));
+        feedback = localizedFeedback(() => resultFeedback(t('defaults.importNotUtf8'), "error"));
         renderPage();
         return;
     }
@@ -2193,7 +2354,7 @@ async function importAgents(file, stillCurrent = () => true) {
             return;
         defaultDraft.agentsMd = text;
         dirty = changedDefaults();
-        feedback = localizedFeedback(() => Feedback(t('defaults.imported'), "info"));
+        feedback = localizedFeedback(() => resultFeedback(t('defaults.imported'), "info"));
         renderPage();
     };
     if (defaultDraft.agentsMd !== defaults?.agentsMd) {
@@ -2249,7 +2410,7 @@ document.addEventListener("change", async (event) => {
         const name = el.dataset.defaultPackage;
         if (el.checked && defaultDraft.packages.length >= 64) {
             el.checked = false;
-            showToast(t('defaults.packageLimit'));
+            showToast(() => t('defaults.packageLimit'));
             return;
         }
         defaultDraft.packages = el.checked
@@ -2307,7 +2468,17 @@ document.addEventListener("submit", async (event) => {
         const submitButton = form.querySelector('button[type="submit"]');
         if (!submissionPending && !preflightPending && !submitButton?.disabled) {
             const submit = dialogAction, data = new FormData(form);
-            await tracked({ key: `dialog:${path}:${currentModalTitle}`, kind: 'configuration', resource: currentModalTitle, label: t('intent.submitting'), target: `${currentModalTitle} · ${routeId() || String(data.get('new-account') || upload?.name || packageSourceDraft || t('term.core'))}`, anchor: '#dialog-submit', view: path }, async () => { await submit?.(data); });
+            const titleText = currentModalTitleText;
+            const target = routeId() || String(data.get('new-account') || upload?.name || packageSourceDraft || '');
+            const targetText = () => `${titleText()} · ${target || t('term.core')}`;
+            await tracked({ key: `dialog:${path}:${currentModalTitle}`, kind: 'configuration', resource: currentModalTitle, label: t('intent.submitting'), target: targetText(), targetText, anchor: '#dialog-submit', view: path }, async (record) => {
+                dialogRecord = record;
+                if (form.querySelector('#new-account'))
+                    registerCreateUserRecovery(record, {
+                        account: String(data.get('new-account') || ''), role: String(data.get('new-role')) === 'Administrator' ? 'Administrator' : 'User',
+                    });
+                await submit?.(data);
+            });
         }
         return;
     }
@@ -2348,7 +2519,7 @@ document.addEventListener("submit", async (event) => {
             const message = e instanceof ConsoleError && e.code === "RATE_LIMITED"
                 ? t('login.rateLimited', { seconds: Math.max(1, Math.ceil((rateUntil - Date.now()) / 1000)) })
                 : err(e);
-            document.querySelector("#login-error").innerHTML = Feedback(message, "error", e instanceof ConsoleError && e.code === "CORE_UNREACHABLE"
+            document.querySelector("#login-error").innerHTML = OwnedFeedback(message, "error", e instanceof ConsoleError && e.code === "CORE_UNREACHABLE"
                 ? Button(t('login.retryConnection'), "retry-connection", "secondary")
                 : "");
             button.disabled = false;
@@ -2362,7 +2533,7 @@ document.addEventListener("submit", async (event) => {
                         clearInterval(timer);
                         return;
                     }
-                    area.innerHTML = Feedback(remaining
+                    area.innerHTML = OwnedFeedback(remaining
                         ? t('login.rateLimited', { seconds: remaining })
                         : t('login.rateRetry'), "warning");
                     if (!remaining) {
@@ -2447,7 +2618,7 @@ async function handleConsoleAction(button) {
         defaultConflicts = [];
         dirty = changedDefaults();
         closeDialog(true);
-        feedback = localizedFeedback(() => Feedback(t('defaults.conflictsKept'), "info"));
+        feedback = localizedFeedback(() => resultFeedback(t('defaults.conflictsKept'), "info"));
         renderPage();
     }
     else if (action === "resolve-default-reference") {
@@ -2530,12 +2701,17 @@ async function handleConsoleAction(button) {
     else if (action === "close-dialog")
         closeDialog();
     else if (action === "copy") {
+        const valid = currentView();
         try {
             await navigator.clipboard.writeText(button.dataset.value || "");
-            showToast(t('common.copied'));
+            if (valid())
+                showToast(() => t('common.copied'));
         }
         catch {
-            showToast(t('common.clipboardUnavailable'));
+            if (!valid())
+                return;
+            feedback = localizedFeedback(() => resultFeedback(t('common.clipboardUnavailable'), 'error', Button(t('common.retry'), 'copy', 'secondary', `data-value="${esc(button.dataset.value || '')}"`)));
+            renderPage();
         }
     }
     else if (action === "refresh") {
@@ -2562,7 +2738,7 @@ async function handleConsoleAction(button) {
                 packageIntent = null;
                 path = "/login";
                 history.pushState({ path }, "", publicPath(path));
-                feedback = localizedFeedback(() => Feedback(t('login.signedOut'), "success"));
+                feedback = localizedFeedback(() => resultFeedback(t('login.signedOut'), "success"));
                 renderPage();
             }
             catch (e) {
@@ -2586,12 +2762,12 @@ async function handleConsoleAction(button) {
             await adapter.connection();
             if (!valid())
                 return;
-            feedback = localizedFeedback(() => Feedback(t('login.coreReachable'), "success"));
+            feedback = localizedFeedback(() => resultFeedback(t('login.coreReachable'), "success"));
         }
         catch (e) {
             if (!valid())
                 return;
-            feedback = localizedFeedback(() => Feedback(err(e), "error", Button(t('login.retryConnection'), "retry-connection", "secondary")));
+            feedback = localizedFeedback(() => resultFeedback(err(e), "error", Button(t('login.retryConnection'), "retry-connection", "secondary")));
         }
         renderPage();
     }
@@ -2716,18 +2892,31 @@ async function handleConsoleAction(button) {
 history.replaceState({ path }, "", publicPath(path) + location.search);
 pageURL = location.pathname + location.search;
 let startupSequence = 0, availabilitySequence = 0;
+let availabilityNoticeOwner = null;
 let startupTimer, availabilityTimer;
 function startupStatus(message) {
     const node = app.querySelector('[data-startup-status]');
-    if (node)
+    if (node) {
         node.textContent = message;
+        node.classList.toggle('sr-only', message === t('startup.opening'));
+    }
+    const skeleton = app.querySelector('[data-startup-skeleton]');
+    if (skeleton)
+        skeleton.hidden = message !== t('startup.opening');
 }
 function availabilityNotice(message) {
+    const identity = String(adapter.identityEpoch), generation = availabilitySequence, origin = path;
+    if (availabilityNoticeOwner)
+        notices.resolve(availabilityNoticeOwner);
+    availabilityNoticeOwner = { identity, object: origin, task: 'availability', generation };
+    publishNotice({ ...availabilityNoticeOwner, key: 'failed', tone: 'error', message: () => message,
+        recovery: { label: () => t('common.retry'), run: () => { if (identity === String(adapter.identityEpoch))
+                void readAvailability(); } } });
     let node = document.getElementById('console-availability-notice');
     if (!node) {
         node = document.createElement('div');
         node.id = 'console-availability-notice';
-        node.className = 'feedback warning';
+        node.className = 'owned-feedback warning';
         node.setAttribute('role', 'status');
         const text = document.createElement('span');
         text.dataset.availabilityMessage = '';
@@ -2737,7 +2926,7 @@ function availabilityNotice(message) {
         retry.textContent = t('common.retry');
         retry.addEventListener('click', () => { void readAvailability(); });
         node.append(text, retry);
-        document.body.prepend(node);
+        (document.querySelector('main') || app).prepend(node);
     }
     node.querySelector('[data-availability-message]').textContent = message;
 }
@@ -2754,6 +2943,10 @@ async function readAvailability(automatic = false, attempt = 0) {
         if (!valid())
             return;
         document.getElementById('console-availability-notice')?.remove();
+        if (availabilityNoticeOwner) {
+            notices.resolve(availabilityNoticeOwner);
+            availabilityNoticeOwner = null;
+        }
         if (path === '/login') {
             const status = app.querySelector('.core-login-status');
             if (status)
@@ -2796,7 +2989,7 @@ async function startConsole(automatic = false, attempt = 0) {
                 void startConsole(true, attempt + 1); }, attempt === 0 ? 1000 : 3000);
     }
 }
-app.innerHTML = `<main class="main task-main"><p role="status" data-startup-status>${esc(t('startup.opening'))}</p><button type="button" class="btn secondary" data-startup-retry>${esc(t('common.retry'))}</button> <a href="/">${esc(t('startup.home'))}</a></main>`;
+app.innerHTML = `<main class="main task-main"><p role="status" class="sr-only" data-startup-status>${esc(t('startup.opening'))}</p><section data-startup-skeleton class="console-read-skeleton" aria-busy="true" aria-label="${esc(t('startup.opening'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section><button type="button" class="btn secondary" data-startup-retry>${esc(t('common.retry'))}</button> <a href="/">${esc(t('startup.home'))}</a></main>`;
 app.addEventListener('click', event => { if (event.target.closest('[data-startup-retry]'))
     void startConsole(); });
 document.dispatchEvent(new Event('piwork:boot-ready'));

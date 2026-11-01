@@ -16,6 +16,9 @@
   --warning-soft: #fff7e7;
   --danger: #b42332;
   --danger-soft: #fff0f0;
+  --chrome-height: 56px;
+  --chrome-narrow-height: 96px;
+  --service-toolbar-height: 39px;
   --radius: 8px;
   --shadow: none;
   --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

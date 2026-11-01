@@ -1,17 +1,19 @@
 import { pendingDots } from './pending.js';
-import { t } from './locale.js';
+import { t, LocalizedMessage } from './locale.js';
 /** In-memory request coordination; never a queue or a remote task cancellation API. */
 export class ActionState {
     changed;
     now;
+    formatError;
     records = new Map();
     generation = 0;
     sequence = 0;
     announced = new Set();
     timer;
-    constructor(changed = () => { }, now = () => Date.now()) {
+    constructor(changed = () => { }, now = () => Date.now(), formatError = error => error instanceof Error ? error.message : String(error)) {
         this.changed = changed;
         this.now = now;
+        this.formatError = formatError;
     }
     conflict(intent) {
         return [...this.records.values()].find(record => (record.pending || record.blocked) && (record.key === intent.key || record.pending && (((record.kind === 'identity' || intent.kind === 'identity') && record.kind !== 'read' && intent.kind !== 'read') ||
@@ -37,10 +39,12 @@ export class ActionState {
         return record;
     }
     current(record) { return record.generation === this.generation && this.records.get(record.key) === record; }
-    update(record, phase) { if (this.current(record)) {
+    update(record, phase) {
+        if (!this.current(record))
+            return;
         record.phase = phase;
         this.changed();
-    } }
+    }
     confirm(record, result) {
         if (!this.current(record))
             return;
@@ -58,7 +62,7 @@ export class ActionState {
         record.pending = false;
         record.checkedAt = new Date(this.now()).toISOString();
         if (!record.result && !record.error) {
-            record.phase = record.refresh === 'failed' ? t('d.action.readbackUnconfirmed') : record.kind === 'read' ? t('d.action.statusChecked') : t('d.action.confirmed');
+            record.phase = new LocalizedMessage(record.refresh === 'failed' ? 'd.action.readbackUnconfirmed' : record.kind === 'read' ? 'd.action.statusChecked' : 'd.action.confirmed');
             record.visibleUntil = record.kind === 'read' && !['refresh-files', 'refresh-config', 'check-work', 'check-operation', 'check-connection', 'check-preview', 'check-catalog'].includes(record.action || '') ? 0 : this.now() + 3000;
         }
         this.tick();
@@ -68,26 +72,35 @@ export class ActionState {
         if (!this.current(record))
             return;
         record.pending = false;
-        record.error = error instanceof Error ? error.message : String(error);
-        record.phase = t('d.action.notConfirmed');
+        record.error = this.formatError(error);
+        record.errorMessage = () => this.formatError(error);
+        record.phase = new LocalizedMessage(record.kind === 'read' ? 'd.action.readFailed' : 'd.action.notConfirmed');
         const code = error?.code;
         record.blocked = record.kind !== 'read' && record.kind !== 'identity' && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(code || '');
         this.changed();
     }
     reviewed(work, kinds, view) {
-        for (const record of this.records.values())
-            if (record.work === work && (!view || record.view === view) && kinds.includes(record.kind) && record.blocked) {
-                record.blocked = false;
-                record.phase = t('d.action.previousUnknown');
-            }
+        for (const record of this.records.values()) {
+            if (record.work !== work || view && record.view !== view || !kinds.includes(record.kind) || !record.blocked)
+                continue;
+            record.blocked = false;
+            record.phase = new LocalizedMessage('d.action.previousUnknown');
+        }
         this.changed();
     }
     review(record) {
         if (!this.current(record) || !record.blocked)
             return;
         record.blocked = false;
-        record.phase = t('d.action.previousUnknown');
+        record.phase = new LocalizedMessage('d.action.previousUnknown');
         record.checkedAt = new Date(this.now()).toISOString();
+        this.changed();
+    }
+    /** A detached read is not a confirmation; mutation/unknown owners cannot use this. */
+    discardRead(record) {
+        if (!this.current(record) || record.kind !== 'read')
+            return;
+        this.records.delete(record.key);
         this.changed();
     }
     async refresh(record, read) {
@@ -95,6 +108,7 @@ export class ActionState {
             return;
         record.refresh = 'refreshing';
         record.refreshError = undefined;
+        record.refreshErrorMessage = undefined;
         this.changed();
         try {
             await read();
@@ -106,7 +120,8 @@ export class ActionState {
         catch (error) {
             if (this.current(record)) {
                 record.refresh = 'failed';
-                record.refreshError = error instanceof Error ? error.message : String(error);
+                record.refreshError = this.formatError(error);
+                record.refreshErrorMessage = () => this.formatError(error);
             }
         }
         finally {
@@ -116,7 +131,9 @@ export class ActionState {
     }
     message(record) {
         const elapsed = Math.floor((this.now() - record.started) / 1000);
-        return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? t('d.action.waitingSuffix', { seconds: elapsed }) : ''}${record.error ? ` · ${record.error}` : ''}${record.refresh === 'refreshing' ? t('d.action.refreshing') : record.refresh === 'failed' ? ` · ${record.result ? t('d.action.retainedPrefix') : ''}${record.refreshError ? t('d.action.refreshNotConfirmedDetail', { detail: record.refreshError }) : t('d.action.refreshNotConfirmed')}` : ''}`;
+        const error = record.errorMessage?.() || record.error;
+        const refreshError = record.refreshErrorMessage?.() || record.refreshError;
+        return `${record.target} · ${record.phase}${record.pending && elapsed >= 10 ? t('d.action.waitingSuffix', { seconds: elapsed }) : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? t('d.action.refreshing') : record.refresh === 'failed' ? ` · ${record.result ? t('d.action.retainedPrefix') : ''}${refreshError ? t('d.action.refreshNotConfirmedDetail', { detail: refreshError }) : t('d.action.refreshNotConfirmed')}` : ''}`;
     }
     slow(record) { return record.pending && this.now() - record.started >= 10000; }
     visible(record) { return record.pending || !!record.error || !!record.blocked || record.refresh !== '' || (record.visibleUntil || 0) > this.now(); }
@@ -199,6 +216,9 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             continue;
         if (record.action === 'check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh === '')
             continue;
+        // Short results are owned by the single notice host; ordinary reads stay silent.
+        if (!record.pending && !record.error && !record.blocked && record.refresh === '')
+            continue;
         if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record))
             continue;
         const matches = record.anchor ? [...root.querySelectorAll(record.anchor)] : [];
@@ -265,7 +285,7 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         }
         if (!record.pending && record.error && pageText.includes(record.error) && !record.blocked && record.refresh !== 'failed')
             continue;
-        if (!record.pending && record.result && pageText.includes(record.result) && !record.error && !record.blocked && record.refresh === '')
+        if (!record.pending && record.result && pageText.includes(String(record.result)) && !record.error && !record.blocked && record.refresh === '')
             continue;
         const anchor = owner;
         const anchored = anchor?.closest('.dialog-body, .dialog-footer, .modal-body, .modal-footer, .work-card, .work-row, .main-panel, .agent-panel, .service-controls, .composer, .auth-card, .file-detail, .settings-content, main') ?? null;
@@ -284,7 +304,7 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         const node = previous.get(record.key) || document.createElement('div');
         previous.delete(record.key);
         node.dataset.actionStatus = record.key;
-        node.className = record.kind === 'read' && !record.error && record.refresh !== 'failed' ? 'local-read-status' : `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+        node.className = record.kind === 'read' && !record.error && record.refresh !== 'failed' ? 'local-read-status' : 'action-recovery action-status';
         const floating = !anchor && record.pending && !record.error && !record.blocked && record.refresh !== 'failed';
         if (floating)
             node.className += ' action-orphan-status';
@@ -296,9 +316,9 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             visible.error = undefined;
         if (record.refreshError && pageText.includes(record.refreshError))
             visible.refreshError = undefined;
-        if (record.result && pageText.includes(record.result)) {
+        if (record.result && pageText.includes(String(record.result))) {
             visible.result = undefined;
-            visible.phase = t('d.action.confirmed');
+            visible.phase = new LocalizedMessage('d.action.confirmed');
         }
         const message = actions.message(visible);
         // Update the text node in place so phase/elapsed-time messages do not restart dots.

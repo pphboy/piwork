@@ -355,7 +355,10 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     assert.equal(exportCalls, 0, 'running Work export submitted implicitly');
     await page.getByRole('button',{name:'Stop and export',exact:true}).click();
     await expect(page.locator('#modal')).toContainText('Stop failed');
-    await page.locator('#modal .export-details > summary').click();
+    await expect(page.locator('#modal .export-snapshot')).toHaveCount(0);
+    await page.getByRole('button',{name:'Close dialog'}).click();
+    await page.getByRole('button',{name:'Work options'}).click();
+    await page.locator('#modal [data-action=find-previous-export]').click();
     const originalStop = page.locator('#modal [data-action="operation"][data-id="stop-failed-1234"]');
     await expect(originalStop).toBeVisible();
     assert.equal(exportCalls, 0, 'failed original Stop must never advance to Export');

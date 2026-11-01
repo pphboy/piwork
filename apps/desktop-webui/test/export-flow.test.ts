@@ -590,3 +590,158 @@ test('missing control version cannot authorize Stop but does not affect exact ex
   assert.equal(flow.phase, 'failed'); assert.equal(f.count('POST stop'), 0);
   const old = f.existing(); await settle(); assert.equal(old.phase, 'delivered'); assert.equal(f.count('POST export'), 0);
 });
+
+test('feedback read provenance survives Pause, Hide and pending reset until matching confirmed read', async () => {
+  const f = fixture(), nextRead = deferred<any>();
+  let attempts = 0;
+  f.port.refreshWorkStatus = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error('Original Work read failed');
+    return nextRead.promise;
+  };
+  const flow = f.flows.start('work-a', { mode: 'new' });
+  await settle();
+  assert.equal(flow.feedbackIssue, 'read');
+  assert.equal(flow.feedbackError, 'Original Work read failed');
+  f.flows.pause(flow.id);
+  f.flows.setVisible(false);
+  assert.equal(flow.feedbackError, 'Original Work read failed');
+  f.flows.setVisible(true);
+  const checking = f.flows.check(flow.id);
+  await settle();
+  assert.equal(flow.error, '');
+  assert.equal(flow.feedbackIssue, 'read');
+  assert.equal(flow.feedbackError, 'Original Work read failed');
+  nextRead.resolve(f.work);
+  await checking;
+  await settle();
+  assert.equal(flow.feedbackIssue, undefined);
+  assert.equal(flow.feedbackError, undefined);
+  assert.equal(flow.paused, true);
+  assert.equal(f.count('POST export'), 0);
+});
+test('delivery exception is original feedback evidence without a second browser handoff', async () => {
+  const f = fixture();
+  let handoffs = 0;
+  f.options.deliver = () => {
+    handoffs++;
+    throw new Error('Synthetic browser handoff failed');
+  };
+  const flow = f.flows.start('work-a', { mode: 'new' });
+  await settle();
+  assert.equal(flow.phase, 'delivered');
+  assert.equal(flow.autoDeliveryConsumed, true);
+  assert.equal(flow.feedbackIssue, 'delivery');
+  assert.match(flow.feedbackError, /Synthetic browser handoff failed/);
+  f.flows.pause(flow.id);
+  f.flows.setVisible(false);
+  f.flows.setVisible(true);
+  await f.flows.check(flow.id);
+  f.flows.update();
+  assert.equal(handoffs, 1);
+  assert.equal(flow.feedbackIssue, 'delivery');
+});
+
+test('manual handoff evidence clears only its original delivery issue without protocol changes', async () => {
+  const f = fixture();
+  f.options.deliver = () => { throw new Error('Original browser handoff failed'); };
+  const flow = f.flows.start('work-a', { mode: 'new' });
+  await settle();
+  const before = [...f.calls];
+  for (const [id, snapshot, transfer, epoch] of [
+    ['other-flow', flow.snapshotId, flow.transferId, 1],
+    [flow.id, 'other-snapshot', flow.transferId, 1],
+    [flow.id, flow.snapshotId, 'other-transfer', 1],
+    [flow.id, flow.snapshotId, flow.transferId, 2],
+  ] as const) {
+    assert.equal(f.flows.confirmDelivery(id, snapshot, transfer, epoch), false);
+    assert.equal(flow.feedbackIssue, 'delivery');
+  }
+  assert.equal(f.flows.confirmDelivery(flow.id, flow.snapshotId, flow.transferId, 1), true);
+  assert.equal(flow.feedbackIssue, undefined);
+  assert.equal(flow.feedbackError, undefined);
+  assert.equal(flow.phase, 'delivered');
+  assert.equal(flow.autoDeliveryConsumed, true);
+  assert.equal(f.flows.confirmDelivery(flow.id, flow.snapshotId, flow.transferId, 1), false);
+  assert.deepEqual(f.calls, before);
+});
+
+test('actual manual handoff resolves only the pruned original delivery notice', async () => {
+  const { ExportFeedbackRegistry, exportFlowNotice } = await import(new URL('../browser/export-feedback.js', import.meta.url).href);
+  const { NoticeStore } = await import(new URL('../browser/notices.js', import.meta.url).href);
+  const { saveExportFile } = await import(new URL('../browser/export-panel-controls.js', import.meta.url).href);
+  const f = fixture(), registry = new ExportFeedbackRegistry(), notices = new NoticeStore();
+  registry.setIdentity('1');
+  notices.setIdentity('1');
+  f.options.deliver = () => { throw new Error('Original handoff failed'); };
+  const flow = f.flows.start('work-a', { mode: 'new' });
+  registry.acceptFlow(flow);
+  await settle();
+  const registered = registry.flowOwner(flow);
+  registry.publishedFlow(registered, notices.publish(exportFlowNotice(registered, { label: () => 'Details', run() {} })));
+  assert.equal(registry.flowOwners().length, 0);
+  assert.equal(notices.items().length, 1);
+  const delivered = await saveExportFile(flow.snapshotId, {
+    identityEpoch: 1,
+    fetchSnapshot: f.port.fetchSnapshot,
+    checkTransfer: f.port.checkDownload,
+    currentSnapshot: f.port.getSnapshot,
+    currentTransfer: (id: string) => f.port.downloads.get(id),
+    deliver() {},
+  });
+  assert.equal(f.flows.confirmDelivery(flow.id, delivered.snapshotId, delivered.transferId, delivered.identityEpoch), true);
+  notices.resolve(registry.flowOwner(flow).owner);
+  assert.equal(notices.items().length, 0);
+  assert.equal(flow.phase, 'delivered');
+  assert.equal(f.count('POST prepare'), 1);
+  assert.equal(f.count('POST export'), 1);
+  notices.destroy();
+});
+
+test('a verified original snapshot read can recover while its actual package is still preparing', async () => {
+  const f = fixture();
+  let failed = true;
+  f.port.fetchSnapshot = async (id: string) => {
+    if (failed) throw new Error('Original snapshot read unavailable');
+    return { ...f.snapshots.get(id), status: 'preparing' };
+  };
+  const flow = f.flows.start('work-a', { mode: 'new' });
+  await settle();
+  assert.equal(flow.feedbackIssue, 'read');
+  failed = false;
+  await f.flows.check(flow.id);
+  assert.equal(flow.feedbackIssue, undefined);
+  assert.equal(flow.feedbackError, undefined);
+  assert.equal(flow.phase, 'snapshot');
+  assert.equal(f.count('POST export'), 1);
+  assert.equal(f.count('POST prepare'), 0);
+  assert.equal(f.deliveries.length, 0);
+});
+
+test('unknown transfer acceptance recovers only from a confirmed original transfer, not a local pending placeholder', async () => {
+  const { ExportFeedbackRegistry } = await import(new URL('../browser/export-feedback.js', import.meta.url).href);
+  const f = fixture(), registry = new ExportFeedbackRegistry();
+  registry.setIdentity('1');
+  const post = pendingPreparation(f), flow = f.existing();
+  registry.acceptFlow(flow);
+  await settle();
+  f.flows.pause(flow.id);
+  post.reject(new Error('Original preparation response lost'));
+  await settle();
+  const original = registry.flowOwner(flow);
+  assert.equal(flow.phase, 'unknown');
+  assert.equal(registry.readRecovered(original), false);
+  await f.flows.check(flow.id);
+  assert.equal(flow.phase, 'preparing');
+  assert.equal(flow.transferConfirmation, undefined);
+  assert.equal(registry.readRecovered(original), false, 'preclaim 404 can return only the local pending placeholder');
+  Object.assign(f.port.downloads.get(flow.snapshotId), { seen: true, checkedAt: 'confirmed-original-read', phase: 'downloading' });
+  await f.flows.check(flow.id);
+  assert.equal(flow.phase, 'preparing');
+  assert.equal(registry.readRecovered(original), true);
+  assert.equal(registry.readRecovered(original), false);
+  assert.equal(flow.paused, true);
+  assert.equal(flow.autoDeliveryConsumed, false);
+  assert.equal(f.deliveries.length, 0);
+  assert.equal(f.count('POST prepare'), 1);
+});

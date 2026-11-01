@@ -1,179 +1,204 @@
-const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
-const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, readFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
-import { chromium, expect, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import { chromium, expect } from '@playwright/test';
 
-const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
-const { overlayRole } = await import(new URL('../browser/overlay-role.js', import.meta.url).href);
-const { exportSnapshotAvailable } = await import(new URL('../browser/export-admission.js', import.meta.url).href);
-const source = readFileSync(new URL('../browser/app.js', import.meta.url), 'utf8');
-const evidence = new URL('../../../../dist/server-ui-core-flow/export-details/', import.meta.url);
+const { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } = await import(new URL('../browser/export-panel.js', import.meta.url).href);
+const { chooseLocale } = await import(new URL('../browser/locale.js', import.meta.url).href);
 
-// Render the production panel and its real modal shell; no copied export markup or CSS.
-function fixture(longToken = false) {
-  const suffix = longToken ? 'a8'.repeat(96) : '8714ad1e-23ad-4046-90dd-eff97ae25863';
-  const work = { id: 'work-export-layout', name: 'Export layout fixture' };
-  const snapshot = { id: `snapshot-${suffix}`, workId: work.id, operationId: `operation-export-${suffix}`, status: 'preparing', size: '', expiresAt: '' };
-  const saved = { ...snapshot, id: `snapshot-saved-${suffix}`, status: 'verified' };
-  const flow = { id: 'export-layout-flow', workId: work.id, workName: work.name, stopOperationId: `operation-stop-${suffix}`, exportOperationId: snapshot.operationId, snapshotId: snapshot.id, phase: 'exporting', paused: false, terminal: false };
-  const context: any = {
-    ...localeSandbox,
-    pendingDots, overlayRole, exportSnapshotAvailable, innerWidth: 1440,
-    adapter: { getWork: () => work, getSnapshot: () => snapshot, downloads: new Map(), state: { snapshots: [snapshot, saved] } },
-    exportFlows: { get: () => flow, forWork: () => flow },
-    route: () => ['work', work.id], current: () => work, isRequestInspector: () => false,
-  };
-  vm.createContext(context);
-  vm.runInContext(source.slice(source.indexOf('const esc ='), source.indexOf('let view =')), context);
-  context.view = { modal: 'export', modalError: '', data: { flowId: flow.id, workId: work.id } };
-  for (const name of ['progressText', 'downloadProgressMarkup', 'exportPanel', 'modalMarkup']) {
-    const implementation = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}`, 'm'));
-    assert.ok(implementation, `${name} production renderer`);
-    vm.runInContext(implementation[0], context);
-  }
-  return { context, flow, snapshot, saved, html: () => context.modalMarkup() as string };
+function fixture(longName = false) {
+  const work = { id: 'work-original', name: longName ? 'Very long original Work 名称 '.repeat(12) : 'Original Work' };
+  const snapshot = { id: 'snapshot-original', workId: work.id, operationId: 'operation-original', status: 'verified', size: '42 bytes', filename: 'original.work', expiresAt: '2100-01-01T00:00:00Z' };
+  const flow = { id: 'flow-original', workId: work.id, workName: work.name, identityEpoch: 1, mode: 'new', stopConfirmed: true, stopOperationId: 'stop-original', exportOperationId: snapshot.operationId, snapshotId: snapshot.id, transferId: 'transfer-original', phase: 'preparing', paused: false, terminal: false, error: '', autoDeliveryConsumed: false };
+  const transfer = { transferId: flow.transferId, snapshotId: snapshot.id, workId: work.id, phase: 'receiving', transferred: 21, total: 42, pending: true, ready: false };
+  return { work, flow, snapshot, transfer, activeFlow: flow, snapshots: [snapshot, { ...snapshot, id: 'snapshot-older' }, { ...snapshot, id: 'foreign-snapshot', workId: 'foreign-work' }], snapshotQuery: '' };
 }
 
-test('export details retains full original IDs, collapsed disclosure and existing flow controls', () => {
-  const f = fixture();
-  let html = f.html();
-  assert.match(html, /<details class="export-details"><summary>Details<\/summary>/);
-  for (const id of [f.flow.stopOperationId, f.flow.exportOperationId]) {
-    assert.ok(html.includes(`data-action="operation" data-id="${id}">${id}</button>`));
+test('direct production renderer: progress Details has only same-task progress and controls', () => {
+  chooseLocale('en');
+  const input = fixture();
+  const before = structuredClone(input);
+  const panel = renderExportPanel(exportPanelModel(input));
+  for (const id of [input.flow.stopOperationId, input.flow.exportOperationId, input.snapshot.id, input.transfer.transferId, 'snapshot-older']) {
+    assert.ok(!panel.body.replace(/<[^>]*>/g, '').includes(id), `progress body excludes visible technical identity ${id}`);
   }
-  assert.ok(html.includes(`<code>${f.snapshot.id}</code>`));
-  assert.ok(html.includes(`data-action="view-snapshot" data-id="${f.saved.id}"`));
-  assert.match(html, /data-action="pause-export-flow"[^>]*>Pause<\/button>/);
-  assert.match(html, /data-action="check-export-flow"[^>]*>Check status<\/button>/);
-  assert.match(html, /data-action="close-modal"[^>]*>Hide<\/button>/);
-  assert.match(html, /aria-busy="true" data-pending-label="Starting export"/);
-  assert.match(html, /Starting export<\/span><\/span> You can keep working/);
-  f.flow.paused = true;
-  html = f.html();
-  assert.match(html, /data-action="resume-export-flow"[^>]*>Resume<\/button>/);
-  assert.doesNotMatch(html, /data-pending-label="Starting export"/);
-  assert.match(html, /Paused\. Resume in Details/);
-  assert.equal(catalog.en['ops.copyId'], 'Copy Operation ID');
+  assert.doesNotMatch(panel.body, /snapshot-query|export-snapshot|view-snapshot|lookup-snapshot|feedback/);
+  assert.match(panel.body, /value="21" max="42"/);
+  assert.match(panel.body, /data-action="check-export-flow"/);
+  assert.match(panel.body, /data-action="pause-export-flow"/);
+  assert.match(panel.body, /aria-busy="true"/);
+  assert.match(panel.body, /private|credential/i);
+  assert.match(panel.footer, />Hide<\/button>/);
+  assert.deepEqual(input, before, 'rendering cannot mutate the flow or input');
+  assert.deepEqual(renderExportPanel(exportPanelModel(input)), panel, 'hide/reopen reads the same task without effects');
 });
 
-async function assertDetailsGeometry(page: Page) {
-  const geometry = await page.locator('.export-details').evaluate(details => {
-    const box = (element: Element) => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
-    };
-    const values = [...details.querySelectorAll('dl > dd')];
-    return {
-      viewportWidth: innerWidth,
-      pageOverflow: document.documentElement.scrollWidth > innerWidth,
-      bodyOverflow: details.closest('.modal-body')!.scrollWidth > details.closest('.modal-body')!.clientWidth,
-      panel: box(details.closest('dialog')!),
-      summary: box(details.querySelector('summary')!),
-      rows: values.map(value => {
-        const range = document.createRange();
-        range.selectNodeContents(value);
-        const content = range.getBoundingClientRect();
-        const button = value.querySelector('button');
-        return {
-          label: value.previousElementSibling!.textContent,
-          labelBox: box(value.previousElementSibling!), value: box(value),
-          content: { left: content.left, right: content.right, top: content.top, bottom: content.bottom },
-          button: button ? { ...box(button), overflowing: button.scrollHeight > button.clientHeight + 1 } : undefined,
-        };
-      }),
-      saved: [...details.querySelectorAll('.menu-list .button')].map(button => ({ ...box(button), overflowing: button.scrollHeight > button.clientHeight + 1 })),
-    };
-  });
-  assert.equal(geometry.pageOverflow, false, 'no viewport horizontal overflow');
-  assert.equal(geometry.bodyOverflow, false, 'no export body horizontal overflow');
-  assert.ok(geometry.panel.left >= 0 && geometry.panel.right <= geometry.viewportWidth, 'panel remains within viewport');
-  assert.equal(geometry.rows.length, 6);
-  let previousBottom = geometry.summary.bottom;
-  for (const row of geometry.rows) {
-    assert.ok(row.value.top >= previousBottom - 1, `${row.label} cannot overlap the preceding metadata row`);
-    assert.ok(row.content.left >= row.value.left - 1 && row.content.right <= row.value.right + 1, `${row.label} text remains inside the value column`);
-    assert.ok(row.content.top >= row.value.top - 1 && row.content.bottom <= row.value.bottom + 1, `${row.label} row grows to contain its complete text`);
-    if (row.button) {
-      assert.ok(Math.abs(row.button.width - row.value.width) <= 1 && row.button.width > 100, `${row.label} is a full-width link, not a 27px copy icon`);
-      assert.ok(row.button.height >= 32 && row.button.bottom <= row.value.bottom + 1, `${row.label} link height belongs to its row`);
-      assert.equal(row.button.overflowing, false, `${row.label} ID has no clipped or overflowing lines`);
-    }
-    previousBottom = Math.max(row.value.bottom, row.labelBox.bottom, row.content.bottom);
+test('unknown/paused/failed stop motion but retain original controls and locks', () => {
+  const input = fixture();
+  for (const phase of ['unknown', 'failed', 'revoked']) {
+    input.flow.phase = phase;
+    const panel = renderExportPanel(exportPanelModel(input));
+    assert.doesNotMatch(panel.body, /aria-busy="true"/);
   }
-  for (const saved of geometry.saved) {
-    assert.ok(saved.left >= geometry.panel.left && saved.right <= geometry.panel.right, 'saved package link remains in panel');
-    assert.equal(saved.overflowing, false, 'saved package link grows with its long identity');
+  input.flow.phase = 'preparing';
+  input.flow.paused = true;
+  const panel = renderExportPanel(exportPanelModel(input));
+  assert.match(panel.body, /data-action="resume-export-flow"/);
+  assert.doesNotMatch(panel.body, /aria-busy="true"/);
+  assert.equal(input.flow.paused, true);
+});
+
+test('original read issue remains local truth through notice dismissal and Resume start', () => {
+  const input = fixture();
+  const flow = Object.assign(input.flow, { feedbackIssue: 'read' as const, feedbackError: 'Original read unavailable' });
+  flow.error = 'Waiting for original stop';
+  flow.paused = true;
+  assert.equal(exportPanelModel(input).error, flow.feedbackError);
+  flow.paused = false;
+  flow.error = '';
+  const panel = renderExportPanel(exportPanelModel(input));
+  assert.match(panel.body, /Original read unavailable/);
+  assert.doesNotMatch(panel.body, /aria-busy="true"/);
+  assert.equal(exportPanelModel(input).flow, flow);
+  delete (flow as Partial<typeof flow>).feedbackIssue;
+  delete (flow as Partial<typeof flow>).feedbackError;
+  assert.equal(exportPanelModel(input).error, '');
+});
+
+test('read-only model rejects another transfer, preserves original snapshot and expiry admission', () => {
+  const input = fixture();
+  input.transfer.ready = true;
+  assert.equal(exportPanelModel(input).canSave, true);
+  assert.equal(exportPanelModel({ ...input, activeFlow: { ...input.flow, workId: 'foreign-work' } }).busy, false);
+  input.transfer.transferId = 'another-transfer';
+  assert.equal(exportPanelModel(input).transfer, undefined);
+  assert.equal(exportPanelModel(input).canSave, false);
+  input.transfer.transferId = input.flow.transferId;
+  input.transfer.snapshotId = 'another-snapshot';
+  assert.equal(exportPanelModel(input).canSave, false);
+  input.transfer.snapshotId = input.snapshot.id;
+  input.transfer.workId = 'another-work';
+  assert.equal(exportPanelModel(input).canSave, false);
+  input.transfer.workId = input.work.id;
+  input.snapshot.expiresAt = '2000-01-01T00:00:00Z';
+  assert.equal(exportPanelModel(input).canSave, false);
+  input.snapshot.workId = 'another-work';
+  assert.equal(exportPanelModel(input).snapshot, undefined);
+});
+
+test('separately opened recovery preserves scoped IDs, lookup, old packages and privacy', () => {
+  const input = fixture();
+  const panel = renderExportRecoveryPanel(input);
+  for (const id of [input.flow.stopOperationId, input.flow.exportOperationId, input.snapshot.id, input.transfer.transferId, 'snapshot-older']) assert.ok(panel.body.includes(id));
+  assert.ok(!panel.body.includes('foreign-snapshot'));
+  assert.match(panel.footer, /data-action="show-export-progress" data-id="flow-original" data-work-id="work-original"/);
+  assert.match(panel.body, /id="snapshot-query"/);
+  assert.match(panel.body, /data-action="lookup-snapshot" data-work-id="work-original"/);
+  assert.match(panel.body, /private|credential/i);
+  const withoutWork = renderExportRecoveryPanel({ snapshot: input.snapshot, transfer: input.transfer });
+  assert.match(withoutWork.body, /data-action="lookup-snapshot" data-work-id="work-original"/);
+  assert.ok(withoutWork.body.includes(input.snapshot.id));
+});
+
+test('locale is read at render time and unavailable bytes never invent a percentage', () => {
+  const input = fixture();
+  chooseLocale('zh-CN');
+  assert.match(renderExportPanel(exportPanelModel(input)).body, /详情/);
+  chooseLocale('en');
+  assert.match(renderExportPanel(exportPanelModel(input)).body, /Details/);
+  for (const total of [0, -1, NaN, Infinity]) {
+    input.transfer.total = total;
+    assert.doesNotMatch(renderExportPanel(exportPanelModel(input)).body, /<progress/);
   }
-  return geometry;
+  const unknownBytes = { ...input, transfer: { ...input.transfer, transferred: undefined, total: 42 } };
+  assert.doesNotMatch(renderExportPanel(exportPanelModel(unknownBytes)).body, /<progress/);
+});
+
+// Browser coverage uses the directly imported production renderer, not app source extraction.
+function shell(panel: { title: string; body: string; footer: string }, kind = 'export-panel') {
+  return `<button id="background">Background action</button><dialog id="modal" aria-modal="false" aria-labelledby="modal-title" class="modal ${kind}"><div class="modal-head"><h2 id="modal-title">${panel.title}</h2></div><div class="modal-body">${panel.body}</div><div class="modal-footer">${panel.footer}</div></dialog>`;
 }
 
-test('export details long identities fit auto-sized rows at 1440px and 360px', async t => {
-  const browser = await chromium.launch(process.env.PIWORK_TEST_BROWSER_BIN
-    ? { headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN }
-    : { headless: true, channel: 'chromium' });
+test('nonmodal progress stays keyboard-accessible at 360px/wide and in both languages', async t => {
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN || '/usr/bin/chromium' });
   t.after(() => browser.close());
   const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
   const page = await browser.newPage();
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  for (const width of [1440, 360]) for (const phase of ['exporting', 'preparing']) for (const longToken of phase === 'exporting' ? [false, true] : [false]) {
-    const f = fixture(longToken);
-    f.flow.phase = phase;
-    if (phase === 'preparing') {
-      f.snapshot.status = 'verified';
-      f.context.adapter.downloads.set(f.snapshot.id, { transferId: 'download-8714ad1e-23ad-4046-90dd-eff97ae25863', phase: 'preparing', pending: true, ready: false });
-    }
-    f.context.innerWidth = width;
-    const screenshotName = `export-${phase === 'exporting' ? 'starting' : 'preparing'}-${longToken ? 'token' : 'uuid'}-${width}`;
+  for (const locale of ['en', 'zh-CN']) for (const width of [1440, 360]) {
+    chooseLocale(locale);
+    const input = fixture(true);
+    const panel = renderExportPanel(exportPanelModel(input));
     await page.setViewportSize({ width, height: 900 });
-    await page.setContent(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${f.html()}</body></html>`);
-    await page.locator('#modal').evaluate(dialog => (dialog as HTMLDialogElement).show());
-    await expect(page.locator('.export-summary')).toContainText(`${phase === 'exporting' ? 'Starting export' : 'Transferring and verifying'} You can keep working`);
-    const details = page.locator('.export-details');
-    await expect(details).not.toHaveAttribute('open', '');
-    await details.locator('summary').click();
-    await expect(details).toHaveAttribute('open', '');
-    const geometry = await assertDetailsGeometry(page);
-    await details.locator('summary').focus();
-    for (const id of [f.flow.stopOperationId, f.flow.exportOperationId]) {
-      const link = details.getByRole('button', { name: id, exact: true });
-      await expect(link).toHaveAttribute('data-action', 'operation');
-      await expect(link).toHaveAttribute('data-id', id);
-      await page.keyboard.press('Tab');
-      await expect(link).toBeFocused();
-      assert.notEqual(await link.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
+    await page.setContent(`<style>${css}</style>${shell(panel)}`);
+    await page.locator('dialog').evaluate(dialog => (dialog as HTMLDialogElement).show());
+    assert.equal(await page.locator('dialog').evaluate(dialog => dialog.matches(':modal')), false);
+    await page.locator('#background').click();
+    await expect(page.locator('#background')).toBeFocused();
+    await page.locator('.export-details summary').click();
+    const check = page.locator('[data-action="check-export-flow"]');
+    await check.focus();
+    await expect(check).toBeFocused();
+    const geometry = await page.locator('dialog').evaluate(dialog => ({
+      left: dialog.getBoundingClientRect().left, right: dialog.getBoundingClientRect().right,
+      overflow: document.documentElement.scrollWidth > innerWidth,
+      bodyOverflow: dialog.querySelector('.modal-body')!.scrollWidth > dialog.querySelector('.modal-body')!.clientWidth,
+    }));
+    assert.equal(geometry.overflow, false);
+    assert.equal(geometry.bodyOverflow, false);
+    assert.ok(geometry.left >= 0 && geometry.right <= width);
+    await page.locator('dialog').evaluate(dialog => (dialog as HTMLDialogElement).close());
+    await page.locator('dialog').evaluate(dialog => (dialog as HTMLDialogElement).show());
+    await expect(page.locator('[data-action="pause-export-flow"]')).toHaveAttribute('data-id', input.flow.id);
+  }
+  chooseLocale('en');
+});
+
+
+test('independent recovery keeps long original identities readable and controls reachable', async t => {
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.PIWORK_TEST_BROWSER_BIN || '/usr/bin/chromium' });
+  t.after(() => browser.close());
+  const css = await readFile(new URL('../public/style.css', import.meta.url), 'utf8');
+  const page = await browser.newPage();
+  for (const width of [1440, 360]) {
+    const input = fixture();
+    const suffix = 'a8'.repeat(96);
+    input.snapshot.id += suffix;
+    input.snapshot.operationId += suffix;
+    input.flow.snapshotId = input.snapshot.id;
+    input.flow.exportOperationId = input.snapshot.operationId;
+    input.flow.stopOperationId += suffix;
+    input.transfer.snapshotId = input.snapshot.id;
+    input.transfer.transferId += suffix;
+    input.flow.transferId = input.transfer.transferId;
+    const panel = renderExportRecoveryPanel(input);
+    await page.setViewportSize({ width, height: 900 });
+    await page.setContent(`<style>${css}</style>${shell(panel, 'inspector-drawer')}`);
+    await page.locator('dialog').evaluate(dialog => (dialog as HTMLDialogElement).show());
+    const rows = await page.locator('.export-snapshot dd').evaluateAll(elements => elements.map(element => {
+      const box = element.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const text = range.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, textLeft: text.left, textRight: text.right, textTop: text.top, textBottom: text.bottom };
+    }));
+    assert.equal(rows.length, 7);
+    for (const row of rows) {
+      assert.ok(row.textLeft >= row.left - 1 && row.textRight <= row.right + 1);
+      assert.ok(row.textTop >= row.top - 1 && row.textBottom <= row.bottom + 1);
     }
-    await details.getByRole('button', { name: 'Pause', exact: true }).scrollIntoViewIfNeeded();
-    for (const name of ['Check status', 'Pause']) {
-      const control = details.getByRole('button', { name, exact: true });
-      await expect(control).toBeVisible();
-      for (const focused of [false, true]) {
-        if (focused) { await control.focus(); await expect(control).toBeFocused(); }
-        const visibleTarget = await control.evaluate(button => {
-          const rect = button.getBoundingClientRect(), body = button.closest('.modal-body')!;
-          const viewport = body.getBoundingClientRect(), footer = button.closest('dialog')!.querySelector('.modal-footer')!.getBoundingClientRect();
-          const left = viewport.left + body.clientLeft, top = viewport.top + body.clientTop;
-          const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-          return {
-            contained: rect.left >= left - 1 && rect.right <= left + body.clientWidth + 1 && rect.top >= top - 1 && rect.bottom <= top + body.clientHeight + 1,
-            aboveFooter: rect.bottom <= footer.top + 1,
-            hit: hit === button || !!hit && button.contains(hit),
-          };
-        });
-        assert.deepEqual(visibleTarget, { contained: true, aboveFooter: true, hit: true }, `${name} is fully reachable ${focused ? 'with focus' : 'after normal scrolling'}`);
-      }
-    }
-    await expect(page.getByRole('button', { name: 'Hide', exact: true })).toBeVisible();
-    if (process.env.PIWORK_EXPORT_EVIDENCE && !longToken) {
-      await mkdir(evidence, { recursive: true });
-      await details.getByRole('button', { name: f.flow.exportOperationId, exact: true }).focus();
-      await page.locator('.modal-body').evaluate(body => { body.scrollTop = 0; });
-      await page.screenshot({ path: fileURLToPath(new URL(`${screenshotName}-expanded.png`, evidence)), fullPage: true });
-    }
-    assert.ok(geometry.rows[0]!.button!.height > 32 || !longToken, 'stress IDs require and receive growing link rows');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    const originalStop = page.locator('[data-action="operation"]').first();
+    await originalStop.focus();
+    await expect(originalStop).toBeFocused();
+    assert.notEqual(await originalStop.evaluate(element => getComputedStyle(element).outlineStyle), 'none');
+    await expect(originalStop).toHaveAttribute('data-id', input.flow.stopOperationId);
+    const copy = page.locator('[data-action="copy"]').first();
+    await copy.scrollIntoViewIfNeeded();
+    await copy.focus();
+    await expect(copy).toBeFocused();
+    await expect(copy).toHaveAttribute('data-copy', input.snapshot.id);
+    await page.locator('[data-action="lookup-snapshot"]').scrollIntoViewIfNeeded();
+    await expect(page.locator('[data-action="lookup-snapshot"]')).toBeVisible();
   }
 });

@@ -69,7 +69,16 @@ test('Key-only save serializes defaults, never implicitly Tests and enters once 
 test('advanced errors expand and focus without a write, while reads preserve draft and focus',async({page})=>{
  await page.clock.install();
  const state=await fixture(page);await key(page);await advanced(page);await page.getByLabel('Base URL',{exact:true}).fill('not-a-url');await page.locator('#model-advanced summary').click();await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#model-base-url')).toBeFocused();await expect(page.locator('#model-advanced')).toHaveAttribute('open','');expect(writes(state)).toEqual([]);
- await page.getByLabel('Base URL',{exact:true}).fill('https://custom.example.invalid/anthropic');await page.getByLabel('Model ID',{exact:true}).fill('custom');await page.locator('#model-id').evaluate(el=>{window.original=el;el.focus();el.setSelectionRange(1,3);});await autoRead(page);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);expect(await page.locator('#model-id').evaluate(el=>[el===window.original,document.activeElement===el,el.selectionStart,el.selectionEnd])).toEqual([true,true,1,3]);await expect(page.locator('#model-key')).toHaveValue('synthetic-key');await expect(page.locator('#model-base-url')).toHaveValue('https://custom.example.invalid/anthropic');
+ await page.getByLabel('Base URL',{exact:true}).fill('https://custom.example.invalid/anthropic');
+ await page.getByLabel('Model ID',{exact:true}).fill('custom');
+ await page.locator('#model-id').evaluate(el=>{window.original=el;
+ el.focus();
+ el.setSelectionRange(1,3);});
+ await autoRead(page);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(0);
+ expect(await page.locator('#model-id').evaluate(el=>[el===window.original,document.activeElement===el,el.selectionStart,el.selectionEnd])).toEqual([true,true,1,3]);
+ await expect(page.locator('#model-key')).toHaveValue('synthetic-key');
+ await expect(page.locator('#model-base-url')).toHaveValue('https://custom.example.invalid/anthropic');
 });
 
 test('existing choices keep their baseline and additional models never receive first-install defaults',async({page})=>{
@@ -191,10 +200,20 @@ for(const path of ['state','session'])test(`ordinary ${path} reads have one loca
  const state=await identityFixture(page,{entry:'/setup#setup=synthetic-obsolete-proof',waitForForm:false,handle:async r=>{
   if(r.path!==path)return null;if(failures){await failed.promise;return{status:502,json:{message:`Synthetic ${path} failure`}};}await recovery.promise;return null;
  }});
- await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await expect(page.locator('#credentials')).toHaveCount(0);expect(new URL(page.url()).hash).toBe('');
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#credentials')).toHaveCount(0);
+ expect(new URL(page.url()).hash).toBe('');
  await page.clock.fastForward(10001);await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText('The read timed out');expect(state.requests.filter(r=>r.path===path)).toHaveLength(1);expect(identityWrites(state)).toEqual([]);
- failed.resolve();await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);await expect(page.locator('#setup-status')).toHaveText('');
- failures=false;const retry=page.getByRole('button',{name:'Read current state',exact:true});await retry.click();await expect(retry).toBeEnabled();await expect(retry).toHaveAttribute('aria-busy','true');await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await expect.poll(()=>state.requests.filter(r=>r.path===path).length).toBe(2);
+ failed.resolve();
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(0);
+ await expect(page.locator('#setup-status')).toHaveText('');
+ failures=false;
+ const retry=page.getByRole('button',{name:'Read current state',exact:true});
+ await retry.click();
+ await expect(retry).toBeEnabled();
+ await expect(retry).toHaveAttribute('aria-busy','true');
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect.poll(()=>state.requests.filter(r=>r.path===path).length).toBe(2);
  recovery.resolve();await expect(page.getByRole('heading',{name:'Create your administrator',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Create administrator',exact:true})).toBeEnabled();await expect(page.locator('#setup-status')).toHaveText('');await page.clock.fastForward(10001);await expect(page.locator('#setup-status')).toHaveText('');expect(identityWrites(state)).toEqual([]);expectPlainSession(state);await expect(page.getByRole('button',{name:'Check setup access',exact:true})).toHaveCount(0);await expect(page.locator('body')).not.toContainText('Open your setup link');expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('synthetic-obsolete-proof');
 });
 
@@ -204,7 +223,14 @@ for(const outcome of ['uncommitted network failure','committed server error','co
   if(r.path==='setup/administrator'&&fail){recovering=true;s.initialized=outcome!=='uncommitted network failure';if(!s.initialized){await route.abort('failed');return'handled';}return{status:outcome==='concurrent 409'?409:502,json:{code:outcome==='concurrent 409'?'ADMINISTRATOR_ALREADY_INITIALIZED':'CORE_UNAVAILABLE'}};}
   if(r.path==='state'&&recovering)await readback.promise;return null;
  }});
- await fillCredentials(page);await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect.poll(()=>state.requests.filter(r=>r.path==='state').length).toBe(2);await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#confirm-password')).toHaveValue('');await expect(page.locator('#credentials .pending-dots')).toHaveCount(0);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await expect(page.getByRole('button',{name:'Create administrator',exact:true})).toBeDisabled();
+ await fillCredentials(page);
+ await page.getByRole('button',{name:'Create administrator',exact:true}).click();
+ await expect.poll(()=>state.requests.filter(r=>r.path==='state').length).toBe(2);
+ await expect(page.locator('#password')).toHaveValue('');
+ await expect(page.locator('#confirm-password')).toHaveValue('');
+ await expect(page.locator('#credentials .pending-dots')).toHaveCount(0);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.getByRole('button',{name:'Create administrator',exact:true})).toBeDisabled();
  await page.locator('#credentials').evaluate(form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));expect(identityWrites(state).map(r=>r.path)).toEqual(['setup/administrator']);readback.resolve();
  await expect(page.getByRole('heading',{name:state.initialized?'Sign in to Piwork':'Create your administrator',exact:true})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText(state.initialized?'Administrator setup is complete. Sign in to continue.':'Creation was not confirmed. Enter your password again');await expect(page.locator('#account')).toHaveValue('admin');await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#setup-status')).toHaveText('');await expect(page.locator('#credentials [type=submit]')).toBeEnabled();expect(state.requests.map(r=>r.path)).toEqual(['state','session','setup/administrator','state','session']);expect(identityWrites(state)).toHaveLength(1);expect(new URL(page.url()).pathname).toBe('/setup');
  if(!state.initialized){await expect(page.locator('#confirm-password')).toHaveValue('');fail=false;await fillCredentials(page);await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();expect(identityWrites(state).map(r=>r.path)).toEqual(['setup/administrator','setup/administrator']);}
@@ -226,7 +252,19 @@ for(const creating of [true,false])test(`${creating?'administrator creation':'si
   if(r.path===path){rejected=true;s.csrfToken='synthetic-refreshed-session-csrf';return{status:403,json:{code:'CSRF_INVALID'}};}
   if(r.path==='session'&&rejected)await refreshed.promise;return null;
  }});
- await fillCredentials(page,{creating});const submit=page.locator('#credentials [type=submit]');await submit.click();await expect(page.locator('#setup-notice')).toContainText('form session expired');await expect(page.locator('#password')).toHaveValue('');if(creating)await expect(page.locator('#confirm-password')).toHaveValue('');await expect(page.locator('#account')).toHaveValue('admin');await expect(submit).toBeDisabled();await expect(submit).toHaveAttribute('aria-busy','true');await expect(page.locator('#credentials .pending-dots')).toHaveCount(1);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);await page.locator('#credentials').evaluate(form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));expect(identityWrites(state)).toHaveLength(1);
+ await fillCredentials(page,{creating});
+ const submit=page.locator('#credentials [type=submit]');
+ await submit.click();
+ await expect(page.locator('#setup-notice')).toContainText('form session expired');
+ await expect(page.locator('#password')).toHaveValue('');
+ if(creating)await expect(page.locator('#confirm-password')).toHaveValue('');
+ await expect(page.locator('#account')).toHaveValue('admin');
+ await expect(submit).toBeDisabled();
+ await expect(submit).toHaveAttribute('aria-busy','true');
+ await expect(page.locator('#credentials .pending-dots')).toHaveCount(1);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(0);
+ await page.locator('#credentials').evaluate(form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+ expect(identityWrites(state)).toHaveLength(1);
  refreshed.resolve();await expect(submit).toBeEnabled();await expect(submit).toHaveAttribute('aria-busy','false');await expect(page.locator('#credentials .pending-dots')).toHaveCount(0);await fillCredentials(page,{creating});await submit.click();await expect.poll(()=>identityWrites(state).length).toBe(2);await expect(submit).toBeEnabled();await expect(page.locator('#password')).toHaveValue('');expect(identityWrites(state).map(r=>r.headers['x-piwork-csrf'])).toEqual(['synthetic-session-csrf','synthetic-refreshed-session-csrf']);expect(identityWrites(state).map(r=>r.headers['x-csrf-token'])).toEqual(['synthetic-session-csrf','synthetic-refreshed-session-csrf']);expect(state.requests.filter(r=>r.path==='state')).toHaveLength(1);expectPlainSession(state);
 });
 
@@ -235,7 +273,17 @@ for(const path of ['state','session'])test(`a late ${path} response after pagehi
  const state=await identityFixture(page,{waitForForm:false,handle:async r=>{
   if(r.path!==path)return null;reads++;if(reads===1){await oldRead.promise;return{json:path==='state'?{administratorInitialized:false}:{authenticated:true,csrfToken:'stale-session-csrf',user:{role:'admin'}}};}if(reads===2)await newRead.promise;return null;
  }});
- await expect.poll(()=>reads).toBe(1);state.initialized=true;await restoreIdentityPage(page);await expect.poll(()=>reads).toBe(2);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);oldRead.resolve();await page.waitForTimeout(50);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await expect(page.locator('#credentials')).toHaveCount(0);expect(new URL(page.url()).pathname).toBe('/setup');expect(identityWrites(state)).toEqual([]);
+ await expect.poll(()=>reads).toBe(1);
+ state.initialized=true;
+ await restoreIdentityPage(page);
+ await expect.poll(()=>reads).toBe(2);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ oldRead.resolve();
+ await page.waitForTimeout(50);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#credentials')).toHaveCount(0);
+ expect(new URL(page.url()).pathname).toBe('/setup');
+ expect(identityWrites(state)).toEqual([]);
  newRead.resolve();await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();await expect(page.locator('#credentials [type=submit]')).toBeEnabled();await expect(page.locator('#setup-status')).toHaveText('');expect(state.requests.filter(r=>r.path==='state')).toHaveLength(2);expect(state.requests.filter(r=>r.path==='session')).toHaveLength(path==='state'?1:2);expectPlainSession(state);
 });
 
@@ -256,8 +304,27 @@ for(const staleSuccess of [true,false])test(`late sign-out ${staleSuccess?'succe
  const state=await identityFixture(page,{initialized:true,authenticated:true,entry:'/setup',waitForForm:false,handle:async r=>{
   if(r.path!=='logout')return null;writes++;if(writes===1){await oldWrite.promise;return staleSuccess?{json:{}}:{status:502,json:{message:'Synthetic stale sign-out failure'}};}await newWrite.promise;return{status:502,json:{message:'Synthetic current sign-out failure'}};
  }});
- await expect(page.getByRole('heading',{name:'Core setup is pending',exact:true})).toBeVisible();const signout=page.getByRole('button',{name:'Sign out',exact:true});await signout.click();await expect.poll(()=>writes).toBe(1);await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await restoreIdentityPage(page);await expect(signout).toBeEnabled();await expect(page.locator('#setup-status')).toHaveText('');await signout.click();await expect.poll(()=>writes).toBe(2);
- await releaseIdentityResponse(page,oldWrite,'logout');await expect(signout).toBeDisabled();await expect(page.locator('#setup-status .pending-dots')).toHaveCount(1);await expect(page.locator('#setup-notice')).toHaveText('');expect(new URL(page.url()).pathname).toBe('/setup');newWrite.resolve();await expect(page.locator('#setup-notice')).toContainText('The request failed. Check the current state before continuing.');await expect(signout).toBeEnabled();await expect(page.locator('#setup-status .pending-dots')).toHaveCount(0);expect(identityWrites(state).map(r=>r.path)).toEqual(['logout','logout']);expectPlainSession(state);
+ await expect(page.getByRole('heading',{name:'Core setup is pending',exact:true})).toBeVisible();
+ const signout=page.getByRole('button',{name:'Sign out',exact:true});
+ await signout.click();
+ await expect.poll(()=>writes).toBe(1);
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await restoreIdentityPage(page);
+ await expect(signout).toBeEnabled();
+ await expect(page.locator('#setup-status')).toHaveText('');
+ await signout.click();
+ await expect.poll(()=>writes).toBe(2);
+ await releaseIdentityResponse(page,oldWrite,'logout');
+ await expect(signout).toBeDisabled();
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#setup-notice')).toHaveText('');
+ expect(new URL(page.url()).pathname).toBe('/setup');
+ newWrite.resolve();
+ await expect(page.locator('#setup-notice')).toContainText('The request failed. Check the current state before continuing.');
+ await expect(signout).toBeEnabled();
+ await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(0);
+ expect(identityWrites(state).map(r=>r.path)).toEqual(['logout','logout']);
+ expectPlainSession(state);
 });
 
 test('an unknown model save only reads back the unique public identity and never replays or auto-enters',async({page})=>{
@@ -281,7 +348,11 @@ test('a slow save explains the outstanding confirmation without replay or a fabr
 test('unknown model readback preserves the exceptional recovery link and disclosure without replay',async({page})=>{
  await page.clock.install();const state=await fixture(page,{handle:r=>r.method==='POST'&&r.path.endsWith('/admin/models')?{status:502,json:{message:'Synthetic unconfirmed write'}}:null});
  await key(page);await page.getByRole('button',{name:'Save and continue',exact:true}).click();
- const recovery=page.getByRole('link',{name:'Review saved models',exact:true});await expect(recovery).toBeVisible();await expect(page.locator('#setup-notice .feedback')).toHaveCount(1);await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();await expect(page.locator('#model-key')).toHaveValue('');
+ const recovery=page.getByRole('link',{name:'Review saved models',exact:true});
+ await expect(recovery).toBeVisible();
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(1);
+ await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();
+ await expect(page.locator('#model-key')).toHaveValue('');
  await advanced(page);await recovery.evaluate(el=>{window.recovery=el;window.advanced=document.querySelector('#model-advanced');el.focus();});
  for(let i=0;i<2;i++){await autoRead(page);await expect(page.locator('#setup-status')).toHaveText('');await expect(recovery).toBeFocused();expect(await recovery.evaluate(el=>el===window.recovery)).toBe(true);expect(await page.locator('#model-advanced').evaluate(el=>el===window.advanced&&el.open)).toBe(true);await expect(page.locator('[data-continue]')).toBeDisabled();}
  await page.locator('[data-model-action=test]').evaluate(el=>{el.disabled=false;el.click();});expect(writes(state)).toHaveLength(1);await evidence(page,'unknown-model-recovery');
@@ -309,7 +380,23 @@ test('healthy automatic read preserves an unrelated definite save error without 
 });
 
 test('unknown write remains a single warning through a failed and recovered automatic read',async({page})=>{
- await page.clock.install();let fail=false;const state=await fixture(page,{handle:r=>r.method==='POST'&&r.path.endsWith('/admin/models')?{status:502,json:{message:'Synthetic unknown write'}}:r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic read unavailable'}}:null});await key(page);await page.locator('[data-continue]').click();await expect(page.locator('#setup-notice .feedback')).toHaveCount(1);fail=true;await autoRead(page);await expect(page.locator('#setup-notice .feedback')).toHaveCount(2);await expect(page.getByRole('link',{name:'Review saved models',exact:true})).toHaveCount(1);fail=false;await autoRead(page);await expect(page.locator('#setup-notice .feedback')).toHaveCount(1);await expect(page.locator('#setup-notice')).not.toContainText('State could not be refreshed');await expect(page.locator('[data-continue]')).toBeDisabled();expect(writes(state)).toHaveLength(1);expect(await nav(page)).toEqual([]);
+ await page.clock.install();
+ let fail=false;
+ const state=await fixture(page,{handle:r=>r.method==='POST'&&r.path.endsWith('/admin/models')?{status:502,json:{message:'Synthetic unknown write'}}:r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic read unavailable'}}:null});
+ await key(page);
+ await page.locator('[data-continue]').click();
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(1);
+ fail=true;
+ await autoRead(page);
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(2);
+ await expect(page.getByRole('link',{name:'Review saved models',exact:true})).toHaveCount(1);
+ fail=false;
+ await autoRead(page);
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(1);
+ await expect(page.locator('#setup-notice')).not.toContainText('State could not be refreshed');
+ await expect(page.locator('[data-continue]')).toBeDisabled();
+ expect(writes(state)).toHaveLength(1);
+ expect(await nav(page)).toEqual([]);
 });
 
 
@@ -324,7 +411,24 @@ test('a failed read and its recovery do not erase an earlier definite save rejec
 
 
 test('repeated failed recovery reads do not replace the focused exceptional recovery link',async({page})=>{
- await page.clock.install();let fail=false;const state=await fixture(page,{handle:r=>r.method==='POST'&&r.path.endsWith('/admin/models')?{status:502,json:{message:'Synthetic unknown write'}}:r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic same read failure'}}:null});await key(page);await page.locator('[data-continue]').click();await expect(page.getByRole('link',{name:'Review saved models',exact:true})).toBeVisible();fail=true;await autoRead(page);await expect(page.locator('#setup-notice .feedback')).toHaveCount(2);const link=page.getByRole('link',{name:'Review saved models',exact:true});await link.evaluate(el=>{window.recoveryLink=el;el.focus();});await autoRead(page);await expect(link).toBeFocused();expect(await link.evaluate(el=>el===window.recoveryLink)).toBe(true);await expect(page.locator('#setup-notice .feedback')).toHaveCount(2);await expect(page.locator('[data-continue]')).toBeDisabled();expect(writes(state)).toHaveLength(1);
+ await page.clock.install();
+ let fail=false;
+ const state=await fixture(page,{handle:r=>r.method==='POST'&&r.path.endsWith('/admin/models')?{status:502,json:{message:'Synthetic unknown write'}}:r.path==='/_web/api/onboarding'&&fail?{status:502,json:{message:'Synthetic same read failure'}}:null});
+ await key(page);
+ await page.locator('[data-continue]').click();
+ await expect(page.getByRole('link',{name:'Review saved models',exact:true})).toBeVisible();
+ fail=true;
+ await autoRead(page);
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(2);
+ const link=page.getByRole('link',{name:'Review saved models',exact:true});
+ await link.evaluate(el=>{window.recoveryLink=el;
+ el.focus();});
+ await autoRead(page);
+ await expect(link).toBeFocused();
+ expect(await link.evaluate(el=>el===window.recoveryLink)).toBe(true);
+ await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(2);
+ await expect(page.locator('[data-continue]')).toBeDisabled();
+ expect(writes(state)).toHaveLength(1);
 });
 
 

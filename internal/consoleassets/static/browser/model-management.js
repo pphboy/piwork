@@ -1,5 +1,7 @@
+import { resultNotice } from './feedback-policy.js';
 import { pendingDots } from './pending.js';
-import { adapter, ConsoleError } from './adapter.js';
+import { ConsoleError } from './adapter.js';
+import { modelPort } from './model-port.js';
 import { esc, PageHeader, Section, Feedback, NavLink, StatusLabel } from './components.js';
 import { blankModel, modelDraftIssue, modelFields, modelField, modelPlaceholder, modelProtocolHelp, readModelDraft, validateModelControl, modelTestSummary, modelTestDetails, validModelTest } from './model-form.js';
 import { t, currentLocale, LocalizedMessage, messageText } from './locale.js';
@@ -11,6 +13,9 @@ export class ModelManagement {
     dirty;
     sessionError;
     showTestDialog;
+    notify;
+    port;
+    resolveNotice;
     models = [];
     path = '/models';
     draft = blank();
@@ -27,14 +32,21 @@ export class ModelManagement {
     note = '';
     noteError = false;
     fieldError = null;
+    uncertainWrites = new Map();
+    noteEvent = 0;
+    notifiedNote = '';
+    lastAction = 'read';
     testResult = null;
     testDialog = null;
     testSlowTimer;
-    constructor(render, dirty, sessionError = () => false, showTestDialog) {
+    constructor(render, dirty, sessionError = () => false, showTestDialog, notify = () => { }, port = modelPort, resolveNotice = () => { }) {
         this.render = render;
         this.dirty = dirty;
         this.sessionError = sessionError;
         this.showTestDialog = showTestDialog;
+        this.notify = notify;
+        this.port = port;
+        this.resolveNotice = resolveNotice;
         document.addEventListener('input', e => { const el = e.target; if (!el.closest('[data-model-form]'))
             return; this.capture(); this.validateLength(el); this.revision++; this.dirty(true); if (el.id === 'model-api') {
             const input = document.querySelector('#model-base-url');
@@ -60,11 +72,31 @@ export class ModelManagement {
             return; e.preventDefault(); void this.action(el.dataset.modelAction, el.dataset.id); });
     }
     leave() { clearInterval(this.pendingTimer); clearTimeout(this.testSlowTimer); this.pendingTimer = undefined; this.testSlowTimer = undefined; this.view++; this.draft.key = ''; this.testDialog?.close(); this.testDialog = null; }
-    reset() { this.leave(); clearInterval(this.pendingTimer); this.pendingTimer = undefined; this.reading = false; this.pendingAction = ''; this.testDialog?.close(); this.testDialog = null; this.models = []; this.draft = blank(); this.testResult = null; this.fieldError = null; this.note = ''; this.saving = false; this.testing = false; this.uncertain = false; this.revision++; this.loading++; this.view++; }
+    reset() {
+        this.uncertainWrites.clear();
+        this.leave();
+        clearInterval(this.pendingTimer);
+        this.pendingTimer = undefined;
+        this.reading = false;
+        this.pendingAction = '';
+        this.testDialog?.close();
+        this.testDialog = null;
+        this.models = [];
+        this.draft = blank();
+        this.testResult = null;
+        this.fieldError = null;
+        this.note = '';
+        this.saving = false;
+        this.testing = false;
+        this.uncertain = false;
+        this.revision++;
+        this.loading++;
+        this.view++;
+    }
     model() { return this.models.find(m => this.path === '/models/' + part(m.id)); }
-    sameView(path, epoch, view) { return path === this.path && epoch === adapter.identityEpoch && view === this.view; }
+    sameView(path, epoch, view) { return path === this.path && epoch === this.port.identityEpoch && view === this.view; }
     async load(path, preserveDraft = false) {
-        const ticket = ++this.loading, epoch = adapter.identityEpoch, changed = !preserveDraft || path !== this.path;
+        const ticket = ++this.loading, epoch = this.port.identityEpoch, changed = !preserveDraft || path !== this.path;
         this.path = path;
         if (changed) {
             this.testDialog?.close();
@@ -80,12 +112,16 @@ export class ModelManagement {
             this.testResult = null;
             this.fieldError = null;
             this.note = '';
-            this.uncertain = false;
+            this.uncertain = this.uncertainWrites.get(path)?.identity === epoch;
+            if (this.uncertain) {
+                this.note = new LocalizedMessage('models.resultUnknown');
+                this.noteError = true;
+            }
         }
         this.revision++;
         this.markTestStale();
-        const value = await adapter.modelRequest('models');
-        if (ticket !== this.loading || epoch !== adapter.identityEpoch)
+        const value = await this.port.readModels();
+        if (ticket !== this.loading || epoch !== this.port.identityEpoch)
             return;
         if (!Array.isArray(value.models))
             throw new ConsoleError('INVALID_RESPONSE', new LocalizedMessage('models.dataIncomplete'));
@@ -117,8 +153,14 @@ export class ModelManagement {
         this.testDialog?.close();
         this.testDialog = this.showTestDialog(this.testModalMarkup());
     } }
-    beginPending(action) { this.pendingAction = action; this.pendingStarted = Date.now(); clearInterval(this.pendingTimer); this.pendingTimer = setInterval(() => { if (Date.now() - this.pendingStarted >= 10000)
-        this.render(); }, 1000); }
+    beginPending(action) {
+        this.lastAction = action;
+        this.pendingAction = action;
+        this.pendingStarted = Date.now();
+        clearInterval(this.pendingTimer);
+        this.pendingTimer = setInterval(() => { if (Date.now() - this.pendingStarted >= 10000)
+            this.render(); }, 1000);
+    }
     endPending() { this.pendingAction = ''; clearInterval(this.pendingTimer); this.pendingTimer = undefined; }
     pendingText(action, idle) { const pending = this.pendingAction === action; return `<span class="button-pending-content${pending ? ' is-pending' : ''}"><span>${esc(idle)}</span>${pending ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`; }
     busy(action) { return `aria-busy="${this.pendingAction === action}"`; }
@@ -126,12 +168,43 @@ export class ModelManagement {
         const d = this.draft;
         return `<form data-model-form="model" class="form-grid">
  ${modelFields(d, !!m)}
- <div class="form-actions"><button class="btn primary" type="submit" ${this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy('save')}>${this.pendingText('save', m ? t('models.save') : t('models.add'))}</button><button class="btn secondary" type="button" data-model-action="test" ${this.testing ? 'disabled' : ''}>${t('setup.model.test')}</button></div><p class="help">${t('setup.model.testHelp')}</p></form>`;
+ <div class="form-actions"><button class="btn primary" type="submit" ${this.saving || this.reading || this.uncertain ? 'disabled' : ''} ${this.busy('save')}>${this.pendingText('save', m ? t('models.save') : t('models.add'))}</button><button class="btn secondary" type="button" data-model-action="test" ${this.testing ? 'disabled' : ''} aria-busy="${this.testing}"><span class="button-pending-content${this.testing ? ' is-pending' : ''}"><span>${t('setup.model.test')}</span><span class="button-pending-indicator">${this.testing ? pendingDots() : ''}</span></span></button></div><p class="help">${t('setup.model.testHelp')}</p></form>`;
+    }
+    markUncertain(value) {
+        this.uncertain = value;
+        const previous = this.uncertainWrites.get(this.path);
+        if (value)
+            this.uncertainWrites.set(this.path, { identity: this.port.identityEpoch, owner: previous?.owner });
+        else {
+            if (previous?.owner)
+                this.resolveNotice(previous.owner);
+            this.uncertainWrites.delete(this.path);
+        }
+    }
+    publishNote() {
+        if (!this.note || this.note === this.notifiedNote)
+            return;
+        this.notifiedNote = this.note;
+        const note = this.note, path = this.path, epoch = this.port.identityEpoch, view = this.view;
+        const event = resultNotice({ identity: String(epoch), object: path, task: this.lastAction, generation: this.pendingStarted || view }, {
+            phase: String(++this.noteEvent), message: () => messageText(note), error: this.noteError, unknown: this.uncertain,
+            ...(this.noteError ? { recovery: { label: () => t('models.read'), run: () => { if (this.sameView(path, epoch, view))
+                        void this.action('read'); } } } : {}),
+        });
+        if (event) {
+            if (this.uncertain) {
+                const lock = this.uncertainWrites.get(path);
+                if (lock)
+                    lock.owner = event;
+            }
+            this.notify(event);
+        }
     }
     markup() {
+        this.publishNote();
         const m = this.model();
         let body = PageHeader(t('models.pageTitle'), t('models.pageDescription'), `<button class="btn secondary" data-model-action="read" ${this.reading || this.saving ? 'disabled' : ''} ${this.busy('read')}>${this.pendingText('read', t('models.read'))}</button>${NavLink(t('models.configureRuntime'), '/runtime', 'btn secondary')}`, this.path !== '/models' ? NavLink(t('models.all'), '/models') : '');
-        body += `<div id="model-pending-note" role="status">${this.pendingAction && Date.now() - this.pendingStarted >= 10000 ? t('models.pendingNote', { target: this.pendingAction === 'read' ? t('models.pendingRead') : t('models.pendingWrite'), seconds: Math.floor((Date.now() - this.pendingStarted) / 1000) }) : ''}</div><div id="model-note">${this.note ? Feedback(messageText(this.note), this.noteError ? 'warning' : 'success') : ''}</div>`;
+        body += `<div id="model-pending-note" role="status">${this.pendingAction && Date.now() - this.pendingStarted >= 10000 ? t('models.pendingNote', { target: this.pendingAction === 'read' ? t('models.pendingRead') : t('models.pendingWrite'), seconds: Math.floor((Date.now() - this.pendingStarted) / 1000) }) : ''}</div><div id="model-note">${this.note && this.noteError ? `<div class="owned-feedback warning" role="status">${esc(messageText(this.note))}</div>` : ''}</div>`;
         if (this.path === '/models')
             return body + Section(t('models.sectionModels'), t('models.sectionModelsDescription'), `<div class="section-body">${this.models.length ? this.models.map(m => `<div class="catalog-row"><div><a href="/models/${part(m.id)}" data-nav><strong>${esc(m.name)}</strong></a><p>${esc(m.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages')} · <code>${esc(m.model)}</code> · <small>${esc(m.id.slice(-8))}</small></p><p>${m.credentialAvailable ? t('models.keyAvailable') : t('models.keyUnavailable')}</p></div>${StatusLabel(m.enabled ? t('models.enabled') : t('models.disabled'), m.enabled ? 'success' : 'neutral')}</div>`).join('') : `<p>${t('models.empty')}</p>`}</div>`) + Section(t('models.addSection'), t('models.addDescription'), `<div class="section-body">${this.form()}<div id="model-test-result">${this.testMarkup()}</div></div>`);
         if (!m)
@@ -147,7 +220,7 @@ export class ModelManagement {
             this.inputFailure(issue.field, issue.message);
             return;
         }
-        const m = this.model(), path = this.path, epoch = adapter.identityEpoch, view = this.view, submitted = this.draft;
+        const m = this.model(), path = this.path, epoch = this.port.identityEpoch, view = this.view, submitted = this.draft;
         let committed = false;
         this.saving = true;
         this.beginPending('save');
@@ -156,7 +229,7 @@ export class ModelManagement {
         this.render();
         try {
             const d = submitted;
-            const value = await adapter.modelRequest(m ? 'models/' + part(m.id) : 'models', m ? 'PATCH' : 'POST', { name: d.name.trim(), model: d.model.trim(), api: d.api, baseUrl: d.baseUrl.trim(), ...(d.key ? { credential: d.key } : {}) });
+            const value = await (m ? this.port.update(m.id, { name: d.name.trim(), model: d.model.trim(), api: d.api, baseUrl: d.baseUrl.trim(), ...(d.key ? { credential: d.key } : {}) }) : this.port.create({ name: d.name.trim(), model: d.model.trim(), api: d.api, baseUrl: d.baseUrl.trim(), ...(d.key ? { credential: d.key } : {}) }));
             if (typeof value.id !== 'string')
                 throw new ConsoleError('RESULT_UNKNOWN', new LocalizedMessage('models.resultUnknown'));
             committed = true;
@@ -169,6 +242,7 @@ export class ModelManagement {
             this.dirty(newerDraft);
             if (!m && !newerDraft)
                 this.draft = blank();
+            this.render();
             await this.load(path, true);
         }
         catch (e) {
@@ -179,7 +253,7 @@ export class ModelManagement {
                     this.fieldError = { field: e.field, message: e.feedback };
                 this.note = committed ? new LocalizedMessage('models.savedRefresh') : message(e);
                 this.noteError = true;
-                this.uncertain = committed || e instanceof ConsoleError && e.code === 'RESULT_UNKNOWN';
+                this.markUncertain(committed || e instanceof ConsoleError && e.code === 'RESULT_UNKNOWN');
             }
         }
         finally {
@@ -208,7 +282,7 @@ export class ModelManagement {
         if (action === 'read') {
             if (this.reading || this.saving)
                 return;
-            const path = this.path, epoch = adapter.identityEpoch, view = this.view;
+            const path = this.path, epoch = this.port.identityEpoch, view = this.view;
             this.capture();
             this.reading = true;
             this.beginPending('read');
@@ -217,7 +291,7 @@ export class ModelManagement {
                 await this.load(path, true);
                 if (!this.sameView(path, epoch, view))
                     return;
-                this.uncertain = false;
+                this.markUncertain(false);
                 this.note = new LocalizedMessage('models.readDone', { time: new Date().toLocaleTimeString(currentLocale() === 'zh-CN' ? 'zh-CN' : 'en-US') });
                 this.noteError = false;
             }
@@ -243,24 +317,25 @@ export class ModelManagement {
             return;
         if (action !== 'default' && !confirm(action === 'delete' ? t('models.confirm.delete', { name: m.name }) : action === 'disable' ? t('models.confirm.disable', { name: m.name }) : t('models.confirm.enable', { name: m.name })))
             return;
-        const path = this.path, epoch = adapter.identityEpoch, view = this.view;
+        const path = this.path, epoch = this.port.identityEpoch, view = this.view;
         let committed = false;
         this.saving = true;
         this.beginPending(action);
         this.render();
         try {
             if (action === 'default')
-                await adapter.modelRequest('default-work', 'PATCH', { modelRef: m.modelRef });
+                await this.port.chooseForFutureWork(m.modelRef);
+            else if (action === 'delete')
+                await this.port.remove(m.id);
             else
-                await adapter.modelRequest('models/' + part(m.id) + (action === 'delete' ? '' : '/' + action), action === 'delete' ? 'DELETE' : 'POST', action === 'delete' ? undefined : {});
+                await this.port.setEnabled(m.id, action === 'enable');
             committed = true;
-            if (!this.sameView(path, epoch, view))
-                return;
-            await this.load(path, true);
             if (!this.sameView(path, epoch, view))
                 return;
             this.note = new LocalizedMessage(action === 'default' ? 'models.defaultSaved' : 'models.stateSaved');
             this.noteError = false;
+            this.render();
+            await this.load(path, true);
         }
         catch (e) {
             if (this.sessionError(e, epoch))
@@ -268,7 +343,7 @@ export class ModelManagement {
             if (this.sameView(path, epoch, view)) {
                 this.note = committed ? new LocalizedMessage('models.stateSavedRefresh') : message(e);
                 this.noteError = true;
-                this.uncertain = committed || e instanceof ConsoleError && e.code === 'RESULT_UNKNOWN';
+                this.markUncertain(committed || e instanceof ConsoleError && e.code === 'RESULT_UNKNOWN');
             }
         }
         finally {
@@ -283,7 +358,7 @@ export class ModelManagement {
         if (this.testing)
             return;
         this.capture();
-        const m = this.model(), path = this.path, epoch = adapter.identityEpoch, view = this.view, revision = this.revision, d = { ...this.draft };
+        const m = this.model(), path = this.path, epoch = this.port.identityEpoch, view = this.view, revision = this.revision, d = { ...this.draft };
         const model = d.model.trim(), baseUrl = d.baseUrl.trim();
         if (!model || !baseUrl || !m && !d.key.trim()) {
             const field = !model ? 'model' : !baseUrl ? 'baseUrl' : 'credential';
@@ -308,7 +383,7 @@ export class ModelManagement {
         this.testSlowTimer = setTimeout(() => { if (this.sameView(path, epoch, view) && this.testResult === record && record.pending)
             this.markTestStale(); }, 10000);
         try {
-            const value = await adapter.modelRequest('model-tests', 'POST', input);
+            const value = await this.port.test(input);
             if (!validModelTest(value))
                 throw new ConsoleError('RESULT_UNKNOWN', new LocalizedMessage('models.testIncomplete'));
             if (this.sameView(path, epoch, view) && this.testResult === record)

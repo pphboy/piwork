@@ -1,3 +1,4 @@
+import { requiresOwnedRecovery } from './feedback-policy.js';
 import { pendingDots } from './pending.js';
 import { t } from './locale.js';
 /** In-memory request coordination; never a queue or a remote task cancellation API. */
@@ -61,8 +62,12 @@ export class ActionState {
         record.pending = false;
         record.errorText = () => error instanceof Error ? error.message : String(error);
         record.error = record.errorText();
-        record.phaseKey = 'common.notConfirmed';
         const code = error?.code;
+        // Phase copy describes the outcome, independently of existing admission locks.
+        record.phaseKey = record.kind === 'read' ? 'action.readFailed'
+            : ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(code || '')
+                ? 'common.notConfirmed' : 'setup.state.failed';
+        record.errorCode = code || 'READ_FAILED';
         record.blocked = record.kind !== 'read' && record.kind !== 'identity' && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(code || '');
         this.changed();
     }
@@ -105,7 +110,7 @@ export class ActionState {
         const elapsed = Math.floor((this.now() - record.started) / 1000);
         const phase = record.phaseKey ? t(record.phaseKey) : record.resultText && record.phase === record.result ? record.resultText() : record.phase;
         const error = record.errorText?.() ?? record.error;
-        return `${record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
+        return `${record.targetText?.() ?? record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
     }
     slow(record) { return (record.pending || record.refresh === 'refreshing') && this.now() - record.started >= 10000; }
     clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
@@ -125,7 +130,7 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let pageText = '';
     while (walker.nextNode())
-        if (!walker.currentNode.parentElement?.closest('[data-action-status]'))
+        if (!walker.currentNode.parentElement?.closest('[data-action-status], .notice-host'))
             pageText += walker.currentNode.textContent || '';
     for (const button of root.querySelectorAll('button[data-action]')) {
         if (button.dataset.actionLocked) {
@@ -148,9 +153,17 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
     for (const record of actions.records.values()) {
         if (record.view && record.view !== view || !visibleRecord(record))
             continue;
+        const anchor = record.anchor ? root.querySelector(record.anchor) : null;
+        if (!record.pending && record.refresh !== 'refreshing' && !requiresOwnedRecovery({
+            error: !!record.error, unknown: record.blocked || ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(record.errorCode || ''),
+            refreshFailed: record.refresh === 'failed', restorableDetached: !!record.recover && !anchor,
+        }))
+            continue;
+        const ownedError = record.errorText?.() ?? record.error;
+        if (ownedError && pageText.includes(ownedError))
+            continue;
         if (record.kind === 'read' && record.pending && !record.error && root.querySelector('.console-read-skeleton'))
             continue;
-        const anchor = record.anchor ? root.querySelector(record.anchor) : null;
         const owner = anchor instanceof HTMLButtonElement ? anchor : anchor?.matches('form') ? anchor.querySelector('button[type="submit"], button:not([type])') : null;
         const ordinaryPending = (record.pending || record.refresh === 'refreshing') && !record.error && !record.blocked && record.refresh !== 'failed';
         if (ordinaryPending && owner && owner.getClientRects().length) {
@@ -197,7 +210,7 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
         const node = [...root.querySelectorAll('[data-action-status]')].find(node => node.dataset.actionStatus === record.key) || document.createElement('div');
         node.dataset.actionStatus = record.key;
         retained.add(node);
-        node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+        node.className = `owned-feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
         node.setAttribute('role', 'status');
         node.setAttribute('aria-live', 'polite');
         node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));

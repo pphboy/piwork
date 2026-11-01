@@ -1,3 +1,4 @@
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 const { DesktopAdapter } = await import(new URL('../browser/adapter.js', import.meta.url).href);
@@ -18,7 +19,11 @@ function fixture(t: TestContext, handler: (path: string) => Reply | Promise<Repl
 }
 const ready = { json: { health: { available: true }, readiness: { available: true, value: { ready: true } } } };
 const fallback = (path: string): Reply => ({ json: path === 'works' ? { works: [] } : path === 'known-operations' ? { operations: [] } : path === 'skills' ? { skills: [] } : { packages: [] } });
-async function tickUntil(test: () => boolean) { for (let n = 0; n < 30 && !test(); n++) await Promise.resolve(); assert.ok(test()); }
+async function tickUntil(test: () => boolean) {
+  // Wait for the real request boundary, not a fixed internal Promise-chain depth.
+  if (!test()) await nextTurn();
+  assert.ok(test());
+}
 
 test('pending Core: a timed-out check releases its lock for an explicit read-only retry', async t => {
   const status = gate(), works = gate();

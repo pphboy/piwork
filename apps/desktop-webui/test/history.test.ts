@@ -1,3 +1,4 @@
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const { HistoryProjection }=await import(new URL('../browser/history-projection.js',import.meta.url).href);
@@ -280,7 +281,9 @@ test('late history after identity reset never enters the next account',async t=>
   return new Promise<Response>(done=>resolve=done);
  });
  const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[]}],services:[]}];
- const read=adapter.loadSession('work-1','session-1');for(let i=0;i<20&&!resolve;i++)await Promise.resolve();
+ const read = adapter.loadSession('work-1', 'session-1');
+ await nextTurn();
+ assert.equal(typeof resolve, 'function');
  adapter.clearIdentity();resolve(Response.json(page([text('old-account',0,'private old text')])));await read;
  assert.equal(adapter.state.works.length,0);
 });

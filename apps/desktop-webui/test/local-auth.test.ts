@@ -148,6 +148,7 @@ test('a lost sign-in response is read back and never submitted automatically aga
   let sent = false, allowReadback = false;
   const { page, records } = await fixture(t, r => {
     if (r.path === 'session') return sent && !allowReadback ? { abort: true } : { json: signedOut() };
+    if (r.path === 'preferences') return { json: { coreUrl: null } };
     if (r.path === 'login') { sent = true; return { abort: true }; }
   });
   await expect(button(page, 'sign-in')).toBeVisible();
@@ -155,11 +156,19 @@ test('a lost sign-in response is read back and never submitted automatically aga
   await page.getByLabel('Password').fill('synthetic-password');
   await button(page, 'sign-in').click();
   await expect(page.locator('body')).toContainText('sign-in result is not confirmed');
+  const unknownNotice = page.locator('.notice-host .notice-unknown');
+  await expect(unknownNotice).toHaveCount(1);
+  await page.waitForTimeout(3200);
+  await expect(unknownNotice).toBeVisible();
+  await unknownNotice.locator('.notice-close').click();
+  assert.equal(await api(page, 'return adapter.signInUnknown'), true);
+  await expect(page.locator('body')).toContainText('sign-in result is not confirmed');
   assert.equal(records.filter(r => r.path === 'login' && r.method === 'POST').length, 1);
   allowReadback = true;
   await button(page, 'retry-session').click();
   await expect(button(page, 'sign-in')).toBeEnabled();
   await expect(page.getByLabel('Account', { exact: true })).toHaveValue('owner');
+  await expect(page.locator('.notice-host .notice')).toHaveCount(0);
   assert.equal(records.filter(r => r.path === 'login' && r.method === 'POST').length, 1);
 });
 test('ordinary session: blocked Cookies and capacity show connection diagnostics without Access',async t=>{

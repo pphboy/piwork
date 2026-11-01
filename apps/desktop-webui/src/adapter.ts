@@ -1,3 +1,4 @@
+import { RunFeedbackObservations } from './chat-run-feedback.js';
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
@@ -226,12 +227,39 @@ export class DesktopAdapter {
   }
   readonly hosted = typeof document !== 'undefined' && document.querySelector('meta[name="piwork-mode"]')?.getAttribute('content') === 'hosted';
   about={local:null as Data|null,core:null as Data|null,localError:'',coreError:'',localLoading:false,coreLoading:false,coreChecked:''};
-  loadAbout() {
-    const epoch=this.epoch;this.about.localLoading=true;this.about.localError='';this.emit();
-    void this.request('about').then(value=>{if(epoch===this.epoch)this.about.local=value;}).catch(error=>{if(epoch===this.epoch)this.about.localError=errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.localLoading=false;this.emit();}});
-    if(!this.state.signedIn){this.about.coreError=localizedText('d.error.signInCoreVersion');return;}
-    this.about.coreLoading=true;this.about.coreError='';
-    void this.request('core-about').then(value=>{if(epoch===this.epoch){this.about.core=value;this.about.coreChecked=new Date().toISOString();}}).catch(error=>{if(epoch===this.epoch)this.about.coreError=(error as DesktopError).httpStatus===404?localizedText('d.error.coreVersionUnsupported'):errorText(error);}).finally(()=>{if(epoch===this.epoch){this.about.coreLoading=false;this.emit();}});
+  private aboutSequence = 0;
+  async loadAbout() {
+    const epoch = this.epoch, sequence = ++this.aboutSequence;
+    const current = () => epoch === this.epoch && sequence === this.aboutSequence;
+    this.about.localLoading = true;
+    this.about.localError = '';
+    this.about.coreLoading = this.state.signedIn;
+    this.about.coreError = this.state.signedIn ? '' : localizedText('d.error.signInCoreVersion');
+    this.emit();
+    const local = this.request('about').then(value => {
+      if (current()) this.about.local = value;
+    }).catch(error => {
+      if (current()) this.about.localError = errorText(error);
+    }).finally(() => {
+      if (current()) {
+        this.about.localLoading = false;
+        this.emit();
+      }
+    });
+    const core = this.state.signedIn ? this.request('core-about').then(value => {
+      if (current()) {
+        this.about.core = value;
+        this.about.coreChecked = new Date().toISOString();
+      }
+    }).catch(error => {
+      if (current()) this.about.coreError = (error as DesktopError).httpStatus === 404 ? localizedText('d.error.coreVersionUnsupported') : errorText(error);
+    }).finally(() => {
+      if (current()) {
+        this.about.coreLoading = false;
+        this.emit();
+      }
+    }) : Promise.resolve();
+    await Promise.all([local, core]);
   }
   imageCapabilities = new Map<string,{loading:boolean;error:string;value?:Data}>();
   imageLoads = new Map<string,{phase:'loading'|'ready'|'error';url?:string;error?:string}>();
@@ -278,11 +306,12 @@ export class DesktopAdapter {
     sessionState: 'loading' as 'loading' | 'ready' | 'unavailable', sessionError: '', cleanupRequired: false,
     core: { address: '', name: 'Core', account: '', role: '', proxyPort: '', username: '' }, transfers: [] as TransferResult[], lastChecked: '' };
   requests = new Map<string, { loading: boolean; error: string; items: Data[]; nextCursor: string|null; checkedAt?: string }>();
+  private requestPageReads = new Map<string, Promise<void>>();
   requestDetails = new Map<string, Data>();
   requestPresence = new Map<string, { confirmed: boolean; loading: boolean; hasRecords: boolean; error: string }>();
   requestResponses = new Map<string, { loading: boolean; visibleLoading?: boolean; runs: Run[]; errors: string[]; checked: Record<string,string>; errorsByRun: Record<string,string> }>();
   runDetails = new Map<string, Run>();
-  temporaryCleanups = new Map<string, { loading: boolean; error: string; items: TemporaryCleanup[]; truncated: boolean }>();
+  temporaryCleanups = new Map<string, { loading: boolean; error: string; items: TemporaryCleanup[]; truncated: boolean; checkedAt: string }>();
   private temporaryCleanupRequests = new Map<string, Promise<void>>();
   requestRetries = new Map<string,{submissionKey:string; error:string; unknown:boolean}>();
   private cancellingRequests = new Set<string>();
@@ -293,6 +322,22 @@ export class DesktopAdapter {
   chatCapabilities = new Map<string, 0|1|2|3|4>();
   cancelAndSendCapabilities = new Map<string, 0|1>();
   activeRuns = new Map<string, { confirmed: boolean; loading: boolean; visibleLoading?: boolean; run: Run|null; error: string }>();
+  private runFeedbackObservations = new RunFeedbackObservations();
+  getRunFeedback(work: string, session: string, run: string) { return this.runFeedbackObservations.get(work, session, run); }
+  forgetRunFeedback(work: string, session: string, run: string) { this.runFeedbackObservations.forget(work, session, run); }
+  private assertOriginalRunResponse(work: string, run: Run, raw: Data) {
+    if (raw.workId !== undefined && raw.workId !== work
+      || raw.runId !== undefined && raw.runId !== run.id
+      || raw.sessionId !== undefined && raw.sessionId !== run.sessionId) {
+      throw failure('INVALID_RESPONSE', 'd.error.runDetailsMismatch');
+    }
+  }
+  private confirmOriginalRunFeedback(work: string, run: Run, raw: Data) {
+    if (!runStates[raw.state] || raw.workId !== undefined && raw.workId !== work
+      || raw.runId !== undefined && raw.runId !== run.id
+      || raw.sessionId !== undefined && raw.sessionId !== run.sessionId) return;
+    this.runFeedbackObservations.record(work, run, true);
+  }
   private activeRevisions = new Map<string,number>();
   commands = new Map<string,{loading:boolean;confirmed:boolean;error:string;items:Data[];checkedAt?:string}>();
   private failedChatSnapshots = new Map<string,ChatSendSnapshot>();
@@ -302,6 +347,12 @@ export class DesktopAdapter {
   private sessionVersions=new Map<string,number>();
   activateChat(id:string,sessionId:string) { const key=`${id}:${sessionId}`;if(this.chatSelection&&this.chatSelection!==key)this.cancelHistoryReads();this.chatSelection=key; }
   status: Data = {};
+  statusReadError = '';
+  private statusReadReceipt?: object;
+  statusReadEvidence(): object | undefined { return this.statusReadReceipt; }
+  private operationRecordsState = { reading: false, error: '', receipt: undefined as object | undefined };
+  get operationRecords(): Readonly<{ reading: boolean; error: string; receipt?: object }> { return this.operationRecordsState; }
+  private operationRecordsSequence = 0;
   private coreAdmitted = false;
   private coreHeld = false;
   private corePaused = false;
@@ -321,6 +372,8 @@ export class DesktopAdapter {
   }
   private acceptCoreStatus(status: Data) {
     this.status = status;
+    this.statusReadReceipt = status;
+    this.statusReadError = '';
     if (status.health?.available && status.readiness?.available && status.readiness.value?.ready === true) { this.coreAdmitted = true; this.coreHeld = false; }
     else if (status.health?.available === false || status.readiness?.available && status.readiness.value?.ready === false) this.coreHeld = true;
   }
@@ -396,24 +449,31 @@ export class DesktopAdapter {
   private sessionTimer?: ReturnType<typeof setTimeout>;
   private initializationTimer?: ReturnType<typeof setTimeout>;
   private initializationCycle = 0;
-  private pendingSignIn?: { core: string; account: string; phase: 'connection' | 'login' };
+  private pendingSignIn?: { core: string; account: string; phase: 'connection' | 'login'; revision: number };
   get signInUnknown() { return !!this.pendingSignIn; }
+  get signInRevision() { return this.pendingSignIn?.revision ?? 0; }
   private authCheck?: { epoch: number; sequence: number; acceptedEpoch?: number; connectionOwned?: boolean; pending: Promise<Data>; controller: AbortController };
   private authSequence = 0;
   connectionCheck = { checking: false, error: '', checkedAt: '', waiting: false };
   private connectionRequest?: { epoch: number; pending: Promise<void> };
   preferences = { reading: false, phase: 'idle' as 'idle'|'loading'|'saving'|'clearing'|'unconfirmed', confirmed: false, coreUrl: null as string|null, error: '', notice: '', waiting: false };
   private preferenceSequence = 0;
+  private confirmedPreferenceSequence = -1;
+  get preferenceRevision() { return this.preferenceSequence; }
+  get preferenceConfirmedRevision() { return this.confirmedPreferenceSequence; }
+  get sessionReadRevision() { return this.authSequence; }
   private preferenceNotice?: ReturnType<typeof setTimeout>;
-  private async preferenceRequest(method: 'GET'|'PUT'|'DELETE', coreUrl?: string): Promise<string|null> {
+  private preferenceRead?: AbortController;
+  private async preferenceRequest(method: 'GET'|'PUT'|'DELETE', coreUrl?: string, signal?: AbortSignal): Promise<string|null> {
     const csrf = this.csrf;
     let response: Response;
     try {
-      response = await fetch('/_desktop/api/preferences', { method, credentials: 'same-origin',
+      response = await fetch('/_desktop/api/preferences', { method, credentials: 'same-origin', signal,
         headers: method === 'GET' ? {} : { 'X-Piwork-Csrf': csrf, ...(method === 'PUT' ? { 'Content-Type': 'application/json' } : {}) },
         ...(method === 'PUT' ? { body: JSON.stringify({ coreUrl }) } : {}) });
     } catch { throw failure(method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN', method === 'GET' ? 'd.error.preferencesReadFailed' : 'd.error.preferencesResponseLost'); }
     const value = await response.json().catch(() => null);
+    if (signal?.aborted) throw new DOMException(localizedText('d.error.observationEnded'), 'AbortError');
     if (csrf !== this.csrf) throw failure(method === 'GET' ? 'LOCAL_AUTH_REQUIRED' : 'RESULT_UNKNOWN', 'd.error.preferencesSessionChanged');
     if (!response.ok) {
       const code = value?.code || (method === 'GET' ? 'PREFERENCES_UNAVAILABLE' : 'RESULT_UNKNOWN');
@@ -429,16 +489,29 @@ export class DesktopAdapter {
     if (this.hosted) return;
     if (['saving','clearing'].includes(this.preferences.phase)) return;
     const sequence = ++this.preferenceSequence, unconfirmed = this.preferences.phase === 'unconfirmed';
+    const controller = new AbortController();
+    this.preferenceRead = controller;
     if (!unconfirmed) this.preferences.phase = 'loading';
-    this.preferences.error = ''; this.preferences.reading = true; this.emit();
+    this.preferences.error = '';
+    this.preferences.notice = '';
+    this.preferences.reading = true;
+    this.emit();
     try {
-      const coreUrl = await this.preferenceRequest('GET');
+      const coreUrl = await readWithDeadline(signal => this.preferenceRequest('GET', undefined, signal), { signal: controller.signal });
       if (sequence !== this.preferenceSequence) return;
+      this.confirmedPreferenceSequence = sequence;
       Object.assign(this.preferences, { coreUrl, confirmed: true, phase: 'idle', error: '', waiting: false });
     } catch (error) {
       if (sequence !== this.preferenceSequence) return;
-      this.preferences.phase = unconfirmed ? 'unconfirmed' : 'idle'; this.preferences.error = errorText(error);
-    } finally { if (sequence === this.preferenceSequence) { this.preferences.reading = false; this.emit(); } }
+      this.preferences.phase = unconfirmed ? 'unconfirmed' : 'idle';
+      this.preferences.error = error instanceof ReadTimeout ? localizedText('d.error.readTimeout') : errorText(error);
+    } finally {
+      if (this.preferenceRead === controller) this.preferenceRead = undefined;
+      if (sequence === this.preferenceSequence) {
+        this.preferences.reading = false;
+        this.emit();
+      }
+    }
   }
   async savePreferences(coreUrl: string|null) {
     if (['saving','clearing','unconfirmed'].includes(this.preferences.phase)) return;
@@ -449,12 +522,15 @@ export class DesktopAdapter {
       } catch { this.preferences.error = localizedText('d.error.preferencesInvalidOrigin'); this.emit(); return; }
     }
     const sequence = ++this.preferenceSequence;
+    this.preferenceRead?.abort();
+    this.preferenceRead = undefined;
     clearTimeout(this.preferenceNotice);
     Object.assign(this.preferences, { reading: false, phase: coreUrl === null ? 'clearing' : 'saving', error: '', notice: '', waiting: false }); this.emit();
     const slow = setTimeout(() => { if (sequence === this.preferenceSequence && ['saving','clearing'].includes(this.preferences.phase)) { this.preferences.waiting = true; this.emit(); } }, 10000);
     try {
       const saved = await this.preferenceRequest(coreUrl === null ? 'DELETE' : 'PUT', coreUrl ?? undefined);
       if (sequence !== this.preferenceSequence) return;
+      this.confirmedPreferenceSequence = sequence;
       Object.assign(this.preferences, { phase: 'idle', confirmed: true, coreUrl: saved, notice: saved === null ? localizedText('d.error.preferencesRestored') : localizedText('d.error.preferencesSaved'), waiting: false });
       this.preferenceNotice = setTimeout(() => { if (sequence === this.preferenceSequence) { this.preferences.notice = ''; this.emit(); } }, 3000);
     } catch (error) {
@@ -605,18 +681,46 @@ export class DesktopAdapter {
 
   worksLoading = false; worksChecked = ''; worksError = '';
   private clearIdentity(preserveInspection = false) {
+    this.runFeedbackObservations.clear();
+    if (this.preferenceRead) {
+      this.preferenceSequence++;
+      this.preferenceRead.abort();
+      this.preferenceRead = undefined;
+      this.preferences.reading = false;
+      if (this.preferences.phase === 'loading') this.preferences.phase = 'idle';
+    }
     if (this.hosted) { try { for (const key of Object.keys(sessionStorage)) if (key.startsWith('piwork:web:')) sessionStorage.removeItem(key); } catch {} }
     const inspection = preserveInspection ? { context: this.inspectionContext, summary: this.inspection, transfer: this.inspectionTransfer, progress: this.transferProgress } : null;
     if (!preserveInspection) { this.inspectionSelection++; this.inspectionNonce++; this.inspectionContext?.xhr?.abort(); this.inspectionContext = null; this.transferProgress = null; this.cleanupPending.clear(); }
+    this.statusReadError = '';
+    this.statusReadReceipt = undefined;
+    this.operationRecordsSequence++;
+    Object.assign(this.operationRecordsState, { reading: false, error: '', receipt: undefined });
     this.epoch++; this.coreAdmitted = false; this.coreHeld = false; this.corePaused = false; this.recoveryStartedAt = 0; this.status = {}; this.connectionRequest = undefined; clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined; this.recoveryObservation++; this.recoveryReads = 0; this.recoveryListVisible = false; Object.assign(this.connectionCheck, { checking: false, error: '', checkedAt: '', waiting: false }); this.worksLoading = false; this.worksChecked = ''; this.stopFileReads(); this.directoryLoads.clear(); this.state.works = []; this.state.operations = []; this.state.snapshots = []; this.state.transfers = [];
     clearInterval(this.interactionTimer); this.interactionTimer=undefined;this.interactionScope='';this.interactionVersion++;
     this.requestPresence.clear();this.requestResponses.clear();this.runDetails.clear();this.temporaryCleanups.clear();this.temporaryCleanupRequests.clear();this.activeRuns.clear();this.activeRevisions.clear();this.cancelAndSendCapabilities.clear();
     this.terminalEvidence.clear(); this.pendingOperationHides.clear(); this.metadata.clear(); this.pollTargets.clear(); this.workMutations.clear(); this.workReads.clear(); this.deletedWorks.clear(); this.workSync.clear(); this.capabilityReads.clear(); this.worksError = '';
     this.stopDownloadObservers(); this.downloads.clear(); this.downloadRequests.clear(); this.uploadProgress.clear(); this.stopLogExportPolling(); this.logExport = null;
-    Object.assign(this.about,{core:null,coreError:'',coreLoading:false,coreChecked:''});
+    Object.assign(this.about,{localError:'',localLoading:false,core:null,coreError:'',coreLoading:false,coreChecked:''});
     this.cancelHistoryReads();this.historySupport.clear();this.historyProjections.clear();this.legacyProjections.clear();this.liveSourceSets.clear();
     this.stopImageReads();for(const value of this.imageLoads.values())if(value.url)URL.revokeObjectURL(value.url);this.imageLoads.clear();this.imageCapabilities.clear();
-    this.transfersByWork.clear(); this.directories.clear(); this.models.clear();this.modelSelections.clear();this.chatCapabilities.clear();this.sessionVersions.clear();this.commands.clear();this.chatSubmissions.clear();this.failedChatSnapshots.clear();this.pairSaves.clear();this.requests.clear();this.requestDetails.clear();this.requestRetries.clear();this.cancellingRequests.clear();this.requestReadErrors.clear();this.requestCancellations.clear();
+    this.transfersByWork.clear();
+    this.directories.clear();
+    this.models.clear();
+    this.modelSelections.clear();
+    this.chatCapabilities.clear();
+    this.sessionVersions.clear();
+    this.commands.clear();
+    this.chatSubmissions.clear();
+    this.failedChatSnapshots.clear();
+    this.pairSaves.clear();
+    this.requests.clear();
+    this.requestPageReads.clear();
+    this.requestDetails.clear();
+    this.requestRetries.clear();
+    this.cancellingRequests.clear();
+    this.requestReadErrors.clear();
+    this.requestCancellations.clear();
     for (const status of Object.values(this.catalog)) Object.assign(status, { loading: false, error: '', confirmed: false, checkedAt: '' });
     this.uploadIntents.clear(); this.skills = []; this.packages = []; this.entries.clear(); this.entryErrors.clear(); this.entryPromises.clear(); this.entryChecks.clear(); this.entryVersions.clear(); this.serviceDenials.clear(); this.entryServiceGrants.clear(); this.serviceLoads.clear(); this.serviceReads.clear(); this.worksRequests.clear(); this.worksRequestSequence++; this.worksReadSequence = 0; this.logs.clear(); this.logStates.clear(); this.logRequests.clear(); this.inspection = null; this.inspectionTransfer = '';
     if (inspection) { this.inspectionContext = inspection.context; this.inspection = inspection.summary; this.inspectionTransfer = inspection.transfer; this.transferProgress = inspection.progress; }
@@ -641,8 +745,17 @@ export class DesktopAdapter {
   private readMetadata(path: string, explicit = false) {
     return this.metadata.read(this.metadataKey(path), async signal => {
       const sequence = ++this.statusSequence;
-      const value = await this.request(path, 'GET', undefined, signal);
-      return { value, sequence };
+      const epoch = this.epoch;
+      try {
+        const value = await this.request(path, 'GET', undefined, signal);
+        return { value, sequence };
+      } catch (error) {
+        if (path === 'status' && epoch === this.epoch && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
+          this.statusReadError = errorText(error);
+          if (error && typeof error === 'object') this.readFailureOrigins.set(error, { epoch, path });
+        }
+        throw error;
+      }
     }, explicit);
   }
   private requireWorkSync(id: string, rearm = false) {
@@ -680,11 +793,21 @@ export class DesktopAdapter {
     if(old&&!this.project(work).usable){this.cancelHistoryReads();this.historySupport.delete(work.id);}
     return work;
   }
+  private readFailureOrigins = new WeakMap<object, { epoch: number; path: string }>();
+  /** Source-confirmed read provenance for display ownership; never infer it from error text. */
+  readFailureResource(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object') return;
+    const origin = this.readFailureOrigins.get(error);
+    return origin?.epoch === this.epoch ? origin.path : undefined;
+  }
   private requestOnce(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<Data> {
-    const startupRead = path === 'session' || path === 'status' || path === 'works' || /^works\/[^/?]+(?:\?.*)?$/.test(path) || /^works\/[^/]+\/(?:services|configuration|packages|sessions|models)(?:\?.*)?$/.test(path);
+    const startupRead = path === 'known-operations' || path === 'about' || path === 'core-about' || /^works\/[^/]+\/services\/[^/]+\/logs\?tailLines=100$/.test(path) || /^works\/[^/]+\/temporary-cleanups(?:\/[^/?]+|\?runId=[^&]+)$/.test(path) || path === 'session' || path === 'status' || path === 'works' || /^works\/[^/?]+(?:\?.*)?$/.test(path) || /^works\/[^/]+\/(?:services|configuration|packages|sessions|models)(?:\?.*)?$/.test(path);
     if (method !== 'GET' || !startupRead) return this.requestRaw(path, method, body, signal, headers);
     return readWithDeadline(inner => this.requestRaw(path, method, body, inner, headers), { signal })
-      .catch(error => { if (error instanceof ReadTimeout) throw failure('READ_TIMEOUT', 'd.error.readTimeout'); throw error; });
+      .catch(error => {
+        if (error instanceof ReadTimeout) throw failure('READ_TIMEOUT', 'd.error.readTimeout');
+        throw error;
+      });
   }
   private async requestRaw(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, headers: Record<string, string> = {}): Promise<Data> {
     if (method !== 'GET' && /^(works(?:\/|$)|work-imports$|service-entries$)/.test(path)) this.assertCoreReady();
@@ -872,7 +995,8 @@ export class DesktopAdapter {
       this.acceptSession(await this.request('login', 'POST', { account, password }));
     } catch (error) {
       if (!(error instanceof DesktopError) || !['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(error.code)) throw error;
-      this.pendingSignIn = { core, account, phase }; this.emit();
+      this.pendingSignIn = { core, account, phase, revision: this.authSequence };
+      this.emit();
       const confirmed = await this.checkSignInOutcome().catch(() => false);
       if (!confirmed) throw failure('RESULT_UNKNOWN', 'd.error.signInUnknown');
     }
@@ -989,7 +1113,10 @@ export class DesktopAdapter {
       if (!this.state.works.length && this.state.scenario === 'normal') this.state.scenario = 'empty'; this.emit();
     } catch (error) {
       if (epoch === this.epoch && (!guard || guard()) && requestSequence === this.worksRequestSequence && this.state.signedIn && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred)) {
-        this.worksError = errorText(error); if (!this.worksChecked) this.state.scenario = 'list-error'; this.emit();
+        if (error && typeof error === 'object') this.readFailureOrigins.set(error, { epoch, path: 'works' });
+        this.worksError = errorText(error);
+        if (!this.worksChecked) this.state.scenario = 'list-error';
+        this.emit();
       }
       throw error;
     } finally { if (!guard && epoch === this.epoch && requestSequence === this.worksRequestSequence) { this.worksLoading = false; this.emit(); } }
@@ -1124,20 +1251,29 @@ export class DesktopAdapter {
       const raw=value.run;
       if(raw!==null && (!raw?.runId || !raw.sessionId || raw.workId!==id || ![1,2,3].includes(raw.state)))throw failure('INVALID_RESPONSE','d.error.activeRunUnconfirmed');
       Object.assign(state,{confirmed:true,error:'',run:raw===null?null:this.runRecord(raw,raw.sessionId)});
+      if (state.run) this.runFeedbackObservations.record(id, state.run, true);
     }catch(error){if(epoch===this.epoch && version===this.interactionVersion && !(error instanceof ObservationStopped) && !(error instanceof ObservationDeferred))state.error=errorText(error);}
     finally{if(epoch===this.epoch){state.loading=false;state.visibleLoading=false;this.emit();}}
   }
-  async loadRunDetails(id: string, runId: string, explicit=true) {
+  async loadRunDetails(id: string, runId: string, explicit=true, expectedSession?: string) {
     const epoch=this.epoch;await this.supportsHistory(id);if(epoch!==this.epoch)return;
     const {value}=await this.readMetadata(`works/${part(id)}/runs/${part(runId)}`,explicit),raw=value.run ?? value;
-    if(raw.runId!==runId || raw.workId!==id || !raw.sessionId)throw failure('INVALID_RESPONSE','d.error.runDetailsMismatch');
+    if(raw.runId!==runId || raw.workId!==id || !raw.sessionId || expectedSession && raw.sessionId !== expectedSession)throw failure('INVALID_RESPONSE','d.error.runDetailsMismatch');
     if(epoch!==this.epoch)return;
-    const run=this.runRecord(raw,raw.sessionId);if(run.resultRef){run.finalText=await this.readRunResult(id,run);if(epoch!==this.epoch)return;}this.runDetails.set(`${id}:${runId}`,run);this.emit();return run;
+    const run = this.runRecord(raw, raw.sessionId);
+    if (run.resultRef) {
+      run.finalText = await this.readRunResult(id, run);
+      if (epoch !== this.epoch) return;
+    }
+    this.runDetails.set(`${id}:${runId}`, run);
+    this.confirmOriginalRunFeedback(id, run, raw);
+    this.emit();
+    return run;
   }
   async loadTemporaryCleanups(workId: string, kind: 'run' | 'service', ref: string) {
     const key = `${workId}:${kind}:${ref}`, prior = this.temporaryCleanupRequests.get(key);
     if (prior) return prior;
-    const epoch = this.epoch, state = this.temporaryCleanups.get(key) ?? { loading: false, error: '', items: [], truncated: false };
+    const epoch = this.epoch, state = this.temporaryCleanups.get(key) ?? { loading: false, error: '', items: [], truncated: false, checkedAt: '' };
     this.temporaryCleanups.set(key, state); state.loading = true; state.error = ''; this.emit();
     let pending!: Promise<void>;
     pending = (async () => {
@@ -1155,10 +1291,16 @@ export class DesktopAdapter {
             events: item.events.map((event: Data) => ({ at: diagnosticText(event?.at), stage: diagnosticText(event?.stage), outcome: diagnosticText(event?.outcome), ...(diagnosticText(event?.code) ? { code: diagnosticText(event.code) } : {}) })) };
         });
         if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state) return;
-        state.items = items; state.truncated = kind === 'run' && value.truncated === true;
+        state.items = items;
+        state.truncated = kind === 'run' && value.truncated === true;
+        state.checkedAt = new Date().toISOString();
       } catch (error) {
         if (epoch !== this.epoch || this.temporaryCleanups.get(key) !== state) return;
-        if (error instanceof DesktopError && error.httpStatus === 404) { state.items = []; state.truncated = false; }
+        if (error instanceof DesktopError && error.httpStatus === 404) {
+          state.items = [];
+          state.truncated = false;
+          state.checkedAt = new Date().toISOString();
+        }
         else { state.error = errorText(error); throw error; }
       } finally {
         if (this.temporaryCleanupRequests.get(key) === pending) this.temporaryCleanupRequests.delete(key);
@@ -1167,13 +1309,44 @@ export class DesktopAdapter {
     })();
     this.temporaryCleanupRequests.set(key, pending); return pending;
   }
-  async loadRequests(id: string,serviceName='',more=false) {
-    const key=`${id}:${serviceName}`,state=this.requests.get(key) ?? {loading:false,error:'',items:[],nextCursor:null},epoch=this.epoch;
-    if(state.loading)return;this.requests.set(key,state);state.loading=true;state.error='';this.emit();
-    const query=new URLSearchParams({limit:'25',...(serviceName?{serviceName}:{}),...(more && state.nextCursor?{cursor:state.nextCursor}:{})});
-    try {const {value}=await this.readMetadata(`works/${part(id)}/agent-requests?${query}`,true);if(!Array.isArray(value.items))throw failure('INVALID_RESPONSE','d.error.requestPageIncomplete');if(epoch!==this.epoch)return;state.items=more?[...state.items,...value.items]:value.items;state.nextCursor=value.nextCursor;state.checkedAt=value.checkedAt;
-      if(serviceName&&!more)this.requestPresence.set(key,{confirmed:true,loading:false,hasRecords:value.items.length>0,error:''});
-    }catch(error){if(epoch===this.epoch)state.error=errorText(error);throw error;}finally{if(epoch===this.epoch){state.loading=false;this.emit();}}
+  loadRequests(id: string, serviceName = '', more = false): Promise<void> {
+    const key = `${id}:${serviceName}`;
+    const existing = this.requestPageReads.get(key);
+    if (existing) return existing;
+    const state = this.requests.get(key) ?? { loading: false, error: '', items: [], nextCursor: null };
+    const epoch = this.epoch;
+    this.requests.set(key, state);
+    state.loading = true;
+    state.error = '';
+    this.emit();
+    const query = new URLSearchParams({
+      limit: '25',
+      ...(serviceName ? { serviceName } : {}),
+      ...(more && state.nextCursor ? { cursor: state.nextCursor } : {}),
+    });
+    let pending!: Promise<void>;
+    pending = (async () => {
+      try {
+        const { value } = await this.readMetadata(`works/${part(id)}/agent-requests?${query}`, true);
+        if (!Array.isArray(value.items)) throw failure('INVALID_RESPONSE', 'd.error.requestPageIncomplete');
+        if (epoch !== this.epoch || this.requests.get(key) !== state) return;
+        state.items = more ? [...state.items, ...value.items] : value.items;
+        state.nextCursor = value.nextCursor;
+        state.checkedAt = value.checkedAt;
+        if (serviceName && !more) this.requestPresence.set(key, { confirmed: true, loading: false, hasRecords: value.items.length > 0, error: '' });
+      } catch (error) {
+        if (epoch === this.epoch && this.requests.get(key) === state) state.error = errorText(error);
+        throw error;
+      } finally {
+        if (this.requestPageReads.get(key) === pending) this.requestPageReads.delete(key);
+        if (epoch === this.epoch && this.requests.get(key) === state) {
+          state.loading = false;
+          this.emit();
+        }
+      }
+    })();
+    this.requestPageReads.set(key, pending);
+    return pending;
   }
   async loadRequest(id: string,requestId: string,more=false,explicit=true) {
     const key=`${id}:${requestId}`,previous=this.requestDetails.get(key),cursor=more?previous?.evidence?.nextCursor:null;
@@ -1457,7 +1630,17 @@ export class DesktopAdapter {
     const key = `${workId}:${serviceId}:${port}`, denial = this.serviceDenials.get(workId);
     return this.entryErrors.get(key) || (denial && this.entryServiceGrants.get(key) !== denial.version ? denial.reason : '');
   }
+  /** Opaque validated read receipt; display consumers may compare identity, not infer admission. */
+  serviceEntryReadEvidence(workId: string, serviceId: string, port: number): object | undefined {
+    return this.entries.get(`${workId}:${serviceId}:${port}`);
+  }
   serviceEntryPending(workId: string, serviceId: string, port: number) { return this.entryPromises.has(`${workId}:${serviceId}:${port}`); }
+  servicePreviewReadEvidence(workId: string, serviceId: string, port: number): object | undefined {
+    return this.entries.get(`${workId}:${serviceId}:${port}`)?.previewReceipt;
+  }
+  servicePreviewPending(workId: string, serviceId: string, port: number): boolean {
+    return this.entryChecks.has(`${workId}:${serviceId}:${port}`);
+  }
   servicePreviewUnconfirmed(workId: string, serviceId: string, port: number) { const entry = this.entries.get(`${workId}:${serviceId}:${port}`); return entry?.checked && entry.embed === 'unknown'; }
   ensureServiceEntry(workId: string, serviceId: string, port: number, retry = false): Promise<void> {
     const key = `${workId}:${serviceId}:${port}`;
@@ -1487,7 +1670,14 @@ export class DesktopAdapter {
   }
   serviceFrameLoaded(workId: string, serviceId: string, port: number) {
     const key = `${workId}:${serviceId}:${port}`; const old = this.entryChecks.get(key); if (old) return old;
-    const pending = this.probeServiceFrame(workId, serviceId, port).finally(() => { if (this.entryChecks.get(key) === pending) this.entryChecks.delete(key); }); this.entryChecks.set(key, pending); return pending;
+    const pending = this.probeServiceFrame(workId, serviceId, port).finally(() => {
+      if (this.entryChecks.get(key) === pending) {
+        this.entryChecks.delete(key);
+        this.emit();
+      }
+    });
+    this.entryChecks.set(key, pending);
+    return pending;
   }
   private async probeServiceFrame(workId: string, serviceId: string, port: number) {
     const key = `${workId}:${serviceId}:${port}`; const entry = this.entries.get(key); if (!entry) return;
@@ -1500,7 +1690,10 @@ export class DesktopAdapter {
         if (!current()) return;
         if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port) throw failure('SERVICE_IDENTITY_CHANGED','d.error.entryIdentityChanged', undefined, 403);
         entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
-        entry.entryUrl = entry.origin + (entry.basePath ?? '/'); entry.checkError = ''; this.emit();
+        entry.entryUrl = entry.origin + (entry.basePath ?? '/');
+        entry.checkError = '';
+        entry.previewReceipt = value;
+        this.emit();
         if (value.embed !== 'unknown') { entry.checked = true; this.emit(); return; }
         await new Promise(resolve => setTimeout(resolve, 250));
       }
@@ -1628,13 +1821,35 @@ export class DesktopAdapter {
     this.emit(); this.scheduleOperationPoll(); return operation;
   }
   async recoverOperations() {
-    const value = await this.request('known-operations');
-    for (const record of value.operations ?? []) if (!this.state.operations.some(o => o.id === record.operationId)) {
-      const kind = typeof record.type === 'string' && record.type ? record.type : 'Operation';
-      this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', ...(record.terminal === true ? { terminalHint: { state: terminalOperation(record.terminalState) ? record.terminalState : undefined, checkedAt: record.terminalCheckedAt } } : {}), phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+    const epoch = this.epoch, sequence = ++this.operationRecordsSequence;
+    const current = () => epoch === this.epoch && sequence === this.operationRecordsSequence;
+    this.operationRecordsState.reading = true;
+    this.emit();
+    try {
+      const value = await this.request('known-operations');
+      if (!current()) return;
+      if (!Array.isArray(value.operations) || value.operations.some((record: unknown) => !record || typeof record !== 'object' || typeof (record as Data).operationId !== 'string' || !(record as Data).operationId)) throw failure('INVALID_RESPONSE', 'd.error.operationRecordsIncomplete');
+      for (const record of value.operations ?? []) if (!this.state.operations.some(o => o.id === record.operationId)) {
+        const kind = typeof record.type === 'string' && record.type ? record.type : 'Operation';
+        this.state.operations.push({ id: record.operationId, workId: record.workId ?? '', serviceId: record.serviceId, kind, action: lifecycleAction(kind), state: 'unknown', ...(record.terminal === true ? { terminalHint: { state: terminalOperation(record.terminalState) ? record.terminalState : undefined, checkedAt: record.terminalCheckedAt } } : {}), phase: t('d.lifecycle.checkOriginalPhase'), created: record.recordedAt, updated: '', snapshotId: record.snapshotId, scope: `${this.state.core.address} · ${this.state.core.account}` });
+      }
+      for (const work of this.state.works) this.associateOperations(work);
+      this.scheduleOperationPoll();
+      this.emit();
+      this.operationRecordsState.receipt = value;
+      this.operationRecordsState.error = '';
+    } catch (error) {
+      if (current()) {
+        this.operationRecordsState.error = errorText(error);
+        if (error && typeof error === 'object') this.readFailureOrigins.set(error, { epoch, path: 'known-operations' });
+      }
+      throw error;
+    } finally {
+      if (current()) {
+        this.operationRecordsState.reading = false;
+        this.emit();
+      }
     }
-    for (const work of this.state.works) this.associateOperations(work);
-    this.scheduleOperationPoll(); this.emit();
   }
   workSynchronizationPending(workId: string) { return this.workSync.has(workId); }
   private finishWorkSync() {
@@ -1938,6 +2153,7 @@ export class DesktopAdapter {
       const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`, 'GET', undefined, controller.signal);
       if (!current()) return;
       const raw = value.run ?? value;
+      this.assertOriginalRunResponse(id, run, raw);
       run.status = runStates[raw.state] ?? 'interrupted';
       run.executionError = raw.error?.message;
       run.errorCode = typeof raw.error?.code === 'string' ? raw.error.code : undefined;
@@ -1961,10 +2177,12 @@ export class DesktopAdapter {
       retry = ['accepted', 'running', 'cancelling'].includes(run.status);
       run.error = run.executionError ?? (retry ? t('d.error.eventCursorExpired') : undefined);
       }
+      this.confirmOriginalRunFeedback(id, run, raw);
     } catch (error) {
       if (!current()) return;
       const legacyLimit=this.legacyHistoryLimit(id,error);
       run.error = [run.executionError, t('d.error.historyRecoveryFailed', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' ');
+      this.runFeedbackObservations.record(id, run, false);
       delay = Math.min(30000, 2000 * 2 ** Math.min(observer.failures++, 4));
       // Terminal history errors require explicit readback; do not claim completion
       // or poll an inaccessible/deleted Run indefinitely.
@@ -2044,18 +2262,41 @@ export class DesktopAdapter {
         else if (kind?.$case === 'text' && update) { this.appendLiveText(session,run,update,sources); }
         else if (kind?.$case === 'tool') { const tool = kind.tool,incoming={id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant' as const,text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}};sources.tool(run.id,sequence,incoming,tool.phase);if(legacy){session.messages=legacy.project(session.messages);}else upsertTool(session.messages,incoming); }
         else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if(legacy&&kind.state.finalText)legacy.result({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText});if(legacy)session.messages=legacy.project(session.messages); }
-        this.emit(); };
+        if (['text', 'tool'].includes(kind?.$case) || kind?.$case === 'state' && runStates[kind.state.state]) {
+          this.runFeedbackObservations.record(id, run, true);
+        }
+        this.emit();
+      };
       while (epoch === this.epoch && !controller.signal.aborted && this.streams.get(id) === controller && this.getWork(id)?.run === run) { const { value, done } = await reader.read(); if (done) { buffer += decoder.decode(); if (buffer.trim()) consume(buffer); break; } buffer += decoder.decode(value, { stream: true }); if (buffer.length > 2_097_152) throw new Error(t('d.error.runEventTooLarge')); let index; while ((index = buffer.indexOf('\n')) !== -1) { consume(buffer.slice(0, index)); buffer = buffer.slice(index + 1); } }
       if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
-      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`); run.status = runStates[(value.run ?? value).state] ?? 'interrupted'; run.executionError = (value.run ?? value).error?.message;run.errorCode=typeof (value.run??value).error?.code==='string'?(value.run??value).error.code:undefined;run.errorRetryable=typeof (value.run??value).error?.retryable==='boolean'?(value.run??value).error.retryable:undefined;run.resultRef=(value.run??value).resultRef;
+      const value = await this.request(`works/${part(id)}/runs/${part(run.id)}`);
+      if (epoch !== this.epoch || controller.signal.aborted || this.streams.get(id) !== controller || this.getWork(id)?.run !== run) return;
+      const raw = value.run ?? value;
+      this.assertOriginalRunResponse(id, run, raw);
+      run.status = runStates[raw.state] ?? 'interrupted';
+      run.executionError = raw.error?.message;
+      run.errorCode = typeof raw.error?.code === 'string' ? raw.error.code : undefined;
+      run.errorRetryable = typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined;
+      run.resultRef = raw.resultRef;
       if (['accepted', 'running', 'cancelling'].includes(run.status)) {
         if(this.historySupport.get(id)&&sources.pendingFragments(run.id)){run.historyRecovery=true;const observer={controller,run,epoch,failures:0};this.historyObservers.set(id,observer);await this.recoverRunHistory(id,observer);}
         else run.error = localizedText('d.error.eventStreamEnded');
       }
-      else { run.error = run.executionError; this.reconnectAttempts.delete(id); if(this.historySupport.get(id))await this.loadSavedRun(id,run,controller.signal);else await this.loadSession(id, run.sessionId); await this.loadServices(id).catch(() => undefined); await this.loadConfiguration(id).catch(() => undefined); } this.emit();
+      else {
+        run.error = run.executionError;
+        this.reconnectAttempts.delete(id);
+        if (this.historySupport.get(id)) await this.loadSavedRun(id, run, controller.signal);
+        else await this.loadSession(id, run.sessionId);
+        await this.loadServices(id).catch(() => undefined);
+        await this.loadConfiguration(id).catch(() => undefined);
+      }
+      this.confirmOriginalRunFeedback(id, run, value.run ?? value);
+      this.emit();
     } catch (error) { if (!controller.signal.aborted && epoch === this.epoch) {
       const legacyLimit=this.legacyHistoryLimit(id,error);retry=!legacyLimit;
-      run.error = [run.executionError, t('d.error.resumeOriginalRun', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' '); this.emit();
+      run.error = [run.executionError, t('d.error.resumeOriginalRun', { detail: errorText(error) }),legacyLimit?this.historyNotice(id):''].filter(Boolean).join(' ');
+      this.runFeedbackObservations.record(id, run, false);
+      this.emit();
     } }
     finally {
       if(epoch===this.epoch&&this.streams.get(id)===controller)this.liveSources(id,run.sessionId).end(run.id,!['accepted','running','cancelling'].includes(run.status));
@@ -2280,13 +2521,23 @@ export class DesktopAdapter {
     const epoch = this.epoch; const work = this.getWork(id); if (!work) throw failure('WORK_NOT_FOUND','d.error.thisWorkUnavailable', undefined, 404);
     const key = `${id}:${path}`, state = this.directories.get(key) || { loading: false, checkedAt: '', error: '' };
     const generation = (this.directoryLoads.get(key) || 0) + 1; this.directoryLoads.set(key, generation);
+    const current = () => epoch === this.epoch && this.directoryLoads.get(key) === generation && this.getWork(id) === work;
     this.directories.set(key, state); state.loading = true; this.emit();
     try {
       const base = this.fileURL(id, path).replace(/\/?$/, '/');
-      const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
-      if (!response.ok) { await this.fileAuth(response); throw this.fileError(response, localizedText('d.error.workspaceReadFailed')); }
-      const text = await response.text();
-      if (epoch !== this.epoch || this.directoryLoads.get(key) !== generation) throw failure('CONNECTION_CHANGED','d.error.fileListingDiscarded');
+      const text = await readWithDeadline(async signal => {
+        const response = await fetch(base, { method: 'PROPFIND', credentials: 'same-origin', signal, headers: { Depth: '1', 'X-Piwork-Csrf': this.csrf } });
+        if (!current() || signal.aborted) throw failure('CONNECTION_CHANGED', 'd.error.fileListingDiscarded');
+        if (!response.ok) {
+          await this.fileAuth(response);
+          if (!current() || signal.aborted) throw failure('CONNECTION_CHANGED', 'd.error.fileListingDiscarded');
+          throw this.fileError(response, localizedText('d.error.workspaceReadFailed'));
+        }
+        const body = await response.text();
+        if (!current() || signal.aborted) throw failure('CONNECTION_CHANGED', 'd.error.fileListingDiscarded');
+        return body;
+      });
+      if (!current()) throw failure('CONNECTION_CHANGED', 'd.error.fileListingDiscarded');
       const entries = parseEntries(text, base); state.checkedAt = new Date().toISOString(); state.error = '';
       const children: WorkspaceFile[] = entries.filter(e => e.name !== '/').map(e => ({ path: (path === '/' ? '' : path) + '/' + e.name, name: e.name,
         kind: e.directory ? 'directory' : e.kind === 'file' ? 'file' : 'special', size: e.size ?? 0, modified: e.modified ?? '' }));
@@ -2294,10 +2545,20 @@ export class DesktopAdapter {
       for (const old of work.files) if ((old.path.slice(0, old.path.lastIndexOf('/')) || '/') === path) this.releasePreview(old);
       work.files = [...work.files.filter(f => (f.path.slice(0, f.path.lastIndexOf('/')) || '/') !== path), ...children];
       if (work.resourceErrors) delete work.resourceErrors.files; this.emit();
-    } catch (error) {
-      if (epoch === this.epoch && this.directoryLoads.get(key) === generation) { (work.resourceErrors ??= {}).files = errorText(error); state.error = errorText(error); this.emit(); }
+    } catch (cause) {
+      const error = cause instanceof ReadTimeout ? failure('READ_TIMEOUT', 'd.error.readTimeout') : cause;
+      if (current()) {
+        (work.resourceErrors ??= {}).files = errorText(error);
+        state.error = errorText(error);
+        this.emit();
+      }
       throw error;
-    } finally { state.loading = false; if (epoch === this.epoch && this.directoryLoads.get(key) === generation) this.emit(); }
+    } finally {
+      if (current()) {
+        state.loading = false;
+        this.emit();
+      }
+    }
   }
   private async uploadResponse(url: string, method: string, body: File | FormData, headers: Record<string, string>, progress: (sent: number, total?: number, sentAll?: boolean) => void) {
     const epoch = this.epoch;

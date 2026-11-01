@@ -205,3 +205,77 @@ dialog, dialog::backdrop { animation:none; transition:none; }
 .language-picker-option[aria-selected=true] { color:var(--accent); background:var(--accent-soft); }
 .language-picker-option:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .language-picker-option svg { flex:none; }
+
+/* A single display-only host floats above content; it never adds a layout row. */
+.notice-host {
+  position: fixed;
+  z-index: 1000;
+  inset: auto 16px 16px auto;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+.notice-host[hidden] { display: none; }
+.notice {
+  background: var(--surface, #fff);
+  color: var(--text, #1b2634);
+  border: 1px solid var(--border, #dce7f2);
+  border-inline-start: 3px solid #0969da;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 16px #1b263422;
+  pointer-events: auto;
+  overflow-wrap: anywhere;
+}
+.notice-error, .notice-unknown { border-inline-start-color: #b42332; }
+.notice-warning { border-inline-start-color: #8a5a00; }
+.notice-message {
+  margin: 0;
+  font-size: 14px;
+}
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.notice-actions button { min-height: 32px; }
+.button svg.shared-icon.icon-refresh, .btn svg.shared-icon.icon-refresh, svg.shared-icon.icon-refresh {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+@media (max-width: 480px) {
+  .notice-host {
+    inset: 64px 8px auto;
+    width: auto;
+    max-height: 28vh;
+  }
+}
+
+/* The cold HTML shell has no confirmed data; retain watchdog recovery text. */
+.boot-skeleton {
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 48px));
+  padding: 24px 0;
+}
+.boot-skeleton > .skeleton-fill {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+}
+.boot-skeleton > .skeleton-fill:first-child {
+  width: 55%;
+  height: 24px;
+}
+.boot-skeleton > .skeleton-fill:last-child {
+  width: 75%;
+}
+[data-boot-state="failed"] .boot-skeleton {
+  display: none;
+}

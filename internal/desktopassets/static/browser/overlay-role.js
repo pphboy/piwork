@@ -8,7 +8,7 @@ export function overlayRole(name) {
         return 'drawer';
     if (['chat-history-status', 'chat-submission', 'service-picker', 'sessions', 'chat-response-settings', 'chat-input-options', 'connection', 'work-info', 'skill-detail'].includes(name))
         return 'popover';
-    if (['manage-services', 'service-details', 'operations', 'operation', 'run-details', 'package-detail'].includes(name))
+    if (['manage-services', 'service-details', 'operations', 'operation', 'run-details', 'package-detail', 'export-recovery'].includes(name))
         return 'drawer';
     return 'modal';
 }

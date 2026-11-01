@@ -255,7 +255,9 @@ export class ConsoleAdapter {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest(); xhr.open(method, `/console/api/${path}`); xhr.withCredentials = true; xhr.setRequestHeader("X-Csrf-Token", this.csrf);
       if (body instanceof File) { xhr.setRequestHeader("Content-Type", "application/zip"); xhr.setRequestHeader("X-Piwork-Package-Name", encodeURIComponent(body.name)); }
-      xhr.upload.onprogress = e => progress?.(e.loaded, e.lengthComputable ? e.total : 0);
+      xhr.upload.onprogress = e => {
+        if (epoch === this.epoch) progress?.(e.loaded, e.lengthComputable ? e.total : 0);
+      };
       xhr.onload = () => { if (epoch !== this.epoch) { reject(new ConsoleError("SESSION_CHANGED", new LocalizedMessage('adapter.error.accountChangedUpload'))); return; } let value: Data = {}; try { value = JSON.parse(xhr.responseText); } catch { /* handled below */ }
         if (xhr.status >= 200 && xhr.status < 300) resolve(value); else reject(errorFrom(value, xhr.status, true)); };
       xhr.onerror = () => reject(new ConsoleError("RESULT_UNKNOWN", new LocalizedMessage('adapter.error.uploadLost')));
@@ -293,6 +295,7 @@ export class ConsoleAdapter {
   }
   async operation(id: string, intent?: PackageIntent, bounded = false): Promise<Operation> {
     const value = await this.request(`admin/operations/${encodeURIComponent(id)}`, 'GET', undefined, false, bounded);
+    if (value.operationId !== id) throw new ConsoleError('INVALID_RESPONSE', new LocalizedMessage('adapter.error.operationInvalid'));
     const previous = this.store.operations.find(o => o.id === id);
     const op = operationView(value, intent ?? (previous ? { key: "", kind: previous.sourceKind, source: previous.source, name: previous.packageName, addDefault: previous.addDefault, ...(previous.target ? { target: previous.target } : {}) } : undefined));
     this.store.operations = [op]; return op;

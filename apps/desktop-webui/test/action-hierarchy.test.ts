@@ -1,3 +1,6 @@
+const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
+const { menuCommands, workHeaderModel, serviceToolbarModel } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
+const { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } = await import(new URL('../browser/export-panel.js', import.meta.url).href);
 const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
 const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
@@ -21,18 +24,18 @@ function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
   ...localeSandbox,
-    pendingDots,
-    view: { layout:'workspace', modal: '', data: {}, path: '/', selected: [], file: '', modalError: '' },
-    adapter: { connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [], operations: [] },
+    pendingDots, sharedIcon, menuCommands, workHeaderModel, serviceToolbarModel,
+    view: { layout:'workspace', modal: '', data: { scope: 'work-header', epoch: '1' }, path: '/', selected: [], file: '', modalError: '' },
+    adapter: { identityEpoch: 1, connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [], operations: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(), workControl: () => undefined, controlMarkup: () => '', operationAction: (op: any) => op.kind,
-    exportFlows: { forWork: () => undefined, get: () => undefined }, exportSnapshotAvailable: () => true,
+    exportFlows: { forWork: () => undefined, get: () => undefined },
     filesRestoreNotice: '', uploadProgressMarkup: () => '', filesUploadState: () => undefined, transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
-    downloadProgressMarkup: () => '', actions: { records: new Map() },
+    exportPanelModel, renderExportPanel, renderExportRecoveryPanel, exportPanelInput: () => ({}), actions: { records: new Map() },
   };
   c.fileActionsContext="";c.overlayRole=overlayRole;vm.createContext(c); vm.runInContext(helpers, c);
-  vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'exportPanel', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport', 'workMenuTasks'), c);
+  vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport', 'workMenuTasks'), c);
   return { c, work };
 }
 
@@ -78,15 +81,23 @@ test('repeated Export while active reopens its exact flow without starting a sec
   c.openExportFlow = (flow: any) => assert.equal(flow, old); c.beginExport(work);
 });
 
-test('export success presents only same-file fallback; IDs and older packages are collapsed', () => {
-  const { c, work } = fixture(); const flow = { id: 'flow', workName: 'A', snapshotId: 'exact', phase: 'delivered', autoDeliveryConsumed: true, terminal: true, exportOperationId: 'original-op' };
-  c.view.data.flowId = flow.id; c.exportFlows.get = () => flow;
-  c.adapter.getSnapshot = () => ({ id: 'exact', workId: work.id, status: 'verified', size: '820074551 bytes', operationId: 'original-op' });
-  c.adapter.downloads.set('exact', { ready: true }); c.adapter.state.snapshots = [{ id: 'older', workId: work.id, status: 'verified' }];
-  const html = c.exportPanel(work);
+function exportFixture() {
+  const work = { id: 'work-a', name: 'A' };
+  const snapshot = { id: 'exact', workId: work.id, status: 'verified', size: '820074551 bytes', operationId: 'original-op' };
+  const flow = { id: 'flow', workId: work.id, workName: 'A', snapshotId: 'exact', phase: 'delivered', autoDeliveryConsumed: true, terminal: true, exportOperationId: 'original-op' };
+  const transfer = { snapshotId: snapshot.id, workId: work.id, ready: true };
+  return { work, snapshot, flow, transfer, snapshots: [{ ...snapshot, id: 'older' }] };
+}
+
+test('export success presents only same-file fallback; diagnostics are separate', () => {
+  const input = exportFixture();
+  const html = renderExportPanel(exportPanelModel(input));
   assert.equal(html.title, 'Download started');
   assert.match(html.body, /<details class="export-details"><summary>Details<\/summary>/);
-  assert.match(html.body, /original-op/); assert.match(html.body, /data-id="older"/);
+  assert.doesNotMatch(html.body, /original-op|data-id="older"/);
+  const recovery = renderExportRecoveryPanel(input);
+  assert.match(recovery.body, /original-op/);
+  assert.match(recovery.body, /data-id="older"/);
   assert.match(html.footer, /Download again/); assert.match(html.footer, /data-id="exact"/);
   assert.equal((html.footer.match(/<button/g) || []).length, 2);
   assert.doesNotMatch(html.footer, /prepare-export|Check status|Pause/);
@@ -94,18 +105,17 @@ test('export success presents only same-file fallback; IDs and older packages ar
 });
 
 test('export failure keeps error visible and only a read-only check in its footer', () => {
-  const { c, work } = fixture(); c.view.data.flowId = 'original';
-  c.exportFlows.get = () => ({ id: 'original', workName: 'A', phase: 'unknown', error: 'Lost receipt', terminal: false });
-  const html = c.exportPanel(work);
+  const input = exportFixture();
+  const html = renderExportPanel(exportPanelModel({ work: input.work, flow: { ...input.flow, snapshotId: undefined, phase: 'unknown', error: 'Lost receipt', terminal: false } }));
   assert.match(html.body.split('<details')[0], /Lost receipt/);
   assert.match(html.footer, /data-action="check-export-flow"/);
   assert.doesNotMatch(html.footer, /prepare-export|download-work/);
 });
 
 test('recovered exact snapshot is a download choice, never automatically a new export', () => {
-  const { c, work } = fixture(); c.view.data.snapshotId = 'recovered';
-  c.adapter.getSnapshot = (id: string) => ({ id, workId: work.id, status: 'verified', operationId: 'op' });
-  const html = c.exportPanel(work); assert.match(html.footer, /data-action="download-work"[^>]*data-id="recovered"/);
+  const input = exportFixture();
+  const html = renderExportRecoveryPanel({ work: input.work, snapshot: { ...input.snapshot, id: 'recovered' } });
+  assert.match(html.footer, /data-action="download-work"[^>]*data-id="recovered"/);
   assert.doesNotMatch(html.footer, /prepare-export/);
 });
 
@@ -134,11 +144,19 @@ test('Files has no empty selection strip and keeps checkbox/bulk controls in the
 });
 
 test('request entries are scoped icon actions and the duplicate footer creation action is absent', () => {
-  const service = extract('services'), agent = extract('agent'), works = extract('works');
-  assert.match(service, /hasRecords[^\n]*btn\(icon\("note", 17\), "service-requests"/);
-  assert.match(service, /aria-label="\$\{esc\(t\('service\.agentRequests'\)\)\}" title="\$\{esc\(t\('service\.agentRequests'\)\)\}"/);assert.equal(catalog.en['service.agentRequests'],'Agent requests');
+  const agent = extract('agent'), works = extract('works');
+  const context = { scope: 'service', identity: 1, currentIdentity: 1, targetWorkId: 'work-a', openedWorkId: 'work-a', targetServiceId: 'service-a' };
+  const commands = menuCommands(context);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].action, 'service-requests');
+  assert.equal(commands[0].workId, 'work-a');
+  assert.equal(commands[0].serviceId, 'service-a');
+  assert.equal(catalog.en[commands[0].labelKey], 'Agent requests');
   assert.doesNotMatch(agent, /"pi-requests"/);
-  assert.match(extract('workPage'), /t\('work\.piRequestsAria'\)/);assert.equal(catalog.en['work.piRequestsAria'],'Pi requests for this Work');
+  const { c } = fixture();
+  c.view.modal = 'agent-menu';
+  assert.match(c.modalMarkup(), /data-action="pi-requests"/);
+  assert.equal(catalog.en['work.piRequestsAria'], 'Pi requests for this Work');
   assert.doesNotMatch(agent.split('<div class="session-line">')[1]?.split('<div class="messages"')[0] || '', /pi-requests/);
   assert.doesNotMatch(works, /Create a Work", "new-work"/);
   assert.match(works, /t\('works\.emptyTitle'\)/);assert.match(works, /t\('works\.newWork'\)/);assert.equal(catalog.en['works.emptyTitle'],'Make room for your next idea');
@@ -146,15 +164,13 @@ test('request entries are scoped icon actions and the duplicate footer creation 
 
 
 test('terminal preparation failure offers explicit retry of the same verified snapshot', () => {
-  const { c, work } = fixture(); c.view.data.flowId = 'original';
-  c.exportFlows.get = () => ({ id: 'original', snapshotId: 'exact', workName: 'A', phase: 'failed', terminal: true });
-  c.adapter.getSnapshot = () => ({ id: 'exact', workId: work.id, status: 'verified' });
-  c.adapter.downloads.set('exact', { terminalFailure: true, error: 'Not enough local space' });
-  const html = c.exportPanel(work);
+  const input = exportFixture();
+  const failed = { ...input, flow: { ...input.flow, phase: 'failed', terminal: true }, transfer: { ...input.transfer, ready: false, terminalFailure: true, error: 'Not enough local space' } };
+  const html = renderExportPanel(exportPanelModel(failed));
   assert.match(html.footer, /Retry download/); assert.match(html.footer, /data-action="download-work"[^>]*data-id="exact"/);
   assert.doesNotMatch(html.footer, /check-export-flow|prepare-export/);
-  c.adapter.getSnapshot = () => ({ id: 'exact', workId: work.id, status: 'expired' });
-  assert.doesNotMatch(c.exportPanel(work).footer, /download-work|check-export-flow/);
+  failed.snapshot.status = 'expired';
+  assert.doesNotMatch(renderExportPanel(exportPanelModel(failed)).footer, /download-work|check-export-flow/);
 });
 
 
@@ -171,7 +187,13 @@ for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-
   for (const layout of ['workspace', 'service-chat', 'service-only', 'chat-only']) {
     for (const fullscreen of [false, true]) test(`${menu} commands retain labelled icons in ${layout}, fullscreen=${fullscreen}`, () => {
       const { c, work } = fixture();
-      c.view.modal = menu; c.view.layout = layout;
+      c.view.modal = menu;
+      c.view.layout = layout;
+      c.view.data.id = work.id;
+      if (menu === 'service-menu') {
+        c.view.data.workId = work.id;
+        c.view.data.serviceId = 'service-a';
+      }
       c.document.fullscreenElement = fullscreen ? c.root : null;
       c.adapter.project = () => ({ action: 'stop', label: 'Ready', usable: true });
       work.files = [{ path: '/notes.txt', name: 'notes.txt', kind: 'file' }]; c.view.data.path = '/notes.txt';

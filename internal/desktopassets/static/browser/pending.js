@@ -1,3 +1,3 @@
-/** Decorative only: the owning request supplies its label and busy/status semantics. */
-export const pendingDots = () => '<span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+// The shared primitive owns the markup; request semantics remain feature-local.
+export { pendingDots } from './feedback-primitives.js';
 //# sourceMappingURL=pending.js.map

@@ -54,7 +54,8 @@ async function workTasks(page: Page) {
   await button(page, 'work-menu').click(); await button(page, 'work-info').click(); await button(page, 'find-work-task').click();
 }
 async function exportDetails(page: Page) {
-  if (!await page.locator('.export-details').evaluate(el => el.hasAttribute('open'))) await page.locator('.export-details > summary').click();
+  const summary = page.locator('details.export-details > summary');
+  if (await summary.count() && !await page.locator('details.export-details').evaluate(el => el.hasAttribute('open'))) await summary.click();
 }
 
 type RequestRecord = { bytes?: Buffer | null; path: string; search?:string; method: string; headers: Record<string, string>; body: string };
@@ -161,6 +162,12 @@ test('Core check retains the Works connection trigger geometry during a delayed 
 });
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).last();
+async function openRequests(page: Page, scope: 'work' | 'service' = 'work') {
+  const action = scope === 'service' ? 'service-requests' : 'pi-requests';
+  const trigger = button(page, action);
+  if (!await trigger.isVisible()) await button(page, scope === 'service' ? 'service-menu' : 'work-menu').click();
+  await button(page, action).click();
+}
 function listing(body: string, modified: string) { return `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/note.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${modified}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`; }
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
@@ -260,7 +267,20 @@ for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (cons
  await button(page,'settings').click();trigger=button(page,'check-catalog');before=await trigger.boundingBox();held='skills';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
  await button(page,'back-work').click();await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();trigger=button(page,'refresh-logs');before=await trigger.boundingBox();held='works/work-1/services/tool/logs';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await button(page,'close-modal').click();
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('retained draft');trigger=button(page,'sessions');before=await trigger.boundingBox();held='sessions';gate=deferred();await trigger.click();await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','false');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');await expect(page.locator('#composer')).toHaveValue('retained draft');
- await button(page,'pi-requests').click();await expect(page.locator('#modal .request-list')).toBeVisible();trigger=button(page,'pi-requests');before=await trigger.boundingBox();held='works/work-1/agent-requests';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');
+ await openRequests(page);
+ await expect(page.locator('#modal .request-list')).toBeVisible();
+ trigger=button(page,'pi-requests');
+ before=await trigger.boundingBox();
+ held='works/work-1/agent-requests';
+ gate=deferred();
+ await trigger.click();
+ await expect(trigger).toHaveAttribute('aria-busy','true');
+ assert.deepEqual(await trigger.boundingBox(),before);
+ gate.resolve();
+ held='';
+ await expect(trigger).not.toHaveAttribute('aria-busy','true');
+ assert.deepEqual(await trigger.boundingBox(),before);
+ await page.keyboard.press('Escape');
  await button(page,'back-works').click();trigger=button(page,'retry-works');before=await trigger.boundingBox();neighbor=await page.locator('.work-row').first().boundingBox();held='works';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.work-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
 });
 
@@ -444,7 +464,8 @@ test('D14 configuration confirms before failed refresh and preserves newer edits
   await expect(button(page, 'save-config').locator('[role="status"]')).toContainText('Saving settings');
   await expect(page.locator('[data-action="save-config"] .pending-dots')).toHaveCount(1);
   await page.locator('#agents-editor').fill('newer unsaved draft'); save.resolve();
-  await expect(page.locator('[data-action-status]').filter({hasText:'Settings saved'})).toBeVisible();
+  await expect(page.locator('.notice-success').filter({ hasText: 'Settings saved' })).toHaveCount(1);
+  await expect(page.locator('[data-action-status]').filter({ hasText: 'Settings saved' })).toHaveCount(0);
   await expect(page.locator('#agents-editor')).toHaveValue('newer unsaved draft');
   readback.resolve(); await expect(page.locator('[data-action-status]').filter({hasText:'refresh not confirmed'})).toBeVisible();
   assert.equal(requests.filter(r => r.method === 'PUT').length, 1);
@@ -550,12 +571,17 @@ test('stopped Export delivers current content once despite a known old snapshot,
   assert.equal(await current.failure(), null); assert.deepEqual(await readFile((await current.path())!), packages['snap-new']);
   assert.equal(current.url(), `${base}/_desktop/api/downloads/${transfers.get('snap-new')}/content`);
   assert.equal(current.suggestedFilename(), 'snap-new.work'); assert.equal(createHash('sha256').update(await readFile((await current.path())!)).digest('hex'), metadata('snap-new').digest);
-  await expect(page.locator('.export-snapshot')).toContainText('snap-new');
-  await expect(page.locator('.export-snapshot')).not.toContainText('snap-old');
+  await expect(page.locator('.export-snapshot')).toHaveCount(0);
+  await expect(button(page, 'save-export-file')).toHaveAttribute('data-id', 'snap-new');
   await expect(button(page, 'prepare-export')).toHaveCount(0);
   await exportDetails(page);
   await expect(button(page, 'save-export-file')).toHaveText('Download again');
   await button(page, 'check-download').click(); assert.equal(downloadEvents, 1);
+  await findPreviousExport(page);
+  await button(page, 'show-export-progress').click();
+  await expect(button(page, 'save-export-file')).toHaveAttribute('data-id', 'snap-new');
+  assert.equal(downloadEvents, 1, 'reopening delivered progress does not create another delivery');
+  await findPreviousExport(page);
   await page.locator('[data-action="view-snapshot"][data-id="snap-old"]').click();
   await expect(page.locator('.export-snapshot')).toContainText('snap-old');
   await expect(page.locator('.export-snapshot')).not.toContainText('snap-new');
@@ -600,14 +626,16 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
   if (race !== 'ready-before-post') await api(page, `await adapter.fetchSnapshot('${oldSnapshotId}')`);
   await button(page, 'work-menu').click(); await button(page, 'export').click(); await exportDetails(page);
   await expect.poll(() => transferId).toMatch(/^[0-9a-f-]{36}$/);
-  await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
+  await expect(page.locator('.export-snapshot')).toHaveCount(0);
+  assert.equal(await api(page, `return adapter.downloads.get('${snapshotId}')?.snapshotId`), snapshotId);
   if (race === 'ready-before-post') await api(page, `await adapter.fetchSnapshot('${oldSnapshotId}')`);
   // Assert actual browser response arrival, not the adapter's presentation order:
   // accepted Export may prepend its snapshot even when old metadata arrived first.
   assert.ok(snapshotResponses.includes(snapshotId)); assert.ok(snapshotResponses.includes(oldSnapshotId));
   assert.equal(snapshotResponses.indexOf(oldSnapshotId) < snapshotResponses.indexOf(snapshotId), race !== 'ready-before-post');
   assert.deepEqual(new Set(await api(page, "return adapter.state.snapshots.map(snapshot => snapshot.id)")), new Set([snapshotId, oldSnapshotId]));
-  await expect(page.locator('.export-snapshot')).toContainText(snapshotId);
+  await expect(page.locator('.export-snapshot')).toHaveCount(0);
+  assert.equal(await api(page, `return adapter.downloads.get('${snapshotId}')?.snapshotId`), snapshotId);
   assert.equal(downloadEvents, 0); assert.equal(requests.filter(r => r.path.endsWith('/content')).length, 0);
   const delivered = page.waitForEvent('download');
   if (race === 'close-switch-work') {
@@ -642,6 +670,7 @@ for (const race of ['close-switch-work', 'lost-preparation', 'ready-before-post'
   assert.equal(requests.filter(r => r.path === `work-snapshots/${oldSnapshotId}/downloads`).length, 0);
   if (race === 'close-switch-work') { await expect(page).toHaveURL(/#\/work\/work-2$/); await expect(page.locator('#modal')).toHaveCount(0); }
   if (race === 'ready-before-post') {
+    await findPreviousExport(page);
     await page.locator(`[data-action="view-snapshot"][data-id="${oldSnapshotId}"]`).click();
     await expect(page.locator('.export-snapshot')).toContainText(oldSnapshotId); await expect(page.locator('.export-snapshot')).not.toContainText(snapshotId);
     await expect(button(page, 'download-work')).toHaveAttribute('data-id', oldSnapshotId);
@@ -905,6 +934,7 @@ for(const method of ['mouse','keyboard'] as const)test(`D07 Send ${method} confi
   await expect(original.locator('.message-submission')).toHaveText('');
   await expect(button(page,'send-message')).toBeDisabled();await page.locator('#composer').fill('newer draft');await page.locator('#composer').press('Enter');assert.equal(requests.filter(r=>r.method==='POST').length,1);
   gate.resolve();const accepted=page.locator('[data-action-status]').filter({hasText:'Message accepted'});await expect(accepted).toHaveCount(0);await expect(page.locator('#composer')).toHaveValue('newer draft');await expect(original).toHaveCount(1);await expect(original.locator('.message-submission')).toHaveCount(0);events.resolve();
+  await expect(page.locator('.notice-host')).not.toContainText('Message accepted');
 });
 
 test('pending Chat submission cannot reappear after identity is cleared',async t=>{
@@ -936,6 +966,7 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
   if(action==='cancel'){
     await expect.poll(()=>api(page,"return adapter.getWork('work-1').run.cancellationRequested")).toBe(true);
     await expect(button(page,'cancel-run')).toBeDisabled();await expect(button(page,'cancel-run')).toHaveAttribute('aria-busy','true');assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');
+    await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
   }else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();
   assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
 });
@@ -1438,7 +1469,7 @@ test('DWUI-OPREC-001 a previous snapshot is found only within the original Work'
   await expect(page.locator('#modal')).toContainText('does not match');
   assert.equal(await api(page, "return !!adapter.getSnapshot('snapshot-other')"), false);
   await page.locator('#snapshot-query').fill('snapshot-original'); await button(page, 'lookup-snapshot').click();
-  await page.locator('.export-details > summary').click();
+  await expect(page.locator('.export-recovery')).toBeVisible();
   await expect(page.locator('.export-snapshot')).toContainText('snapshot-original');
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/exports')).length, 0);
 });
@@ -2294,7 +2325,7 @@ test('a request reply file link returns to the original request inspector', asyn
     if (r.path === filesBase + 'note.txt' && r.method === 'PROPFIND') return { status: 207, body: listing('request reply file', mtime1) };
     if (r.path === filesBase + 'note.txt' && r.method === 'GET') return { body: 'request reply file', headers: { 'Last-Modified': mtime1 } };
   });
-  await page.locator('[data-action="pi-requests"]').click();
+  await openRequests(page);
   await page.locator('[data-action="pi-request-detail"][data-id="request-file"]').click();
   await expect(page.locator('.request-overview')).toContainText('Publish the report');
   await page.locator('.request-executions > summary').click();
@@ -3037,4 +3068,431 @@ for(const state of [5,6])test(`Legacy message identity: partial output remains o
  await api(page,`await adapter.loadSession('work-1','session-1');await adapter.loadSession('work-1','session-1');`);
  assert.equal(await body(),'Known tail');await expect(page.locator('#messages .message.user')).toHaveCount(1);await expect(page.locator('#messages .message.assistant')).toHaveCount(2);
  assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/runs').length,1);
+});
+
+test('Requests first-read failure is not empty and refresh failure retains the original Work rows', async t => {
+  const held = deferred();
+  t.after(() => held.resolve());
+  let phase: 'initial' | 'empty' | 'rows' | 'failed-refresh' = 'initial';
+  const request = { requestId: 'retained-request', goal: 'Retained original request', source: { kind: 'chat' }, state: 'waiting_apply', disposition: 'live', updatedAt: 'now', runIds: [] };
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path !== 'works/work-1/agent-requests') return;
+    if (phase === 'initial') {
+      await held.promise;
+      return { status: 503, json: { message: 'Synthetic request read failed' } };
+    }
+    if (phase === 'failed-refresh') return { status: 503, json: { message: 'Synthetic refresh failed' } };
+    return { json: { items: phase === 'rows' ? [request] : [], nextCursor: null, checkedAt: '2026-11-01T08:00:00Z' } };
+  });
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list .skeleton-fill').first()).toBeVisible();
+  held.resolve();
+  await expect(page.locator('#modal')).toContainText('Synthetic request read failed');
+  await expect(page.locator('#modal .request-list')).not.toContainText('No requests');
+  phase = 'empty';
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  phase = 'rows';
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list')).toContainText('Retained original request');
+  phase = 'failed-refresh';
+  await openRequests(page);
+  await expect(page.locator('#modal')).toContainText('Synthetic refresh failed');
+  await expect(page.locator('#modal .request-list')).toContainText('Retained original request');
+  assert.equal(requests.filter(r => r.path.includes('agent-requests') && r.method !== 'GET').length, 0);
+});
+
+
+test('Clipboard denial retains the original value and persistent recovery without a business write', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new DOMException('Synthetic denial', 'NotAllowedError'); } },
+    });
+  });
+  await button(page, 'work-menu').click();
+  await button(page, 'work-info').click();
+  await page.locator('[data-action="copy"][data-copy="work-1"]').click();
+  const notice = page.locator('.notice-host .notice-message').filter({ hasText: 'Clipboard unavailable' });
+  await expect(notice).toContainText('work-1');
+  await page.waitForTimeout(3200);
+  await expect(notice).toBeVisible();
+  await notice.locator('..').locator('.notice-close').click();
+  await expect(page.locator('#modal')).toContainText('work-1');
+  assert.equal(requests.filter(record => record.method !== 'GET').length, 0);
+});
+
+test('Requests filter failure and retry share one recoverable read owner', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/services')) return { json: { services: [
+      { serviceId: 'tool', name: 'Tool', enabled: true, observedState: 'ready', access: { ports: [] } },
+    ] } };
+    if (r.path !== 'works/work-1/agent-requests') return;
+    const serviceName = new URLSearchParams(r.search).get('serviceName');
+    if (serviceName === 'Tool' && failed) return { status: 503, json: { message: 'Synthetic Tool filter unavailable' } };
+    return { json: { items: [], nextCursor: null, checkedAt: '2026-11-01T08:00:00Z' } };
+  });
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  await page.locator('#pi-service-filter').selectOption('Tool');
+  const notice = page.locator('.notice-host .notice-message').filter({ hasText: 'Synthetic Tool filter unavailable' });
+  await expect(notice).toHaveCount(1);
+  await expect(page.locator('#modal .request-read-error')).toContainText('Synthetic Tool filter unavailable');
+  await page.waitForTimeout(3200);
+  await expect(notice).toBeVisible();
+  failed = false;
+  await page.locator('#modal .request-read-error [data-action="pi-requests"]').click();
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  await expect(page.locator('#modal .request-read-error')).toHaveCount(0);
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool');
+  assert.equal(requests.filter(r => r.path.includes('agent-requests') && r.method !== 'GET').length, 0);
+});
+
+test('Requests stale filter rejection cannot replace the selected page or publish a notice', async t => {
+  const held = deferred();
+  t.after(() => held.resolve());
+  let oldFilterStarted = false;
+  const { page } = await fixture(t, async r => {
+    if (r.path.endsWith('/services')) return { json: { services: [
+      { serviceId: 'tool', name: 'Tool', enabled: true, observedState: 'ready', access: { ports: [] } },
+    ] } };
+    if (r.path !== 'works/work-1/agent-requests') return;
+    if (new URLSearchParams(r.search).get('serviceName') === 'Tool') {
+      oldFilterStarted = true;
+      await held.promise;
+      return { status: 503, json: { message: 'Stale Tool filter failed' } };
+    }
+    return { json: { items: [], nextCursor: null, checkedAt: '2026-11-01T08:00:00Z' } };
+  });
+  await openRequests(page);
+  await page.locator('#pi-service-filter').selectOption('Tool');
+  await expect.poll(() => oldFilterStarted).toBe(true);
+  await page.locator('#pi-service-filter').selectOption('');
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  held.resolve();
+  await expect.poll(() => api(page, "return adapter.requests.get('work-1:Tool')?.loading")).toBe(false);
+  await expect(page.locator('#pi-service-filter')).toHaveValue('');
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  await expect(page.locator('.notice-host')).not.toContainText('Stale Tool filter failed');
+});
+
+test('Requests first read rejection after closing its inspector is retained locally without a late notice', async t => {
+  const held = deferred();
+  t.after(() => held.resolve());
+  let first = true;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path !== 'works/work-1/agent-requests') return;
+    if (first) {
+      first = false;
+      await held.promise;
+      return { status: 503, json: { message: 'Closed inspector read failed' } };
+    }
+    return { json: { items: [], nextCursor: null, checkedAt: '2026-11-01T08:00:00Z' } };
+  });
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list .skeleton-fill').first()).toBeVisible();
+  await button(page, 'close-modal').click();
+  held.resolve();
+  await expect.poll(() => api(page, "return adapter.requests.get('work-1:')?.loading")).toBe(false);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.notice-host')).not.toContainText('Closed inspector read failed');
+  assert.match(await api(page, "return adapter.requests.get('work-1:')?.error"), /Closed inspector read failed/);
+  await openRequests(page);
+  await expect(page.locator('#modal .request-list')).toContainText('No requests');
+  assert.equal(requests.filter(r => r.path === 'works/work-1/agent-requests').length, 2);
+  assert.equal(requests.filter(r => r.path.includes('agent-requests') && r.method !== 'GET').length, 0);
+});
+
+test('accepted Chat Run failure is sticky while its original message and recovery remain local', async t => {
+  const events = deferred();
+  t.after(() => events.resolve());
+  let accepted = false;
+  let failed = false;
+  const failure = { code: 'MODEL_AUTHENTICATION_FAILED', message: 'Synthetic original Run model failure', retryable: false };
+  const run = () => ({ workId: 'work-1', sessionId: 'session-1', runId: 'run-late-failure', state: failed ? 5 : 1, ...(failed ? { error: failure } : {}) });
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/runs' && r.method === 'POST') {
+      accepted = true;
+      return { json: { run: run() } };
+    }
+    if (r.path === 'works/work-1/runs/run-late-failure/events') {
+      await events.promise;
+      failed = true;
+      return { body: JSON.stringify({ sequence: 1, kind: { $case: 'state', state: { state: 5, error: failure } } }) + '\n', headers: { 'Content-Type': 'application/x-ndjson' } };
+    }
+    if (r.path === 'works/work-1/runs/run-late-failure') return { json: { run: run() } };
+    if (accepted && r.path === 'works/work-1/sessions/session-1') return { json: {
+      session: { workId: 'work-1', sessionId: 'session-1', modelPreference: null },
+      messages: [{ entryId: 'accepted-user', runId: 'run-late-failure', role: 'user', blocks: [{ blockId: 'accepted-text', type: 'text', text: 'Original failing prompt' }] }],
+      runs: [run()],
+    } };
+  });
+  await page.locator('#composer').fill('Original failing prompt');
+  await button(page, 'send-message').click();
+  await expect(page.locator('.message.user').filter({ hasText: 'Original failing prompt' })).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
+  events.resolve();
+  const notice = page.locator('.notice-host .notice-error').filter({ hasText: 'Synthetic original Run model failure' });
+  await expect(notice).toHaveCount(1);
+  await page.waitForTimeout(3200);
+  await expect(notice).toBeVisible();
+  await expect(page.locator('.message-execution')).toContainText('Synthetic original Run model failure');
+  await notice.locator('.notice-close').click();
+  await expect(page.locator('.message-execution')).toContainText('Synthetic original Run model failure');
+  await expect(page.locator('.message.user').filter({ hasText: 'Original failing prompt' })).toHaveCount(1);
+  assert.equal(requests.filter(r => r.path === 'works/work-1/runs' && r.method === 'POST').length, 1);
+});
+
+test('Export progress permits Account opening and restores its actual expanded/focus state', async t => {
+  const stopped = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: [stopped] } };
+    if (r.path === 'works/work-1') return { json: stopped };
+    if (r.path === 'works/work-1/exports' && r.method === 'POST') return { json: { workId: 'work-1', operationId: 'export-original', snapshotId: 'snapshot-original' } };
+    if (r.path === 'operations/export-original') return { json: { operationId: 'export-original', workId: 'work-1', kind: 'export-work', state: 'running' } };
+    if (r.path === 'work-snapshots/snapshot-original') return { json: { snapshotId: 'snapshot-original', workId: 'work-1', operationId: 'export-original', state: 'preparing' } };
+  });
+  await button(page, 'work-menu').click();
+  await button(page, 'export').click();
+  await expect(page.locator('#modal')).toBeVisible();
+  assert.equal(await page.locator('#modal').evaluate(dialog => dialog.matches(':modal')), false);
+  await expect(page.locator('.notice-success')).toHaveCount(0);
+  const account = button(page, 'account');
+  await account.click();
+  await expect(account).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(account).toHaveAttribute('aria-expanded', 'false');
+  await expect(account).toBeFocused();
+  assert.equal(requests.filter(r => r.path === 'works/work-1/exports' && r.method === 'POST').length, 1);
+  assert.equal(requests.filter(r => r.path.endsWith('/stop') || r.path.endsWith('/start')).length, 0);
+});
+
+test('first configuration failure remains retry-only despite the Work default config placeholder', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => {
+    if (failed && r.path === 'works/work-1/configuration' && r.method === 'GET') return { status: 503, json: { message: 'Original configuration read unavailable' } };
+  });
+  await button(page, 'work-menu').click();
+  await button(page, 'settings').click();
+  await expect(page.locator('.settings-page')).toContainText('Original configuration read unavailable');
+  await expect(page.locator('.settings-page textarea')).toHaveCount(0);
+  await expect(button(page, 'save-config')).toHaveCount(0);
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original configuration read unavailable' })).toHaveCount(1);
+  await api(page, "const work = adapter.getWork('work-1'); work.resourceErrors = {}; adapter.emit();");
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original configuration read unavailable' })).toHaveCount(1);
+  failed = false;
+  await api(page, "await adapter.loadConfiguration('work-1')");
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original configuration read unavailable' })).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path === 'works/work-1/configuration' && r.method === 'PUT').length, 0);
+});
+
+test('package metadata read recovery preserves the saved selection and unsaved config draft', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => {
+    if (failed && r.path === 'works/work-1/packages') return { status: 503, json: { message: 'Original package metadata unavailable' } };
+  });
+  await button(page, 'work-menu').click();
+  await button(page, 'settings').click();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('Retained original unsaved draft');
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await expect(page.locator('.package-list')).toContainText('pkg');
+  await expect(page.locator('.settings-page')).toContainText('Original package metadata unavailable');
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original package metadata unavailable' })).toHaveCount(1);
+  const before = requests.filter(r => r.path === 'works/work-1/packages').length;
+  failed = false;
+  await button(page, 'refresh-packages').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/packages').length).toBe(before + 1);
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original package metadata unavailable' })).toHaveCount(0);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('Retained original unsaved draft');
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+});
+
+test('Service log first read uses a skeleton and cleanup refresh retains original diagnostics', async t => {
+  const first = deferred(), refresh = deferred();
+  t.after(async () => {
+    first.resolve();
+    refresh.resolve();
+  });
+  let refreshing = false;
+  const { page } = await fixture(t, async r => {
+    if (r.path.endsWith('/services')) return { json: { services: [{ serviceId: 'tool', name: 'Tool', enabled: true, observedState: 'ready', temporary: { mode: 'once', state: 'running' }, access: { ports: [] } }] } };
+    if (r.path.includes('/logs')) {
+      await first.promise;
+      return { json: { text: 'Original log snapshot', status: 'collected' } };
+    }
+    if (r.path === 'works/work-1/temporary-cleanups/tool') {
+      if (refreshing) {
+        await refresh.promise;
+        return { status: 503, json: { message: 'Original cleanup read unavailable' } };
+      }
+      await first.promise;
+      return { json: { workId: 'work-1', serviceId: 'tool', runId: 'original-run', createOperationId: 'original-create', state: 'running', stage: 'stop', trigger: 'work-stop', events: [] } };
+    }
+  });
+  await button(page, 'tab-Services').click();
+  await button(page, 'manage-services').click();
+  await button(page, 'service-details').click();
+  await expect(page.locator('#modal .read-placeholder').first()).toBeVisible();
+  await expect(page.locator('#modal pre.logs')).toHaveCount(0);
+  first.resolve();
+  await expect(page.locator('#modal pre.logs')).toContainText('Original log snapshot');
+  await expect(page.locator('.service-explanation article')).toContainText('tool');
+  refreshing = true;
+  await button(page, 'refresh-temporary-cleanups').click();
+  await expect(button(page, 'refresh-temporary-cleanups').locator('.pending-dots')).toHaveCount(1);
+  await expect(page.locator('.service-explanation article')).toContainText('tool');
+  refresh.resolve();
+  await expect(page.locator('.notice-error').filter({ hasText: 'Original cleanup read unavailable' })).toHaveCount(1);
+  await expect(page.locator('.service-explanation article')).toContainText('tool');
+});
+
+test('file preview failure has one original read notice and successful retry retires it silently', async t => {
+  let failRead = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.startsWith('/_desktop/files/')) {
+      if (r.method === 'PROPFIND') return { status: 207, body: listing('original', mtime1) };
+      if (r.method === 'GET') return failRead ? { status: 503 } : { body: 'original', headers: { 'Last-Modified': mtime1 } };
+    }
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await expect(button(page, 'retry-file-preview')).toBeVisible();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error')).toContainText('/note.txt');
+  await page.locator('.notice-host .notice-recovery').click();
+  await expect(button(page, 'retry-file-preview')).toBeFocused();
+  failRead = false;
+  await button(page, 'retry-file-preview').click();
+  await expect(page.locator('#file-editor')).toHaveValue('original');
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
+  await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
+  await expect.poll(() => api(page, "return [...actions.records.values()].filter(record => record.kind === 'read' && record.work === 'work-1' && record.resource === '/note.txt' && record.error).length;")).toBe(0);
+  await expect(page.locator('[data-action-status]')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/note.txt')).length, 2);
+});
+
+test('failed directory prerequisite never leaves an existing dirty preview loading', async t => {
+  let failDirectory = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.startsWith('/_desktop/files/')) {
+      if (r.method === 'PROPFIND') return failDirectory ? { status: 503 } : { status: 207, body: listing('original', mtime1) };
+      if (r.method === 'GET') return { body: 'original', headers: { 'Last-Modified': mtime1 } };
+    }
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await page.locator('#file-editor').fill('keep this unsaved draft');
+  const reads = requests.filter(r => r.method === 'GET' && r.path.endsWith('/note.txt')).length;
+  failDirectory = true;
+  await button(page, 'refresh-files').click();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await expect(page.locator('#file-editor')).toHaveValue('keep this unsaved draft');
+  await expect(button(page, 'refresh-files')).not.toHaveAttribute('aria-busy', 'true');
+  assert.equal(await api(page, 'return view.fileStatus;'), 'ready');
+  assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/note.txt')).length, reads);
+  assert.equal(requests.filter(r => ['PUT', 'COPY', 'MOVE', 'DELETE'].includes(r.method) && r.path.startsWith('/_desktop/files/')).length, 0);
+});
+
+
+test('narrow response settings retain native body scroll and allow the second model choice', async t => {
+  const model = (modelRef: string | null) => ({ modelRef, label: modelRef ? 'Second supported model with a long visible label' : 'Work model', provider: 'fixture', model: 'supported', thinkingLevels: ['off', 'high'], defaultThinkingLevel: 'off' });
+  let selected: string | null = null;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 4 } };
+    if (r.path.endsWith('/chat-models')) return { json: { defaultModel: model(null), models: [model('second-model')], availability: 'available' } };
+    if (r.path.endsWith('/chat-options')) {
+      if (r.method === 'PATCH') selected = JSON.parse(r.body).modelRef;
+      return { json: { sessionId: 'session-1', modelRef: selected, model: model(selected), thinkingLevel: 'off', thinkingProfile: null, availability: 'available' } };
+    }
+  });
+  await page.setViewportSize({ width: 360, height: 480 });
+  await button(page, 'open-chat-settings').click();
+  await page.locator('#model-select').click();
+  const body = page.locator('#modal .modal-body');
+  await expect.poll(() => body.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
+  const box = await body.boundingBox();
+  assert.ok(box);
+  await page.mouse.move(box.x + 3, box.y + box.height / 2);
+  await page.mouse.wheel(0, 240);
+  await expect.poll(() => body.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
+  const offset = await body.evaluate(node => node.scrollTop);
+  await page.waitForTimeout(250);
+  assert.ok(await body.evaluate(node => node.scrollTop) >= offset);
+  await page.locator('[data-action="choose-chat-setting"][data-option-value="second-model"]').click();
+  await expect.poll(() => requests.filter(r => r.path.endsWith('/chat-options') && r.method === 'PATCH').length).toBe(1);
+  await expect(page.locator('#model-select')).toContainText('Second supported model');
+});
+
+test('startup status failure has one original actionable notice and retained connection recovery', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => failed && r.path === 'status' ? { status: 503, json: { message: 'Original startup status unavailable' } } : undefined, false, false, undefined, true);
+  const notice = page.locator('.notice-error').filter({ hasText: 'Original startup status unavailable' });
+  await expect(notice).toHaveCount(1);
+  await notice.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page.locator('#modal')).toContainText('Original startup status unavailable');
+  failed = false;
+  await button(page, 'check-connection').click();
+  await expect(notice).toHaveCount(0);
+  assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
+});
+
+test('deep Work bootstrap collection failure recovers through the canonical Works owner only', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => failed && r.path === 'works' ? { status: 503, json: { message: 'Original bootstrap Works unavailable' } } : undefined, false, false, undefined, true);
+  const notice = page.locator('.notice-error').filter({ hasText: 'Original bootstrap Works unavailable' });
+  await expect(notice).toHaveCount(1);
+  await expect(page.locator('main')).toContainText('Original bootstrap Works unavailable');
+  await notice.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page).toHaveURL(/#\/works$/);
+  await expect(notice).toHaveCount(1);
+  failed = false;
+  await button(page, 'retry-works').click();
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('.work-name')).toContainText('Recovery Work');
+  assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
+});
+
+test('startup original-record failure retains copied-ID recovery and never claims an empty confirmed list', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => failed && r.path === 'known-operations' ? { status: 503, json: { message: 'Original record read unavailable' } } : undefined, false, false, undefined, true);
+  const notice = page.locator('.notice-error').filter({ hasText: 'Original record read unavailable' });
+  await expect(notice).toHaveCount(1);
+  await notice.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page.locator('#operation-query')).toBeVisible();
+  await page.locator('#operation-query').fill('copied-original-operation');
+  await expect(page.locator('#modal')).toContainText('Original record read unavailable');
+  await expect(page.locator('#modal .operation-list')).toBeEmpty();
+  failed = false;
+  await button(page, 'retry-known-operations').click();
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('#operation-query')).toHaveValue('copied-original-operation');
+  assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
+});
+
+test('zero-Work original-record failure remains recoverable after its notice is dismissed', async t => {
+  let failed = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: [] } };
+    if (r.path === 'known-operations' && failed) return { status: 503, json: { message: 'Original record collection unavailable' } };
+  }, false, false, undefined, true);
+  const notice = page.locator('.notice-error').filter({ hasText: 'Original record collection unavailable' });
+  await expect(notice).toHaveCount(1);
+  await notice.locator('.notice-close').click();
+  await page.goto(base + '/#/works');
+  await expect(notice).toHaveCount(0);
+  const entry = button(page, 'works-tasks');
+  await expect(entry).toBeVisible();
+  await expect(entry).not.toContainText('(0)');
+  await entry.click();
+  await expect(page.locator('#modal')).toContainText('Original record collection unavailable');
+  await expect(button(page, 'retry-known-operations')).toBeVisible();
+  failed = false;
+  await button(page, 'retry-known-operations').click();
+  await expect(page.locator('#modal')).not.toContainText('Original record collection unavailable');
+  assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
 });

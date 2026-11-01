@@ -110,9 +110,9 @@ test('default Core: slow confirmation remains usable and success notice expires'
   await expect(page.locator('.default-core-preferences')).toContainText('Still waiting');
   await expect(button(page,'sign-in')).toBeEnabled();
   gate.resolve();
-  await expect(page.locator('.default-core-preferences')).toContainText('Default Core saved for next launch.');
+  await expect(page.locator('.notice-host')).toContainText('Default Core saved for next launch.');
   await page.clock.fastForward(3001);
-  await expect(page.locator('.default-core-preferences')).not.toContainText('Default Core saved for next launch.');
+  await expect(page.locator('.notice-host')).not.toContainText('Default Core saved for next launch.');
   await expect(page.locator('.default-core-preferences')).toContainText('http://remote.example');
 });
 
@@ -189,4 +189,35 @@ test('current connection: remote HTTP switch uses the selected origin without ch
   assert.deepEqual(records.filter(r=>r.path==='connection').map(r=>({method:r.method,body:JSON.parse(r.body)})),[{method:'PUT',body:{coreUrl:'http://192.168.14.134:7171'}}]);
   assert.equal(records.filter(r=>r.path==='login'||r.path==='preferences'&&r.method!=='GET').length,0);
   assert.equal(await api(page,'return adapter.preferences.coreUrl'),'https://saved.example');
+});
+
+test('default Core: dismissing an unknown notice preserves the original preference lock and read recovery', async t => {
+  let readFails = false;
+  const { page, records } = await fixture(t, r => {
+    if (r.path === 'session') return { json: signedOut() };
+    if (r.path !== 'preferences') return;
+    if (r.method === 'PUT') {
+      readFails = true;
+      return { abort: true };
+    }
+    return readFails ? { status: 503, json: { code: 'DESKTOP_PREFERENCES_UNAVAILABLE' } } : { json: { coreUrl: 'https://accepted.example' } };
+  });
+  await expect(page.locator('.default-core-preferences')).toContainText('https://accepted.example');
+  await page.locator('#auth-core').fill('https://accepted.example');
+  await button(page, 'save-default-core').click();
+  const notice = page.locator('.notice-host .notice').filter({ hasText: 'The response was lost' });
+  await expect(notice).toHaveCount(1);
+  await page.waitForTimeout(3200);
+  await expect(notice).toBeVisible();
+  await notice.locator('.notice-close').click();
+  await expect(button(page, 'save-default-core')).toBeDisabled();
+  await expect(page.locator('.default-core-preferences')).toContainText('not yet confirmed');
+  await button(page, 'read-default-core').click();
+  await expect(button(page, 'save-default-core')).toBeDisabled();
+  readFails = false;
+  await button(page, 'read-default-core').click();
+  await expect(button(page, 'save-default-core')).toBeEnabled();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(0);
+  assert.equal(records.filter(r => r.path === 'preferences' && r.method === 'PUT').length, 1);
+  assert.equal(records.filter(r => r.method === 'DELETE').length, 0);
 });

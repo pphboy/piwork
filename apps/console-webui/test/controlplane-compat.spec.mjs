@@ -87,3 +87,56 @@ test('late logout success after pagehide/pageshow cannot clear newer storage or 
  newWrite.resolve();await expect(page.locator('#setup-notice')).toContainText('The request failed. Check the current state before continuing.');await expect(page.locator('#setup-notice')).not.toContainText('Synthetic current sign-out failure');await expect(signOut(page)).toBeEnabled();expect(await storage(page)).toEqual(newer);await expect(page).toHaveURL(base+'/setup');
  expect(state.requests.filter(r=>r.method!=='GET').map(r=>r.path)).toEqual(['logout','logout']);
 });
+
+test('onboarding read failure coalesces, dismissal keeps recovery, and confirmed read clears only its episode', async ({ page }) => {
+  let fail = false;
+  const state = await waiting(page, { handle: request => request.path === 'state' && fail
+    ? { status: 503, json: { code: 'CORE_UNAVAILABLE' } } : null });
+  fail = true;
+  await page.locator('[data-action=refresh]').click();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(1);
+  await page.locator('[data-action=refresh]').click();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await page.locator('.notice-close').click();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(0);
+  await expect(page.locator('#setup-notice .owned-feedback')).toHaveCount(1);
+  fail = false;
+  await page.locator('[data-action=refresh]').click();
+  await expect(page.locator('#setup-notice')).toHaveText('');
+  await expect(page.locator('.notice-host .notice')).toHaveCount(0);
+  fail = true;
+  await page.locator('[data-action=refresh]').click();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  const english = await page.locator('.notice-message').innerText();
+  await page.evaluate(async () => {
+    const { chooseLocale } = await import('/browser/locale.js');
+    chooseLocale('zh-CN');
+  });
+  await expect(page.locator('.notice-message')).not.toHaveText(english);
+  expect(state.requests.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+test('unknown sign-in keeps its local lock after notice dismissal and never repeats the write', async ({ page }) => {
+  let failReads = false;
+  const state = await fixture(page, { handle: request => {
+    if (request.path === 'login') {
+      failReads = true;
+      return { status: 502, json: { code: 'CORE_UNAVAILABLE' } };
+    }
+    if (request.path === 'state' && failReads) return { status: 503, json: { code: 'CORE_UNAVAILABLE' } };
+    return null;
+  } });
+  await signIn(page);
+  await expect(page.locator('.notice-unknown')).toHaveCount(1);
+  await expect(page.locator('#credentials [type=submit]')).toBeDisabled();
+  await expect(page.locator('#password')).toHaveValue('');
+  await page.locator('.notice-unknown .notice-close').click();
+  await expect(page.locator('#setup-notice .owned-feedback.unknown')).toHaveCount(1);
+  await expect(page.locator('#credentials [type=submit]')).toBeDisabled();
+  failReads = false;
+  await page.locator('#credential-recovery [data-action=refresh]').click();
+  await expect(page.locator('#credentials [type=submit]')).toBeEnabled();
+  await expect(page.locator('.notice-unknown')).toHaveCount(0);
+  expect(state.requests.filter(request => request.path === 'login')).toHaveLength(1);
+});

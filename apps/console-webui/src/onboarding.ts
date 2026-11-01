@@ -1,6 +1,8 @@
+import { NoticeStore, createNoticeHost } from './notices.js';
+import { resultNotice, readFailureNotice } from './feedback-policy.js';
 import { createLanguagePicker } from './i18n.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
-import {esc,Field,Input,Feedback,icon} from './components.js';
+import {esc,Field,Input,OwnedFeedback,icon} from './components.js';
 import {modelErrors} from './model-form.js';
 import {pendingDots} from './pending.js';
 import {t,onLocaleChange,chooseLocale,languageChoices,applyDocumentTitle,LocalizedMessage,messageText,type Feedback as FeedbackText} from './locale.js';
@@ -14,6 +16,19 @@ let readLock:symbol|null=null,readController:AbortController|null=null,readCycle
 let waitTimer:ReturnType<typeof setTimeout>|undefined,waitSince=0,waitPhase='';
 let credentialUnknown:{kind:'administrator'|'login';account:string}|null=null;
 let lastReadFailed=false;
+let credentialGeneration = 0;
+const notices = new NoticeStore({ onChange: () => noticeHost?.render() });
+let noticeHost: ReturnType<typeof createNoticeHost> | undefined;
+noticeHost = createNoticeHost(notices, { document, closeLabel: () => t('common.close') });
+document.body.append(noticeHost.element);
+function noticeOwner(task: string) {
+  return { identity: String(identity), object: 'onboarding', task, generation: task === 'read' ? 0 : credentialGeneration };
+}
+function resolveReadNotice() {
+  notices.setIdentity(String(identity));
+  notices.resolve(noticeOwner('read'));
+}
+
 class RequestError extends Error {
   readonly feedback:FeedbackText;
   constructor(message:FeedbackText,public status=0,public unknown=false,public field='',public code='') {
@@ -49,7 +64,7 @@ async function requestOnce(path:string,method='GET',body?:unknown,signal?:AbortS
 }
 const web=(path:string,method='GET',body?:unknown,signal?:AbortSignal)=>request('/_web/api/'+path,method,body,signal);
 const message=(error:unknown):FeedbackText=>error instanceof RequestError?error.feedback:error instanceof Error?error.message:new LocalizedMessage('net.unconfirmed');
-const button=(text:string,action:string,primary=false,disabled=false)=>`<button type="button" class="btn ${primary?'primary':'secondary'}" data-action="${action}" ${disabled?'disabled':''}>${text}</button>`;
+const button=(text:string,action:string,primary=false,disabled=false)=>`<button type="button" class="btn ${primary?'primary':'secondary'}" data-action="${action}" ${disabled?'disabled':''}>${text}${action === 'refresh' || action === 'logout' ? `<span class="pending-slot" data-pending-action="${action}">${action === 'refresh' ? icon('refresh',18) : ''}</span>` : ''}</button>`;
 function current(ticket:{view:number;identity:number}) {return ticket.view===view&&ticket.identity===identity;}
 function context() {return {view,identity};}
 function clearSecrets(){root.querySelectorAll<HTMLInputElement>('input[type=password]').forEach(input=>{input.value='';});}
@@ -67,6 +82,7 @@ function credentialForm() {
 function render(){
  const title=stage==='administrator'?t('onboarding.title.createAdmin'):stage==='login'?t('onboarding.title.login'):stage==='waiting'?(snapshot.status?.ready?t('onboarding.title.ready'):t('onboarding.title.pending')):stage==='error'?t('onboarding.title.error'):t('onboarding.title.loading');
  let content='';
+ if(stage==='loading')content='<section class="console-read-skeleton" aria-busy="true"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>';
  if(stage==='administrator'||stage==='login')content=credentialForm();
  if(stage==='waiting')content=`<p>${snapshot.status?.ready?t('onboarding.waiting.ready'):t('onboarding.waiting.pending')}</p><div class="form-actions"><a class="btn primary" href="/">${t('onboarding.openWorkbench')}${icon('arrow',16)}</a>${button(t('onboarding.refreshState'),'refresh')}</div>`;
  if(stage==='error')content=`<p>${t('onboarding.error.body')}</p>${button(t('onboarding.readState'),'refresh',true)}`;
@@ -74,8 +90,29 @@ function render(){
  applyDocumentTitle(t('onboarding.docTitle'));
  updateNotice();updateLocks();
 }
-function updateNotice(){const node=root.querySelector('#setup-notice');if(node)node.innerHTML=notice?Feedback(messageText(notice),noticeError?'warning':'success'):'';}
-function tell(text:FeedbackText,error=false){notice=text;noticeError=error;updateNotice();}
+function updateNotice() {
+  const node = root.querySelector('#setup-notice');
+  if (node) node.innerHTML = (credentialUnknown ? OwnedFeedback(t('net.offlineWrite'), 'unknown') : '')
+    + (notice && noticeError ? OwnedFeedback(messageText(notice), 'warning') : '');
+  noticeHost?.render();
+}
+function tell(text: FeedbackText, error = false, task = 'credential') {
+  notice = text;
+  noticeError = error;
+  notices.setIdentity(String(identity));
+  if (text) {
+    const owner = noticeOwner(task);
+    const recovery = { label: () => t('onboarding.readState'), run: () => {
+      if (owner.identity === String(identity) && !writing) void load(credentialUnknown?.kind === 'administrator');
+    } };
+    const item = task === 'read'
+      ? readFailureNotice(owner, 'READ_FAILED', () => messageText(text), recovery)
+      : resultNotice(owner, { phase: credentialUnknown ? 'unknown' : error ? 'failed' : 'confirmed',
+        unknown: !!credentialUnknown, error, message: () => messageText(text), ...(error ? { recovery } : {}) });
+    if (item) notices.publish(item);
+  }
+  updateNotice();
+}
 function updateLocks(){
  const navigation=root.querySelector<HTMLElement>('[data-session-navigation]');
  if(navigation&&navigation.dataset.authenticated!==String(authenticated)){navigation.dataset.authenticated=String(authenticated);navigation.innerHTML=sessionNavigation();}
@@ -88,7 +125,12 @@ function updateLocks(){
  root.querySelector('#credentials [type=submit]')?.setAttribute('aria-busy',String(writing));
  const pending=root.querySelector('[data-credential-pending]');if(pending)pending.innerHTML=writing?pendingDots():icon('arrow',16);
  root.querySelectorAll('[data-action="refresh"]').forEach(node=>node.setAttribute('aria-busy',String(reading)));
- const status=root.querySelector('#setup-status');if(status)status.innerHTML=writing?(stage==='login'?t('onboarding.status.signingIn'):stage==='administrator'?t('onboarding.status.creating'):`${pendingDots()} ${t('onboarding.status.signingOut')}`):reading?`${pendingDots()} ${t('onboarding.status.reading')}`:'';
+ root.querySelectorAll<HTMLElement>('[data-pending-action]').forEach(node => {
+  const active = node.dataset.pendingAction === 'refresh' ? reading : writing;
+  node.innerHTML = active ? pendingDots() : node.dataset.pendingAction === 'refresh' ? icon('refresh',18) : '';
+ });
+ const status=root.querySelector('#setup-status');
+ if(status)status.innerHTML=writing?(stage==='login'?t('onboarding.status.signingIn'):stage==='administrator'?t('onboarding.status.creating'):t('onboarding.status.signingOut')):reading&&stage!=='loading'?t('onboarding.status.reading'):'';
  if(status&&slow)status.innerHTML+=`<span class="pending-wait-message"> ${esc(t('onboarding.status.slow'))}</span>`;
 }
 
@@ -114,18 +156,23 @@ function validateCredentials(submitting=false) {
 }
 async function credentials(form:HTMLFormElement) {
   if(writing||reading||credentialUnknown||!validateCredentials(true))return;
+  notices.resolve(noticeOwner('credential'));
+  credentialGeneration++;
   const creating=stage==='administrator',ticket=context(),data=new FormData(form);
   account=String(data.get('account')||'');let password=String(data.get('password')||'');writing=true;updateLocks();
   try {const value=await web(creating?'setup/administrator':'login','POST',{account,password});if(!current(ticket))return;clearSecrets();identity++;location.replace(nextLocation(value.next||'/'));}
   catch(error) {
-    if(!current(ticket))return;clearSecrets();tell(message(error),true);
+    if(!current(ticket))return;
+    clearSecrets();
     if(error instanceof RequestError&&(error.unknown||(creating&&error.status===409))) {
       // Read back uncertain creation or sign-in; never replay the write.
       credentialUnknown={kind:creating?'administrator':'login',account:String(data.get('account')||'')};
+      tell(message(error), true);
       writing=false;
       updateLocks();
       await load(creating);
     } else {
+      tell(message(error), true);
       const session=await web('session').catch(()=>null);
       if(current(ticket)&&session)csrf=session.csrfToken||'';
     }
@@ -143,23 +190,48 @@ async function load(recoveringCreation=false,automatic=false,attempt=0){
   const session=await web('session','GET',undefined,controller.signal);if(!currentRead())return;
   csrf=session.csrfToken||'';authenticated=session.authenticated===true;
   if(checkedCredential?.kind==='login'&&session.authenticated&&session.user?.account!==checkedCredential.account){
+   resolveReadNotice();
    tell(new LocalizedMessage('onboarding.error.loginDifferentAccount',{account:checkedCredential.account}),true);
    return;
   }
-  if(credentialUnknown===checkedCredential)credentialUnknown=null;
-  if(checkedCredential?.kind==='login'&&!session.authenticated)tell(t('onboarding.error.loginNotConfirmed'),true);
+  if(credentialUnknown===checkedCredential){
+    credentialUnknown=null;
+    if(checkedCredential)notices.resolve(noticeOwner('credential'));
+  }
+  if(checkedCredential?.kind==='login'&&!session.authenticated)tell(new LocalizedMessage('onboarding.error.loginNotConfirmed'),true);
   else if(lastReadFailed&&!checkedCredential)tell('');
   lastReadFailed=false;
-  if(!state.administratorInitialized){const changed=stage!=='administrator';changeStage('administrator');if(recoveringCreation)tell(t('onboarding.error.recoveringAdmin'),true);if(changed)render();return;}
-  if(!session.authenticated){const changed=stage!=='login';changeStage('login');if(recoveringCreation)tell(t('onboarding.error.recoveringLogin'));if(changed)render();return;}
-  if(location.pathname==='/login'){location.replace(nextLocation(session.next||'/'));return;}
-  if(session.user?.role==='admin'){location.replace('/admin/setup');return;}
-  const next=await web('onboarding','GET',undefined,controller.signal);if(!currentRead())return;snapshot=next;changeStage('waiting');render();
+  if(!state.administratorInitialized){resolveReadNotice();
+  const changed=stage!=='administrator';
+  changeStage('administrator');
+  if(recoveringCreation)tell(new LocalizedMessage('onboarding.error.recoveringAdmin'),true);
+  if(changed)render();
+  return;}
+  if(!session.authenticated){resolveReadNotice();
+  const changed=stage!=='login';
+  changeStage('login');
+  if(recoveringCreation)tell(new LocalizedMessage('onboarding.error.recoveringLogin'),true);
+  if(changed)render();
+  return;}
+  if(location.pathname==='/login'){resolveReadNotice();
+  location.replace(nextLocation(session.next||'/'));
+  return;}
+  if(session.user?.role==='admin'){resolveReadNotice();
+  location.replace('/admin/setup');
+  return;}
+  const next=await web('onboarding','GET',undefined,controller.signal);
+  if(!currentRead())return;
+  resolveReadNotice();
+  snapshot=next;
+  changeStage('waiting');
+  render();
  }catch(error){
   if(currentRead()){
    lastReadFailed=true;
-   const notice=credentialUnknown?`${t('net.offlineWrite')} ${messageText(message(error))}`:message(error);
-   if(stage==='loading'||stage==='error'){changeStage('error');tell(notice,true);render();}else tell(notice,true);
+   const notice=message(error);
+   if(stage==='loading'||stage==='error'){changeStage('error');
+   tell(notice,true,'read');
+   render();}else tell(notice,true,'read');
    if(attempt<2){const retryContext=context();readRetryTimer=setTimeout(()=>{if(readCycle===cycle&&current(retryContext)&&!writing)void load(recoveringCreation,true,attempt+1);},attempt===0?1000:3000);}
   }
  }finally{if(readLock===lock){readLock=null;readController=null;reading=false;updateLocks();}}
@@ -168,7 +240,20 @@ root.addEventListener('submit',event=>{event.preventDefault();void credentials(e
 root.addEventListener('input',()=>{account=root.querySelector<HTMLInputElement>('#account')?.value||'';validateCredentials();});
 root.addEventListener('focusout',event=>{const input=event.target as HTMLInputElement;if(input.id==='confirm-password'){confirmationTouched=true;validateCredentials();}if(input.id==='password'&&stage==='administrator'&&input.value&&input.value.length<12)fieldError('password',t('onboarding.error.passwordTooShort'));});
 root.addEventListener('click',event=>{const trigger=(event.target as HTMLElement).closest<HTMLElement>('[data-language-trigger]');if(trigger){event.preventDefault();languagePicker.open(trigger);return;}const action=(event.target as HTMLElement).closest<HTMLElement>('[data-action]')?.dataset.action;if(!action||writing||(reading&&action!=='refresh'))return;event.preventDefault();if(action==='refresh'){if(!credentialUnknown)tell('');void load(credentialUnknown?.kind==='administrator');}else if(action==='logout'){writing=true;identity++;const ticket=context();clearSecrets();updateLocks();void web('logout','POST',{}).then(()=>{if(!current(ticket))return;try{for(const key of Object.keys(sessionStorage))if(key.startsWith('piwork:web:'))sessionStorage.removeItem(key);}catch{}location.replace('/login');}).catch(error=>{if(!current(ticket))return;writing=false;tell(message(error),true);updateLocks();});}});
-window.addEventListener('pagehide',()=>{identity++;view++;readCycle++;readController?.abort();readController=null;clearTimeout(readRetryTimer);readLock=null;reading=false;writing=false;clearTimeout(waitTimer);waitPhase='';waitSince=0;clearSecrets();});
+window.addEventListener('pagehide',()=>{identity++;
+notices.setIdentity(String(identity));
+view++;
+readCycle++;
+readController?.abort();
+readController=null;
+clearTimeout(readRetryTimer);
+readLock=null;
+reading=false;
+writing=false;
+clearTimeout(waitTimer);
+waitPhase='';
+waitSince=0;
+clearSecrets();});
 window.addEventListener('pageshow',event=>{if(event.persisted){identity++;view++;writing=false;clearSecrets();void load();}});
 onLocaleChange(()=>{
   // Keep credentials only in the current DOM across this presentation update.

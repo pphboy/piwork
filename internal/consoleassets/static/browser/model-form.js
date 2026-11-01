@@ -1,4 +1,4 @@
-import { esc, Field, Input, Feedback, date } from './components.js';
+import { esc, Field, Input, OwnedFeedback, date } from './components.js';
 import { pendingDots } from './pending.js';
 import { t, LocalizedMessage } from './locale.js';
 export const blankModel = () => ({ name: '', model: '', api: 'openai-responses', baseUrl: '', key: '' });
@@ -61,16 +61,19 @@ export function modelTestSummary(result, currentRevision) {
     const { value, revision, pending, error } = result, stale = revision !== currentRevision;
     const summary = pending ? (result.startedAt && Date.now() - result.startedAt >= 10000 ? t('modelForm.test.slow') : t('modelForm.test.pending')) : error ? String(error) : (value ? `${value.success ? t('modelForm.test.passed') : t('modelForm.test.failed', { category: value.category, message: value.message })} ${t('modelForm.test.checked', { date: date(value.checkedAt), duration: value.durationMs })}${value.httpStatus ? t('modelForm.test.http', { status: value.httpStatus }) : ''}` : t('modelForm.test.unavailable'));
     const text = `${stale ? t('modelForm.test.previous') : ''}${summary}${stale ? t('modelForm.test.staleSuffix') : ''}`, actions = `<button type="button" class="btn secondary" data-model-action="view-test">${esc(t('modelForm.test.view'))}</button>`;
-    return pending ? `<div class="feedback info" role="status">${pendingDots()}<div>${esc(text)}<div class="feedback-actions">${actions}</div></div></div>` : Feedback(text, value?.success && !stale ? 'success' : 'warning', actions);
+    return pending ? `<div class="owned-feedback info" role="status">${pendingDots()}<div>${esc(text)}<div class="feedback-actions">${actions}</div></div></div>` : OwnedFeedback(text, value?.success && !stale ? 'success' : 'warning', actions);
 }
 export function modelTestDetails(result, currentRevision) {
     if (!result)
         return '';
     const { target, value, pending, revision, error } = result;
     const stage = pending ? t('modelForm.test.stage.pending') : error ? (result.notStarted ? t('modelForm.test.stage.notStarted') : t('modelForm.test.stage.error')) : value?.success ? t('modelForm.test.stage.received') : t('modelForm.test.stage.failed');
-    const outcome = pending ? `<div class="feedback info" role="status">${pendingDots()}<div>${result.startedAt && Date.now() - result.startedAt >= 10000 ? t('modelForm.test.slow') : t('modelForm.test.pending')}</div></div>` : error ? Feedback(String(error), 'warning') : value?.success ? `<h3>${t('modelForm.test.reply')}</h3><pre data-model-test-reply>${esc(value.replyText)}</pre>${value.replyTruncated ? Feedback(t('modelForm.test.truncated'), 'warning') : ''}` : value ? `${Feedback(value.message, 'warning')}<p data-model-test-recovery>${esc(value.recovery)}</p>` : '';
+    const errorText = error ? String(error) : '';
+    // The stage already presents this exact localized sentence. Keep all recovery guidance.
+    const errorDetail = errorText.startsWith(stage) ? errorText.slice(stage.length).trimStart() : errorText;
+    const outcome = pending ? `<div class="owned-feedback info" role="status">${pendingDots()}<div>${result.startedAt && Date.now() - result.startedAt >= 10000 ? t('modelForm.test.slow') : t('modelForm.test.pending')}</div></div>` : error ? (errorDetail ? OwnedFeedback(errorDetail, 'warning') : '') : value?.success ? `<h3>${t('modelForm.test.reply')}</h3><pre data-model-test-reply>${esc(value.replyText)}</pre>${value.replyTruncated ? OwnedFeedback(t('modelForm.test.truncated'), 'warning') : ''}` : value ? `${OwnedFeedback(value.message, 'warning')}<p data-model-test-recovery>${esc(value.recovery)}</p>` : '';
     const recovery = error ? `<button type="button" class="btn secondary" data-model-action="edit-test">${t('modelForm.test.back')}</button>` : '';
     const checked = value ? `<p class="help">${t('modelForm.test.checked', { date: date(value.checkedAt), duration: value.durationMs })}${value.httpStatus ? t('modelForm.test.http', { status: value.httpStatus }) : ''}</p>` : '';
-    return `<div data-model-test-dialog><dl class="summary-list"><dt>${t('modelForm.test.model')}</dt><dd>${esc(target.provider)}</dd><dt>${t('modelForm.apiType')}</dt><dd>${esc(target.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages')}</dd><dt>${t('modelForm.modelId')}</dt><dd><code>${esc(target.model)}</code></dd></dl><h3>${t('modelForm.test.testMessage')}</h3><pre>${esc(value?.testMessage || testMessage)}</pre><div aria-live="polite"><p data-model-test-stage>${esc(stage)}</p>${outcome}${recovery}${checked}${result.diagnosticId ? `<p class="help">${esc(t('modelForm.test.diagnostic', { id: result.diagnosticId }))}</p>` : ''}${revision !== currentRevision ? Feedback(t('modelForm.test.changed'), 'warning') : ''}</div><p class="help">${t('modelForm.test.advisory')}</p></div>`;
+    return `<div data-model-test-dialog><dl class="summary-list"><dt>${t('modelForm.test.model')}</dt><dd>${esc(target.provider)}</dd><dt>${t('modelForm.apiType')}</dt><dd>${esc(target.api === 'openai-responses' ? 'OpenAI Responses' : 'Anthropic Messages')}</dd><dt>${t('modelForm.modelId')}</dt><dd><code>${esc(target.model)}</code></dd></dl><h3>${t('modelForm.test.testMessage')}</h3><pre>${esc(value?.testMessage || testMessage)}</pre><div aria-live="polite"><p data-model-test-stage>${esc(stage)}</p>${outcome}${recovery}${checked}${result.diagnosticId ? `<p class="help">${esc(t('modelForm.test.diagnostic', { id: result.diagnosticId }))}</p>` : ''}${revision !== currentRevision ? OwnedFeedback(t('modelForm.test.changed'), 'warning') : ''}</div><p class="help">${t('modelForm.test.advisory')}</p></div>`;
 }
 //# sourceMappingURL=model-form.js.map

@@ -196,3 +196,26 @@ test('failed message retry requires the original compatible profile even at the 
  pair.profile='messages-adaptive-v1';
  await assert.rejects(adapter.retryChatSubmission('work-1','session-1',key),{code:'INVALID_REQUEST'});assert.equal(bodies.length,2);assert.equal(bodies[1]!.prompt,bodies[0]!.prompt);
 });
+
+test('known model selection after a confirmed Thinking autosave persists the whole pair', async t => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const model = (modelRef: string | null) => ({ modelRef, label: 'Supported model', provider: 'fixture', model: 'known', thinkingLevels: ['off', 'low', 'high'], defaultThinkingLevel: 'off' });
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    return Response.json({ sessionId: 'session-1', ...body, model: model(body.modelRef), availability: 'available' });
+  });
+  const adapter = new DesktopAdapter();
+  adapter.state.signedIn = true;
+  adapter.state.works = [{ id: 'work-1', status: 'Ready', desired: 'running', sessions: [{ id: 'session-1', title: 'One', messages: [], thinkingLevel: 'off' }], services: [] }];
+  adapter.models.set('work-1', { loading: false, confirmed: true, error: '', models: [model('model-synthetic-1')], defaultModel: model(null) });
+  adapter.chatCapabilities.set('work-1', 4);
+  t.after(() => adapter.clearIdentity());
+  adapter.selectThinking('work-1', 'session-1', 'high');
+  await adapter.saveModel('work-1', 'session-1');
+  adapter.selectModel('work-1', 'session-1', 'model-synthetic-1');
+  await adapter.saveModel('work-1', 'session-1');
+  assert.deepEqual(bodies.map(body => [body.modelRef, body.thinkingLevel]), [[null, 'high'], ['model-synthetic-1', 'high']]);
+  assert.equal(adapter.modelSelection('work-1', 'session-1').phase, 'clean');
+  assert.equal(adapter.modelSelection('work-1', 'session-1').ref, 'model-synthetic-1');
+});

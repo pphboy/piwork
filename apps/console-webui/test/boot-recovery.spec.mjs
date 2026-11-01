@@ -28,7 +28,8 @@ test.beforeAll(async () => {
     } else if (path.endsWith('/work-navigation.js') || path.endsWith('/boot.js') || path.endsWith('/i18n.js')) {
       res.writeHead(200, { 'content-type': 'text/javascript' }); res.end('export {};');
     } else if (path.endsWith('/style.css')) {
-      res.writeHead(200, { 'content-type': 'text/css' }); res.end('body { color: black; }');
+      res.writeHead(200, { 'content-type': 'text/css' });
+      res.end(await readFile(consolePublic + 'style.css', 'utf8'));
     } else { res.writeHead(404); res.end(); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -159,3 +160,24 @@ test('manual recovery cancels a scheduled automatic retry before it fires', asyn
   expect(documents).toBe(2); expect(entries).toBe(2);
   await expect(page).toHaveURL(base + '/desktop?view=example#target');
 });
+
+for (const path of ['/admin', '/setup', '/login']) {
+  test(`${path} shows the real cold-boot skeleton while the entry asset is pending`, async ({ page }) => {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    await page.route(/\/(?:app|onboarding)\.js$/, async route => {
+      await gate;
+      await route.continue();
+    });
+    try {
+      await page.goto(base + path, { waitUntil: 'commit' });
+      await expect(page.locator('.boot-skeleton')).toBeVisible();
+      await expect(page.locator('.boot-skeleton .skeleton-fill')).toHaveCount(3);
+      await expect(page.locator('[data-boot-loading]')).toBeVisible();
+      await expect(page.locator('.pending-dots')).toHaveCount(0);
+    } finally {
+      release();
+    }
+    await expect(page.locator('body')).toHaveAttribute('data-app-ready', 'yes');
+  });
+}

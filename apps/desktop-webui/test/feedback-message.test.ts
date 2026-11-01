@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { ActionRecord } from '../dist/browser/action-state.js';
+const { noticeMessage } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+const { LocalizedMessage, chooseLocale } = await import(new URL('../browser/locale.js', import.meta.url).href);
+const { NoticeStore } = await import(new URL('../browser/notices.js', import.meta.url).href);
+
+test('an already published explicit error reads the current locale without another event', () => {
+  chooseLocale('en');
+  const store = new NoticeStore();
+  store.setIdentity('original');
+  const message = new LocalizedMessage('clipboard.unavailable', { value: 'original-safe-value' });
+  const event = { identity: 'original', object: 'work-a', task: 'copy', generation: 1, key: 'failed', tone: 'error', message: noticeMessage(message) };
+  assert.equal(store.publish(event), true);
+  const original = store.items()[0];
+  assert.match(original.message(), /Clipboard unavailable/);
+  chooseLocale('zh-CN');
+  assert.match(store.items()[0].message(), /剪贴板不可用/);
+  assert.match(store.items()[0].message(), /original-safe-value/);
+  assert.equal(store.items()[0].id, original.id);
+  assert.equal(store.publish(event), false);
+  store.destroy();
+  chooseLocale('en');
+});
+
+test('explicit callback and raw diagnostic preserve their separate responsibilities', () => {
+  chooseLocale('en');
+  const workName = 'Original Work';
+  const retained = noticeMessage(() => `${workName} · ${new LocalizedMessage('download.startedBrowser')}`);
+  assert.match(retained(), /Original Work/);
+  chooseLocale('zh-CN');
+  assert.match(retained(), /Original Work/);
+  assert.doesNotMatch(retained(), /Download started/);
+  assert.equal(noticeMessage('UNTRUSTED_TECHNICAL_CODE')(), 'UNTRUSTED_TECHNICAL_CODE');
+  chooseLocale('en');
+});
+
+test('aggregate file failures stay errors without changing the original unknown lock', async () => {
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const record: ActionRecord = { key: 'files:w:a', kind: 'files', label: 'Copy', target: 'a', token: 1, generation: 1, started: 0, pending: false, phase: 'Result', result: '1 confirmed; 1 needs review', resultTone: 'error', refresh: '' };
+  assert.equal(actionNotice(record, 'identity', () => record.result)?.tone, 'error');
+  assert.equal(record.blocked, undefined);
+  record.blocked = true;
+  assert.equal(actionNotice(record, 'identity', () => record.result)?.tone, 'unknown');
+  assert.equal(record.blocked, true);
+  record.resultTone = 'success';
+  assert.equal(actionNotice(record, 'identity', () => record.result)?.tone, 'unknown');
+});
+
+test('one action success does not replay on readback or finish; failed readback replaces it', async () => {
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const store = new NoticeStore();
+  store.setIdentity('identity');
+  const record: ActionRecord = { key: 'save:w:a', kind: 'files', label: 'Save', target: 'a', token: 1, generation: 1, started: 0, pending: false, phase: 'Saved', result: 'Saved', refresh: 'refreshing', checkedAt: 'first' };
+  const project = () => actionNotice(record, 'identity', () => record.result);
+  assert.equal(project().key, 'success');
+  assert.equal(store.publish(project()), true);
+  const successId = store.items()[0].id;
+  record.refresh = '';
+  record.checkedAt = 'readback';
+  assert.equal(store.publish(project()), false);
+  record.checkedAt = 'finished';
+  assert.equal(store.publish(project()), false);
+  assert.equal(store.items()[0].id, successId);
+  record.refresh = 'failed';
+  assert.equal(project().tone, 'error');
+  assert.equal(store.publish(project()), true);
+  assert.equal(store.items().length, 1);
+  assert.equal(store.items()[0].tone, 'error');
+  record.checkedAt = 'later-finish';
+  assert.equal(store.publish(project()), false);
+  record.refresh = '';
+  assert.equal(store.publish(project()), true);
+  assert.equal(store.items().length, 1);
+  assert.equal(store.items()[0].tone, 'success');
+  store.destroy();
+});
+
+test('one original ledger publishes retries while each original unknown lock remains owned', async () => {
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const original: ActionRecord = { key: 'copy:w:a', kind: 'files', label: 'Copy', target: 'a', token: 1, generation: 1, started: 0, pending: false, phase: 'Review', result: '1 confirmed; 1 needs review', resultTone: 'error', refresh: '' };
+  const retry: ActionRecord = { ...original, key: 'retry:w:a', token: 2, notificationProjection: 'ledger-secondary', blocked: true, resultTone: 'unknown' };
+  const { FileMutationResults, UnknownFileLocks } = await import(new URL('../browser/file-results.js', import.meta.url).href);
+  const targets = [{ source: '/a' }, { source: '/b' }];
+  const ledger = new FileMutationResults(targets);
+  ledger.record(targets, [{ path: '/a', status: 'succeeded', message: 'Confirmed' }, { path: '/b', status: 'failed', message: 'Denied' }]);
+  ledger.record([targets[1]], [{ path: '/b', status: 'unknown', message: 'Response lost' }]);
+  const locks = new UnknownFileLocks();
+  const originalLock = locks.add('w', targets[1], retry);
+  const retained = ledger.results;
+  original.resultTone = 'unknown';
+  const store = new NoticeStore();
+  store.setIdentity('identity');
+  store.publish(actionNotice(original, 'identity', () => String(original.result)));
+  store.dismiss(store.items()[0].id);
+  assert.deepEqual(ledger.results, retained);
+  assert.equal(locks.conflict('w', [targets[1]]), originalLock);
+  assert.deepEqual(ledger.retryTargets(['/a', '/b']), []);
+  store.destroy();
+  assert.equal(actionNotice(retry, 'identity', () => String(retry.result)), undefined);
+  assert.equal(actionNotice(original, 'identity', () => String(original.result))?.tone, 'unknown');
+  assert.equal(original.blocked, undefined);
+  assert.equal(retry.blocked, true);
+  original.refresh = 'failed';
+  assert.equal(actionNotice(original, 'identity', () => String(original.result))?.tone, 'unknown');
+  original.refresh = '';
+  original.blocked = true;
+  retry.blocked = false;
+  original.resultTone = 'success';
+  retry.resultTone = 'success';
+  assert.equal(actionNotice(original, 'identity', () => String(original.result))?.tone, 'unknown');
+  assert.equal(actionNotice(retry, 'identity', () => String(retry.result)), undefined);
+  assert.equal(original.blocked, true);
+  original.blocked = false;
+  assert.equal(actionNotice(original, 'identity', () => String(original.result))?.tone, 'success');
+  assert.equal(actionNotice(retry, 'identity', () => String(retry.result)), undefined);
+});

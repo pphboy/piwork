@@ -46,8 +46,8 @@ export const appStrings = {
     "merge.unknownMany": "{count} Service states are not confirmed",
     "merge.statusUnconfirmed": "Service status is not confirmed.",
     "merge.askAdmin": "Ask an administrator to check the model configuration before submitting a new Run.",
-    "merge.hostedAdminBefore": "Check the model configuration in",
-    "merge.hostedAdminAfter": ", then submit a new Run.",
+    "merge.hostedAdminBefore": "From the Account menu, open",
+    "merge.hostedAdminAfter": ", check the model configuration, then submit a new Run.",
     "merge.admin": "Administration",
     "merge.localAdmin": "Open Administration on the connected Core to check the model configuration, then submit a new Run.",
     "merge.originalFailure": "Original failure",
@@ -709,6 +709,7 @@ export const appStrings = {
     'settings.title': 'Work settings',
     'settings.loading': 'Loading Work settings…',
     'settings.refreshConfiguration': 'Refresh configuration',
+    'settings.refreshPackageStatus': 'Refresh package status',
     'settings.applyFailed': 'Apply failed',
     'settings.unsavedChanges': 'Unsaved changes',
     'settings.submittingApply': 'Submitting Apply',
@@ -1247,6 +1248,8 @@ export const appStrings = {
     'chat.resourceUnavailable': 'Resource commands are unavailable in this Work. Choose Send as text to send a literal slash.',
     'chat.unknownCommand': 'Unknown resource command. Choose an available command or Send as text.',
     'chat.messageAccepted': 'Message accepted',
+    'chat.runNotice': '{work}: {message}',
+    'chat.closeDialogForRun': 'Close current dialog first',
     'suggest.notes': 'Build a simple notes app and save its data in the shared workspace.',
     'suggest.files': 'List the shared workspace files and help me analyze the data I choose.',
 
@@ -1394,6 +1397,7 @@ export const appStrings = {
     'export.otherPackages': 'Other saved packages',
     'export.closingNote': 'Closing only hides progress. Reloading or changing account ends automatic delivery. Pause holds later steps.',
     'export.hide': 'Hide',
+    'export.progress': 'Export progress',
 
     // Files browser DOM module (files.ts).
     'filesBrowser.invalidName': 'Enter a single valid file name.',
@@ -1500,8 +1504,8 @@ export const appStrings = {
     "merge.unknownMany": "{count} 个 Service 的状态尚未确认",
     "merge.statusUnconfirmed": "Service 状态尚未确认。",
     "merge.askAdmin": "请管理员检查模型配置，然后再提交新的 Run。",
-    "merge.hostedAdminBefore": "请在",
-    "merge.hostedAdminAfter": "中检查模型配置，然后提交新的 Run。",
+    "merge.hostedAdminBefore": "请从账号菜单打开",
+    "merge.hostedAdminAfter": "，检查模型配置，然后提交新的 Run。",
     "merge.admin": "管理界面",
     "merge.localAdmin": "请打开已连接 Core 的管理界面检查模型配置，然后提交新的 Run。",
     "merge.originalFailure": "原始错误",
@@ -2164,6 +2168,7 @@ export const appStrings = {
     'settings.title': 'Work 设置',
     'settings.loading': '正在加载 Work 设置…',
     'settings.refreshConfiguration': '刷新配置',
+    'settings.refreshPackageStatus': '刷新包状态',
     'settings.applyFailed': 'Apply 失败',
     'settings.unsavedChanges': '未保存的更改',
     'settings.submittingApply': '正在提交 Apply',
@@ -2702,6 +2707,8 @@ export const appStrings = {
     'chat.resourceUnavailable': '此 Work 中资源命令不可用。请选择“作为文本发送”以发送字面斜杠。',
     'chat.unknownCommand': '未知的资源命令。请选择可用命令或“作为文本发送”。',
     'chat.messageAccepted': '消息已接受',
+    'chat.runNotice': '{work}：{message}',
+    'chat.closeDialogForRun': '先关闭当前对话框',
     'suggest.notes': '构建一个简单的笔记应用，并把数据保存在共享工作区中。',
     'suggest.files': '列出共享工作区文件，并帮我分析我选择的数据。',
 
@@ -2849,6 +2856,7 @@ export const appStrings = {
     'export.otherPackages': '其他已保存的包',
     'export.closingNote': '关闭只会隐藏进度。重新加载或切换账号会结束自动交付。暂停会保留后续步骤。',
     'export.hide': '隐藏',
+    'export.progress': '导出进度',
 
     // Files browser DOM module (files.ts).
     'filesBrowser.invalidName': '请输入单个有效的文件名。',

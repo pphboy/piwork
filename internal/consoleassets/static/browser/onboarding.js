@@ -1,6 +1,8 @@
+import { NoticeStore, createNoticeHost } from './notices.js';
+import { resultNotice, readFailureNotice } from './feedback-policy.js';
 import { createLanguagePicker } from './i18n.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
-import { esc, Field, Input, Feedback, icon } from './components.js';
+import { esc, Field, Input, OwnedFeedback, icon } from './components.js';
 import { modelErrors } from './model-form.js';
 import { pendingDots } from './pending.js';
 import { t, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, LocalizedMessage, messageText } from './locale.js';
@@ -13,6 +15,18 @@ let readLock = null, readController = null, readCycle = 0, readRetryTimer;
 let waitTimer, waitSince = 0, waitPhase = '';
 let credentialUnknown = null;
 let lastReadFailed = false;
+let credentialGeneration = 0;
+const notices = new NoticeStore({ onChange: () => noticeHost?.render() });
+let noticeHost;
+noticeHost = createNoticeHost(notices, { document, closeLabel: () => t('common.close') });
+document.body.append(noticeHost.element);
+function noticeOwner(task) {
+    return { identity: String(identity), object: 'onboarding', task, generation: task === 'read' ? 0 : credentialGeneration };
+}
+function resolveReadNotice() {
+    notices.setIdentity(String(identity));
+    notices.resolve(noticeOwner('read'));
+}
 class RequestError extends Error {
     status;
     unknown;
@@ -72,7 +86,7 @@ async function requestOnce(path, method = 'GET', body, signal) {
 }
 const web = (path, method = 'GET', body, signal) => request('/_web/api/' + path, method, body, signal);
 const message = (error) => error instanceof RequestError ? error.feedback : error instanceof Error ? error.message : new LocalizedMessage('net.unconfirmed');
-const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}</button>`;
+const button = (text, action, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'primary' : 'secondary'}" data-action="${action}" ${disabled ? 'disabled' : ''}>${text}${action === 'refresh' || action === 'logout' ? `<span class="pending-slot" data-pending-action="${action}">${action === 'refresh' ? icon('refresh', 18) : ''}</span>` : ''}</button>`;
 function current(ticket) { return ticket.view === view && ticket.identity === identity; }
 function context() { return { view, identity }; }
 function clearSecrets() { root.querySelectorAll('input[type=password]').forEach(input => { input.value = ''; }); }
@@ -95,6 +109,8 @@ function credentialForm() {
 function render() {
     const title = stage === 'administrator' ? t('onboarding.title.createAdmin') : stage === 'login' ? t('onboarding.title.login') : stage === 'waiting' ? (snapshot.status?.ready ? t('onboarding.title.ready') : t('onboarding.title.pending')) : stage === 'error' ? t('onboarding.title.error') : t('onboarding.title.loading');
     let content = '';
+    if (stage === 'loading')
+        content = '<section class="console-read-skeleton" aria-busy="true"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>';
     if (stage === 'administrator' || stage === 'login')
         content = credentialForm();
     if (stage === 'waiting')
@@ -106,9 +122,32 @@ function render() {
     updateNotice();
     updateLocks();
 }
-function updateNotice() { const node = root.querySelector('#setup-notice'); if (node)
-    node.innerHTML = notice ? Feedback(messageText(notice), noticeError ? 'warning' : 'success') : ''; }
-function tell(text, error = false) { notice = text; noticeError = error; updateNotice(); }
+function updateNotice() {
+    const node = root.querySelector('#setup-notice');
+    if (node)
+        node.innerHTML = (credentialUnknown ? OwnedFeedback(t('net.offlineWrite'), 'unknown') : '')
+            + (notice && noticeError ? OwnedFeedback(messageText(notice), 'warning') : '');
+    noticeHost?.render();
+}
+function tell(text, error = false, task = 'credential') {
+    notice = text;
+    noticeError = error;
+    notices.setIdentity(String(identity));
+    if (text) {
+        const owner = noticeOwner(task);
+        const recovery = { label: () => t('onboarding.readState'), run: () => {
+                if (owner.identity === String(identity) && !writing)
+                    void load(credentialUnknown?.kind === 'administrator');
+            } };
+        const item = task === 'read'
+            ? readFailureNotice(owner, 'READ_FAILED', () => messageText(text), recovery)
+            : resultNotice(owner, { phase: credentialUnknown ? 'unknown' : error ? 'failed' : 'confirmed',
+                unknown: !!credentialUnknown, error, message: () => messageText(text), ...(error ? { recovery } : {}) });
+        if (item)
+            notices.publish(item);
+    }
+    updateNotice();
+}
 function updateLocks() {
     const navigation = root.querySelector('[data-session-navigation]');
     if (navigation && navigation.dataset.authenticated !== String(authenticated)) {
@@ -134,9 +173,13 @@ function updateLocks() {
     if (pending)
         pending.innerHTML = writing ? pendingDots() : icon('arrow', 16);
     root.querySelectorAll('[data-action="refresh"]').forEach(node => node.setAttribute('aria-busy', String(reading)));
+    root.querySelectorAll('[data-pending-action]').forEach(node => {
+        const active = node.dataset.pendingAction === 'refresh' ? reading : writing;
+        node.innerHTML = active ? pendingDots() : node.dataset.pendingAction === 'refresh' ? icon('refresh', 18) : '';
+    });
     const status = root.querySelector('#setup-status');
     if (status)
-        status.innerHTML = writing ? (stage === 'login' ? t('onboarding.status.signingIn') : stage === 'administrator' ? t('onboarding.status.creating') : `${pendingDots()} ${t('onboarding.status.signingOut')}`) : reading ? `${pendingDots()} ${t('onboarding.status.reading')}` : '';
+        status.innerHTML = writing ? (stage === 'login' ? t('onboarding.status.signingIn') : stage === 'administrator' ? t('onboarding.status.creating') : t('onboarding.status.signingOut')) : reading && stage !== 'loading' ? t('onboarding.status.reading') : '';
     if (status && slow)
         status.innerHTML += `<span class="pending-wait-message"> ${esc(t('onboarding.status.slow'))}</span>`;
 }
@@ -183,6 +226,8 @@ function validateCredentials(submitting = false) {
 async function credentials(form) {
     if (writing || reading || credentialUnknown || !validateCredentials(true))
         return;
+    notices.resolve(noticeOwner('credential'));
+    credentialGeneration++;
     const creating = stage === 'administrator', ticket = context(), data = new FormData(form);
     account = String(data.get('account') || '');
     let password = String(data.get('password') || '');
@@ -200,15 +245,16 @@ async function credentials(form) {
         if (!current(ticket))
             return;
         clearSecrets();
-        tell(message(error), true);
         if (error instanceof RequestError && (error.unknown || (creating && error.status === 409))) {
             // Read back uncertain creation or sign-in; never replay the write.
             credentialUnknown = { kind: creating ? 'administrator' : 'login', account: String(data.get('account') || '') };
+            tell(message(error), true);
             writing = false;
             updateLocks();
             await load(creating);
         }
         else {
+            tell(message(error), true);
             const session = await web('session').catch(() => null);
             if (current(ticket) && session)
                 csrf = session.csrfToken || '';
@@ -248,45 +294,54 @@ async function load(recoveringCreation = false, automatic = false, attempt = 0) 
         csrf = session.csrfToken || '';
         authenticated = session.authenticated === true;
         if (checkedCredential?.kind === 'login' && session.authenticated && session.user?.account !== checkedCredential.account) {
+            resolveReadNotice();
             tell(new LocalizedMessage('onboarding.error.loginDifferentAccount', { account: checkedCredential.account }), true);
             return;
         }
-        if (credentialUnknown === checkedCredential)
+        if (credentialUnknown === checkedCredential) {
             credentialUnknown = null;
+            if (checkedCredential)
+                notices.resolve(noticeOwner('credential'));
+        }
         if (checkedCredential?.kind === 'login' && !session.authenticated)
-            tell(t('onboarding.error.loginNotConfirmed'), true);
+            tell(new LocalizedMessage('onboarding.error.loginNotConfirmed'), true);
         else if (lastReadFailed && !checkedCredential)
             tell('');
         lastReadFailed = false;
         if (!state.administratorInitialized) {
+            resolveReadNotice();
             const changed = stage !== 'administrator';
             changeStage('administrator');
             if (recoveringCreation)
-                tell(t('onboarding.error.recoveringAdmin'), true);
+                tell(new LocalizedMessage('onboarding.error.recoveringAdmin'), true);
             if (changed)
                 render();
             return;
         }
         if (!session.authenticated) {
+            resolveReadNotice();
             const changed = stage !== 'login';
             changeStage('login');
             if (recoveringCreation)
-                tell(t('onboarding.error.recoveringLogin'));
+                tell(new LocalizedMessage('onboarding.error.recoveringLogin'), true);
             if (changed)
                 render();
             return;
         }
         if (location.pathname === '/login') {
+            resolveReadNotice();
             location.replace(nextLocation(session.next || '/'));
             return;
         }
         if (session.user?.role === 'admin') {
+            resolveReadNotice();
             location.replace('/admin/setup');
             return;
         }
         const next = await web('onboarding', 'GET', undefined, controller.signal);
         if (!currentRead())
             return;
+        resolveReadNotice();
         snapshot = next;
         changeStage('waiting');
         render();
@@ -294,14 +349,14 @@ async function load(recoveringCreation = false, automatic = false, attempt = 0) 
     catch (error) {
         if (currentRead()) {
             lastReadFailed = true;
-            const notice = credentialUnknown ? `${t('net.offlineWrite')} ${messageText(message(error))}` : message(error);
+            const notice = message(error);
             if (stage === 'loading' || stage === 'error') {
                 changeStage('error');
-                tell(notice, true);
+                tell(notice, true, 'read');
                 render();
             }
             else
-                tell(notice, true);
+                tell(notice, true, 'read');
             if (attempt < 2) {
                 const retryContext = context();
                 readRetryTimer = setTimeout(() => { if (readCycle === cycle && current(retryContext) && !writing)
@@ -350,7 +405,22 @@ else if (action === 'logout') {
     catch { } location.replace('/login'); }).catch(error => { if (!current(ticket))
         return; writing = false; tell(message(error), true); updateLocks(); });
 } });
-window.addEventListener('pagehide', () => { identity++; view++; readCycle++; readController?.abort(); readController = null; clearTimeout(readRetryTimer); readLock = null; reading = false; writing = false; clearTimeout(waitTimer); waitPhase = ''; waitSince = 0; clearSecrets(); });
+window.addEventListener('pagehide', () => {
+    identity++;
+    notices.setIdentity(String(identity));
+    view++;
+    readCycle++;
+    readController?.abort();
+    readController = null;
+    clearTimeout(readRetryTimer);
+    readLock = null;
+    reading = false;
+    writing = false;
+    clearTimeout(waitTimer);
+    waitPhase = '';
+    waitSince = 0;
+    clearSecrets();
+});
 window.addEventListener('pageshow', event => { if (event.persisted) {
     identity++;
     view++;

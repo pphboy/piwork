@@ -1,14 +1,16 @@
+import { requiresOwnedRecovery } from './feedback-policy.js';
 import { pendingDots } from './pending.js';
 import { t } from './locale.js';
 export type ActionKind = 'identity' | 'lifecycle' | 'files' | 'configuration' | 'service' | 'agent' | 'transfer' | 'read';
 export interface ActionIntent {
   key: string; kind: ActionKind; work?: string; resource?: string;
-  label: string; target: string; anchor?: string; view?: string;
+  label: string; target: string; targetText?: () => string; recover?: () => void; anchor?: string; view?: string;
 }
 export interface ActionRecord extends ActionIntent {
   token: number; generation: number; started: number; checkedAt?: string;
   pending: boolean; phase: string; result?: string; error?: string;
   blocked?: boolean;
+  errorCode?: string;
   refresh: '' | 'refreshing' | 'failed'; refreshError?: string;
   phaseKey?: string; resultText?: () => string;
   errorText?: () => string; refreshErrorText?: () => string;
@@ -51,8 +53,15 @@ export class ActionState {
   }
   fail(record: ActionRecord, error: unknown) {
     if (!this.current(record)) return;
-    record.pending = false; record.errorText = () => error instanceof Error ? error.message : String(error); record.error = record.errorText(); record.phaseKey = 'common.notConfirmed';
+    record.pending = false;
+    record.errorText = () => error instanceof Error ? error.message : String(error);
+    record.error = record.errorText();
     const code = (error as { code?: string })?.code;
+    // Phase copy describes the outcome, independently of existing admission locks.
+    record.phaseKey = record.kind === 'read' ? 'action.readFailed'
+      : ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(code || '')
+        ? 'common.notConfirmed' : 'setup.state.failed';
+    record.errorCode = code || 'READ_FAILED';
     record.blocked = record.kind !== 'read' && record.kind !== 'identity' && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(code || ''); this.changed();
   }
   reviewed(work: string | undefined, kinds: ActionKind[], view?: string) {
@@ -70,7 +79,7 @@ export class ActionState {
     const elapsed = Math.floor((this.now() - record.started) / 1000);
     const phase = record.phaseKey ? t(record.phaseKey) : record.resultText && record.phase === record.result ? record.resultText() : record.phase;
     const error = record.errorText?.() ?? record.error;
-    return `${record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
+    return `${record.targetText?.() ?? record.target} · ${phase}${(record.pending || record.refresh === 'refreshing') && elapsed >= 10 ? ` · ${t('action.stillWaiting', { seconds: elapsed })}` : ''}${error ? ` · ${error}` : ''}${record.refresh === 'refreshing' ? ` · ${t('action.refreshing')}` : record.refresh === 'failed' ? ` · ${t('action.refreshFailed', { error: record.refreshErrorText?.() ?? record.refreshError ?? '' })}` : ''}${!record.pending && record.checkedAt ? ` · ${record.checkedAt}` : ''}`;
   }
   slow(record: ActionRecord) { return (record.pending || record.refresh === 'refreshing') && this.now() - record.started >= 10000; }
   clear() { this.generation++; this.records.clear(); clearTimeout(this.timer); this.timer = undefined; this.changed(); }
@@ -85,7 +94,8 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   const retained = new Set<HTMLElement>();
   const pendingOwners = new Set<HTMLButtonElement>();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let pageText = ''; while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest('[data-action-status]')) pageText += walker.currentNode.textContent || '';
+  let pageText = '';
+  while (walker.nextNode()) if (!walker.currentNode.parentElement?.closest('[data-action-status], .notice-host')) pageText += walker.currentNode.textContent || '';
   for (const button of root.querySelectorAll<HTMLButtonElement>('button[data-action]')) {
     if (button.dataset.actionLocked) { button.disabled = button.dataset.actionBaseDisabled === 'true'; delete button.dataset.actionLocked; delete button.dataset.actionBaseDisabled; button.removeAttribute('aria-busy'); }
     const intent = intentFor(button); if (!intent) continue;
@@ -93,8 +103,14 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
   }
   for (const record of actions.records.values()) {
     if (record.view && record.view !== view || !visibleRecord(record)) continue;
-    if (record.kind === 'read' && record.pending && !record.error && root.querySelector('.console-read-skeleton')) continue;
     const anchor = record.anchor ? root.querySelector<HTMLElement>(record.anchor) : null;
+    if (!record.pending && record.refresh !== 'refreshing' && !requiresOwnedRecovery({
+      error: !!record.error, unknown: record.blocked || ['RESULT_UNKNOWN', 'INVALID_RESPONSE', 'ACCEPTANCE_UNKNOWN'].includes(record.errorCode || ''),
+      refreshFailed: record.refresh === 'failed', restorableDetached: !!record.recover && !anchor,
+    })) continue;
+    const ownedError = record.errorText?.() ?? record.error;
+    if (ownedError && pageText.includes(ownedError)) continue;
+    if (record.kind === 'read' && record.pending && !record.error && root.querySelector('.console-read-skeleton')) continue;
     const owner = anchor instanceof HTMLButtonElement ? anchor : anchor?.matches('form') ? anchor.querySelector<HTMLButtonElement>('button[type="submit"], button:not([type])') : null;
     const ordinaryPending = (record.pending || record.refresh === 'refreshing') && !record.error && !record.blocked && record.refresh !== 'failed';
     if (ordinaryPending && owner && owner.getClientRects().length) {
@@ -123,7 +139,7 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
       root.querySelector<HTMLElement>('main, .main-panel, .agent-panel') ?? root;
     if (!region) continue;
     const node = [...root.querySelectorAll<HTMLElement>('[data-action-status]')].find(node => node.dataset.actionStatus === record.key) || document.createElement('div'); node.dataset.actionStatus = record.key; retained.add(node);
-    node.className = `feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
+    node.className = `owned-feedback ${record.error || record.refresh === 'failed' ? 'warning' : 'info'} action-status`;
     node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); node.setAttribute('aria-busy', String(record.pending || record.refresh === 'refreshing'));
     const visible = { ...record };
     const error = record.errorText?.() ?? record.error, result = record.resultText?.() ?? record.result;

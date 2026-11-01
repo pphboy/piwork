@@ -887,3 +887,33 @@ test('Quick setup 切换语言同步更新 html lang 与文档标题', async ({ 
     await context.close();
   }
 });
+
+test('360px Administration account menu reflects the selected locale after retained-shell rendering', async ({ browser }) => {
+  const context = await browser.newContext({ locale: 'en', viewport: { width: 360, height: 800 } });
+  const page = await context.newPage();
+  try {
+    await mockConsole(page, { authenticated: true });
+    await page.goto(`${base}/admin`);
+    await expect(page.locator('.topbar')).toHaveCSS('height', '96px');
+    await page.locator('[data-action=menu]').click();
+    await expect(page.locator('.nav.open')).toBeVisible();
+    await expect(page.locator('.topbar')).toHaveCSS('height', '96px');
+    await selectLanguage(page, 'zh-CN');
+    await page.locator('#account-trigger').click();
+    const menu = page.locator('#account-dropdown');
+    await expect(menu).toContainText(zh['shell.roleAdmin']);
+    await expect(menu).toContainText(zh['shell.aboutPiwork']);
+    await expect(menu).toContainText(zh['shell.signOut']);
+    await expect(menu).not.toContainText(en['shell.roleAdmin']);
+    await expect(menu.locator('.language-current')).toHaveText('简体中文');
+    await expect(menu.locator('.dropdown-title')).toHaveText('admin');
+    await menu.locator('[data-action=language]').click();
+    await expect(page.locator('.language-picker [data-locale="zh-CN"]')).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#account-trigger')).toBeFocused();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(page.locator('.topbar')).toHaveCSS('height', '56px');
+  } finally {
+    await context.close();
+  }
+});

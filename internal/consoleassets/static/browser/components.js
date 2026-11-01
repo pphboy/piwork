@@ -1,6 +1,10 @@
+import { sharedIcon } from './feedback-primitives.js';
 import { t, currentLocale } from './locale.js';
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 export const icon = (name, size = 18) => {
+    const shared = sharedIcon(name, size);
+    if (shared)
+        return shared;
     const paths = {
         globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
         grid: '<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>',
@@ -8,7 +12,6 @@ export const icon = (name, size = 18) => {
         logout: '<path d="M9 3H3v18h6M10 12h11m-5-5 5 5-5 5"/>',
         check: '<path d="m5 12 4 4L19 6"/>',
         arrow: '<path d="M5 12h14m-5-5 5 5-5 5"/>',
-        refresh: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.5-2L20 8M4 16l2.4 3A7 7 0 0 0 18 17"/>',
         plus: '<path d="M12 5v14M5 12h14"/>',
         chevron: '<path d="m9 5 7 7-7 7"/>',
         copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
@@ -34,6 +37,8 @@ export const Button = (text, action, kind = "secondary", attrs = "") => `<button
 export const NavLink = (text, path, cls = "text-link") => `<a class="${cls}" href="${esc(path)}" data-nav>${text}</a>`;
 export const StatusLabel = (text, tone = "neutral") => `<span class="status-label ${tone}"><span class="status-dot"></span>${esc(text)}</span>`;
 export const Feedback = (message, tone = "info", actions = "") => `<div class="feedback ${tone}" role="${tone === "error" ? "alert" : "status"}">${icon(tone === "success" ? "check" : tone === "error" || tone === "warning" ? "warning" : "shield", 17)}<div>${esc(message)}${actions ? `<div class="feedback-actions">${actions}</div>` : ""}</div></div>`;
+/** Persistent object recovery; unlike transient results it remains after dismissal. */
+export const OwnedFeedback = (message, tone = 'warning', actions = '') => `<div class="owned-feedback ${tone}" role="status"><span>${esc(message)}</span>${actions ? `<div class="feedback-actions">${actions}</div>` : ''}</div>`;
 export const PageHeader = (title, description, actions = "", back = "") => `${back ? `<div class="breadcrumb">${back}</div>` : ""}<div class="page-header"><div><h1>${esc(title)}</h1><p>${esc(description)}</p></div><div class="header-actions">${actions}</div></div>`;
 export const Section = (title, description, body, actions = "", cls = "") => `<section class="section ${cls}"><div class="section-heading"><div><h2>${esc(title)}</h2>${description ? `<p>${esc(description)}</p>` : ""}</div>${actions ? `<div class="section-actions">${actions}</div>` : ""}</div>${body}</section>`;
 export const Field = (id, label, control, help = "", error = "") => `<div class="field"><label for="${id}">${label}</label><div class="field-body">${control}${help ? `<p class="help" id="${id}-help">${help}</p>` : ""}<p class="field-error" id="${id}-error" ${error ? "" : "hidden"}>${esc(error)}</p></div></div>`;

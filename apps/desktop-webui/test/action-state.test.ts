@@ -75,7 +75,7 @@ test('reviewing one original record retains unrelated unknown locks and rejects 
   actions.fail(agent, Object.assign(new Error('lost Run'), { code: 'RESULT_UNKNOWN' }));
   actions.review(start);
   assert.equal(start.blocked, false); assert.equal(transfer.blocked, true); assert.equal(agent.blocked, true);
-  assert.match(start.phase, /Previous result unknown/);
+  assert.match(String(start.phase), /Previous result unknown/);
   actions.clear();
   const fresh = actions.begin(intent('start', 'lifecycle'));
   actions.fail(fresh, Object.assign(new Error('lost new Start'), { code: 'RESULT_UNKNOWN' }));
@@ -151,4 +151,58 @@ test('only aria-disabled read refresh avoids native disabling while the action l
   const request={...intent('refresh-files',kind),action:'refresh-files'};const record=actions.begin(request);const attrs:any={'aria-disabled':'true'};const button:any={dataset:{action:'refresh-files',readBusy:'true'},disabled:false,getAttribute:(name:string)=>attrs[name],setAttribute:(name:string,value:string)=>attrs[name]=value};
   const root:any={querySelectorAll:(selector:string)=>selector==='button[data-action]'?[button]:[]};record.view='different';renderActionStates(root,actions,'current',()=>request);assert.equal(button.disabled,kind!=='read');assert.ok(actions.conflict(request));actions.clear();
  }
+});
+
+test('retained local failure and confirmation render in the current language', async () => {
+  const { chooseLocale, LocalizedMessage } = await import(new URL('../browser/locale.js', import.meta.url).href);
+  const actions = new ActionState();
+  chooseLocale('en');
+  const read = actions.begin(intent('locale-read', 'read'));
+  actions.fail(read, new Error('Synthetic backend detail'));
+  assert.match(actions.message(read), /Could not read/);
+  chooseLocale('zh-CN');
+  assert.match(actions.message(read), /读取失败/);
+  assert.match(actions.message(read), /Synthetic backend detail/);
+  const save = actions.begin(intent('locale-save'));
+  actions.confirm(save, new LocalizedMessage('save.saved'));
+  assert.match(actions.message(save), /已保存/);
+  chooseLocale('en');
+  assert.match(actions.message(save), /File saved/);
+  actions.clear();
+});
+
+test('discarding a detached read never confirms it or releases mutation unknown', () => {
+  const actions = new ActionState();
+  const read = actions.begin(intent('detached-read', 'read'));
+  const write = actions.begin(intent('original-write'));
+  actions.fail(write, Object.assign(new Error('Unconfirmed'), { code: 'RESULT_UNKNOWN' }));
+  actions.discardRead(write);
+  assert.equal(actions.current(write), true);
+  assert.equal(write.blocked, true);
+  actions.discardRead(read);
+  actions.finish(read);
+  assert.equal(actions.current(read), false);
+  assert.equal(read.checkedAt, undefined);
+  assert.equal(write.blocked, true);
+  actions.clear();
+});
+
+test('retained request and readback errors use their narrow display formatter at render time', async () => {
+  let language = 'en';
+  const format = (error: unknown) => `${language === 'en' ? 'Read failed' : '读取失败'}: ${(error as Error).message}`;
+  const actions = new ActionState(() => {}, () => Date.now(), format);
+  const read = actions.begin(intent('localized-error', 'read'));
+  actions.fail(read, new Error('RAW_CODE'));
+  assert.match(actions.message(read), /Read failed: RAW_CODE/);
+  language = 'zh';
+  assert.match(actions.message(read), /读取失败: RAW_CODE/);
+  const write = actions.begin(intent('localized-readback'));
+  actions.confirm(write, 'Saved');
+  await actions.refresh(write, async () => { throw new Error('READBACK_CODE'); });
+  assert.match(actions.message(write), /读取失败: READBACK_CODE/);
+  language = 'en';
+  assert.match(actions.message(write), /Read failed: READBACK_CODE/);
+  assert.equal(write.result, 'Saved');
+  assert.equal(write.blocked, undefined);
+  actions.clear();
 });

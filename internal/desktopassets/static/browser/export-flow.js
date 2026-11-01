@@ -74,6 +74,18 @@ export class ExportFlows {
         void this.run(flow, true);
         return flow;
     }
+    /** Records only a validated manual browser handoff, not a physical disk save. */
+    confirmDelivery(id, snapshotId, transferId, identityEpoch) {
+        const flow = this.get(id);
+        if (!flow || !this.authorized() || identityEpoch !== this.port.identityEpoch || flow.identityEpoch !== identityEpoch ||
+            flow.phase !== 'delivered' || !flow.autoDeliveryConsumed || flow.snapshotId !== snapshotId || flow.transferId !== transferId || flow.feedbackIssue !== 'delivery')
+            return false;
+        delete flow.feedbackIssue;
+        delete flow.feedbackError;
+        flow.error = '';
+        this.changed();
+        return true;
+    }
     pause(id) {
         const flow = this.require(id), runtime = this.runtime.get(id);
         flow.paused = true;
@@ -192,6 +204,19 @@ export class ExportFlows {
             runtime.reading = undefined;
         }
     }
+    readFeedback(flow, kind, error) {
+        const runtime = this.runtime.get(flow.id);
+        if (error) {
+            runtime.feedbackRead = kind;
+            flow.feedbackIssue = 'read';
+            flow.feedbackError = error;
+        }
+        else if (flow.feedbackIssue === 'read' && runtime.feedbackRead === kind) {
+            runtime.feedbackRead = undefined;
+            delete flow.feedbackIssue;
+            delete flow.feedbackError;
+        }
+    }
     validOperation(flow, operation, id) {
         if (operation.id !== id || operation.workId !== flow.workId || operation.checkedWorkId !== flow.workId) {
             this.fail(flow, t('d.export.originalOperationUnknown'));
@@ -289,6 +314,7 @@ export class ExportFlows {
                             this.fail(flow, t('d.export.notStop'));
                             return;
                         }
+                        this.readFeedback(flow, 'stop', stop.observationError);
                         if (failedOperation(stop)) {
                             this.fail(flow, stop.error || t('d.export.stopState', { state: stop.state }));
                             return;
@@ -300,6 +326,7 @@ export class ExportFlows {
                             this.fail(flow, t('d.export.originalWorkUnavailable'));
                             return;
                         }
+                        this.readFeedback(flow, 'work', work.statusError);
                         if (!this.matchingStop(flow, work))
                             return;
                         if (stop.state !== 'succeeded' || !this.stopped(work)) {
@@ -316,6 +343,7 @@ export class ExportFlows {
                             this.fail(flow, t('d.export.originalWorkUnavailable'));
                             return;
                         }
+                        this.readFeedback(flow, 'work', work.statusError);
                         if (!this.stopped(work)) {
                             if (work.desired === 'stopped' || work.statusError || this.port.project(work).action !== 'stop') {
                                 flow.error = t('d.export.workNotStopped');
@@ -406,6 +434,7 @@ export class ExportFlows {
                     snapshot = await this.read(flow, 'snapshot', () => this.port.fetchSnapshot(flow.snapshotId, explicit));
                     if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot))
                         return;
+                    this.readFeedback(flow, 'snapshot');
                     flow.exportOperationId = snapshot.operationId;
                 }
                 if (!flow.exportOperationId) {
@@ -426,6 +455,7 @@ export class ExportFlows {
                 }
                 if (!flow.snapshotId && operation.snapshotId)
                     flow.snapshotId = operation.snapshotId;
+                this.readFeedback(flow, 'operation', operation.observationError);
                 if (operation.state !== 'succeeded') {
                     flow.phase = 'exporting';
                     return;
@@ -436,7 +466,10 @@ export class ExportFlows {
                 }
                 flow.phase = 'snapshot';
                 snapshot = await this.read(flow, 'snapshot', () => this.port.fetchSnapshot(flow.snapshotId, explicit));
-                if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot) || !this.available(flow, snapshot))
+                if (!this.live(flow) || !this.validSnapshotIdentity(flow, snapshot))
+                    return;
+                this.readFeedback(flow, 'snapshot');
+                if (!this.available(flow, snapshot))
                     return;
                 runtime.validatedSnapshot = flow.snapshotId;
                 runtime.validatedOperation = flow.exportOperationId;
@@ -505,6 +538,8 @@ export class ExportFlows {
             catch (error) {
                 if (this.live(flow) && !flow.autoDeliveryConsumed && !flow.terminal) {
                     flow.error = message(error);
+                    if (runtime.failedRead)
+                        this.readFeedback(flow, runtime.failedRead, flow.error);
                     const status = error?.httpStatus;
                     if (runtime.failedRead === 'transfer')
                         this.unknown(flow, t('d.export.transferUnconfirmedDetail', { detail: message(error) }));
@@ -567,6 +602,9 @@ export class ExportFlows {
             this.fail(flow, t('d.export.transferWrong'));
             return;
         }
+        if (!transfer.error && !transfer.observationError && !transfer.terminalFailure && (transfer.ready || transfer.seen && transfer.checkedAt))
+            flow.transferConfirmation = (flow.transferConfirmation || 0) + 1;
+        this.readFeedback(flow, 'transfer', transfer.observationError);
         if (transfer.terminalFailure) {
             this.fail(flow, transfer.error || t('d.export.preparationFailed'));
             return;
@@ -591,6 +629,8 @@ export class ExportFlows {
         }
         catch (error) {
             flow.error = t('d.export.saveAgain', { detail: message(error) });
+            flow.feedbackIssue = 'delivery';
+            flow.feedbackError = flow.error;
         }
         this.changed();
     }

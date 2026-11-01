@@ -334,18 +334,21 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	client := browser(t)
 	for path, contentType := range map[string]string{
 		"/setup": "text/html", "/login": "text/html",
-		"/setup/browser/onboarding.js":   "text/javascript",
-		"/setup/browser/components.js":   "text/javascript",
-		"/setup/browser/model-form.js":   "text/javascript",
-		"/setup/browser/pending.js":      "text/javascript",
-		"/setup/browser/i18n.js":         "text/javascript",
-		"/setup/browser/boot.js":         "text/javascript",
-		"/setup/browser/locale.js":       "text/javascript",
-		"/setup/browser/i18n/catalog.js": "text/javascript",
-		"/setup/browser/i18n/shared.js":  "text/javascript",
-		"/setup/browser/i18n/setup.js":   "text/javascript",
-		"/setup/browser/i18n/app.js":     "text/javascript",
-		"/setup/piwork-logo.png":         "image/png", "/setup/style.css": "text/css",
+		"/setup/browser/onboarding.js":          "text/javascript",
+		"/setup/browser/components.js":          "text/javascript",
+		"/setup/browser/model-form.js":          "text/javascript",
+		"/setup/browser/pending.js":             "text/javascript",
+		"/setup/browser/notices.js":             "text/javascript",
+		"/setup/browser/feedback-policy.js":     "text/javascript",
+		"/setup/browser/feedback-primitives.js": "text/javascript",
+		"/setup/browser/i18n.js":                "text/javascript",
+		"/setup/browser/boot.js":                "text/javascript",
+		"/setup/browser/locale.js":              "text/javascript",
+		"/setup/browser/i18n/catalog.js":        "text/javascript",
+		"/setup/browser/i18n/shared.js":         "text/javascript",
+		"/setup/browser/i18n/setup.js":          "text/javascript",
+		"/setup/browser/i18n/app.js":            "text/javascript",
+		"/setup/piwork-logo.png":                "image/png", "/setup/style.css": "text/css",
 	} {
 		response, err := client.Get(origin + path)
 		if err != nil {
@@ -357,13 +360,15 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 			t.Fatalf("setup asset %s unavailable or wrong type", path)
 		}
 	}
-	response, err := client.Get(origin + "/setup/browser/adapter.js")
-	if err != nil {
-		t.Fatal(err)
-	}
-	response.Body.Close()
-	if response.StatusCode != 404 {
-		t.Fatal("unexpected setup module was exposed")
+	for _, path := range []string{"/setup/browser/adapter.js", "/setup/browser/app.js", "/setup/browser/model-port.js", "/setup/browser/feedback-unlisted.js"} {
+		response, err := client.Get(origin + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 404 {
+			t.Fatalf("unexpected setup module %s was exposed", path)
+		}
 	}
 }
 
@@ -377,6 +382,9 @@ func TestSetupLanguageModulesSupportHeadAndKeepCSP(t *testing.T) {
 		"/setup/browser/i18n.js",
 		"/setup/browser/locale.js",
 		"/setup/browser/read-deadline.js",
+		"/setup/browser/notices.js",
+		"/setup/browser/feedback-policy.js",
+		"/setup/browser/feedback-primitives.js",
 		"/setup/browser/i18n/catalog.js",
 		"/setup/browser/i18n/shared.js",
 		"/setup/browser/i18n/setup.js",

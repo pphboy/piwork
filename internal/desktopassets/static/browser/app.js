@@ -1,5 +1,20 @@
+import { BootstrapReadFeedback } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
+import { sharedIcon } from './feedback-primitives.js';
+import { NoticeStore, createNoticeHost } from './notices.js';
+import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-notices.js';
+import { fileReadFeedback, FileReadNoticeOwners } from './file-read-feedback.js';
+import { WorkReadFeedback, workReadMatches } from './work-read-feedback.js';
+import { SettingsReadFeedback, settingsReadMatches } from './settings-read-feedback.js';
+import { ServiceReadFeedback, serviceReadMatches } from './service-read-feedback.js';
+import { acceptedChatSubmissionOwns } from './chat-submission-feedback.js';
+import { AboutReadFeedback } from './about-read-feedback.js';
+import { ReadFeedbackBindings } from './read-feedback.js';
+import { operationFeedback, operationFeedbackSource, OperationFeedbackRegistry } from './operation-feedback.js';
+import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedbackVisible } from './admission-feedback.js';
+import { ChatRunFeedback } from './chat-run-feedback.js';
+import { menuCommands, workHeaderModel, serviceToolbarModel } from './work-chrome.js';
 import { renderChatMarkdown } from './chat-markdown.js';
 import { overlayRole, anchoredOverlay, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
@@ -8,17 +23,20 @@ import { restoreSelection, initialWorkArea, parentDirectory, missingFileTarget }
 import { renameField, validLocalName, canSubmitName, canDismissLightModal, pointOutsideDialog, canCancelPiRequest, modalActionRelevant } from './control-rules.js';
 import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from './draft-revision.js';
 import { FileMutationResults, UnknownFileLocks, uploadReview } from './file-results.js';
-import { exportWorkConflict, exportSnapshotAvailable } from './export-admission.js';
+import { exportWorkConflict } from './export-admission.js';
+import { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } from './export-panel.js';
+import { ExportFeedbackRegistry, exportFlowNotice, logExportNotice, logExportTargetAvailable, logExportReadRecovered } from './export-feedback.js';
 import { ExportFlows } from './export-flow.js';
+import { saveExportFile } from './export-panel-controls.js';
 import { operationKind } from './operation-recovery.js';
 import { operationCauseStatus } from './operation-diagnostics.js';
 import { activityGroups } from './chat-projection.js';
 import { ImageDrafts } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates, positionSlowStatus, pruneSlowStatuses } from './action-state.js';
-import { adapter, DesktopError, fileVersion } from "./adapter.js";
+import { adapter, DesktopError, describeError, fileVersion } from "./adapter.js";
 import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
-import { t, stateText, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatTime, formatDateTime, formatNumber, formatBytes, formatPercent } from './locale.js';
+import { t, stateText, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, LocalizedMessage, formatTime, formatDateTime, formatNumber, formatBytes, formatPercent } from './locale.js';
 const root = document.querySelector("#app");
 onLocaleChange(render);
 const pendingAges = new Map();
@@ -40,6 +58,9 @@ const imageObserver = new IntersectionObserver(entries => { for (const entry of 
     } });
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const icon = (name, size = 18) => {
+    const shared = sharedIcon(name, size);
+    if (shared)
+        return shared;
     const paths = {
         arrow: '<path d="m10 5-7 7 7 7M3 12h18"/>',
         reset: '<path d="M3 10a9 9 0 1 1 2.6 8.4M3 4v6h6"/>',
@@ -60,7 +81,6 @@ const icon = (name, size = 18) => {
         settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="16" cy="17" r="3"/>',
         external: '<path d="M14 3h7v7M10 14 21 3M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/>',
         copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
-        refresh: '<path d="M21 3v6h-6M3 21v-6h6M20 9A8 8 0 0 0 6 5L3 9m18 6-3 4A8 8 0 0 1 4 15"/>',
         upload: '<path d="M12 16V3m-5 5 5-5 5 5M3 15v6h18v-6"/>',
         download: '<path d="M12 3v13m-5-5 5 5 5-5M3 17v4h18v-4"/>',
         close: '<path d="m6 6 12 12M6 18 18 6"/>',
@@ -88,9 +108,9 @@ const btn = (label, action, cls = "", extra = "") => `<button class="button ${cl
 const languageName = () => languageChoices().find(choice => choice.selected)?.label || '';
 const languageTrigger = (cls = 'account-button quiet', key = 'topbar') => btn(`${icon('globe', 16)}<span>${t('lang.menu')}</span>${icon('down', 12)}`, 'language', `${cls} language-trigger`, `data-language-trigger="${key}" aria-label="${esc(t('lang.triggerAria', { language: languageName() }))}" aria-haspopup="listbox" aria-expanded="${typeof languagePicker !== 'undefined' && languagePicker.isOpen}"`);
 const languageMenuItems = () => `<div class="menu-list language-menu">${btn(`${icon('globe', 16)}<span>${t('lang.menu')}</span><span class="language-current">${esc(languageName())}</span>${icon('chevron', 14)}`, 'language', 'language-trigger', 'role="menuitem" tabindex="-1" data-language-trigger="menu" aria-haspopup="listbox" aria-expanded="false"')}</div>`;
-const workLink = (label, id, cls = '') => `<a class="button ${cls}" data-action="open-work" data-id="${esc(id)}" href="#/work/${encodeURIComponent(id)}">${label}</a>`;
+const workLink = (label, id, cls = '') => `<a class="button ${cls}" data-action="open-work" data-id="${esc(id)}" href="#/work/${encodeURIComponent(id)}">${icon('open-work')} ${label}</a>`;
 const badge = (status) => `<span class="status ${status.toLowerCase().replaceAll(" ", "-")}"><i></i>${esc(stateText(status))}</span>`;
-const feedback = (text, tone = "info", action = "") => `<div class="feedback ${tone}" role="status">${icon(tone === "success" ? "check" : "info")}<div>${text}</div>${action}</div>`;
+const feedback = (text, tone = "info", action = "") => `<div class="feedback owner-recovery ${tone}" role="status">${icon(tone === "success" ? "check" : "info")}<div>${text}</div>${action}</div>`;
 const empty = (symbol, title, body, action = "") => `<div class="empty">${icon(symbol, 32)}<h2>${title}</h2><p>${body}</p>${action}</div>`;
 const pendingStatus = (label, ownedActions = '') => `<span class="pending-status" role="status" aria-busy="true" data-pending-label="${esc(label)}" ${ownedActions ? `data-pending-action="${ownedActions}"` : ''}>${pendingDots()}<span>${esc(label)}</span></span>`;
 /**
@@ -138,7 +158,6 @@ let view = {
     noteTitle: "",
     noteBody: "",
     noteLoaded: "",
-    toast: "",
     modalError: "",
     modalNameError: null,
     createName: "",
@@ -184,7 +203,7 @@ let workspaceReturn, chatReturn;
 const chatReading = new Map();
 let pendingWebCommand;
 let importSignInSuspended = false;
-const actions = new ActionState(() => render());
+const actions = new ActionState(() => render(), undefined, describeError);
 let latestCreateToken = 0;
 const createDraft = new NewWorkDraftRevision();
 const unknownFiles = new UnknownFileLocks();
@@ -350,9 +369,11 @@ function orphanTaskRows() {
  */
 function orphanTasksEntry() {
     const { count } = orphanTaskRows();
-    if (!count)
+    if (!count && !adapter.operationRecords.error)
         return '';
-    return `<div class="works-task-entry">${btn(`${icon('clock', 15)} <span>${t('works.taskEntry', { count })}</span>`, 'works-tasks', 'quiet small', `aria-haspopup="dialog" aria-expanded="${view.modal === 'works-tasks'}" aria-label="${esc(t('works.taskEntryAria', { count }))}"`)}</div>`;
+    const label = adapter.operationRecords.error ? t('recovery.pendingTasks') : t('works.taskEntry', { count });
+    const ariaLabel = adapter.operationRecords.error ? t('ops.findOperation') : t('works.taskEntryAria', { count });
+    return `<div class="works-task-entry">${btn(`${icon('clock', 15)} <span>${label}</span>`, 'works-tasks', 'quiet small', `aria-haspopup="dialog" aria-expanded="${view.modal === 'works-tasks'}" aria-label="${esc(ariaLabel)}"`)}</div>`;
 }
 function orphanTaskList() {
     const { count, rows } = orphanTaskRows();
@@ -423,7 +444,9 @@ async function submitWorkStart(w, record, imported) {
         }
         if (record) {
             record.businessId = op.id;
-            actions.confirm(record, t('action.accepted', { id: op.id }));
+            record.successFeedback = 'owner';
+            retainOperationFeedback(record, op);
+            actions.confirm(record, new LocalizedMessage('action.accepted', { id: op.id }));
         }
         void adapter.loadWork(w.id).catch(() => undefined);
         render();
@@ -460,7 +483,9 @@ async function submitServiceControl(w, serviceId, action, record) {
         control.phase = 'accepted';
         if (record) {
             record.businessId = op.id;
-            actions.confirm(record, t('action.accepted', { id: op.id }));
+            record.successFeedback = 'owner';
+            retainOperationFeedback(record, op);
+            actions.confirm(record, new LocalizedMessage('action.accepted', { id: op.id }));
         }
         if (origin === location.hash && choice === modalChoice && current()?.id === w.id)
             openModal('service-details', { serviceId });
@@ -496,10 +521,58 @@ function advanceImportStarts() {
             intent.consumed = true;
             queueMicrotask(() => {
                 if (intent.epoch === adapter.identityEpoch && intent.origin === location.hash && intent.choice === modalChoice)
-                    void openWork(w).catch(error => toast(error.message));
+                    void openWork(w).catch(error => toast(() => describeError(error), 'error'));
             });
         }
     }
+}
+const exportFeedback = new ExportFeedbackRegistry();
+function acceptedExportFlow(flow) {
+    exportFeedback.setIdentity(noticeIdentity());
+    exportFeedback.acceptFlow(flow);
+    return flow;
+}
+function startLogExportWithFeedback() {
+    exportFeedback.setIdentity(noticeIdentity());
+    adapter.startLogExport();
+    exportFeedback.acceptLog(adapter.logExport);
+}
+function syncExportFeedback() {
+    exportFeedback.setIdentity(noticeIdentity());
+    for (const registered of exportFeedback.flowOwners()) {
+        const flow = registered.original;
+        if (exportFeedback.readRecovered(registered))
+            notices.resolve(registered.owner);
+        if (flow.phase === 'revoked' || flow.phase === 'delivered' && !flow.feedbackIssue) {
+            notices.resolve(registered.owner);
+            exportFeedback.publishedFlow(registered, true);
+            continue;
+        }
+        const event = exportFlowNotice(registered, {
+            label: () => t('common.details'),
+            run: () => {
+                if (registered.owner.identity !== noticeIdentity() || exportFlows.get(flow.id) !== flow)
+                    return;
+                openModal('export', { id: flow.workId, flowId: flow.id, snapshotId: exportFlows.get(flow.id)?.snapshotId || '' });
+            },
+        });
+        if (event)
+            exportFeedback.publishedFlow(registered, notices.publish(event));
+    }
+    const registered = exportFeedback.logOwner(adapter.logExport);
+    if (!registered)
+        return;
+    const event = logExportNotice(registered, {
+        label: () => t('common.details'),
+        run: () => {
+            if (registered.owner.identity === noticeIdentity())
+                openModal('log-export', { originalLogKey: String(registered.owner.generation) });
+        },
+    });
+    if (event)
+        notices.publish(event);
+    else if (logExportReadRecovered(registered, adapter.logExport, noticeIdentity()))
+        notices.resolve(registered.owner);
 }
 const exportFlows = new ExportFlows(adapter, {
     deliver: (flow, url) => downloadURL(url, flow.workName),
@@ -507,10 +580,14 @@ const exportFlows = new ExportFlows(adapter, {
     visible: () => document.visibilityState === 'visible',
     canSubmitWorkMutation: (workId, flowId) => !exportWorkConflict(actions.records.values(), workId, flowId),
 });
-function openExportFlow(flow, record) { if (record) {
-    record.businessId = flow.id;
-    actions.confirm(record, t('action.exportIntentRetained'));
-} openModal('export', { id: flow.workId, flowId: flow.id, snapshotId: flow.snapshotId || '' }); }
+function openExportFlow(flow, record) {
+    if (record) {
+        record.businessId = flow.id;
+        record.successFeedback = 'owner';
+        actions.confirm(record, new LocalizedMessage('action.exportIntentRetained'));
+    }
+    openModal('export', { id: flow.workId, flowId: flow.id, snapshotId: flow.snapshotId || '' });
+}
 function beginExport(work, stopConfirmed = false, record) {
     const old = exportFlows.forWork(work.id);
     if (old && !old.terminal) {
@@ -523,7 +600,7 @@ function beginExport(work, stopConfirmed = false, record) {
         openModal('stop-work', { id: work.id, exportAfterStop: 'true' });
         return;
     }
-    openExportFlow(exportFlows.start(work.id, { mode: 'new', stopConfirmed }), record);
+    openExportFlow(acceptedExportFlow(exportFlows.start(work.id, { mode: 'new', stopConfirmed })), record);
 }
 class ViewChanged extends Error {
 }
@@ -533,17 +610,17 @@ const fileSelections = new Map();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels = {
     'retry-chat-submission': 'chat.retryMessage',
-    'sign-in': 'actions.signIn', 'sign-out': 'actions.signOut', 'confirm-switch-core': 'actions.switchingCore', 'check-connection': 'actions.checkingConnection',
+    'sign-in': 'actions.signIn', 'sign-out': 'actions.signOut', 'confirm-switch-core': 'actions.switchingCore', 'check-connection': 'actions.checkingConnection', 'retry-known-operations': 'quick.checkStatus',
     'retry-works': 'actions.loadingWorks', 'create-work': 'actions.creatingWork', 'start-work': 'actions.startingWork', 'start-import-open': 'actions.startingImportedWork', 'check-work-progress': 'actions.checkingWorkProgress', 'check-service-progress': 'actions.checkingServiceProgress', 'confirm-stop': 'actions.stoppingWork', 'confirm-delete': 'actions.deletingWork',
     'retry-work-read': 'actions.loadingWork', 'open-work': 'actions.loadingWork', 'check-work': 'actions.checkingWork', settings: 'actions.readingSettings', 'tab-Services': 'actions.loadingServices', 'tab-Files': 'actions.readingWorkspace',
     'retry-services': 'actions.readingServices', 'run-details': 'actions.readingRunDetails', 'active-run': 'actions.readingActiveRun', 'check-chat-submission': 'actions.checkingOriginalSubmission',
     'load-models': 'actions.readingModels', 'save-model': 'actions.savingSessionModel', 'check-session-model': 'actions.readingSessionModel', 'service-requests': 'actions.readingAgentRequests', 'check-active-run': 'actions.checkingActiveRun', 'pi-requests': 'actions.readingPiRequests', 'pi-request-detail': 'actions.readingPiRequest', 'cancel-pi-request': 'actions.cancellingPiRequest', 'retry-pi-request': 'actions.retryingPiRequest', 'next-pi-requests': 'actions.readingMorePiRequests', 'next-pi-evidence': 'actions.readingMoreEvidence',
     'load-earlier-history': 'actions.readingEarlierMessages', 'reload-history': 'actions.readingRecentMessages', 'retry-conversation': 'actions.readingConversation', 'sessions': 'actions.readingSessions', 'select-session': 'actions.readingSession', 'new-session': 'actions.creatingSession', 'send-message': 'actions.submittingMessage', 'cancel-run': 'actions.requestingCancellation', 'resume-run': 'actions.reconnectingRun',
-    'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs', 'check-service-operation': 'actions.checkingServiceProgress',
+    'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs', 'refresh-temporary-cleanups': 'merge.refreshCleanup', 'select-service': 'actions.loadingServices', 'open-controlled-service': 'actions.loadingServices', 'check-service-operation': 'actions.checkingServiceProgress',
     'open-app': 'actions.openingApplication', 'open-window': 'actions.openingApplication', 'retry-service-entry': 'actions.preparingApplication', 'check-preview': 'actions.checkingPreview',
     'refresh-files': 'actions.readingWorkspace', 'file-path': 'actions.readingDirectory', 'open-file': 'actions.readingFile', 'open-source': 'actions.readingFile', 'retry-file-preview': 'actions.readingFile', 'save-file': 'actions.savingFile', 'dirty-save': 'actions.savingFile',
     'confirm-upload-overwrite': 'actions.uploadingFiles', 'confirm-folder': 'actions.creatingFolder', 'retry-selected-files': 'actions.retryingSelectedPaths', 'confirm-transfer': 'actions.transferringFiles', 'confirm-file-delete': 'actions.deletingFiles',
-    'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
+    'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'refresh-packages': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
     'confirm-install': 'actions.submittingPackage', 'confirm-remove-package': 'actions.removingPackage', 'confirm-import': 'actions.submittingImport', 'prepare-export': 'actions.preparingExport',
     'export': 'actions.preparingExport', 'view-snapshot': 'actions.checkingSnapshot', 'save-export-file': 'actions.checkingOriginalDownload', 'check-export-flow': 'actions.checkingExport', 'resume-export-flow': 'actions.resumingExport',
     'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'check-task-operation': 'actions.checkingOperation', 'lookup-operation': 'actions.readingOperation', 'lookup-create-operation': 'actions.readingOperation', 'lookup-import-operation': 'actions.readingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
@@ -581,9 +658,26 @@ function actionIntent(el, action = el.dataset.action || '') {
         kind = 'agent';
     else if (['confirm-import', 'download-work', 'prepare-export', 'export'].includes(action))
         kind = 'transfer';
-    const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview'].includes(action);
-    const serviceId = el.dataset.id || view.data.serviceId || view.service;
-    const resource = action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${view.port}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    // Opening, filtering, and retrying observe the same Work/filter page.
+    // Keep this key independent of the current Files selection or menu entry.
+    if (['pi-requests', 'service-requests', 'next-pi-requests'].includes(action)) {
+        const serviceName = view.modal === 'pi-requests'
+            ? view.data.serviceName || ''
+            : action === 'service-requests' && w ? activeService(w)?.name || '' : '';
+        const resource = `requests:${JSON.stringify(serviceName)}`;
+        return {
+            key: `read:${w?.id || 'local'}:${resource}:pi-requests`,
+            kind: 'read', work: w?.id, resource, action, label,
+            target: `${w?.name || ''}${serviceName ? ` · ${serviceName}` : ''}`,
+            anchor: `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`,
+            owner: el, view: location.hash, projected: true,
+            sourceContext: `requests:${serviceName}`,
+        };
+    }
+    const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview', 'select-service', 'open-controlled-service'].includes(action);
+    const serviceId = el.dataset.serviceId || el.dataset.id || view.data.serviceId || view.service;
+    const servicePort = action === 'select-service' ? w?.services.find(service => service.id === serviceId)?.ports[0] : Number(el.dataset.port) || view.port;
+    const resource = action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'retry-chat-submission', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
     const anchor = `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`;
@@ -592,6 +686,15 @@ function actionIntent(el, action = el.dataset.action || '') {
 }
 async function dispatchAction(el, perform, intent = actionIntent(el)) {
     if (el.getAttribute?.('aria-disabled') === 'true')
+        return;
+    if (el.dataset.menuEpoch && Number(el.dataset.menuEpoch) !== adapter.identityEpoch)
+        return;
+    if (el.dataset.menuScope === 'work-header' && el.dataset.id !== current()?.id)
+        return;
+    const serviceMenu = el.closest('[data-menu-scope="service"]');
+    if (serviceMenu && (Number(serviceMenu.dataset.menuEpoch) !== adapter.identityEpoch ||
+        serviceMenu.dataset.menuWork !== current()?.id ||
+        serviceMenu.dataset.menuService !== (current() && activeService(current())?.id)))
         return;
     // Publishing local feedback can reconcile this button before the action runs.
     // Bind the clicked action and its explicit object IDs before that render.
@@ -603,20 +706,20 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
         return;
     }
     if (intent.action === 'create-work' && createSubmissionBlocked(actions.records.values(), view.createName)) {
-        toast(t('action.createBlocked'));
+        toast(new LocalizedMessage('action.createBlocked'), 'warning');
         return;
     }
     if (intent.work && intent.kind === 'lifecycle' && exportFlows.workControlBlocked(intent.work)) {
-        toast(t('action.lifecycleBlocked'));
+        toast(new LocalizedMessage('action.lifecycleBlocked'), 'warning');
         return;
     }
     if (intent.work && ['export', 'prepare-export'].includes(intent.action || '') && exportWorkConflict(actions.records.values(), intent.work)) {
-        toast(t('action.exportBlocked'));
+        toast(new LocalizedMessage('action.exportBlocked'), 'warning');
         return;
     }
     const conflict = actions.conflict(intent);
     if (conflict) {
-        toast(t('action.conflict', { target: conflict.target, phase: conflict.phase }));
+        toast(new LocalizedMessage('action.conflict', { target: conflict.target, phase: String(conflict.phase) }), 'warning');
         return;
     }
     const record = actions.begin(intent);
@@ -628,6 +731,9 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     }
     catch (error) {
         if (!(error instanceof ViewChanged)) {
+            const source = adapter.readFailureResource(error);
+            if (record.kind === 'read' && ['check-connection', 'retry-session', 'retry-known-operations'].includes(record.action || '') && source)
+                bootstrapReadActions.set(record, source);
             const unknown = record.blocked;
             actions.fail(record, error);
             record.blocked ||= unknown;
@@ -776,13 +882,424 @@ function uploadDetailMarkup(progress) {
         : '';
     return `<details class="file-upload-details"><summary>${t('files.uploadDetails')}</summary><p>${esc(progress.path || '')}${progress.count ? ` · ${t('progress.fileOf', { index: progress.index, count: progress.count })}` : ''}</p><p>${waiting ? pendingStatus(String(progress.phase)) : ''}${bytes}</p>${total ? `<progress value="${Math.min(progress.transferred || 0, total)}" max="${total}" aria-label="${esc(t('progress.transferBytes'))}"></progress>` : ''}</details>`;
 }
-function downloadProgressMarkup(snapshotID) {
-    const job = adapter.downloads.get(snapshotID);
-    if (!job)
-        return '';
-    return feedback(`${t('progress.transfer')} <code>${esc(job.transferId)}</code> · ${progressText(job)}${job.checkedAt ? ` · ${t('progress.checked', { time: esc(job.checkedAt) })}` : ''}${job.error ? ` · ${esc(job.error)}` : ''}${job.observationError ? ` · ${t('progress.observationInterrupted', { error: esc(job.observationError) })}` : ''}`, job.error || job.observationError ? 'warning' : 'info', btn(t('progress.checkTransfer'), 'check-download', 'small', `data-id="${esc(snapshotID)}"`));
+const notices = new NoticeStore({ onChange: () => noticeHost.render() });
+const noticeHost = createNoticeHost(notices, { document, closeLabel: () => t('common.close') });
+document.body.append(noticeHost.element);
+let noticeSequence = 0;
+const readNoticeOwners = new Map();
+const noticeIdentity = () => String(adapter.identityEpoch);
+const chatRunFeedback = new ChatRunFeedback();
+function retainAcceptedChatRun(work, session, run, epoch) {
+    if (epoch !== adapter.identityEpoch)
+        return;
+    chatRunFeedback.setIdentity(String(epoch));
+    chatRunFeedback.accept({ identity: String(epoch), work, workName: adapter.getWork(work)?.name || work, session, run });
 }
-let toastTimer;
+function recoverOriginalChatRun(target) {
+    if (target.identity !== noticeIdentity())
+        return;
+    if (view.modal && view.modal !== 'run-details') {
+        root.querySelector('#modal [data-action="close-modal"]')?.focus();
+        return;
+    }
+    if (current()?.id !== target.work) {
+        navigate(`#/work/${encodeURIComponent(target.work)}`);
+        return;
+    }
+    openModal('run-details', { runId: target.run, feedbackSession: target.session, runReadPending: 'true' });
+    const choice = modalChoice;
+    const currentTarget = () => target.identity === noticeIdentity() && current()?.id === target.work
+        && choice === modalChoice && view.modal === 'run-details' && view.data.runId === target.run;
+    void adapter.loadRunDetails(target.work, target.run, true, target.session).catch(error => {
+        if (currentTarget())
+            view.data.runReadError = describeError(error);
+    }).finally(() => {
+        if (!currentTarget())
+            return;
+        delete view.data.runReadPending;
+        render();
+    });
+}
+const operationFeedbackOwners = new OperationFeedbackRegistry();
+const actionOperationOwners = new WeakMap();
+function retainOperationFeedback(record, operation) {
+    if (!actions.current(record))
+        return;
+    operationFeedbackOwners.setIdentity(noticeIdentity());
+    const owner = operationFeedbackOwners.accept(operation, `${record.generation}:${record.token}`);
+    actionOperationOwners.set(record, owner);
+}
+function publishOperationFeedback(owner, outcome) {
+    const accepted = notices.publish({
+        identity: owner.identity, object: owner.object, task: owner.task, generation: owner.generation,
+        key: outcome.key, tone: outcome.tone,
+        message: () => `${operationAction({ kind: owner.kind })} · ${stateText(outcome.state)}${outcome.reason ? ` · ${outcome.reason}` : ''}`,
+        recovery: {
+            label: () => t('common.details'),
+            run: () => {
+                if (owner.identity !== noticeIdentity() || !adapter.getOperation(owner.operationId))
+                    return;
+                openModal('operation', { id: owner.operationId });
+            },
+        },
+    });
+    operationFeedbackOwners.published(owner, outcome, accepted);
+}
+const aboutReadNotices = new AboutReadFeedback();
+const workReadNotices = new WorkReadFeedback();
+const bootstrapReadNotices = new BootstrapReadFeedback();
+const bootstrapReadActions = new WeakMap();
+let bootstrapWorksIdentity = '';
+let routeLoad = 0;
+const workReadErrors = new Map();
+const settingsReadNotices = new SettingsReadFeedback();
+const serviceReadNotices = new ServiceReadFeedback();
+const resourceReadOwnedActions = new ReadFeedbackBindings();
+function resourceReadFeedback() {
+    const identity = noticeIdentity(), origin = location.hash, work = current();
+    const entries = [];
+    const recovery = (action, serviceId) => ({
+        label: () => t('common.details'),
+        run: () => {
+            if (identity !== noticeIdentity())
+                return;
+            if (location.hash !== origin) {
+                navigate(origin);
+                return;
+            }
+            if (serviceId && view.modal !== 'service-details')
+                openModal('service-details', { serviceId });
+            const control = root.querySelector(`[data-action="${action}"]`);
+            control?.focus();
+            control?.scrollIntoView({ block: 'nearest' });
+        },
+    });
+    const addWork = (facts, action) => entries.push({
+        projection: workReadNotices.observe(facts, facts.source === 'works' ? {
+            label: () => t('common.details'),
+            run: () => {
+                if (identity !== noticeIdentity())
+                    return;
+                if (route()[0] !== 'works')
+                    navigate('#/works');
+                else
+                    root.querySelector('[data-action=retry-works]')?.focus();
+            },
+        } : recovery(action)),
+        owns: record => workReadMatches(record, facts) || facts.source === 'works' && bootstrapReadActions.get(record) === 'works',
+    });
+    const addSettings = (facts, action) => entries.push({
+        projection: settingsReadNotices.observe(facts, recovery(action)), owns: record => settingsReadMatches(record, facts),
+    });
+    const addService = (facts, action, details = false) => entries.push({
+        projection: serviceReadNotices.observe(facts, recovery(action, details ? facts.serviceId : undefined)), owns: record => serviceReadMatches(record, facts),
+    });
+    if (!adapter.state.signedIn)
+        return entries;
+    const addBootstrap = (source, reading, error, receipt) => entries.push({
+        projection: bootstrapReadNotices.observe({ identity, source, reading, error, receipt }, {
+            label: () => t('common.details'),
+            run: () => {
+                if (identity !== noticeIdentity())
+                    return;
+                openModal(source === 'status' ? 'connection' : 'operations', source === 'status' ? {} : { workId: current()?.id || '' });
+            },
+        }),
+        owns: (record) => record.kind === 'read' && bootstrapReadActions.get(record) === source,
+    });
+    addBootstrap('status', adapter.connectionCheck.checking, adapter.statusReadError, adapter.statusReadEvidence());
+    addBootstrap('known-operations', adapter.operationRecords.reading, adapter.operationRecords.error, adapter.operationRecords.receipt);
+    if (['work', 'app'].includes(route()[0]) && !work && adapter.worksError)
+        bootstrapWorksIdentity = identity;
+    if (route()[0] === 'works' || bootstrapWorksIdentity === identity)
+        addWork({ identity, source: 'works', reading: adapter.worksLoading, error: adapter.worksError, checkedAt: adapter.worksChecked }, 'retry-works');
+    if (!work)
+        return entries;
+    addWork({ identity, workId: work.id, source: 'status', reading: false, error: work.statusError, checkedAt: work.checkedAt }, 'work-menu');
+    const settings = route()[2] === 'settings';
+    const services = route()[0] === 'app' || !settings && view.tab === 'Services' || ['service-picker', 'services', 'service-details'].includes(view.modal);
+    if (services) {
+        addWork({ identity, workId: work.id, source: 'services', reading: !!work.resourceLoading?.services, error: work.resourceErrors?.services, checkedAt: work.resourceChecked?.services }, 'retry-services');
+        const selected = activeService(work);
+        if (selected && view.port)
+            addService({ identity, workId: work.id, serviceId: selected.id, port: view.port, source: 'entry',
+                reading: adapter.serviceEntryPending(work.id, selected.id, view.port), error: adapter.serviceEntryError(work.id, selected.id, view.port),
+                confirmedVersion: adapter.serviceEntryReadEvidence(work.id, selected.id, view.port),
+            }, 'retry-service-entry');
+        if (selected && view.port)
+            addService({ identity, workId: work.id, serviceId: selected.id, port: view.port, source: 'preview',
+                reading: adapter.servicePreviewPending(work.id, selected.id, view.port), error: adapter.servicePreviewError(work.id, selected.id, view.port),
+                unconfirmed: !!adapter.servicePreviewUnconfirmed(work.id, selected.id, view.port),
+                confirmedVersion: adapter.servicePreviewReadEvidence(work.id, selected.id, view.port),
+            }, 'check-preview');
+        if (view.modal === 'service-details' && view.data.serviceId) {
+            const serviceId = view.data.serviceId, cleanup = adapter.temporaryCleanups.get(`${work.id}:service:${serviceId}`);
+            if (cleanup)
+                addService({ identity, workId: work.id, serviceId, source: 'cleanup', reading: cleanup.loading, error: cleanup.error, confirmedVersion: cleanup.items }, 'refresh-temporary-cleanups', true);
+        }
+    }
+    if (settings) {
+        addSettings({ identity, workId: work.id, source: 'configuration', reading: !!work.resourceLoading?.configuration, error: work.resourceErrors?.configuration, checkedAt: work.resourceChecked?.configuration }, 'refresh-config');
+        if (view.settingsTab === 'Pi Packages' || view.modal === 'package-detail')
+            addSettings({ identity, workId: work.id, source: 'packages', reading: !!work.resourceLoading?.packages, error: work.resourceErrors?.packages, checkedAt: work.resourceChecked?.packages }, 'refresh-packages'); // i18n-exempt: internal Settings tab identity; visible label is localized.
+        for (const source of ['skills', 'packages']) {
+            const catalog = adapter.catalog[source];
+            addSettings({ identity, source: source === 'skills' ? 'catalog-skills' : 'catalog-packages', reading: catalog.loading, error: catalog.error, checkedAt: catalog.checkedAt }, 'check-catalog');
+        }
+    }
+    return entries;
+}
+const fileReadNoticeOwners = new FileReadNoticeOwners();
+function currentFileReadFeedback() {
+    const work = current();
+    const active = !!work && route()[0] === 'work' && route()[2] !== 'settings' && view.tab === 'Files';
+    if (!active || !work)
+        return;
+    const workId = work.id, path = view.file || view.path, preview = !!view.file, epoch = adapter.identityEpoch;
+    const recovery = {
+        label: () => t('common.details'),
+        run: () => {
+            if (epoch !== adapter.identityEpoch)
+                return;
+            if (current()?.id !== workId || view.tab !== 'Files' || (view.file || view.path) !== path) {
+                navigate(filesDeepLink(workId, path) || `#/work/${encodeURIComponent(workId)}`);
+                return;
+            }
+            const retry = root.querySelector(preview ? '[data-action="retry-file-preview"]' : '.files-toolbar [data-action="refresh-files"]');
+            if (retry && !retry.disabled)
+                retry.focus();
+            else {
+                const owner = root.querySelector(preview ? '.file-target-toolbar' : '.files-toolbar');
+                if (owner) {
+                    owner.tabIndex = -1;
+                    owner.focus();
+                    owner.scrollIntoView({ block: 'nearest' });
+                }
+            }
+        },
+    };
+    return fileReadFeedback(preview ? {
+        active, workId, path, kind: 'preview', status: view.fileStatus,
+        error: view.fileError || new LocalizedMessage('files.couldNotReadFile'),
+    } : {
+        active, workId, path, kind: 'directory', directory: adapter.directories.get(`${workId}:${path}`),
+    }, String(epoch), recovery);
+}
+function syncNotices() {
+    if (notices.identity !== noticeIdentity())
+        readNoticeOwners.clear();
+    notices.setIdentity(noticeIdentity());
+    syncExportFeedback();
+    chatRunFeedback.setIdentity(noticeIdentity());
+    operationFeedbackOwners.setIdentity(noticeIdentity());
+    const aboutIdentity = noticeIdentity();
+    for (const side of ['local', 'core']) {
+        // Signed-out Core information is an admission instruction, not a failed read.
+        if (side === 'core' && !adapter.state.signedIn)
+            continue;
+        const info = adapter.about;
+        const projection = aboutReadNotices.observe({
+            identity: aboutIdentity, side, reading: side === 'local' ? info.localLoading : info.coreLoading,
+            error: side === 'local' ? info.localError : info.coreError,
+            confirmedVersion: (side === 'local' ? info.local : info.core) || undefined,
+        }, {
+            label: () => t(view.modal && view.modal !== 'about-piwork' ? 'chat.closeDialogForRun' : 'common.details'),
+            run: () => {
+                if (aboutIdentity !== noticeIdentity())
+                    return;
+                if (view.modal && view.modal !== 'about-piwork') {
+                    root.querySelector('#modal [data-action="close-modal"]')?.focus();
+                    return;
+                }
+                if (!view.modal)
+                    openModal('about-piwork');
+                root.querySelector('#modal [data-action="refresh-about"]')?.focus();
+            },
+        });
+        if (projection.recovered)
+            notices.resolve(projection.owner);
+        if (projection.event)
+            notices.publish(projection.event);
+    }
+    const resourceReads = resourceReadFeedback();
+    const fileFeedback = currentFileReadFeedback();
+    if (fileFeedback?.recovered)
+        notices.resolve(fileFeedback.owner);
+    else if (fileFeedback?.event)
+        notices.publish(fileFeedback.event);
+    const actionOwnedOperations = new Set();
+    for (const record of actions.records.values()) {
+        if (!actions.current(record))
+            continue;
+        if (record.action === 'sign-in' && adapter.signInUnknown)
+            record.notificationProjection = 'sign-in-owner';
+        const alreadyFileOwned = fileReadNoticeOwners.has(record);
+        if (fileReadNoticeOwners.owns(fileFeedback, record)) {
+            if (!alreadyFileOwned) {
+                const original = actionNotice(record, noticeIdentity(), () => actions.message(record));
+                if (original)
+                    notices.resolve(original);
+                readNoticeOwners.delete(record.key);
+            }
+            if (fileReadNoticeOwners.recoveredOwner(fileFeedback, record))
+                queueMicrotask(() => {
+                    // Defer removal until after this render and recheck the same owner, not a loading reset.
+                    if (actions.current(record) && record.kind === 'read' && !record.pending && fileReadNoticeOwners.recoveredOwner(currentFileReadFeedback(), record))
+                        actions.discardRead(record);
+                });
+            continue;
+        }
+        const recoveredKey = confirmedReadRecovery(record);
+        const previous = recoveredKey && readNoticeOwners.get(recoveredKey);
+        if (previous) {
+            notices.resolve(previous);
+            readNoticeOwners.delete(record.key);
+        }
+        const resourceAttribution = resourceReads.find(entry => !!entry.projection.event && entry.owns(record));
+        if (!resourceReadOwnedActions.has(record) && resourceAttribution) {
+            const previous = actionNotice(record, noticeIdentity(), () => actions.message(record));
+            if (previous)
+                notices.resolve(previous);
+            readNoticeOwners.delete(record.key);
+            resourceReadOwnedActions.bind(record, resourceAttribution.projection.owner);
+        }
+        const event = resourceReadOwnedActions.has(record) ? undefined : actionNotice(record, noticeIdentity(), () => actions.message(record), {
+            label: () => t('common.details'),
+            run: () => {
+                if (!actions.current(record))
+                    return;
+                if (record.businessId && adapter.getOperation(record.businessId))
+                    openModal('operation', { id: record.businessId });
+                else if (record.work && current()?.id !== record.work)
+                    navigate(`#/work/${encodeURIComponent(record.work)}`);
+                else {
+                    const status = [...root.querySelectorAll('[data-action-status]')].find(element => element.dataset.actionStatus === record.key);
+                    if (status) {
+                        status.tabIndex = -1;
+                        status.focus();
+                        status.scrollIntoView({ block: 'nearest' });
+                    }
+                    else if (record.owner?.isConnected && !record.owner.matches(':disabled'))
+                        record.owner.focus();
+                }
+            },
+        });
+        const operationOwner = actionOperationOwners.get(record);
+        if (event) {
+            if (record.kind === 'read') {
+                const prior = readNoticeOwners.get(record.key);
+                if (prior && prior.generation !== event.generation)
+                    notices.resolve(prior);
+                readNoticeOwners.set(record.key, event);
+            }
+            if (operationOwner) {
+                actionOwnedOperations.add(operationOwner.operationId);
+                const outcome = operationFeedback(operationOwner, adapter.getOperation(operationOwner.operationId));
+                if (outcome && operationFeedbackSource(outcome, record) === 'operation')
+                    publishOperationFeedback(operationOwner, outcome);
+                else
+                    notices.publish({ ...event, ...operationOwner });
+            }
+            else
+                notices.publish(event);
+        }
+        else if (operationOwner) {
+            // An accepted terminal receipt may already be pruned from the registry.
+            // Its still-current request can recover a later associated readback error.
+            const outcome = operationFeedback(operationOwner, adapter.getOperation(operationOwner.operationId));
+            if (outcome && operationFeedbackSource(outcome, record) === 'operation') {
+                actionOwnedOperations.add(operationOwner.operationId);
+                publishOperationFeedback(operationOwner, outcome);
+            }
+        }
+    }
+    for (const owner of operationFeedbackOwners.owners()) {
+        if (actionOwnedOperations.has(owner.operationId))
+            continue;
+        const outcome = operationFeedback(owner, adapter.getOperation(owner.operationId));
+        if (outcome)
+            publishOperationFeedback(owner, outcome);
+    }
+    for (const { projection } of resourceReads) {
+        if (projection.recovered) {
+            notices.resolve(projection.owner);
+            for (const original of actions.records.values()) {
+                if (original.kind !== 'read' || !resourceReadOwnedActions.matches(original, projection.owner))
+                    continue;
+                queueMicrotask(() => {
+                    if (actions.current(original) && !original.pending && projection.owner.identity === noticeIdentity() && projection.currentConfirmation?.())
+                        actions.discardRead(original);
+                });
+            }
+        }
+        if (projection.event)
+            notices.publish(projection.event);
+    }
+    const identity = noticeIdentity();
+    const preference = preferenceFeedback({
+        revision: adapter.preferenceRevision, confirmedRevision: adapter.preferenceConfirmedRevision,
+        phase: adapter.preferences.phase, reading: adapter.preferences.reading,
+        error: adapter.preferences.error, notice: adapter.preferences.notice,
+    }, identity, {
+        label: () => t('common.details'),
+        run: () => {
+            if (identity !== noticeIdentity())
+                return;
+            if (adapter.state.signedIn && !view.modal)
+                openModal('switch-core');
+            root.querySelector('#auth-core')?.focus();
+        },
+    });
+    const session = sessionFeedback({
+        revision: adapter.sessionReadRevision,
+        state: adapter.state.sessionState, error: adapter.state.sessionError,
+    }, identity, {
+        label: () => t('auth.retry'),
+        run: () => {
+            if (identity !== noticeIdentity())
+                return;
+            const origin = location.hash;
+            const epoch = adapter.identityEpoch;
+            void adapter.initialize().catch(error => reportInitializationFailure(error, epoch, origin));
+        },
+    });
+    const signInRevision = adapter.signInRevision;
+    const signIn = signInFeedback({
+        unknown: adapter.signInUnknown, revision: signInRevision,
+        readRevision: adapter.sessionReadRevision,
+    }, identity, () => String(adapter.state.sessionError || t('d.error.signInUnknown')), {
+        label: () => t('auth.retry'),
+        run: () => {
+            if (identity !== noticeIdentity() || !adapter.signInUnknown || signInRevision !== adapter.signInRevision)
+                return;
+            // A failed check remains in the original source owner; never replay login.
+            void adapter.checkSignInOutcome().catch(() => { });
+        },
+    });
+    if (adapter.signInUnknown)
+        notices.resolve(session.owner);
+    for (const projection of [preference, ...(adapter.signInUnknown ? [] : [session]), signIn]) {
+        if (projection.recovered)
+            notices.resolve(projection.owner);
+        if (projection.event)
+            notices.publish(projection.event);
+    }
+    for (const outcome of chatRunFeedback.project(target => adapter.getRunFeedback(target.work, target.session, target.run), (run, target) => t('chat.runNotice', {
+        work: target.workName || target.work,
+        message: String(run.executionError || run.error || t('execution.runStatus', { status: stateText(run.status) })),
+    }), target => ({
+        label: () => t(view.modal && view.modal !== 'run-details' ? 'chat.closeDialogForRun' : 'common.details'),
+        run: () => recoverOriginalChatRun(target),
+    }))) {
+        if (outcome.resolve)
+            notices.resolve(outcome.owner);
+        if (outcome.event)
+            notices.publish(outcome.event);
+        if (outcome.retired)
+            adapter.forgetRunFeedback(outcome.target.work, outcome.target.session, outcome.target.run);
+    }
+    noticeHost.render();
+}
 let lastFocus = null;
 let pendingNav = null;
 let sourceGuardReturn;
@@ -808,14 +1325,13 @@ const activeService = (w) => w.services.find((s) => s.id === view.service) ||
     w.services[0];
 const unavailable = () => ["core-offline", "cli-closed"].includes(adapter.state.scenario) || !adapter.state.signedIn || adapter.state.sessionState === 'unavailable';
 const dirty = () => view.file && view.fileDraft !== view.fileOriginal;
-function toast(message) {
-    view.toast = message;
-    clearTimeout(toastTimer);
-    render();
-    toastTimer = setTimeout(() => {
-        view.toast = "";
-        render();
-    }, 3000);
+function toast(message, tone = 'success') {
+    notices.setIdentity(noticeIdentity());
+    notices.publish({
+        identity: noticeIdentity(), key: String(++noticeSequence),
+        object: current()?.id || 'desktop', task: 'explicit-feedback', generation: noticeSequence,
+        tone, message: noticeMessage(message),
+    });
 }
 function navigate(hash) {
     const go = () => {
@@ -954,6 +1470,31 @@ let overlayContext = "";
 let overlayOpening = false;
 let requestNavigation;
 function requestNavigationCurrent() { return requestNavigation?.epoch === adapter.identityEpoch && requestNavigation.workId === current()?.id; }
+/** A page observation may finish in the adapter after its inspector has moved on. */
+async function readRequestPage(workId, serviceName, record, more = false) {
+    const epoch = adapter.identityEpoch;
+    const origin = location.hash;
+    const choice = modalChoice;
+    const selected = () => epoch === adapter.identityEpoch && origin === location.hash
+        && choice === modalChoice && current()?.id === workId
+        && view.modal === 'pi-requests' && (view.data.serviceName || '') === serviceName
+        && (!record || actions.current(record));
+    const discardStale = () => {
+        if (selected())
+            return;
+        if (record)
+            actions.discardRead(record);
+        throw new ViewChanged();
+    };
+    try {
+        await adapter.loadRequests(workId, serviceName, more);
+    }
+    catch (error) {
+        discardStale();
+        throw error;
+    }
+    discardStale();
+}
 function openModal(name, data = {}) {
     if (name === 'import') {
         if (adapter.prepareNewImport()) {
@@ -1078,21 +1619,22 @@ function scenarioBar() { return ""; }
 function brand() {
     return `<a href="#/works" class="brand" aria-label="${esc(t('brand.worksAria'))}"><img class="brand-logo" src="/desktop/piwork-logo.png" alt="" width="40" height="40"><span class="brand-product">Desktop</span></a>`;
 }
-function topbar() {
+function topbar(toolbar = '') {
     if (adapter.state.sessionState !== "ready")
         return `<header class="topbar">${brand()}<div class="topbar-right">${languageTrigger()}</div></header>`;
-    return `<header class="topbar">${brand()}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${!adapter.state.signedIn ? languageTrigger() : ''}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span><span>${esc(adapter.state.core.account || t('topbar.account'))}</span>${icon("down", 14)}`, "account", "account-button quiet", `aria-label="${esc(t('topbar.accountMenuAria', { account: adapter.state.core.account || t('topbar.account') }))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
+    return `<header class="topbar${toolbar ? ' topbar-works' : ''}">${brand()}${toolbar}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${!adapter.state.signedIn ? languageTrigger() : ''}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span>`, "account", "account-button quiet", `aria-label="${esc(t('topbar.accountMenuAria', { account: adapter.state.core.account || t('topbar.account') }))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
 }
 function defaultCorePreferences() {
     const p = adapter.preferences, blocked = ['saving', 'clearing', 'unconfirmed'].includes(p.phase);
     const pending = p.reading ? t('defaults.reading') : p.phase === 'saving' ? t('defaults.saving') : p.phase === 'clearing' ? t('defaults.restoring') : p.phase === 'loading' ? t('defaults.reading') : p.phase === 'unconfirmed' ? t('defaults.unconfirmed') : '';
     const control = (label, action, busy, disabled) => btn(`<span class="button-pending-content${busy ? ' is-pending' : ''}"><span>${esc(label)}</span>${busy ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, action, 'quiet small', `${disabled ? 'disabled' : ''} ${busy ? `aria-busy="true" data-pending-action="${action}" title="${esc(pending)}"` : ''}`);
-    return `<section class="default-core-preferences" aria-label="${esc(t('defaults.aria'))}"><p class="muted">${t('defaults.currentConnection', { address: `<code>${esc(adapter.state.core.address)}</code>` })}</p><p>${t('defaults.savedDefault', { value: `<strong>${esc(p.confirmed ? p.coreUrl || t('defaults.notSet') : t('defaults.notRead'))}</strong>` })}</p><p class="muted">${t('defaults.help')}</p><div>${control(t('defaults.save'), 'save-default-core', p.phase === 'saving', blocked)}${control(t('defaults.restore'), 'clear-default-core', p.phase === 'clearing', blocked)}${control(t('defaults.read'), 'read-default-core', p.reading || p.phase === 'loading', ['saving', 'clearing', 'loading'].includes(p.phase) || p.reading)}</div>${p.phase === 'unconfirmed' || p.waiting ? `<p role="status" aria-live="polite">${esc(pending)}${p.waiting ? esc(t('defaults.stillWaiting')) : ''}</p>` : ''}${p.error ? feedback(esc(p.error), 'warning') : ''}${p.notice ? `<p role="status" aria-live="polite">${esc(p.notice)}</p>` : ''}</section>`;
+    return `<section class="default-core-preferences" aria-label="${esc(t('defaults.aria'))}"><p class="muted">${t('defaults.currentConnection', { address: `<code>${esc(adapter.state.core.address)}</code>` })}</p><p>${t('defaults.savedDefault', { value: `<strong>${esc(p.confirmed ? p.coreUrl || t('defaults.notSet') : t('defaults.notRead'))}</strong>` })}</p><p class="muted">${t('defaults.help')}</p><div>${control(t('defaults.save'), 'save-default-core', p.phase === 'saving', blocked)}${control(t('defaults.restore'), 'clear-default-core', p.phase === 'clearing', blocked)}${control(t('defaults.read'), 'read-default-core', p.reading || p.phase === 'loading', ['saving', 'clearing', 'loading'].includes(p.phase) || p.reading)}</div>${p.phase === 'unconfirmed' || p.waiting ? `<p role="status" aria-live="polite">${esc(pending)}${p.waiting ? esc(t('defaults.stillWaiting')) : ''}</p>` : ''}${p.error ? `<p class="action-recovery" role="status">${esc(p.error)}</p>` : ''}</section>`;
 }
 function coreConnectionStatus() {
     const check = adapter.connectionCheck;
-    if (check.error)
-        return `<span class="muted" role="status">${t('conn.notConfirmed', { error: esc(check.error) })}</span>`;
+    const error = adapter.statusReadError || check.error;
+    if (error)
+        return `<span class="muted" role="status">${t('conn.notConfirmed', { error: esc(error) })}</span>`;
     const label = check.waiting ? t('conn.stillChecking') : t('conn.checking');
     const pending = [...actions.records.values()].filter(record => record.pending && record.action === 'check-connection');
     const pendingKey = pending.length === 1 ? ` data-pending-key="${esc(pending[0].key)}"` : '';
@@ -1110,11 +1652,12 @@ function signIn() {
     applyDocumentTitle(t('doc.connect'));
     const loading = adapter.state.sessionState === 'loading';
     const retryAvailable = !loading || !!adapter.state.sessionError;
+    const importHint = importSignInSuspended && adapter.inspection ? `<p class="auth-import-context">${t('action.signInImport')}</p>` : '';
     if (adapter.hosted)
         return `${topbar()}<main class="auth-main"><h1>${loading ? t('auth.opening') : t('auth.connectToPiwork')}</h1><p class="muted" role="status">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.readingServerSession'), 'retry-session') : esc(adapter.state.sessionError || t('auth.signInContinue'))}</p>${loading ? '' : `<a class="button primary" href="/login">${t('auth.signIn')}</a>`}${retryAvailable ? btn(t('auth.retry'), 'retry-session', 'quiet') : ''}</main>`;
     if (adapter.state.sessionState !== 'ready')
         return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon('lock', 26)}</div><h1>${loading ? t('auth.opening') : t('auth.desktopUnavailable')}</h1><p class="muted" role="status" aria-live="polite">${loading && !adapter.state.sessionError ? pendingStatus(t('auth.connectingLocal'), 'retry-session') : esc(adapter.state.sessionError || t('auth.retryConnection'))}</p>${adapter.signInUnknown ? feedback(t('d.error.signInUnknown'), 'warning') : ''}${retryAvailable ? btn(t('auth.retry'), 'retry-session', 'primary full') : ''}${loading ? '' : `<p class="muted">${t('auth.startDesktop', { command: `<code>${esc(adapter.startCommand())}</code>` })}</p>`}</main>`;
-    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${t('auth.connectToCore')}</h1><p class="muted">${t('auth.coreAccountHelp')}</p>${adapter.state.cleanupRequired ? feedback(t('auth.cleanupIncomplete', { command: `<code>${esc(adapter.logoutCommand())}</code>` }), 'warning') : ''}${view.toast ? feedback(esc(view.toast), "warning") : ""}${adapter.signInUnknown ? feedback(t('d.error.signInUnknown'), 'warning') + btn(t('auth.retry'), 'check-sign-in', 'quiet') : ''}<label class="field">${t('auth.coreAddress')}<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">${t('auth.account')}<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">${t('auth.password')}<input id="auth-password" type="password" autocomplete="current-password"></label>${btn(t('auth.signIn'), "sign-in", "primary full", adapter.signInUnknown ? 'disabled' : '')}<div class="auth-divider">${t('auth.inspectDivider')}</div>${btn(`${icon("upload", 16)} ${t('auth.inspectPackage')}`, "import", "quiet")}</main>`;
+    return `${topbar()}<main class="auth-main"><div class="auth-symbol">${icon("lock", 26)}</div><h1>${t('auth.connectToCore')}</h1><p class="muted">${t('auth.coreAccountHelp')}</p>${importHint}${adapter.state.cleanupRequired ? feedback(t('auth.cleanupIncomplete', { command: `<code>${esc(adapter.logoutCommand())}</code>` }), 'warning') : ''}${adapter.signInUnknown ? feedback(t('d.error.signInUnknown'), 'warning') + btn(t('auth.retry'), 'check-sign-in', 'quiet') : ''}<label class="field">${t('auth.coreAddress')}<input id="auth-core" value="${esc(view.coreAddress || adapter.state.core.address)}" placeholder="http://127.0.0.1:7181"></label>${defaultCorePreferences()}<label class="field">${t('auth.account')}<input id="auth-account" autocomplete="username" value="${esc(view.authAccount)}"></label><label class="field">${t('auth.password')}<input id="auth-password" type="password" autocomplete="current-password"></label>${btn(t('auth.signIn'), "sign-in", "primary full", adapter.signInUnknown ? 'disabled' : '')}<div class="auth-divider">${t('auth.inspectDivider')}</div>${btn(`${icon("upload", 16)} ${t('auth.inspectPackage')}`, "import", "quiet")}</main>`;
 }
 function coreStartupPage() {
     const gate = adapter.coreGate, starting = gate.phase === 'recovering', checking = gate.phase === 'checking';
@@ -1122,7 +1665,7 @@ function coreStartupPage() {
     return `${topbar()}<main class="core-startup-page"><section class="core-startup-state" aria-labelledby="core-startup-title"><div class="core-startup-symbol ${starting ? 'is-starting' : ''}">${starting ? '<span class="core-startup-blocks" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' : icon(checking ? 'clock' : 'info', 28)}</div><h1 id="core-startup-title">${t('coreGate.title.' + phase)}</h1><p>${t('coreGate.body.' + phase)}</p>${starting ? `<p class="core-startup-wait" role="status"><i class="core-starting-spinner" aria-hidden="true"></i>${t('coreGate.autoChecking')}</p>` : checking ? `<p role="status">${pendingDots()} ${t('conn.checking')}</p>` : `<p class="core-startup-reason">${esc(adapter.connectionCheck.error || adapter.status.readiness?.error || adapter.status.health?.error || adapter.status.readiness?.value?.reason || '')}</p>`}<div class="core-startup-actions">${!starting && !checking ? btn(t('coreGate.checkAgain'), 'check-connection', 'primary') : ''}${btn(t('coreGate.viewStatus'), 'connection', 'text-button')}</div><p class="core-startup-hint">${t('coreGate.hint')}</p></section></main>`;
 }
 function coreSafeAction(action) {
-    return ['account', 'connection', 'check-connection', 'retry-session', 'retry-sign-in', 'sign-out', 'switch-core', 'confirm-switch-core', 'read-default-core', 'save-default-core', 'clear-default-core', 'close-modal', 'back-works', 'back-work', 'language', 'choose-language', 'copy', 'log-export', 'check-log-export', 'download-log-export', 'operation', 'check-operation', 'lookup-operation', 'work-history', 'work-current-tasks', 'history-filter', 'find-work-task', 'check-work', 'check-work-progress', 'check-task-operation', 'cancel-navigation', 'discard-navigation', 'dirty-discard', 'dirty-config-discard', 'copy-local', 'about-piwork', 'refresh-about', 'export-logs', 'export-logs-again', 'retry-log-export'].includes(action) || action.startsWith('locale-');
+    return ['account', 'connection', 'check-connection', 'retry-known-operations', 'retry-session', 'retry-sign-in', 'sign-out', 'switch-core', 'confirm-switch-core', 'read-default-core', 'save-default-core', 'clear-default-core', 'close-modal', 'back-works', 'back-work', 'language', 'choose-language', 'copy', 'log-export', 'check-log-export', 'download-log-export', 'operation', 'check-operation', 'lookup-operation', 'work-history', 'work-current-tasks', 'history-filter', 'find-work-task', 'check-work', 'check-work-progress', 'check-task-operation', 'cancel-navigation', 'discard-navigation', 'dirty-discard', 'dirty-config-discard', 'copy-local', 'about-piwork', 'refresh-about', 'export-logs', 'export-logs-again', 'retry-log-export'].includes(action) || action.startsWith('locale-');
 }
 function coreRecoveryHTML() {
     // Keep editor nodes and drafts, but cached markup never preserves a revoked application.
@@ -1152,12 +1695,15 @@ function worksRefreshButton() {
     const label = pending ? t('works.reading') : t('works.refresh');
     return btn(pending && (!!adapter.worksChecked || !!adapter.worksError || adapter.state.works.length > 0) ? pendingDots() : icon('refresh'), 'retry-works', `icon-button quiet ${pending ? 'is-reading' : ''}`, `title="${esc(label)}" aria-label="${esc(label)}" ${pending ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`);
 }
+function worksToolbar() {
+    return `<div class="list-controls works-toolbar"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}<div class="actions">${orphanTasksEntry()}${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>`;
+}
 function works() {
     applyDocumentTitle(t('doc.works'));
     const s = adapter.state.scenario;
     const confirmed = !!adapter.worksChecked || adapter.state.works.length > 0;
     const all = adapter.state.works.filter((w) => w.name.toLowerCase().includes(view.search.toLowerCase()));
-    return `${topbar()}<main class="works-page">${confirmed && adapter.worksError ? feedback(t('works.refreshFailed', { error: esc(adapter.worksError) }), 'warning', btn(t('works.retryLoading'), 'retry-works', 'small')) : ''}<div class="list-controls works-toolbar"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}<div class="actions">${orphanTasksEntry()}${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>${s === "core-offline" ? feedback(t('works.coreOffline', { time: esc(adapter.state.lastChecked) }), "warning", btn(t('works.checkConnection'), "check-connection", "small")) : ""}${s === "env-not-ready" && !coreRecovering() ? feedback(adapter.status?.readiness?.available && !adapter.connectionCheck.error ? t(coreRuntimeUnavailable() ? 'works.runtimeUnavailable' : 'works.runtimeNotReady') : t('works.readinessUnconfirmed'), "warning", btn(t('works.checkReadiness'), "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="${esc(t('works.loadingAria'))}" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i class="skeleton-fill"></i><span class="skeleton-fill"></span><span class="skeleton-fill"></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", t('works.loadFailed'), `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}${t('works.loadFailedBody')}`, btn(t('works.retryLoading'), "retry-works", "primary")) : !confirmed ? empty("grid", t('works.notReadTitle'), t('works.notReadBody'), btn(t('works.read'), "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", t('works.emptyTitle'), t('works.emptyBody'), btn(`${icon("plus")} ${t('works.newWork')}`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>${t('works.colName')}</span><span>${t('works.colStatus')}</span><span>${t('works.colQuick')}</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${workRowControl(w, workControl(w))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('works.moreAria', { name: w.name }))}"`)}</div>`).join("")}</div>` : empty("search", t('works.noMatchTitle'), t('works.noMatchBody'), btn(t('works.clearSearch'), "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} ${t('works.ownOnly')}</span><span>${confirmed ? t('works.count', { count: adapter.state.works.length }) : t('works.countUnread')} <b>·</b> ${esc(adapter.state.core.account)}</span></div><div class="works-help"><span class="mini-symbol">${icon("spark", 19)}</span><div><strong>${t('works.helpTitle')}</strong><p>${t('works.helpBody')}</p></div></div></main>`;
+    return `${topbar(worksToolbar())}<main class="works-page">${confirmed && adapter.worksError ? feedback(t('works.refreshFailed', { error: esc(adapter.worksError) }), 'warning', btn(t('works.retryLoading'), 'retry-works', 'small')) : ''}${s === "core-offline" ? feedback(t('works.coreOffline', { time: esc(adapter.state.lastChecked) }), "warning", btn(t('works.checkConnection'), "check-connection", "small")) : ""}${s === "env-not-ready" && !coreRecovering() ? feedback(adapter.status?.readiness?.available && !adapter.connectionCheck.error ? t(coreRuntimeUnavailable() ? 'works.runtimeUnavailable' : 'works.runtimeNotReady') : t('works.readinessUnconfirmed'), "warning", btn(t('works.checkReadiness'), "check-connection", "small")) : ""}${(!confirmed && !adapter.worksError && (s === "loading" || adapter.worksLoading || adapter.connectionCheck.checking)) ? `<div class="loading-list" role="status" aria-label="${esc(t('works.loadingAria'))}" aria-busy="true">${[1, 2, 3].map(() => '<div class="skeleton" aria-hidden="true"><i class="skeleton-fill"></i><span class="skeleton-fill"></span><span class="skeleton-fill"></span></div>').join("")}</div>` : !confirmed && (s === "list-error" || adapter.worksError) ? empty("refresh", t('works.loadFailed'), `${adapter.worksError ? `<span class="works-error-cause">${esc(adapter.worksError)}</span>` : ""}${t('works.loadFailedBody')}`, btn(t('works.retryLoading'), "retry-works", "primary")) : !confirmed ? empty("grid", t('works.notReadTitle'), t('works.notReadBody'), btn(t('works.read'), "retry-works", "primary")) : !adapter.state.works.length ? empty("grid", t('works.emptyTitle'), t('works.emptyBody'), btn(`${icon("plus")} ${t('works.newWork')}`, "new-work", "primary")) : all.length ? `<div class="work-table"><div class="work-table-head"><span>${t('works.colName')}</span><span>${t('works.colStatus')}</span><span>${t('works.colQuick')}</span><span></span></div>${all.map((w) => `<div class="work-row"><a class="work-name" data-action="open-work" data-id="${esc(w.id)}" href="#/work/${encodeURIComponent(w.id)}"><span class="work-icon ${w.color}">${icon(w.icon, 22)}</span><span><strong>${esc(w.name)}</strong><small>${esc(w.description)}</small></span></a><div class="work-status">${workStatus(w)}${workRowControl(w, workControl(w))}</div><div>${quickAction(w)}</div>${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-row" data-id="${w.id}" aria-label="${esc(t('works.moreAria', { name: w.name }))}"`)}</div>`).join("")}</div>` : empty("search", t('works.noMatchTitle'), t('works.noMatchBody'), btn(t('works.clearSearch'), "clear-search"))}<div class="works-footer"><span>${icon("lock", 14)} ${t('works.ownOnly')}</span><span>${confirmed ? t('works.count', { count: adapter.state.works.length }) : t('works.countUnread')} <b>·</b> ${esc(adapter.state.core.account)}</span></div></main>`;
 }
 function quickAction(w) {
     if (route()[0] === 'works' && controlReady(workControls.get(w.id), w))
@@ -1180,15 +1726,19 @@ function workRouteFeedback(w) {
     const label = slow ? t('work.stillReading') : t('work.reading');
     return `<span class="work-read-feedback" role="status" aria-busy="true" aria-label="${esc(label)}">${pendingDots()}${slow ? `<small>${esc(label)}</small>` : ''}</span>`;
 }
-function workHeader(w, standalone = false) {
-    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), standalone ? "back-work" : "back-works", "icon-button quiet", `aria-label="${esc(standalone ? t('work.backToWork') : t('work.backToWorks'))}"`)}<span class="header-divider"></span><span class="work-icon small ${w.color}">${icon(w.icon, 19)}</span><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${controlMarkup(workControl(w), true)}${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div><div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
+function workHeader(w, standalone = false, navigation = '') {
+    const model = workHeaderModel({ id: w.id, name: w.name, status: adapter.project(w).label, standalone });
+    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), model.backAction, "icon-button quiet", `aria-label="${esc(t(model.backLabelKey))}"`)}<span class="header-divider"></span><img class="work-brand-logo" src="/desktop/piwork-logo.png" alt="" width="28" height="28"><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${controlMarkup(workControl(w), true)}${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div>${navigation}<div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-header" data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
+}
+function workTabs(settings) {
+    return `<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices')], ['Files', t('work.tabFiles')], ['Chat', t('work.tabChat')]].map(([value, label]) => btn(label, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div></nav>`;
 }
 function workPage(w) {
     const settings = route()[2] === "settings", panels = workspacePanels.get(w.id);
     const serviceArea = view.tab === 'Services', narrow = innerWidth < 900;
     const hiddenChat = view.layout === 'service-only' || serviceArea && view.layout === 'workspace' && (narrow ? !panels.narrowChat : panels.collapsed);
     const narrowChat = serviceArea && narrow && !hiddenChat && view.layout !== 'chat-only';
-    return `${workHeader(w)}<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices'), 'grid'], ['Files', t('work.tabFiles'), 'folder'], ['Chat', t('work.tabChat'), 'chat']].map(([value, label, symbol]) => btn(`${icon(symbol, 17)} ${label}`, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div><div class="work-tools">${btn(`${icon('note', 17)} <span>${t('work.piRequests')}</span>`, 'pi-requests', 'tab work-requests', `aria-label="${esc(t('work.piRequestsAria'))}" title="${esc(t('work.piRequestsAria'))}"`)}${btn(`${icon("settings", 17)} ${t('work.settings')}`, "settings", settings ? "tab active" : "tab")}</div></nav>${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback(t('work.statusUnconfirmed'), "warning", btn(t('work.checkWork'), "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="${esc(t('work.resizeAria'))}" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="${esc(t('work.resizeTitle'))}" tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
+    return `${workHeader(w, false, workTabs(settings))}${serviceNotice(w)}${!settings && adapter.project(w).retainWorkspace && !adapter.project(w).usable ? feedback(t('work.statusUnconfirmed'), "warning", btn(t('work.checkWork'), "check-work", "small", `data-id="${esc(w.id)}"`)) : ""}${settings ? settingsPage(w) : !adapter.project(w).retainWorkspace ? `${view.layout !== "workspace" ? `<div class="focus-unavailable"><b>${esc(w.name)}</b>${focusControls(w)}</div>` : ""}${workState(w)}` : `<div class="work-layout ${view.agentOpen ? "agent-open" : ""} ${view.tab === "Chat" || view.layout === "chat-only" ? "chat-main" : ""} ${hiddenChat ? "chat-hidden" : ""} ${serviceArea ? "service-workspace" : ""} ${narrowChat ? "narrow-chat" : ""}"><section id="workspace-main" class="main-panel" ${view.layout === "chat-only" ? "inert" : ""}>${view.tab === "Files" ? files(w) : view.tab === "Chat" ? "" : services(w)}</section><div id="workspace-splitter" class="workspace-splitter" role="separator" aria-orientation="vertical" aria-label="${esc(t('work.resizeAria'))}" aria-controls="workspace-main workspace-chat" aria-valuemin="0" aria-valuemax="100" aria-valuenow="70" title="${esc(t('work.resizeTitle'))}" tabindex="${serviceArea && !narrow && !hiddenChat && view.layout !== 'chat-only' ? 0 : -1}"></div><aside id="workspace-chat" class="agent-side" ${hiddenChat ? "inert" : ""}>${agent(w, view.tab === "Chat" || view.layout === "chat-only")}</aside>${btn(`${icon("chat")} Agent`, "toggle-agent", "floating-agent")}</div>`}`;
 }
 function workState(w) {
     const state = adapter.project(w);
@@ -1295,8 +1845,7 @@ function observeServiceFrames() {
                     return;
                 // Navigation is a reason to recheck embedding, not a visibility gate.
                 const [workId, serviceId, port] = frame.dataset.serviceKey.split(':');
-                void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(error => { if (frame.isConnected && epoch === adapter.identityEpoch)
-                    toast(error.message); });
+                void adapter.serviceFrameLoaded(workId, serviceId, Number(port)).catch(() => undefined);
             });
         }
 }
@@ -1304,19 +1853,18 @@ function services(w) {
     if (!w.resourceChecked?.services && !w.resourceErrors?.services)
         return `${serviceFallbackHeader(w)}${readPlaceholder(t('service.loading'), 'service')}`;
     const s = route()[0] === "app" ? w.services.find(service => service.id === route()[2]) : activeService(w);
-    if (s && route()[0] !== "app" && !s.ports.includes(view.port))
-        view.port = s.ports[0] || 0;
     if (w.resourceErrors?.services && !w.resourceChecked?.services)
         return serviceFallbackHeader(w) + feedback(esc(w.resourceErrors.services), "warning", btn(t('service.retry'), "retry-services"));
     if ((!s || !s.ports.length) && w.resourceErrors?.services)
         return serviceFallbackHeader(w) + feedback(`${t('service.availabilityUnconfirmed')} ${esc(w.resourceErrors.services)}`, 'warning', btn(t('service.retry'), 'retry-services', 'small'));
     if (!s || !s.ports.length)
         return serviceFallbackHeader(w) + empty("grid", t('service.noneReady'), t('service.noneReadyBody'), btn(t('service.focusChat'), "tab-Chat", "primary") + (w.services.length ? btn(t('service.manage'), "manage-services") : ""));
+    const toolbar = serviceToolbarModel({ workId: w.id, serviceId: s.id, name: s.name, enabled: s.enabled, observed: s.observed, hasRequests: !!adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords });
     const serviceKey = `${w.id}:${s.id}:${view.port}`;
     const keepStartingFrame = s.observed === 'Starting' && s.enabled && s.ports.includes(view.port) && w.desired === 'running'
         && (w.status === 'Ready' || w.status === 'Degraded')
         && [...root.querySelectorAll('iframe[data-service-key]')].some(frame => frame.dataset.serviceKey === serviceKey);
-    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn(t('service.retry'), "retry-services", "small")) : ""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(s.name)}</span>${badge(s.enabled ? s.observed : 'Disabled')}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="${esc(t('service.pickerAria', { name: s.name }))}" aria-haspopup="dialog" title="${esc(t('service.switch'))}"`)}</div><div class="actions focus-actions">${adapter.requestPresence.get(`${w.id}:${s.name}`)?.hasRecords ? btn(icon("note", 17), "service-requests", "icon-button quiet", `aria-label="${esc(t('service.agentRequests'))}" title="${esc(t('service.agentRequests'))}"`) : ""}${workspaceChatToggle(w)}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", `aria-label="${esc(t('service.openNewTab'))}"`)}${btn(icon("more"), "service-menu", "icon-button quiet", `aria-label="${esc(t('service.options'))}"`)}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn(adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink'), "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", t('service.opensOwnTab'), t('service.embedDenied'), btn(`${icon("external")} ${t('service.openApplicationTab')}`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? serviceStatePlaceholder(w, s) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", t('service.entryUnavailable'), esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn(t('common.retry'), "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? serviceViewport(w, s) : (adapter.serviceEntryPending(w.id, s.id, view.port) || adapter.project(w).usable && s.enabled && s.observed === 'Ready' && s.ports.includes(view.port)) ? readPlaceholder(t('service.opening', { name: s.name }), 'service') : empty("grid", t('service.entryNotConfirmed'), s.ports.includes(view.port) ? t('service.entryCheckStatus') : t('service.portNotDeclared'), btn(t('common.retry'), "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || t('service.previewUnconfirmed')), "warning", btn(t('service.checkPreview'), "check-preview", "small") + btn(t('service.openNewTab'), "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} ${t('service.privateConnection')} ${w.resourceChecked?.services ? ` · ${t('service.retrieved', { time: esc(formatTime(w.resourceChecked.services)) })}` : ""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
+    return `${w.resourceErrors?.services ? feedback(esc(w.resourceErrors.services), "warning", btn(t('service.retry'), "retry-services", "small")) : ""}<div class="service-toolbar"><div class="service-selector">${btn(`${icon('grid', 16)}<span class="service-name">${esc(toolbar.name)}</span>${badge(toolbar.status)}${icon('down', 13)}`, 'service-picker', 'quiet service-trigger', `id="service-select" data-service-id="${esc(s.id)}" aria-label="${esc(t('service.pickerAria', { name: s.name }))}" aria-haspopup="dialog" title="${esc(t('service.switch'))}"`)}</div><div class="actions focus-actions">${workspaceChatToggle(w)}${focusControls(w)}${btn(icon("external", 16), "open-app", "icon-button quiet", `aria-label="${esc(t('service.openNewTab'))}"`)}${btn(icon("more"), "service-menu", "icon-button quiet", `aria-label="${esc(t('service.options'))}"`)}</div></div>${view.serviceOpenError ? feedback(esc(view.serviceOpenError), "warning", btn(adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink'), "copy-local", "small")) : ""}${s.enabled && s.observed === "Ready" && adapter.serviceEmbed(w.id, s.id, view.port) === "denied" ? empty("external", t('service.opensOwnTab'), t('service.embedDenied'), btn(`${icon("external")} ${t('service.openApplicationTab')}`, "open-app", "primary")) : (!s.enabled || s.observed !== "Ready") && !keepStartingFrame ? serviceStatePlaceholder(w, s) : adapter.serviceEntryError(w.id, s.id, view.port) ? empty("grid", t('service.entryUnavailable'), esc(adapter.serviceEntryError(w.id, s.id, view.port)), btn(t('common.retry'), "retry-service-entry", "primary")) : adapter.serviceEntryUrl(w.id, s.id, view.port) ? serviceViewport(w, s) : (adapter.serviceEntryPending(w.id, s.id, view.port) || adapter.project(w).usable && s.enabled && s.observed === 'Ready' && s.ports.includes(view.port)) ? readPlaceholder(t('service.opening', { name: s.name }), 'service') : empty("grid", t('service.entryNotConfirmed'), s.ports.includes(view.port) ? t('service.entryCheckStatus') : t('service.portNotDeclared'), btn(t('common.retry'), "retry-service-entry", "primary", s.ports.includes(view.port) ? "" : "disabled"))}${adapter.servicePreviewUnconfirmed(w.id, s.id, view.port) ? feedback(esc(adapter.servicePreviewError(w.id, s.id, view.port) || t('service.previewUnconfirmed')), "warning", btn(t('service.checkPreview'), "check-preview", "small") + btn(t('service.openNewTab'), "open-app", "small")) : ""}<div class="service-bottom"><span>${icon("lock", 13)} ${t('service.privateConnection')} ${w.resourceChecked?.services ? ` · ${t('service.retrieved', { time: esc(formatTime(w.resourceChecked.services)) })}` : ""}</span><span class="domain" title="${esc(s.domain)}">${esc(s.domain)}</span></div>`;
 }
 function conversationHistoryControls(w, session) {
     const state = session.history;
@@ -1645,7 +2193,7 @@ function modelFailureHelp(run) {
         return '';
     if (adapter.state.core.role !== 'admin')
         return `<p class="muted">${t('merge.askAdmin')}</p>`;
-    return adapter.hosted ? `<p class="muted">${t('merge.hostedAdminBefore')} <a href="/admin">${t('merge.admin')}</a>${t('merge.hostedAdminAfter')}</p>` : `<p class="muted">${t('merge.localAdmin')}</p>`;
+    return adapter.hosted ? `<p class="muted">${t('merge.hostedAdminBefore')} <strong>${t('merge.admin')}</strong>${t('merge.hostedAdminAfter')}</p>` : `<p class="muted">${t('merge.localAdmin')}</p>`;
 }
 function unmatchedExecutions(w, sessionId, messages) {
     const bound = new Set(activityGroups(messages).flatMap(group => group.messages.map(message => message.runId)).filter(Boolean));
@@ -1980,7 +2528,7 @@ function settingsPage(w) {
     const settingsOperations = adapter.state.operations.filter(item => item.workId === w.id && /^(apply|package):/.test(operationKind(item.checkedKind || item.kind)));
     if (!w.resourceChecked?.configuration && !configurationError && !view.configDirty)
         return `<main class="settings-page">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}<h1>${t('settings.title')}</h1>${settingsTaskRows(settingsOperations)}${readPlaceholder(t('settings.loading'))}</main>`;
-    if (configurationError && !view.config && !w.resourceChecked?.configuration)
+    if (configurationError && !w.resourceChecked?.configuration && !view.configDirty)
         return `<main class="settings-page">${btn(`${icon("arrow", 16)} ${t('settings.backToWork')}`, "back-work", "quiet settings-back")}<h1>${t('settings.title')}</h1>${settingsTaskRows(settingsOperations)}${feedback(esc(configurationError), "warning", btn(t('settings.refreshConfiguration'), "refresh-config", "primary"))}</main>`;
     if (!view.config)
         view.config = structuredClone(w.config);
@@ -2004,7 +2552,8 @@ function settingsPage(w) {
 /** The catalog check's own trigger owns the wait; only a real failure stays local. */
 function catalogButton() {
     const loading = adapter.catalog.skills.loading || adapter.catalog.packages.loading;
-    const checked = !loading && [...actions.records.values()].some(record => record.action === 'check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh === '' && actions.visible(record));
+    const confirmed = adapter.catalog.skills.confirmed && adapter.catalog.packages.confirmed && !adapter.catalog.skills.error && !adapter.catalog.packages.error;
+    const checked = !loading && confirmed && [...actions.records.values()].some(record => record.action === 'check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh === '' && actions.visible(record));
     const label = loading ? t('settings.checkingSkillsCatalog') : t('settings.checkCatalog');
     return btn(`<span class="button-pending-content${loading || checked ? ' is-pending' : ''}"><span>${esc(t('settings.checkCatalog'))}</span>${loading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : checked ? `<span class="button-pending-indicator" role="status">${esc(t('settings.catalogChecked'))}</span>` : ''}</span>`, 'check-catalog', 'quiet small', loading ? `aria-busy="true" data-pending-action="check-catalog" title="${esc(label)}"` : '');
 }
@@ -2019,7 +2568,8 @@ function skillsSettings(w, c) {
         .join("")}</div>`;
 }
 function packagesSettings(w, c) {
-    return `<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div>${settingsTaskRows(adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('package:')))}<div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${catalogButton()}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
+    const packageRead = `${w.resourceErrors?.packages ? feedback(t('package.observationUnavailable', { error: esc(w.resourceErrors.packages) }), 'warning') : ''}${btn(`<span class="button-pending-content${w.resourceLoading?.packages ? ' is-pending' : ''}"><span>${esc(t('settings.refreshPackageStatus'))}</span>${w.resourceLoading?.packages ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'refresh-packages', 'quiet small', w.resourceLoading?.packages ? 'disabled aria-busy="true"' : '')}`;
+    return `${packageRead}<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div>${settingsTaskRows(adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('package:')))}<div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${catalogButton()}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
         .getPackages()
         .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong><p>${esc(p.description || t('settings.descriptionNotProvided'))} · ${p.version || t('settings.versionNotProvided')}</p></div>${btn(t('settings.select'), "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
         .join("")}</div>`;
@@ -2071,32 +2621,21 @@ function syncDialogPresentation(dialog, nonmodal) {
             dialog.showModal();
     }
 }
-function exportPanel(target) {
+function exportPanelInput(target) {
     const flow = view.data.flowId ? exportFlows.get(view.data.flowId) : undefined;
     const selectedID = flow?.snapshotId || view.data.snapshotId;
-    const snap = selectedID ? adapter.getSnapshot(selectedID) : undefined;
-    const job = snap ? adapter.downloads.get(snap.id) : undefined;
-    const active = target ? exportFlows.forWork(target.id) : undefined;
-    const busy = !!active && !active.terminal;
-    const phases = { checking: t('export.phase.checking'), stopping: t('export.phase.stopping'), exporting: t('export.phase.exporting'), snapshot: t('export.phase.snapshot'), preparing: t('export.phase.preparing'), ready: t('export.phase.ready'), delivered: t('export.phase.delivered'), unknown: t('export.phase.unknown'), failed: t('export.phase.failed'), revoked: t('export.phase.revoked') };
-    const title = flow ? phases[flow.phase] || flow.phase : view.data.findSnapshot ? t('recovery.previousExport') : t('export.packageTitle');
-    const canSave = snap?.status === 'verified' && job?.ready && exportSnapshotAvailable(snap);
-    const details = `${flow?.stopOperationId ? `<dt>${t('export.stopLabel')}</dt><dd>${btn(esc(flow.stopOperationId), 'operation', 'text-button', `data-id="${esc(flow.stopOperationId)}"`)}</dd>` : ''}${flow?.exportOperationId || snap?.operationId ? `<dt>${t('export.exportLabel')}</dt><dd>${btn(esc(flow?.exportOperationId || snap?.operationId), 'operation', 'text-button', `data-id="${esc(flow?.exportOperationId || snap?.operationId)}"`)}</dd>` : ''}${snap ? `<dt>${t('export.snapshotLabel')}</dt><dd><code>${esc(snap.id)}</code></dd><dt>${t('export.statusLabel')}</dt><dd>${badge(snap.status)}</dd><dt>${t('export.sizeLabel')}</dt><dd>${esc(snap.size || t('text.notProvided'))}</dd><dt>${t('export.expiresLabel')}</dt><dd>${esc(snap.expiresAt || t('text.notProvided'))}</dd>` : ''}`;
-    const findSnapshot = target ? `<label class="field">${t('ops.findSnapshot')}<div class="input-action"><input id="snapshot-query" value="${esc(view.snapshotQuery)}" placeholder="snapshot-…">${btn(t('ops.findSnapshotButton'), 'lookup-snapshot', '', `data-work-id="${esc(target.id)}"`)}</div></label>` : '';
-    const known = target ? adapter.state.snapshots.filter(value => value.workId === target.id && value.id !== selectedID) : [];
-    const controls = flow && !flow.terminal ? `${btn(t('quick.checkStatus'), 'check-export-flow', 'small', `data-id="${esc(flow.id)}"`)}${!flow.terminal ? btn(flow.paused ? t('export.resume') : t('export.pause'), flow.paused ? 'resume-export-flow' : 'pause-export-flow', 'small', `data-id="${esc(flow.id)}"`) : ''}` : '';
-    const error = flow?.error || snap?.error || job?.error || job?.observationError;
-    const unavailable = snap?.status === 'expired' ? t('export.packageExpired') : snap?.status === 'unavailable' ? t('export.packageUnavailable') : '';
-    const waiting = !!flow && !flow.paused && ['checking', 'stopping', 'exporting', 'snapshot', 'preparing'].includes(flow.phase) && !error;
-    const body = `<p class="export-work-name">${esc(flow?.workName || target?.name || snap?.workId)}</p><p class="export-summary" role="status">${waiting ? pendingStatus(title, "export prepare-export download-work check-export-flow resume-export-flow save-export-file check-download") + " " : ""}${flow?.paused ? t('export.pausedBody') : flow?.phase === 'delivered' ? t('export.deliveredBody') : view.data.findSnapshot && !snap ? t('recovery.previousExportBody') : !flow ? t('export.packageBody') : t('export.keepWorking')}</p>${error || unavailable ? feedback(esc(error || unavailable), 'warning') : ''}<p class="export-privacy">${icon('lock', 14)} ${t('export.privacy')}</p><details class="export-details"${view.data.findSnapshot ? ' open' : ''}><summary>${t('common.details')}</summary>${details ? `<dl class="export-snapshot">${details}</dl>` : ''}${findSnapshot}${snap ? downloadProgressMarkup(snap.id) : ''}${controls ? `<div class="actions">${controls}</div>` : ''}${known.length ? `<h3>${t('export.otherPackages')}</h3><div class="menu-list">${known.map(value => btn(`${esc(value.id)} · ${esc(value.status)}`, 'view-snapshot', '', `data-id="${esc(value.id)}" data-work-id="${esc(value.workId)}"`)).join('')}</div>` : ''}<p class="muted">${t('export.closingNote')}</p></details>`;
-    const retry = flow && flow.phase === 'unknown' && !canSave ? btn(t('quick.checkStatus'), 'check-export-flow', 'primary', `data-id="${esc(flow.id)}"`) : '';
-    const download = canSave ? btn(flow?.autoDeliveryConsumed ? t('export.downloadAgain') : t('editor.saveFile'), 'save-export-file', 'primary', `data-id="${esc(snap.id)}"`) : (!flow || flow.phase === 'failed' && !!job?.terminalFailure) && snap?.status === 'verified' && exportSnapshotAvailable(snap) ? btn(job?.terminalFailure ? t('export.retryDownload') : t('export.downloadSnapshot'), 'download-work', 'primary', `data-id="${esc(snap.id)}" ${busy && active?.snapshotId !== snap.id ? 'disabled' : ''}`) : '';
-    const fresh = !flow && target && ['expired', 'unavailable'].includes(snap?.status || '') ? btn(t('export.exportCurrentWork'), 'prepare-export', 'primary', `data-id="${esc(target.id)}" ${busy ? 'disabled' : ''}`) : '';
-    return { title, body, footer: `${btn(flow && !flow.terminal ? t('export.hide') : t('common.close'), 'close-modal')}${download || fresh || retry}` };
+    const snapshot = selectedID ? adapter.getSnapshot(selectedID) : undefined;
+    return {
+        work: target, flow, snapshot,
+        transfer: snapshot ? adapter.downloads.get(snapshot.id) : undefined,
+        activeFlow: flow ? exportFlows.forWork(flow.workId) : target ? exportFlows.forWork(target.id) : undefined,
+        snapshots: target ? adapter.state.snapshots.filter(value => value.workId === target.id) : [],
+        snapshotQuery: view.snapshotQuery,
+    };
 }
 function modalMarkup() {
     const w = adapter.getWork(view.data.workId || view.data.id || route()[1] || "");
-    const target = w || current();
+    const target = ['work-menu', 'export-recovery'].includes(view.modal) ? w : w || current();
     let title = "", body = "", footer = "";
     const cancel = () => btn(t('common.cancel'), "close-modal");
     const close = () => btn(t('common.close'), "close-modal");
@@ -2140,7 +2679,7 @@ function modalMarkup() {
             break;
         case "account":
             title = esc(adapter.state.core.account || t('topbar.account'));
-            body = `<p class="account-context"><span>${t('account.roleLine', { role: esc(adapter.state.core.role === 'admin' ? t('account.administrator') : adapter.state.core.role) })}</span><span title="${esc(adapter.state.core.address)}">${t('account.coreLine', { address: esc(adapter.state.core.address) })}</span></p><div class="menu-list">${btn(`${icon("info")} ${t('account.about')}`, "about-piwork")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} ${t('account.exportLogs')}`, "export-logs") : ""}</div>${languageMenuItems()}<div class="menu-list account-management">${adapter.hosted ? (adapter.state.core.role === "admin" ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} ${t('account.administration')}</a><a class="button" href="/admin/setup" role="menuitem" tabindex="-1">${icon('settings')} ${t('account.quickSetup')}</a>` : "") : `${btn(`${icon("refresh")} ${t('account.switchCore')}`, "switch-core")}`}${btn(`${icon("logout")} ${t('account.signOut')}`, "sign-out", "danger")}</div>`;
+            body = `<p class="account-context"><span>${t('account.roleLine', { role: esc(adapter.state.core.role === 'admin' ? t('account.administrator') : adapter.state.core.role) })}</span><span title="${esc(adapter.state.core.address)}">${t('account.coreLine', { address: esc(adapter.state.core.address) })}</span></p><div class="menu-list">${btn(`${icon("info")} ${t('account.about')}`, "about-piwork")}${adapter.state.core.role === "admin" ? btn(`${icon("download")} ${t('account.exportLogs')}`, "export-logs") : ""}</div>${languageMenuItems()}<div class="menu-list account-management">${adapter.hosted ? (menuCommands({ scope: 'global-account', identity: adapter.identityEpoch, currentIdentity: adapter.identityEpoch, hosted: adapter.hosted, administrator: adapter.state.core.role === "admin" }).length ? `<a class="button" href="/admin" role="menuitem" tabindex="-1">${icon('grid')} ${t('account.administration')}</a>` : "") : `${btn(`${icon("refresh")} ${t('account.switchCore')}`, "switch-core")}`}${btn(`${icon("logout")} ${t('account.signOut')}`, "sign-out", "danger")}</div>`;
             break;
         case "connection":
             title = t('connection.title');
@@ -2152,17 +2691,26 @@ function modalMarkup() {
             body = `<p>${t('switchCore.body')}</p><label class="field">${t('switchCore.address')}<input id="auth-core" value="${esc(view.coreAddress)}"></label><p class="muted">${t('switchCore.clears')}</p>${defaultCorePreferences()}`;
             footer = `${cancel()}${btn(t('switchCore.connect'), "confirm-switch-core", "primary")}`;
             break;
-        case "work-menu":
+        case "work-menu": {
+            const commands = menuCommands({
+                scope: view.data.scope,
+                identity: Number(view.data.epoch), currentIdentity: adapter.identityEpoch,
+                targetWorkId: target?.id, openedWorkId: current()?.id,
+                canStop: !!target && adapter.project(target).action === 'stop',
+            });
             title = target ? esc(target.name) : t('workMenu.options');
-            body = `${workMenuTasks(target)}<div class="menu-list">${btn(`${icon("clock")} ${t("history.title")}`, "work-history", "", `data-id="${esc(target?.id)}"`)}${btn(`${icon("info")} ${t('workMenu.info')}`, "work-info", "", `data-id="${target?.id}"`)}${btn(`${icon("settings")} ${t('workMenu.settings')}`, "settings", "", `data-id="${target?.id}"`)}${btn(`${icon("download")} ${t('workMenu.export')}`, "export", "", `data-id="${target?.id}"`)}${btn(`${icon("clock")} ${t('recovery.previousExport')}`, "find-previous-export", "", `data-id="${esc(target?.id)}"`)}${target && adapter.project(target).action === "stop" ? btn(`${icon("stop")} ${t('workMenu.stop')}`, "stop-work", "", `data-id="${esc(target.id)}"`) : ""}${btn(`${icon("trash")} ${t('workMenu.delete')}`, "delete-work", "danger", `data-id="${target?.id}"`)}</div>${languageMenuItems()}`;
+            body = `${target && commands.length ? workMenuTasks(target) : ''}<div class="menu-list">${commands.map(command => btn(`${icon(command.icon)} ${t(command.labelKey)}`, command.action, command.danger ? 'danger' : '', `data-id="${esc(command.workId)}" data-menu-scope="${esc(view.data.scope)}" data-menu-epoch="${esc(view.data.epoch)}"`)).join('')}</div>${languageMenuItems()}`;
             break;
-        case "works-tasks":
-            // Non-modal disclosure of this identity's own tasks that have no visible
-            // Work. Rows keep their original identities and read-only checks.
+        }
+        case "works-tasks": {
+            // The same original-task entry survives an unavailable record list.
+            const records = adapter.operationRecords;
+            const recovery = !!records.error || view.data.recordsRecovery === 'true';
             title = t('recovery.pendingTasks');
-            body = orphanTaskList() || `<p class="muted">${t('recovery.noWorkTasks')}</p>`;
-            footer = close();
+            body = `${records.error ? `<p class="action-recovery" role="status">${esc(records.error)}</p>` : ''}${orphanTaskList() || (!records.error && records.receipt ? `<p class="muted">${t('recovery.noWorkTasks')}</p>` : '')}`;
+            footer = `${close()}${recovery ? btn(t('recovery.findWorkTask'), 'find-work-task', 'quiet', 'data-recovery-scope="original-task"') : ''}${records.error ? btn(`<span class="button-pending-content${records.reading ? ' is-pending' : ''}"><span>${t('common.retry')}</span>${records.reading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'retry-known-operations', 'quiet', records.reading ? 'disabled aria-busy="true"' : '') : ''}`;
             break;
+        }
         case "work-info":
             if (!target)
                 break;
@@ -2238,6 +2786,12 @@ function modalMarkup() {
             const cancellable = !!run && active?.id === run.id && ['accepted', 'running', 'cancelling'].includes(active.status);
             const history = target?.sessions.find(s => s.id === view.session)?.runs || [];
             body = run ? `${runFacts(run)}${run.error ? feedback(esc(run.error), 'warning') : ''}${modelFailureHelp(run)}${target ? temporaryCleanupMarkup(target.id, 'run', run.id) : ''}<details><summary>${t('runDetails.technical')}</summary><dl><dt>${t('runDetails.runId')}</dt><dd><code>${esc(run.id)}</code></dd><dt>${t('runDetails.sessionId')}</dt><dd><code>${esc(run.sessionId)}</code></dd><dt>${t('runDetails.cursor')}</dt><dd>${run.cursor}</dd></dl></details><p class="muted">${t('runDetails.note')}</p>` : `<p>${t('runDetails.unconfirmed')}</p>`;
+            if (!run && view.data.runReadPending === 'true')
+                body = readPlaceholder(t('actions.readingRunDetails'));
+            if (run)
+                body = `<span class="pending-icon-slot" aria-label="${esc(t('actions.readingRunDetails'))}">${view.data.runReadPending === 'true' ? pendingDots() : ''}</span>${body}`;
+            if (view.data.runReadError)
+                body += `<p class="action-recovery" role="status">${esc(view.data.runReadError)}</p>`;
             if (history.length)
                 body += `<details><summary>${t('runDetails.earlier')}</summary>${history.map(r => `<p>${btn(`${esc(stateText(r.status))} · ${esc(r.created || t('runDetails.timeUnavailable'))} · ${esc(modelDisplayName(r.actualModel))}`, 'run-details', 'text-button', `data-run-id="${esc(r.id)}"`)}</p>`).join('')}</details>`;
             footer = `${close()}${run && cancellable ? btn(run.cancellationRequested || run.status === 'cancelling' ? t('execution.cancelling') : t('execution.cancelRun'), 'cancel-run', 'danger', `data-run-id="${esc(run.id)}" ${run.cancellationRequested || run.status === 'cancelling' ? 'disabled' : ''}`) : ''}`;
@@ -2250,10 +2804,14 @@ function modalMarkup() {
             footer = btn(`${icon('settings', 16)} ${t('service.manage')}`, 'manage-services', 'quiet');
             break;
         }
-        case "service-menu":
+        case "service-menu": {
+            const serviceCommands = menuCommands({ scope: 'service', identity: Number(view.data.epoch), currentIdentity: adapter.identityEpoch, targetWorkId: view.data.workId, openedWorkId: current()?.id, targetServiceId: view.data.serviceId });
+            if (!serviceCommands.length)
+                break;
             title = t('service.options');
-            body = `<div class="menu-list">${btn(`${icon("external")} ${t('service.openNewTab')}`, "open-app")}${btn(`${icon("focus")} ${t('service.openWindow')}`, "open-window")}${btn(`${icon("copy")} ${t('service.copyDomain')}`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink')}`, "copy-local")}${btn(`${icon("settings")} ${t('service.manage')}`, "manage-services")}${btn(`${icon("note")} ${t('work.piRequestsAria')}`, "pi-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} ${t('service.resetSplit')}`, "reset-workspace-split") + btn(`${icon("focus")} ${t('focus.focusChat')}`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? t('service.menuHostedNote') : t('service.menuLocalNote')}</p>`;
+            body = `<div class="menu-list" data-menu-scope="service" data-menu-epoch="${esc(view.data.epoch)}" data-menu-work="${esc(view.data.workId)}" data-menu-service="${esc(view.data.serviceId)}">${btn(`${icon("external")} ${t('service.openNewTab')}`, "open-app")}${btn(`${icon("focus")} ${t('service.openWindow')}`, "open-window")}${btn(`${icon("copy")} ${t('service.copyDomain')}`, "copy-domain")}${btn(`${icon("copy")} ${adapter.hosted ? t('service.copyAccessLink') : t('service.copyLocalLink')}`, "copy-local")}${btn(`${icon("settings")} ${t('service.manage')}`, "manage-services")}${btn(`${icon("note")} ${t('work.piRequestsAria')}`, "service-requests")}${route()[0] === 'work' ? btn(`${icon("reset")} ${t('service.resetSplit')}`, "reset-workspace-split") + btn(`${icon("focus")} ${t('focus.focusChat')}`, "focus-chat") : ''}${browserFullscreenAction()}</div><p class="muted">${adapter.hosted ? t('service.menuHostedNote') : t('service.menuLocalNote')}</p>`;
             break;
+        }
         case "manage-services":
             title = t('service.manage');
             body = `<p>${t('service.definitionsAgent')}</p><div class="service-list">${target?.services.map((s) => `<button data-action="service-details" data-id="${esc(s.id)}"><span class="service-list-icon">${icon(s.ports.length ? "grid" : "terminal", 20)}</span><span><strong>${esc(s.name)}</strong><small>${s.ports.length ? t(s.ports.length === 1 ? 'service.declaredPortOne' : 'service.declaredPortMany', { count: s.ports.length }) : t('service.noWebEntry')} · ${s.enabled ? t('stateValue.enabled') : t('stateValue.disabled')}</small></span>${controlMarkup(serviceControl(target, s.id), true) || badge(s.observed)}${icon("chevron", 15)}</button>`).join("") || `<p>${t('service.noneDefined')}</p>`}</div>${target ? unassignedServiceTasks(target) : ''}`;
@@ -2282,7 +2840,7 @@ function modalMarkup() {
             const serviceContext = view.data.source === 'service';
             title = serviceContext ? t('service.agentRequests') : t('pi.title');
             const page = target ? adapter.requestPage(target.id, view.data.serviceName || '') : undefined;
-            body = `<p class="request-work-name">${esc(target?.name || t('pi.currentWork'))}${serviceContext ? t('pi.serviceContext') : t('pi.allWorkContext')}</p><div class="request-filter"><label class="field">${t('pi.source')}<select id="pi-service-filter"><option value="">${t('pi.allSources')}</option>${target?.services.map(item => `<option value="${esc(item.name)}" ${item.name === view.data.serviceName ? 'selected' : ''}>${esc(item.name)}</option>`).join('') || ''}</select></label>${btn(page?.loading ? `${pendingDots()}<span class="sr-only">${esc(t('pi.reading'))}</span>` : icon('refresh', 16), 'pi-requests', 'icon-button quiet', `aria-label="${esc(page?.loading ? t('pi.reading') : t('pi.refresh'))}" title="${esc(page?.loading ? t('pi.reading') : t('pi.refresh'))}" ${page?.loading ? 'aria-busy="true" data-pending-action="pi-requests service-requests next-pi-requests"' : ''}`)}</div>${page?.error ? feedback(esc(page.error), 'warning') : ''}<div class="request-list">${page?.items.map(request => `<article class="request-row">${btn(`<span class="request-copy"><strong>${esc(request.goal)}</strong><small>${esc(request.source.kind === 'service' ? t('run.sourceService', { name: request.source.serviceName }) : t('run.sourceChat'))}</small></span>${icon('chevron', 16)}<span class="request-row-meta">${badge(requestStateLabel(request.state))}<small>${t('pi.updated', { time: esc(request.updatedAt) })}</small></span>${request.disposition !== 'live' ? `<small class="request-historical">${t('pi.historical')}</small>` : ''}`, 'pi-request-detail', 'quiet request-row-button', `data-id="${esc(request.requestId)}"`)}${target && adapter.requestReadErrors.get(`${target.id}:${request.requestId}`) ? feedback(esc(adapter.requestReadErrors.get(`${target.id}:${request.requestId}`)), 'warning') : ''}</article>`).join('') || (page?.loading ? t('pi.reading') : t('pi.empty'))}</div>`;
+            body = `<p class="request-work-name">${esc(target?.name || t('pi.currentWork'))}${serviceContext ? t('pi.serviceContext') : t('pi.allWorkContext')}</p><div class="request-filter"><label class="field">${t('pi.source')}<select id="pi-service-filter"><option value="">${t('pi.allSources')}</option>${target?.services.map(item => `<option value="${esc(item.name)}" ${item.name === view.data.serviceName ? 'selected' : ''}>${esc(item.name)}</option>`).join('') || ''}</select></label>${btn(page?.loading ? `${pendingDots()}<span class="sr-only">${esc(t('pi.reading'))}</span>` : icon('refresh', 16), 'pi-requests', 'icon-button quiet', `aria-label="${esc(page?.loading ? t('pi.reading') : t('pi.refresh'))}" title="${esc(page?.loading ? t('pi.reading') : t('pi.refresh'))}" ${page?.loading ? 'aria-busy="true" data-pending-action="pi-requests service-requests next-pi-requests"' : ''}`)}</div>${page?.error ? `<p class="request-read-error" role="status">${esc(page.error)} ${btn(t('common.retry'), 'pi-requests', 'quiet small')}</p>` : ''}<div class="request-list">${page?.items.map(request => `<article class="request-row">${btn(`<span class="request-copy"><strong>${esc(request.goal)}</strong><small>${esc(request.source.kind === 'service' ? t('run.sourceService', { name: request.source.serviceName }) : t('run.sourceChat'))}</small></span>${icon('chevron', 16)}<span class="request-row-meta">${badge(requestStateLabel(request.state))}<small>${t('pi.updated', { time: esc(request.updatedAt) })}</small></span>${request.disposition !== 'live' ? `<small class="request-historical">${t('pi.historical')}</small>` : ''}`, 'pi-request-detail', 'quiet request-row-button', `data-id="${esc(request.requestId)}"`)}${target && adapter.requestReadErrors.get(`${target.id}:${request.requestId}`) ? feedback(esc(adapter.requestReadErrors.get(`${target.id}:${request.requestId}`)), 'warning') : ''}</article>`).join('') || (!page?.checkedAt && !page?.error ? readPlaceholder(t('pi.reading')) : page?.checkedAt && !page?.error ? t('pi.empty') : '')}</div>`;
             footer = `${close()}${page?.nextCursor ? btn(t('pi.more'), 'next-pi-requests') : ''}`;
             break;
         }
@@ -2397,6 +2955,11 @@ function modalMarkup() {
         case "log-export": {
             title = t('logs.title');
             const state = adapter.logExport;
+            if (!logExportTargetAvailable(view.data.originalLogKey, state)) {
+                body = `<p role="status">${t('d.export.intentGone')}</p>`;
+                footer = close();
+                break;
+            }
             if (!state) {
                 body = `<p>${t('logs.none')}</p>`;
                 footer = `${close()}${adapter.state.core.role === "admin" ? btn(t('logs.title'), "export-logs-again", "primary") : ""}`;
@@ -2410,7 +2973,14 @@ function modalMarkup() {
             break;
         }
         case "export": {
-            const panel = exportPanel(target);
+            const panel = renderExportPanel(exportPanelModel(exportPanelInput(target)));
+            title = panel.title;
+            body = panel.body;
+            footer = panel.footer;
+            break;
+        }
+        case 'export-recovery': {
+            const panel = renderExportRecoveryPanel(exportPanelInput(target));
             title = panel.title;
             body = panel.body;
             footer = panel.footer;
@@ -2459,8 +3029,10 @@ function modalMarkup() {
             title = view.data.history ? t('history.title') : t('ops.related');
             const scope = `${adapter.state.core.address} · ${adapter.state.core.account}`;
             const operations = adapter.state.operations.filter((o) => view.data.workId && o.scope === scope && o.workId === view.data.workId && (view.data.filter === 'current' ? adapter.operationNeedsAttention(o) : view.data.filter === 'history' ? !adapter.operationNeedsAttention(o) : true));
-            body = `${view.data.history ? `<p class="operation-history-summary">${t('history.explanation')}</p><div class="operation-history-filters">${[['all', 'history.all'], ['current', 'history.current'], ['history', 'history.completed']].map(([filter, key]) => btn(t(key), 'history-filter', 'small quiet', `data-filter="${filter}" aria-pressed="${(view.data.filter || 'all') === filter}"`)).join('')}</div>` : `<p>${t('recovery.workTasksBody')}</p>`}<label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${esc(op.id)}"><span>${icon("clock", 17)}<span><strong>${esc(operationAction(op))}</strong></span></span>${badge(op.terminalHint?.state || op.state)}<small class="history-record-meta">${esc(formatDateTime(op.created) || op.created)} · ${esc(op.id)}${op.terminalHint ? ` · ${t("history.previousResult")}` : ""}</small></button>`).join("") : `<p class="muted">${t('recovery.noWorkTasks')}</p>`}</div>`;
-            footer = close();
+            const records = adapter.operationRecords;
+            const recordsError = records.error ? `<p class="action-recovery" role="status">${esc(records.error)}</p>` : '';
+            body = `${recordsError}${view.data.history ? `<p class="operation-history-summary">${t('history.explanation')}</p><div class="operation-history-filters">${[['all', 'history.all'], ['current', 'history.current'], ['history', 'history.completed']].map(([filter, key]) => btn(t(key), 'history-filter', 'small quiet', `data-filter="${filter}" aria-pressed="${(view.data.filter || 'all') === filter}"`)).join('')}</div>` : `<p>${t('recovery.workTasksBody')}</p>`}<label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${esc(op.id)}"><span>${icon("clock", 17)}<span><strong>${esc(operationAction(op))}</strong></span></span>${badge(op.terminalHint?.state || op.state)}<small class="history-record-meta">${esc(formatDateTime(op.created) || op.created)} · ${esc(op.id)}${op.terminalHint ? ` · ${t("history.previousResult")}` : ""}</small></button>`).join("") : records.error ? '' : records.reading && !records.receipt ? readPlaceholder(t('quick.checkStatus'), 'list') : records.receipt ? `<p class="muted">${t('recovery.noWorkTasks')}</p>` : ''}</div>`;
+            footer = `${close()}${records.error || !records.receipt ? btn(`<span class="button-pending-content${records.reading ? ' is-pending' : ''}"><span>${t('common.retry')}</span>${records.reading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'retry-known-operations', 'quiet', records.reading ? 'disabled aria-busy="true"' : '') : ''}`;
             break;
         }
         case "operation": {
@@ -2526,20 +3098,21 @@ function temporaryCleanupMarkup(workId, kind, ref) {
     const state = adapter.temporaryCleanups.get(`${workId}:${kind}:${ref}`);
     if (!state)
         return '';
-    const refresh = btn(t('merge.refreshCleanup'), 'refresh-temporary-cleanups', 'small', `data-kind="${kind}" data-ref="${esc(ref)}"`);
-    if (state.loading)
-        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.checkingCleanup')}</p></section>`;
-    if (state.error)
-        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.cleanupUnconfirmed')}</p>${feedback(esc(state.error), 'warning')}${refresh}</section>`;
+    const refresh = btn(`<span class="button-pending-content${state.loading ? ' is-pending' : ''}"><span>${esc(t('merge.refreshCleanup'))}</span>${state.loading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'refresh-temporary-cleanups', 'small', `data-kind="${kind}" data-ref="${esc(ref)}" ${state.loading ? 'disabled aria-busy="true"' : ''}`);
+    const warning = state.error ? feedback(esc(state.error), 'warning') : '';
+    if (state.loading && !state.checkedAt)
+        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3>${readPlaceholder(t('merge.checkingCleanup'), 'service')}${refresh}</section>`;
+    if (state.error && !state.checkedAt)
+        return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.cleanupUnconfirmed')}</p>${warning}${refresh}</section>`;
     if (!state.items.length)
-        return kind === 'service' ? `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.noCleanup')}</p>${refresh}</section>` : '';
+        return kind === 'service' ? `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3><p>${t('merge.noCleanup')}</p>${warning}${refresh}</section>` : '';
     const labels = { requested: t('merge.requested'), running: t('merge.inProgress'), pending: t('merge.waitingRetry'), completed: t('merge.confirmedComplete') };
     const reasons = { DOCKER_UNAVAILABLE: t('merge.dockerUnavailable'), TEMPORARY_CREATE_UNCONFIRMED: t('merge.createUnconfirmed'), WORK_OPERATION_FAILED: t('merge.cleanupStepFailed'), DIAGNOSTIC_PERSIST_FAILED: t('merge.cleanupPersistFailed') };
     const triggers = { 'run-succeeded': t('merge.runSucceeded'), 'run-failed': t('merge.runFailed'), 'run-cancelled': t('merge.runCancelled'), 'run-interrupted': t('merge.agentInterrupted'), 'agent-replaced': t('merge.agentReplaced'), 'work-stop': t('merge.workStopped'), 'work-delete': t('merge.workDeleted'), 'core-shutdown': t('merge.coreShutdown'), explicit: t('merge.explicitRequest') };
     const stages = { request: t('merge.cleanupRequested'), inspect: t('merge.inspectInstance'), stop: t('merge.stopInstance'), remove: t('merge.removeInstance'), release: t('merge.releaseCapacity'), retry: t('merge.retry'), logs: t('merge.archiveOutput') };
     const outcomes = { started: t('merge.started'), succeeded: t('merge.confirmed'), failed: t('merge.failed'), unconfirmed: t('merge.notConfirmed') };
     const items = state.items.map(item => `<article><p><strong>${esc(item.serviceId)}</strong> · ${esc(labels[item.state] || t('merge.statusNotConfirmed'))} · ${esc(stages[item.stage] || item.stage)}</p><p>${t('merge.triggeredBy', { event: esc(triggers[item.trigger] || t('merge.unconfirmedEvent')) })}</p>${item.errorCode ? `<p>${esc(reasons[item.errorCode] || t('merge.reasonUnconfirmed'))}</p>` : ''}${item.logState === 'unavailable' ? `<p>${t('merge.outputUnavailable')}</p>` : item.logState === 'partial' ? `<p>${t('merge.outputPartial')}</p>` : ''}${item.operationId ? btn(t('merge.viewOperation'), 'check-operation', 'text-button', `data-id="${esc(item.operationId)}"`) : ''}<details><summary>${t('merge.cleanupLog')}${item.truncated ? t('merge.olderEntries') : ''}</summary>${item.events.map(event => `<p>${esc(event.at)} · ${esc(stages[event.stage] || event.stage)} · ${esc(outcomes[event.outcome] || event.outcome)}${event.code ? ` · ${esc(event.code)}` : ''}</p>`).join('')}</details></article>`).join('');
-    return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3>${items}${state.truncated ? `<p>${t('merge.olderRecords')}</p>` : ''}${refresh}</section>`;
+    return `<section class="service-explanation"><h3>${t('merge.cleanupTitle')}</h3>${items}${warning}${state.truncated ? `<p>${t('merge.olderRecords')}</p>` : ''}${refresh}</section>`;
 }
 function serviceDetails(s, w) {
     const logs = adapter.serviceLogs(w.id, s.id), control = serviceControl(w, s.id);
@@ -2551,7 +3124,7 @@ function serviceDetails(s, w) {
         ? `<label class="field">${t('service.webEntry')}<select id="port-select" data-service-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== 'Ready' ? 'disabled' : ''}>${s.ports.map(item => `<option value="${item}" ${item === port ? 'selected' : ''}>${t('service.port', { port: item })}</option>`).join('')}</select></label>` : '';
     const ordinaryControls = s.temporary ? '' : `${btn(t('service.start'), "service-action", "small", `data-control="start" data-id="${esc(s.id)}" ${!adapter.project(w).usable || s.observed === "Ready" || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.stop'), "service-action", "small", `data-control="stop" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.restart'), "service-action", "small", `data-control="restart" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Ready" || blocked ? "disabled" : ""} ${blockReason}`)}${btn(t('service.retryAction'), "service-action", "small", `data-control="retry" data-id="${esc(s.id)}" ${!adapter.project(w).usable || !s.enabled || s.observed !== "Failed" || blocked ? "disabled" : ""} ${blockReason}`)}`;
     const temporaryFacts = s.temporary ? `<dt>${t('merge.lifetime')}</dt><dd>${t('merge.runTemporary')} · ${esc(s.temporary.mode)}</dd>${s.temporary.exitCode !== undefined ? `<dt>${t('diag.exitCode')}</dt><dd>${s.temporary.exitCode}</dd>` : ''}` : '';
-    return `${controlMarkup(control)}${serviceTaskList(w, s.id)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>${t('service.domain')}</dt><dd><code>${esc(s.domain)}</code></dd><dt>${t('service.declaredPortsTitle')}</dt><dd>${s.ports.length ? s.ports.join(", ") : t('service.noPorts')}</dd><dt>${t('service.enabled')}</dt><dd>${s.enabled ? t('service.enabledPersists') : t('service.disabledPersists')}</dd><dt>${t('service.observed')}</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn(t('service.remove'), "service-action", "small danger", `data-control="remove" data-id="${esc(s.id)}" ${!adapter.project(w).usable || blocked ? "disabled" : ""} ${blockReason}`)}</div><div class="logs-heading"><h3>${t('service.logTitle')}</h3>${btn(`<span class="button-pending-content${logs?.loading ? ' is-pending' : ''}"><span>${icon("refresh", 14)} ${t('service.refreshLogs')}</span>${logs?.loading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, "refresh-logs", "small", logs?.loading ? `aria-busy="true" data-pending-action="refresh-logs" data-pending-label="${esc(t('service.readingLogs', { name: s.name }))}" title="${esc(t('service.readingLogs', { name: s.name }))}"` : "")}</div>${logs?.error ? feedback(esc(logs.error), "warning", btn(t('service.retryLogs'), "refresh-logs", "small")) : ""}<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? t('service.noLogs'))}</pre><p class="muted small-text">${esc(logs?.value?.status ?? t('service.notRetrieved'))} · ${t('service.collected', { time: esc(logs?.value?.collectedAt ?? t('text.notProvided')) })} · ${logs?.value?.truncated ? t('service.truncated') : t('service.bounded')}. ${t('service.notLive')}</p>`;
+    return `${controlMarkup(control)}${serviceTaskList(w, s.id)}${open}${entryChoice}${serviceExplanation(s)}<dl class="property-list"><dt>${t('service.domain')}</dt><dd><code>${esc(s.domain)}</code></dd><dt>${t('service.declaredPortsTitle')}</dt><dd>${s.ports.length ? s.ports.join(", ") : t('service.noPorts')}</dd><dt>${t('service.enabled')}</dt><dd>${s.enabled ? t('service.enabledPersists') : t('service.disabledPersists')}</dd><dt>${t('service.observed')}</dt><dd>${badge(s.observed)}</dd>${temporaryFacts}</dl>${serviceDiagnostics(s)}${s.temporary ? temporaryCleanupMarkup(w.id, 'service', s.id) : ''}<div class="service-controls">${ordinaryControls}${btn(t('service.remove'), "service-action", "small danger", `data-control="remove" data-id="${esc(s.id)}" ${!adapter.project(w).usable || blocked ? "disabled" : ""} ${blockReason}`)}</div><div class="logs-heading"><h3>${t('service.logTitle')}</h3>${btn(`<span class="button-pending-content${logs?.loading ? ' is-pending' : ''}"><span>${icon("refresh", 14)} ${t('service.refreshLogs')}</span>${logs?.loading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, "refresh-logs", "small", logs?.loading ? `aria-busy="true" data-pending-action="refresh-logs" data-pending-label="${esc(t('service.readingLogs', { name: s.name }))}" title="${esc(t('service.readingLogs', { name: s.name }))}"` : "")}</div>${logs?.error ? feedback(esc(logs.error), "warning", btn(t('service.retryLogs'), "refresh-logs", "small")) : ""}${!logs?.checkedAt && !logs?.error ? readPlaceholder(t('service.readingLogs', { name: s.name }), 'service') : `<pre class="logs">${esc(logs?.value?.text ?? logs?.value?.reason ?? t('service.noLogs'))}</pre>`}<p class="muted small-text">${esc(logs?.value?.status ?? t('service.notRetrieved'))} · ${t('service.collected', { time: esc(logs?.value?.collectedAt ?? t('text.notProvided')) })} · ${logs?.value?.truncated ? t('service.truncated') : t('service.bounded')}. ${t('service.notLive')}</p>`;
 }
 let focusReturn = "";
 function focusKey(el) {
@@ -2620,13 +3193,18 @@ function confirmFileAttempt(record, results) {
         return;
     // Only retainFileResults binds a lock to an actually submitted unknown path.
     // A cumulative summary must not copy an earlier unknown into a later retry.
-    record.successFeedback = results.length && results.every(result => result.status === 'succeeded') ? 'toast' : undefined;
-    actions.confirm(record, t('fileResults.summary', { confirmed: results.filter(result => result.status === 'succeeded').length, review: results.filter(result => result.status !== 'succeeded').length }));
+    record.resultTone = results.some(result => result.status === 'unknown') ? 'unknown'
+        : results.length && results.every(result => result.status === 'succeeded') ? 'success' : 'error';
+    actions.confirm(record, new LocalizedMessage('fileResults.summary', { confirmed: results.filter(result => result.status === 'succeeded').length, review: results.filter(result => result.status !== 'succeeded').length }));
 }
 async function performFileAttempt(attempt, targets, record) {
     const epoch = adapter.identityEpoch, origin = viewKey();
-    if (record)
+    if (record) {
+        const original = [...attempt.feedbackRecords].find(candidate => actions.current(candidate) && candidate.notificationProjection !== 'ledger-secondary');
+        if (original && original !== record)
+            record.notificationProjection = 'ledger-secondary';
         attempt.feedbackRecords.add(record);
+    }
     const confirm = (results) => { for (const original of attempt.feedbackRecords)
         confirmFileAttempt(original, results); };
     for (const target of targets) {
@@ -2652,12 +3230,14 @@ async function performFileAttempt(attempt, targets, record) {
     }
     const results = [...attempt.ledger.results];
     confirm(results);
-    if (record)
-        void actions.refresh(record, () => adapter.loadDirectory(attempt.workId, view.path));
+    const feedbackOwner = [...attempt.feedbackRecords].find(candidate => actions.current(candidate) && candidate.notificationProjection !== 'ledger-secondary');
+    if (feedbackOwner)
+        void actions.refresh(feedbackOwner, () => adapter.loadDirectory(attempt.workId, view.path));
     if (results.length && results.every(result => result.status === 'succeeded')) {
         view.selected = [];
         closeModal();
-        toast(t('fileResults.saved'));
+        if (!record)
+            toast(new LocalizedMessage('fileResults.saved'));
     }
     else {
         view.modalError = t('fileResults.review');
@@ -2697,17 +3277,15 @@ async function saveFile(record) {
         if (epoch !== adapter.identityEpoch)
             return;
         if (record && actions.current(record)) {
-            record.successFeedback = 'toast';
-            actions.confirm(record, t('save.savedShort'));
-            if (!confirmed.modified) {
+            if (!confirmed.modified)
                 record.refresh = 'refreshing';
-                render();
-            }
+            actions.confirm(record, new LocalizedMessage('save.savedShort'));
         }
         if (key === location.hash && view.file === path) {
             view.fileOriginal = content;
             view.fileBaseline = confirmed.modified || '';
-            toast(t('save.savedConfirming'));
+            if (!record)
+                toast(new LocalizedMessage('save.savedConfirming'));
         }
     });
     if (epoch !== adapter.identityEpoch)
@@ -2724,12 +3302,14 @@ async function saveFile(record) {
         view.fileBaseline = result.modified ?? "";
         view.fileUnprotected = false;
         view.fileReread = null;
-        toast(result.message === "Confirmed" ? t('save.saved') : result.message);
+        if (!record && result.message !== 'Confirmed')
+            toast(result.message, 'warning');
         return true;
     }
     view.fileWriteUncertain = result.status === "unknown" || result.httpStatus === 412;
     view.modalError = result.message;
-    toast(result.message);
+    if (!record)
+        toast(result.message, result.status === 'unknown' ? 'unknown' : 'error');
     return false;
 }
 async function saveConfig(record) {
@@ -2738,10 +3318,12 @@ async function saveConfig(record) {
         return false;
     if (!validateConfigDraft())
         return false;
-    const submitted = structuredClone(view.config), version = JSON.stringify(view.config), key = location.hash;
+    const submitted = structuredClone(view.config), version = JSON.stringify(view.config), key = location.hash, epoch = adapter.identityEpoch;
     await adapter.saveConfiguration(w.id, submitted);
+    if (epoch !== adapter.identityEpoch)
+        throw new ViewChanged();
     if (record) {
-        actions.confirm(record, t('save.settingsSaved'));
+        actions.confirm(record, new LocalizedMessage('save.settingsSaved'));
         void actions.refresh(record, () => adapter.loadConfiguration(w.id));
     }
     if (key !== location.hash)
@@ -2750,7 +3332,8 @@ async function saveConfig(record) {
         view.config = structuredClone(submitted);
         view.configDirty = false;
     }
-    toast(t('save.changesSaved'));
+    if (!record)
+        toast(new LocalizedMessage('save.changesSaved'));
     return true;
 }
 function validateConfigDraft() {
@@ -2765,7 +3348,7 @@ function validateConfigDraft() {
         view.settingsTab = "Advanced";
         render();
         root.querySelector("#advanced-editor")?.focus();
-        toast(t('save.fixJson'));
+        toast(new LocalizedMessage('save.fixJson'), 'error');
         return false;
     }
 }
@@ -2776,7 +3359,7 @@ function downloadBlob(name, contents, type = "text/plain") {
     a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast(t('download.started'));
+    toast(new LocalizedMessage('download.started'));
 }
 async function handleAction(action, el, record) {
     if (adapter.coreGate.blocked && !coreSafeAction(action))
@@ -2784,12 +3367,16 @@ async function handleAction(action, el, record) {
     const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
     const stay = async (pending) => { const key = ownedView(), modal = view.modal; const value = await pending; if (key !== ownedView() || record?.kind === 'identity' && !!view.modal && view.modal !== modal)
         throw new ViewChanged(); return value; };
-    const accept = (op) => { if (record) {
-        record.businessId = op.id;
-        actions.confirm(record, t('action.accepted', { id: op.id }));
-        if (op.workId)
-            void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId));
-    } }; // i18n-exempt: server operation kind
+    const accept = (op) => {
+        if (record) {
+            record.businessId = op.id;
+            record.successFeedback = 'owner';
+            retainOperationFeedback(record, op);
+            actions.confirm(record, new LocalizedMessage('action.accepted', { id: op.id }));
+            if (op.workId)
+                void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId)); // i18n-exempt: server operation kind
+        }
+    };
     const show = (op) => { accept(op); runAndShow(op); };
     const filesConfirmed = (results) => {
         if (record) {
@@ -2807,6 +3394,13 @@ async function handleAction(action, el, record) {
     };
     const w = targetWork(el);
     const currentWork = current();
+    const createOriginalSession = () => {
+        const pending = adapter.newSession(currentWork.id);
+        const intent = adapter.chatSubmissions.get(currentWork.id);
+        if (record && intent?.kind === 'session')
+            record.businessId = `submission:${intent.key}`;
+        return pending;
+    };
     const s = currentWork ? activeService(currentWork) : undefined;
     if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'retry-chat-submission', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'cancel-pi-request', 'retry-pi-request'].includes(action))
         throw new Error(t('fileResults.notReadyRuntime'));
@@ -2866,8 +3460,12 @@ async function handleAction(action, el, record) {
             if (snapshot)
                 pendingImageSubmissions.set(currentWork.id, snapshot);
             try {
-                await stay(adapter.retryChatSubmission(currentWork.id, sessionId, key).then(result => { if (snapshot)
-                    consumeImageSubmission(currentWork.id, snapshot); return result; }));
+                await stay(adapter.retryChatSubmission(currentWork.id, sessionId, key).then(result => {
+                    retainAcceptedChatRun(currentWork.id, sessionId, result, epoch);
+                    if (snapshot)
+                        consumeImageSubmission(currentWork.id, snapshot);
+                    return result;
+                }));
                 chatDraftSnapshots.delete(key);
                 closeModal();
             }
@@ -2877,6 +3475,8 @@ async function handleAction(action, el, record) {
                 const message = currentWork.sessions.find(s => s.id === sessionId)?.messages.find(m => m.submission?.previousKeys?.includes(key));
                 const next = message?.submission?.key;
                 if (next) {
+                    if (record)
+                        record.businessId = `submission:${next}`;
                     // Retain the original attempt's recovery data even after navigation.
                     if (snapshot) {
                         chatDraftSnapshots.delete(key);
@@ -2891,6 +3491,8 @@ async function handleAction(action, el, record) {
                     pendingImageSubmissions.delete(currentWork.id);
                 throw error;
             }
+            if (record)
+                record.successFeedback = 'owner';
             break;
         }
         case 'choose-chat-setting': {
@@ -3021,12 +3623,15 @@ async function handleAction(action, el, record) {
             if (!currentWork)
                 break;
             const epoch = adapter.identityEpoch;
+            const intent = adapter.chatSubmissions.get(currentWork.id);
+            const original = intent && { work: currentWork.id, key: intent.key, kind: intent.kind, sessionId: intent.sessionId };
             // Acceptance can remove the icon and its anchored popover before the read
             // resolves. Commit the original draft/lock readback before view guards.
             await stay(adapter.recoverChatSubmission(currentWork.id).then(result => {
                 if (!result || epoch !== adapter.identityEpoch)
                     return result;
                 if (result.kind === 'run') {
+                    retainAcceptedChatRun(currentWork.id, result.run.sessionId, result.run.runId, epoch);
                     const submitted = pendingImageSubmissions.get(currentWork.id);
                     if (submitted && submitted.epoch === epoch)
                         consumeImageSubmission(currentWork.id, submitted);
@@ -3037,9 +3642,16 @@ async function handleAction(action, el, record) {
                     if (original && !view.drafts[draftKey(currentWork)])
                         view.drafts[draftKey(currentWork)] = original;
                 }
-                for (const old of actions.records.values())
-                    if (old.blocked && old.work === currentWork.id && old.kind === 'agent' && ['send-message', 'retry-chat-submission', ...(result.kind === 'session' ? ['new-session'] : [])].includes(old.action || ''))
-                        actions.review(old);
+                for (const old of actions.records.values()) {
+                    if (!original || !actions.current(old) || !acceptedChatSubmissionOwns(old, original, result))
+                        continue;
+                    const notice = actionNotice(old, noticeIdentity(), () => actions.message(old));
+                    if (notice)
+                        notices.resolve(notice);
+                    old.notificationProjection = 'chat-submission-owner';
+                    old.businessId = result.kind === 'run' ? result.run.runId : result.session.sessionId;
+                    actions.review(old);
+                }
                 return result;
             }));
             if (view.modal === 'chat-submission' && !adapter.chatSubmissions.has(currentWork.id))
@@ -3102,9 +3714,17 @@ async function handleAction(action, el, record) {
         case "agent-menu":
         case "manage-services":
         case "webdav":
-        case "service-menu":
             openModal(action);
             break;
+        case "service-menu": {
+            const service = currentWork && activeService(currentWork);
+            if (currentWork && service)
+                openModal(action, {
+                    workId: currentWork.id, serviceId: service.id,
+                    scope: 'service', epoch: String(adapter.identityEpoch),
+                });
+            break;
+        }
         case "file-add": {
             if (fileActionsContext) {
                 closeFileActions(true);
@@ -3116,9 +3736,11 @@ async function handleAction(action, el, record) {
             break;
         }
         case "works-tasks":
-            openModal('works-tasks', {});
+            openModal('works-tasks', { recordsRecovery: adapter.operationRecords.error ? 'true' : '' });
             break;
         case "work-menu":
+            openModal(action, { id: w?.id || '', scope: el.dataset.menuScope || 'work-row', epoch: String(adapter.identityEpoch) });
+            break;
         case "work-info":
         case "delete-work":
         case "stop-work":
@@ -3139,7 +3761,14 @@ async function handleAction(action, el, record) {
                 await stay(adapter.loadPreferences());
             break;
         case "check-sign-in":
-            await stay(adapter.checkSignInOutcome());
+            try {
+                await stay(adapter.checkSignInOutcome());
+            }
+            catch (error) {
+                if (!adapter.signInUnknown)
+                    throw error;
+                // The original credential owner projects this readonly recovery failure.
+            }
             break;
         case "sign-in": {
             const account = root.querySelector("#auth-account")?.value ?? "";
@@ -3160,14 +3789,13 @@ async function handleAction(action, el, record) {
                 importSignInSuspended = false;
                 closeModal();
             }
-            toast(t('action.signedIn'));
+            toast(new LocalizedMessage('action.signedIn'));
             break;
         }
         case "import-sign-in":
             importSignInSuspended = true;
             view.modal = "";
             render();
-            toast(t('action.signInImport'));
             break;
         case "sign-out": {
             const result = await stay(adapter.signOut());
@@ -3185,11 +3813,11 @@ async function handleAction(action, el, record) {
             view.configDirty = false;
             view.file = "";
             closeModal();
-            toast(result.credentialCleared === false ? t('action.signOutCleanup', { command: adapter.logoutCommand() }) : result.remoteRevocationConfirmed ? t('action.signedOut') : t('action.signedOutUnconfirmed'));
+            toast(result.credentialCleared === false ? new LocalizedMessage('action.signOutCleanup', { command: adapter.logoutCommand() }) : new LocalizedMessage(result.remoteRevocationConfirmed ? 'action.signedOut' : 'action.signedOutUnconfirmed'), result.credentialCleared === false ? 'error' : result.remoteRevocationConfirmed ? 'success' : 'warning');
             break;
         }
         case "reconnect":
-            toast(t('action.reconnect'));
+            toast(new LocalizedMessage('action.reconnect'), 'warning');
             break;
         case "confirm-switch-core":
             await stay(adapter.switchCore(view.coreAddress));
@@ -3225,9 +3853,11 @@ async function handleAction(action, el, record) {
                     await stay(adapter.loadSession(currentWork.id, selected));
             }
             break;
+        case "retry-known-operations":
+            await stay(adapter.recoverOperations());
+            break;
         case "check-connection":
             await stay(adapter.checkConnection());
-            toast(t('action.connectionChecked'));
             break;
         case "start-work":
             if (w)
@@ -3360,7 +3990,9 @@ async function handleAction(action, el, record) {
                 openModal('operations', { workId: w.id, history: "1", filter: action === 'work-current-tasks' ? 'current' : 'all' });
             break;
         case 'find-work-task':
-            if (w)
+            if (el.dataset.recoveryScope === 'original-task' && view.modal === 'works-tasks')
+                openModal('operations', {});
+            else if (w)
                 openModal('operations', { workId: w.id, history: "1" });
             break;
         case "check-work": {
@@ -3391,7 +4023,7 @@ async function handleAction(action, el, record) {
             else {
                 if (ids.length > 1)
                     openModal('operations', { workId: w.id });
-                toast(t('action.workChecked'));
+                toast(new LocalizedMessage('action.workChecked'));
             }
             break;
         }
@@ -3442,7 +4074,9 @@ async function handleAction(action, el, record) {
                 createDraft.accept(token);
             if (record) {
                 record.businessId = op.id;
-                actions.confirm(record, t('action.accepted', { id: op.id }));
+                record.successFeedback = 'owner';
+                retainOperationFeedback(record, op);
+                actions.confirm(record, new LocalizedMessage('action.accepted', { id: op.id }));
             }
             if (origin !== ownedView())
                 throw new ViewChanged();
@@ -3492,8 +4126,11 @@ async function handleAction(action, el, record) {
                     if (service) {
                         view.service = service.id;
                         view.port = service.ports.includes(view.port) ? view.port : service.ports[0] || 0;
-                        if (view.port && service.observed === "Ready")
+                        if (view.port && service.observed === "Ready") {
+                            if (record)
+                                record.sourceContext = `entry:${currentWork.id}:${service.id}:${view.port}`;
                             await stay(adapter.ensureServiceEntry(currentWork.id, service.id, view.port));
+                        }
                     }
                 }
                 if (action === "tab-Files" && currentWork)
@@ -3528,10 +4165,10 @@ async function handleAction(action, el, record) {
         case "new-session":
             if (currentWork) {
                 sessionChoice++;
-                view.session = await stay(adapter.newSession(currentWork.id));
+                view.session = await stay(createOriginalSession());
                 if (record) {
                     record.businessId = view.session;
-                    actions.confirm(record, t('action.sessionCreated'));
+                    actions.confirm(record, new LocalizedMessage('action.sessionCreated'));
                 }
                 closeModal();
                 render();
@@ -3541,7 +4178,7 @@ async function handleAction(action, el, record) {
         case "suggest-files":
             if (currentWork) {
                 if (!view.session)
-                    view.session = await stay(adapter.newSession(currentWork.id));
+                    view.session = await stay(createOriginalSession());
                 textDraftRevisions.set(draftKey(currentWork), (textDraftRevisions.get(draftKey(currentWork)) || 0) + 1);
                 view.drafts[draftKey(currentWork)] =
                     action === "suggest-message"
@@ -3559,12 +4196,12 @@ async function handleAction(action, el, record) {
                 if (!refreshing)
                     requestNavigation = { epoch: adapter.identityEpoch, workId: currentWork.id, source, serviceName, entry: focusKey(el), scroll: 0, focus: '' };
                 openModal('pi-requests', { serviceName, source });
-                await stay(adapter.loadRequests(currentWork.id, serviceName));
+                await readRequestPage(currentWork.id, serviceName, record);
             }
             break;
         case "next-pi-requests":
             if (currentWork)
-                await stay(adapter.loadRequests(currentWork.id, view.data.serviceName || '', true));
+                await readRequestPage(currentWork.id, view.data.serviceName || '', record, true);
             break;
         case "pi-request-detail":
             if (currentWork) {
@@ -3689,7 +4326,7 @@ async function handleAction(action, el, record) {
                         if (match?.[2]?.trim())
                             throw new Error(t('chat.commandNoArgs'));
                         if (name === 'new') {
-                            view.session = await stay(adapter.newSession(currentWork.id));
+                            view.session = await stay(createOriginalSession());
                         }
                         else if (name === 'resume') {
                             pendingWebCommand = { key: originalKey, text, kind: 'resume' };
@@ -3719,7 +4356,7 @@ async function handleAction(action, el, record) {
                         throw new Error(t('chat.unknownCommand'));
                 }
                 if (!view.session) {
-                    view.session = await stay(adapter.newSession(currentWork.id));
+                    view.session = await stay(createOriginalSession());
                     render();
                     await stay(adapter.saveModel(currentWork.id, view.session));
                 }
@@ -3737,8 +4374,15 @@ async function handleAction(action, el, record) {
                         while (chatDraftSnapshots.size > 16)
                             chatDraftSnapshots.delete(chatDraftSnapshots.keys().next().value);
                     }
-                    submittedRunId = await stay(sending.then(result => { consumeImageSubmission(currentWork.id, submission); if (attemptKey)
-                        chatDraftSnapshots.delete(attemptKey); return result; }));
+                    submittedRunId = await stay(sending.then(result => {
+                        const accepted = currentWork.run;
+                        if (accepted?.id === result)
+                            retainAcceptedChatRun(currentWork.id, accepted.sessionId, result, submission.epoch);
+                        consumeImageSubmission(currentWork.id, submission);
+                        if (attemptKey)
+                            chatDraftSnapshots.delete(attemptKey);
+                        return result;
+                    }));
                 }
                 catch (error) {
                     if (!adapter.chatSubmissions.has(currentWork.id))
@@ -3748,7 +4392,8 @@ async function handleAction(action, el, record) {
                 pendingImageSubmissions.delete(currentWork.id);
                 if (record) {
                     record.businessId = submittedRunId;
-                    actions.confirm(record, t('chat.messageAccepted'));
+                    record.successFeedback = 'owner';
+                    actions.confirm(record, new LocalizedMessage('chat.messageAccepted'));
                 }
                 view.scrollPinned = true;
                 render();
@@ -3763,7 +4408,8 @@ async function handleAction(action, el, record) {
                 await stay(adapter.cancelRun(currentWork.id, targetRunId));
                 if (record) {
                     record.businessId = targetRunId;
-                    actions.confirm(record, t('action.cancellationRequested'));
+                    record.successFeedback = 'owner';
+                    actions.confirm(record, new LocalizedMessage('action.cancellationRequested'));
                 }
             }
             break;
@@ -3777,7 +4423,7 @@ async function handleAction(action, el, record) {
                 await stay(adapter.resumeRunConnection(currentWork.id));
                 if (record) {
                     record.businessId = currentWork.run?.id;
-                    actions.confirm(record, t('action.reconnected'));
+                    actions.confirm(record, new LocalizedMessage('action.reconnected'));
                 }
             }
             break;
@@ -3810,7 +4456,7 @@ async function handleAction(action, el, record) {
                 const path = el.dataset.path;
                 const link = filesDeepLink(currentWork.id, path);
                 if (!link) {
-                    toast(t('action.invalidFileRef'));
+                    toast(new LocalizedMessage('action.invalidFileRef'), 'warning');
                     break;
                 }
                 sourceGuardReturn = (dirty() || view.configDirty) && view.modal ? { epoch: adapter.identityEpoch, route: location.hash, modal: view.modal, data: { ...view.data }, focus: focusKey(el) } : undefined;
@@ -3850,8 +4496,7 @@ async function handleAction(action, el, record) {
             break;
         case "copy-local":
             if (currentWork && s) {
-                await copy(adapter.localLink(currentWork.id, s.id, view.port));
-                toast(adapter.hosted ? t('service.accessCopied') : t('service.localCopied'));
+                await copy(adapter.localLink(currentWork.id, s.id, view.port), new LocalizedMessage(adapter.hosted ? 'service.accessCopied' : 'service.localCopied'));
             }
             break;
         case "open-app":
@@ -3925,15 +4570,24 @@ async function handleAction(action, el, record) {
             if (currentWork) {
                 const epoch = adapter.identityEpoch, snapshot = unknownFiles.reviewSnapshot(currentWork.id), origin = ownedView();
                 const directories = [...new Set([view.path, ...snapshot.directories])], read = [];
+                const previousFile = view.file, previousFileStatus = view.fileStatus, previousFileChoice = fileChoice;
                 if (view.file) {
                     view.fileStatus = "loading";
                     render();
                 }
-                for (const directory of directories) {
-                    await adapter.loadDirectory(currentWork.id, directory);
-                    if (epoch !== adapter.identityEpoch)
-                        throw new ViewChanged();
-                    read.push(directory);
+                try {
+                    for (const directory of directories) {
+                        await adapter.loadDirectory(currentWork.id, directory);
+                        if (epoch !== adapter.identityEpoch)
+                            throw new ViewChanged();
+                        read.push(directory);
+                    }
+                }
+                catch (error) {
+                    // No preview read began. Keep the original preview/draft instead of an endless spinner.
+                    if (epoch === adapter.identityEpoch && origin === ownedView() && view.file === previousFile && fileChoice === previousFileChoice && view.fileStatus === 'loading')
+                        view.fileStatus = previousFileStatus;
+                    throw error;
                 }
                 const reviewed = unknownFiles.completeReview(snapshot, read);
                 for (const identity of reviewed.actions) {
@@ -4060,7 +4714,7 @@ async function handleAction(action, el, record) {
             break;
         case "allow-unprotected-file":
             view.fileUnprotected = true;
-            toast(t('save.unprotected'));
+            toast(new LocalizedMessage('save.unprotected'));
             break;
         case "use-reread-version":
             if (view.fileReread?.preview?.kind === "text") {
@@ -4122,7 +4776,8 @@ async function handleAction(action, el, record) {
                 pendingUploadFiles = pendingUploadFiles.filter(file => modalTransfers.some(row => row.path === joinPath(directory, file.name) && row.status !== 'succeeded'));
                 if (!pendingUploadFiles.length && modalTransfers.length && modalTransfers.every(row => row.status === 'succeeded')) {
                     closeModal();
-                    toast(t('upload.complete'));
+                    if (!record)
+                        toast(new LocalizedMessage('upload.complete'));
                 }
                 else {
                     view.modalError = t('upload.review');
@@ -4145,7 +4800,8 @@ async function handleAction(action, el, record) {
                 modalTransfers = retained;
                 if (filesConfirmed(retained)) {
                     closeModal();
-                    toast(t('files.folderCreated'));
+                    if (!record)
+                        toast(new LocalizedMessage('files.folderCreated'));
                 }
             }
             break;
@@ -4270,6 +4926,10 @@ async function handleAction(action, el, record) {
                 render();
             }
             break;
+        case 'refresh-packages':
+            if (currentWork)
+                await stay(adapter.loadPackages(currentWork.id));
+            break;
         case "refresh-config":
             if (currentWork) {
                 await stay(adapter.loadConfiguration(currentWork.id));
@@ -4299,16 +4959,19 @@ async function handleAction(action, el, record) {
                     view.configDirty = false;
                 }
                 if (record) {
-                    actions.confirm(record, t('action.skillCopySaved'));
+                    actions.confirm(record, new LocalizedMessage('action.skillCopySaved'));
                     void actions.refresh(record, () => adapter.loadConfiguration(currentWork.id));
                 }
                 closeModal();
-                toast(t('action.coreCopiesSaved'));
+                if (!record)
+                    toast(new LocalizedMessage('action.coreCopiesSaved'));
             }
             break;
         case "check-catalog":
             const available = await stay(adapter.checkCatalog());
-            toast(available ? t('action.catalogsConfirmed') : t('action.catalogIncomplete', { error: [adapter.catalog.skills.error, adapter.catalog.packages.error].filter(Boolean).join(" ") }));
+            if (available)
+                toast(new LocalizedMessage('action.catalogsConfirmed'));
+            // Each actual failed catalog retains its own read notice and local recovery.
             break;
         case "skill-detail":
         case "package-detail":
@@ -4423,18 +5086,28 @@ async function handleAction(action, el, record) {
         case "export-logs":
             adapter.recoverLogExport();
             if (!adapter.logExport || (!adapter.logExport.restored && ["ready", "failed", "interrupted", "expired"].includes(adapter.logExport.phase)))
-                adapter.startLogExport();
+                startLogExportWithFeedback();
             openModal("log-export");
             break;
         case "export-logs-again":
-            adapter.startLogExport();
+            startLogExportWithFeedback();
             break;
         case "retry-log-export":
             adapter.retryLogExportSameKey();
             break;
-        case "check-log-export":
-            await stay(adapter.checkLogExport());
+        case "check-log-export": {
+            const original = adapter.logExport, epoch = adapter.identityEpoch;
+            const registered = exportFeedback.logOwner(original);
+            try {
+                await stay(adapter.checkLogExport());
+            }
+            catch (error) {
+                if (!registered || epoch !== adapter.identityEpoch || adapter.logExport !== original || registered.owner.task !== `log-export:${original?.key}` || !original?.error || String(original.error) !== describeError(error))
+                    throw error;
+                // The exact accepted task already retains this error and its original Details recovery.
+            }
             break;
+        }
         case "download-log-export":
             adapter.deliverLogExport();
             break;
@@ -4443,37 +5116,58 @@ async function handleAction(action, el, record) {
             if (w)
                 beginExport(w, false, record);
             break;
+        case 'show-export-progress': {
+            const flow = exportFlows.get(el.dataset.id);
+            if (flow && flow.identityEpoch === adapter.identityEpoch && flow.workId === el.dataset.workId)
+                openExportFlow(flow);
+            break;
+        }
         case 'find-previous-export':
             if (w)
-                openModal('export', { id: w.id, findSnapshot: 'true' });
+                openModal('export-recovery', { id: w.id, flowId: exportFlows.forWork(w.id)?.id || '' });
             break;
         case 'view-snapshot': {
             const snap = await stay(adapter.fetchSnapshot(el.dataset.id, true, el.dataset.workId));
-            openModal('export', { id: snap.workId, snapshotId: snap.id });
+            openModal('export-recovery', { id: snap.workId, snapshotId: snap.id });
             break;
         }
         case 'download-work': {
             const snap = adapter.getSnapshot(el.dataset.id);
             if (!snap)
                 throw new Error(t('export.checkSnapshot'));
-            openExportFlow(exportFlows.start(snap.workId, { mode: 'existing', snapshotId: snap.id }), record);
+            openExportFlow(acceptedExportFlow(exportFlows.start(snap.workId, { mode: 'existing', snapshotId: snap.id })), record);
             break;
         }
-        case 'check-export-flow':
-            await exportFlows.check(el.dataset.id);
+        case 'check-export-flow': {
+            const controls = exportFlows;
+            await controls.check(el.dataset.id);
             break;
-        case 'pause-export-flow':
-            exportFlows.pause(el.dataset.id);
+        }
+        case 'pause-export-flow': {
+            const controls = exportFlows;
+            controls.pause(el.dataset.id);
             break;
-        case 'resume-export-flow':
-            await exportFlows.resume(el.dataset.id);
+        }
+        case 'resume-export-flow': {
+            const controls = exportFlows;
+            await controls.resume(el.dataset.id);
             break;
+        }
         case 'save-export-file': {
-            const id = el.dataset.id, snap = await stay(adapter.fetchSnapshot(id));
-            const job = await stay(adapter.checkDownload(id));
-            if (adapter.getSnapshot(id) !== snap || adapter.downloads.get(id) !== job || !exportSnapshotAvailable(snap) || !job?.ready || job.snapshotId !== snap.id || job.workId !== snap.workId)
-                throw new Error(t('export.notConfirmed'));
-            downloadURL(`/_desktop/api/downloads/${encodeURIComponent(job.transferId)}/content`, adapter.getWork(snap.workId)?.name || snap.workId);
+            const originalFlow = view.data.flowId ? exportFlows.get(view.data.flowId) : undefined;
+            const delivered = await saveExportFile(el.dataset.id, {
+                get identityEpoch() { return adapter.identityEpoch; },
+                fetchSnapshot: id => stay(adapter.fetchSnapshot(id)),
+                checkTransfer: id => stay(adapter.checkDownload(id)),
+                currentSnapshot: id => adapter.getSnapshot(id),
+                currentTransfer: id => adapter.downloads.get(id),
+                deliver: (url, workId) => downloadURL(url, adapter.getWork(workId)?.name || workId),
+            });
+            if (originalFlow && exportFlows.confirmDelivery(originalFlow.id, delivered.snapshotId, delivered.transferId, delivered.identityEpoch)) {
+                const registered = exportFeedback.flowOwner(originalFlow);
+                if (registered)
+                    notices.resolve(registered.owner);
+            }
             break;
         }
         case 'check-download': {
@@ -4531,7 +5225,7 @@ async function handleAction(action, el, record) {
                 throw new Error(t('export.snapshotMismatch'));
             const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim(), true, workId));
             if (snap)
-                openModal("export", { id: snap.workId, snapshotId: snap.id });
+                openModal("export-recovery", { id: snap.workId, snapshotId: snap.id });
             else
                 throw Error(t('export.snapshotMissing'));
             break;
@@ -4696,16 +5390,26 @@ async function openFile(w, path) {
         throw error;
     }
 }
-async function copy(text) {
+async function copy(text, successMessage = new LocalizedMessage('clipboard.copied')) {
+    const epoch = adapter.identityEpoch, origin = viewKey();
+    const currentOwner = () => epoch === adapter.identityEpoch && origin === viewKey();
     try {
         await navigator.clipboard.writeText(text);
-        toast(t('clipboard.copied'));
+        if (currentOwner())
+            toast(successMessage);
     }
     catch {
-        toast(t('clipboard.unavailable', { value: text }));
+        if (currentOwner())
+            toast(new LocalizedMessage('clipboard.unavailable', { value: text }), 'error');
     }
 }
 function visibleActionRecord(record) {
+    if (!signInActionFeedbackVisible(record, adapter.signInUnknown))
+        return false;
+    if (record.notificationProjection === 'chat-submission-owner')
+        return false;
+    if (record.kind === 'read' && resourceReadOwnedActions.has(record))
+        return false;
     if (['send-message', 'retry-chat-submission'].includes(record.action || '') && record.businessId) {
         const work = adapter.getWork(record.work || '');
         if (work?.sessions.some(session => session.messages.some(m => m.runId === record.businessId || record.businessId === `submission:${m.submission?.key}` || m.submission?.previousKeys?.some(key => record.businessId === `submission:${key}`))))
@@ -4825,7 +5529,7 @@ function render() {
         const w = adapter.getWork(r[1]);
         html = w
             ? workPage(w)
-            : workReadPending(r[1]) ? `${topbar()}<main class="work-loading">${readPlaceholder(t('work.loading'), 'service')}${btn(t('work.backToWorks'), 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? t('work.notFoundTitle') : t('work.unavailableTitle'), esc(workReadErrors.get(r[1])?.message || t('work.readAgainHint')), btn(t('common.retry'), "retry-work-read", "primary") + btn(t('work.backToWorks'), "back-works"))}`;
+            : workReadPending(r[1]) ? `${topbar()}<main class="work-loading">${readPlaceholder(t('work.loading'), 'service')}${btn(t('work.backToWorks'), 'back-works')}</main>` : `${topbar()}${empty("grid", workReadErrors.get(r[1])?.missing ? t('work.notFoundTitle') : t('work.unavailableTitle'), esc(workReadErrors.get(r[1])?.message || adapter.worksError || t('work.readAgainHint')), btn(t('common.retry'), "retry-work-read", "primary") + btn(t('work.backToWorks'), "back-works"))}`;
     }
     else
         html = works();
@@ -4849,10 +5553,11 @@ function render() {
     // The Import dialog renders its own cleanup retries so they stay actionable
     // above the modal backdrop; the page-level banner covers every other view.
     const pageCleanup = view.modal === 'import' ? '' : [...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join('');
-    reconcileHTML(root, `${html}${pageCleanup}<div id="toast" class="toast ${view.toast ? "visible" : ""}" role="status" aria-live="polite">${icon("info", 17)}${esc(view.toast)}</div>${view.modal && (!gate.blocked || ["account", "connection", "switch-core", "operation", "operations", "log-export", "dirty-file", "dirty-settings", "about-piwork"].includes(view.modal)) ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+    reconcileHTML(root, `${html}${pageCleanup}${view.modal && (!gate.blocked || ["account", "connection", "switch-core", "operation", "operations", "log-export", "dirty-file", "dirty-settings", "about-piwork"].includes(view.modal)) ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
     for (const child of [...root.children])
         if (child instanceof HTMLElement && !['modal', 'toast', 'core-recovery-banner'].includes(child.id))
             child.inert = !!retainedCoreView;
+    syncNotices();
     observeServiceFrames();
     renderActionStates(root, actions, location.hash, el => actionIntent(el), visibleActionRecord);
     for (const el of root.querySelectorAll('[data-history-image]'))
@@ -4892,6 +5597,9 @@ function render() {
         if (body)
             body.scrollTop = modalScroll;
     }
+    const noticeParent = dialog?.matches(':modal') ? dialog : document.body;
+    if (noticeHost.element.parentElement !== noticeParent)
+        noticeParent.append(noticeHost.element);
     if (activeKey) {
         const replacement = active?.isConnected ? active : root.querySelector(activeKey);
         if (replacement && replacement !== document.activeElement && (!dialog || nonmodalDialog() || dialog.contains(replacement))) {
@@ -5101,8 +5809,14 @@ root.addEventListener('focusin', event => {
 });
 window.addEventListener('blur', () => { if (anchoredOverlay(view.modal) && document.activeElement instanceof HTMLIFrameElement)
     dismissAnchoredOverlay(); });
-root.addEventListener('scroll', () => { const dialog = root.querySelector('#modal'); if (dialog && anchoredOverlay(view.modal))
-    positionOverlay(dialog); }, true);
+root.addEventListener('scroll', event => {
+    const dialog = root.querySelector('#modal');
+    // Internal scroll does not move the external anchor. Measuring a temporary
+    // unconstrained height here would clamp the body's scroll offset back to zero.
+    if (!dialog || !anchoredOverlay(view.modal) || event.target instanceof Node && dialog.contains(event.target))
+        return;
+    positionOverlay(dialog);
+}, true);
 root.addEventListener('pointerdown', event => {
     if (fileActionsContext && !event.target.closest('.file-add-anchor'))
         closeFileActions();
@@ -5151,8 +5865,13 @@ root.addEventListener("click", (e) => {
     if (["select-session", "new-session"].includes(el.dataset.action || ""))
         imageSelection++;
     if (view.modal === 'export' && !el.closest('#modal')) {
-        closeModal();
+        closeModal(false);
         view.data = {};
+    }
+    // A background menu click owns its anchor, not the drawer's previous trigger.
+    if (overlayRole(overlayForAction(el.dataset.action || '')) === 'menu' && !el.closest('#modal')) {
+        const trigger = el.isConnected ? el : root.querySelector(focusKey(el));
+        trigger?.focus({ preventScroll: true });
     }
     if (!view.modal)
         focusReturn = focusKey(el);
@@ -5172,8 +5891,8 @@ root.addEventListener("click", (e) => {
             if (currentNameError())
                 root.querySelector(`#${view.modal === 'import' ? 'import-name-error' : 'create-name-error'}`)?.scrollIntoView({ block: 'nearest' });
         }
-        else if (![...((el.dataset.action === 'send-message' && [...actions.records.values()].some(r => r.owner === el && !visibleActionRecord(r))) ? ['send-message'] : []), 'refresh-files', 'file-path', 'open-source', 'select-session', 'retry-conversation', 'check-active-run'].includes(el.dataset.action || ''))
-            toast(error instanceof Error ? error.message : String(error));
+        else if (![...actions.records.values()].some(record => record.owner === el && !!record.error) && ![...((el.dataset.action === 'send-message' && [...actions.records.values()].some(r => r.owner === el && !visibleActionRecord(r))) ? ['send-message'] : []), 'refresh-files', 'file-path', 'open-source', 'select-session', 'retry-conversation', 'check-active-run'].includes(el.dataset.action || ''))
+            toast(() => describeError(error), 'error');
     }).finally(() => { if (menuCommand && !menuFailed && modalChoice === menuChoice && overlayRole(view.modal) === 'menu')
         closeModal();
     else
@@ -5290,7 +6009,11 @@ root.addEventListener("change", (e) => {
     const w = current();
     if (input.id === 'pi-service-filter' && w) {
         view.data.serviceName = value;
-        void adapter.loadRequests(w.id, value).catch(error => toast(error.message));
+        if (requestNavigationCurrent())
+            requestNavigation.serviceName = value;
+        void dispatchAction(input, record => readRequestPage(w.id, value, record), actionIntent(input, 'pi-requests')).catch(() => {
+            // ActionState owns the failure and its recovery; stale views stay silent.
+        });
         render();
     }
     if (input.dataset.fileSelect) {
@@ -5329,7 +6052,7 @@ root.addEventListener("change", (e) => {
             view.service = value;
             view.port = w?.services.find((s) => s.id === value)?.ports[0] || 3000;
             if (w && view.port)
-                void adapter.ensureServiceEntry(w.id, view.service, view.port).catch(error => toast(error.message));
+                void adapter.ensureServiceEntry(w.id, view.service, view.port).catch(() => undefined);
             render();
             break;
         case "port-select": {
@@ -5345,7 +6068,7 @@ root.addEventListener("change", (e) => {
                 history.replaceState(null, '', `#/app/${encodeURIComponent(w.id)}/${encodeURIComponent(service.id)}/${port}`);
                 lastRoute = location.hash;
             }
-            void adapter.ensureServiceEntry(w.id, service.id, port).catch(error => toast(error.message));
+            void adapter.ensureServiceEntry(w.id, service.id, port).catch(() => undefined);
             render();
             break;
         }
@@ -5388,7 +6111,7 @@ root.addEventListener("change", (e) => {
             if (err instanceof ViewChanged || origin !== viewKey())
                 return;
             view.modalError = String(err.message || err);
-            toast(view.modalError);
+            toast(() => describeError(err), 'error');
         });
     }
 });
@@ -5421,8 +6144,8 @@ async function handleFiles(input, record) {
             openModal("upload-overwrite");
             modalTransfers = results;
         }
-        else if (results.length && results.every(row => row.status === "succeeded"))
-            toast(t('upload.complete'));
+        else if (!record && results.length && results.every(row => row.status === "succeeded"))
+            toast(new LocalizedMessage('upload.complete'));
         render();
     }
     else if (input.id === "work-file-input") {
@@ -5693,7 +6416,7 @@ function handleRouteNavigation() {
     lastRoute = location.hash;
     view.modal = "";
     modalChoice++;
-    void loadRoute().catch(error => toast(error.message));
+    void loadRoute().catch(error => toast(() => describeError(error), 'error'));
     render();
 }
 window.addEventListener("hashchange", () => languagePicker.close());
@@ -5785,6 +6508,12 @@ adapter.subscribe(() => {
         }
     }
     reviewReadyImport();
+    // Selection reconciliation belongs to data arrival, not the toolbar renderer.
+    const selectedWork = current();
+    const selectedService = selectedWork && activeService(selectedWork);
+    if (selectedService && route()[0] !== 'app' && !selectedService.ports.includes(view.port)) {
+        view.port = selectedService.ports[0] || 0;
+    }
     const work = current();
     const restore = work && runtimeAvailability.get(work.id) === false && adapter.project(work).usable;
     for (const item of adapter.state.works)
@@ -5813,16 +6542,25 @@ void initialization.then(async () => { view.coreAddress = adapter.state.core.add
     void adapter.loadPreferences(); await loadRoute(); }).catch(error => reportInitializationFailure(error, initializationContext.epoch, initializationContext.route));
 let packageFiles = [];
 let pendingUploadFiles = [];
-function downloadURL(url, workName = '') { const link = document.createElement('a'); link.href = url; link.download = ''; link.click(); toast(`${workName ? workName + ' · ' : ''}${t('download.startedBrowser')}`); }
-let routeLoad = 0;
-const workReadErrors = new Map();
+function downloadURL(url, workName = '') {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = '';
+    link.click();
+    toast(() => `${workName ? workName + ' · ' : ''}${t('download.startedBrowser')}`);
+}
 function reportInitializationFailure(error, epoch, origin) {
     if (epoch !== adapter.identityEpoch || origin !== location.hash)
         return;
     const r = route(), message = error instanceof Error ? error.message : String(error);
+    const source = adapter.readFailureResource(error);
     if (routeLoad === 0 && ['work', 'app'].includes(r[0]) && r[1] && !adapter.getWork(r[1]))
         workReadErrors.set(r[1], { message, missing: false });
-    toast(message); // The existing toast render also exposes persistent Work recovery.
+    if (['works', 'status', 'known-operations'].includes(source || '')) {
+        render();
+        return;
+    }
+    toast(() => describeError(error), 'error'); // Persistent admission recovery remains in the owning page.
 }
 function standaloneWorkUnavailable(r) {
     const error = workReadErrors.get(r[1]);
@@ -5943,8 +6681,7 @@ async function loadRoute() {
             return;
         const selectedService = activeService(work);
         if ((view.tab === 'Services' || r[0] === 'app') && selectedService?.observed === 'Ready' && view.port)
-            await adapter.ensureServiceEntry(work.id, selectedService.id, view.port).catch(error => { if (valid())
-                toast(error.message); });
+            await adapter.ensureServiceEntry(work.id, selectedService.id, view.port).catch(() => undefined);
         if (valid())
             render();
     }
@@ -6143,7 +6880,7 @@ root.addEventListener('change', event => { const input = event.target; if (input
 window.addEventListener('pagehide', () => { imageDrafts.clear(); adapter.stopImageReads(); imageObserver.disconnect(); });
 function productInfoMarkup(label, info, loading, error) {
     const build = info?.build, notes = info?.releaseNotes;
-    return `<section class="product-info"><h3>${esc(label)}</h3>${loading && !build ? `<p>${t('product.loadingVersion')}</p>` : ''}${error ? feedback(esc(error), 'warning') : ''}${build ? `<dl><dt>${t('product.version')}</dt><dd>${esc(build.version)}</dd><dt>${t('product.build')}</dt><dd><code>${esc(build.commit)}</code>${build.modified ? t('product.modified') : ''}</dd><dt>${t('product.platform')}</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>${t('product.releaseNotes')}</summary>${notes ? `<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${(notes.sections ?? []).map((section) => `<h4>${esc(section.title)}</h4><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : `<p>${t('product.releaseNotesUnavailable')}</p>`}</details>` : ''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">${t('product.allReleases')}</a></p></section>`;
+    return `<section class="product-info"><h3>${esc(label)}</h3>${loading && !build ? readPlaceholder(t('product.loadingVersion')) : ''}${error ? `<p class="action-recovery" role="status">${esc(error)}</p>` : ''}${build ? `<dl><dt>${t('product.version')}</dt><dd>${esc(build.version)}</dd><dt>${t('product.build')}</dt><dd><code>${esc(build.commit)}</code>${build.modified ? t('product.modified') : ''}</dd><dt>${t('product.platform')}</dt><dd>${esc(build.os)} / ${esc(build.architecture)}</dd></dl><details><summary>${t('product.releaseNotes')}</summary>${notes ? `<h4>${esc(notes.title)} · ${esc(notes.version)}</h4>${notes.publishedAt ? `<p>${esc(notes.publishedAt)}</p>` : ''}${(notes.sections ?? []).map((section) => `<h4>${esc(section.title)}</h4><ul>${section.items.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`).join('')}` : `<p>${t('product.releaseNotesUnavailable')}</p>`}</details>` : ''}<p><a href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">${t('product.allReleases')}</a></p></section>`;
 }
 window.addEventListener("hashchange", () => { adapter.stopImageReads(); adapter.stopFileReads(); });
 function consumeImageSubmission(workId, submitted) {

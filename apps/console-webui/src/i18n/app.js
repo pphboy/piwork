@@ -2,6 +2,7 @@
 export const appStrings = {
   en: {
     'action.checked': 'Checked',
+    'action.readFailed': 'Read failed',
     'action.confirmed': 'Confirmed',
     'action.stillWaiting': 'Still waiting ({seconds}s)',
     'action.waitingHint': 'Keep waiting and check the result when it arrives.',
@@ -50,6 +51,7 @@ export const appStrings = {
     'shell.menu': 'Menu',
     'shell.workbench': 'Workbench',
     'shell.accountMenu': 'Administrator account',
+    'shell.administration': 'Administration',
     'shell.roleAdmin': 'Role: Administrator',
     'shell.coreWithValue': 'Core: {value}',
     'shell.unavailable': 'Unavailable',
@@ -686,6 +688,7 @@ export const appStrings = {
   },
   'zh-CN': {
     'action.checked': '已检查',
+    'action.readFailed': '读取失败',
     'action.confirmed': '已确认',
     'action.stillWaiting': '仍在等待（{seconds} 秒）',
     'action.waitingHint': '可以继续等待，并在结果到达后查看。',
@@ -734,6 +737,7 @@ export const appStrings = {
     'shell.menu': '菜单',
     'shell.workbench': '工作台',
     'shell.accountMenu': '管理员账号',
+    'shell.administration': '管理',
     'shell.roleAdmin': '角色：管理员',
     'shell.coreWithValue': 'Core：{value}',
     'shell.unavailable': '不可用',

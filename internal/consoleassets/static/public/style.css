@@ -16,6 +16,9 @@
   --warning-soft: #fff7e7;
   --danger: #b42332;
   --danger-soft: #fff0f0;
+  --chrome-height: 56px;
+  --chrome-narrow-height: 96px;
+  --service-toolbar-height: 39px;
   --radius: 8px;
   --shadow: none;
   --font: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -317,6 +320,80 @@ dialog, dialog::backdrop { animation:none; transition:none; }
 .language-picker-option:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
 .language-picker-option svg { flex:none; }
 
+/* A single display-only host floats above content; it never adds a layout row. */
+.notice-host {
+  position: fixed;
+  z-index: 1000;
+  inset: auto 16px 16px auto;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+.notice-host[hidden] { display: none; }
+.notice {
+  background: var(--surface, #fff);
+  color: var(--text, #1b2634);
+  border: 1px solid var(--border, #dce7f2);
+  border-inline-start: 3px solid #0969da;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 16px #1b263422;
+  pointer-events: auto;
+  overflow-wrap: anywhere;
+}
+.notice-error, .notice-unknown { border-inline-start-color: #b42332; }
+.notice-warning { border-inline-start-color: #8a5a00; }
+.notice-message {
+  margin: 0;
+  font-size: 14px;
+}
+.notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.notice-actions button { min-height: 32px; }
+.button svg.shared-icon.icon-refresh, .btn svg.shared-icon.icon-refresh, svg.shared-icon.icon-refresh {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+@media (max-width: 480px) {
+  .notice-host {
+    inset: 64px 8px auto;
+    width: auto;
+    max-height: 28vh;
+  }
+}
+
+/* The cold HTML shell has no confirmed data; retain watchdog recovery text. */
+.boot-skeleton {
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 48px));
+  padding: 24px 0;
+}
+.boot-skeleton > .skeleton-fill {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+}
+.boot-skeleton > .skeleton-fill:first-child {
+  width: 55%;
+  height: 24px;
+}
+.boot-skeleton > .skeleton-fill:last-child {
+  width: 75%;
+}
+[data-boot-state="failed"] .boot-skeleton {
+  display: none;
+}
+
 body {
   font-size: 14px;
   line-height: 1.5;
@@ -389,7 +466,7 @@ pre {
   max-width: 1160px;
   padding: 0 30px;
   margin: auto;
-  min-height: 64px;
+  min-height: calc(var(--chrome-height) - 1px);
   display: flex;
   align-items: center;
   gap: 26px;
@@ -1597,7 +1674,7 @@ dialog::backdrop {
 }
 @media (max-width: 760px) {
   .topbar-inner {
-    min-height: 56px;
+    min-height: calc(var(--chrome-height) - 1px);
     padding: 0 20px;
     gap: 16px;
     flex-wrap: wrap;
@@ -1909,7 +1986,7 @@ dialog::backdrop {
 }
 /* Task-first Serve workspace. Global places stay small; workflow context lives beside the task. */
 .task-shell .topbar-inner {
-  min-height: 62px;
+  min-height: calc(var(--chrome-height) - 1px);
 }
 .task-shell .nav {
   gap: 27px;
@@ -3177,8 +3254,8 @@ dialog::backdrop {
 .preparation-list li { display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:14px 0;border-bottom:1px solid var(--border); }
 .preparation-list li > p { grid-column:1/-1;font-size:12px;margin:0;overflow-wrap:anywhere; }
 .preparation-list li > p:empty { display:none; }
-.preparation-state .feedback strong { font-weight:550; }
-.preparation-state .feedback p { margin:4px 0 0; }
+.preparation-state .owned-feedback strong { font-weight:550; }
+.preparation-state .owned-feedback p { margin:4px 0 0; }
 .preparation-list code { font-size:11px;color:var(--muted); }
 .setup-dialog { width:min(640px, calc(100% - 32px));max-height:calc(100dvh - 32px);padding:0;border:1px solid var(--border);border-radius:8px;color:var(--ink);background:var(--surface); }
 .setup-dialog::backdrop { background:#1b263455; }
@@ -3238,4 +3315,82 @@ dialog::backdrop {
  .task-shell .mobile-menu { order:3; }
  .task-shell .operation-utility { order:3;margin-left:auto; }
  .task-shell .nav { order:4; }
+}
+
+/* Results belong to the floating host; persistent recovery is unboxed and owned. */
+.owned-feedback {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.owned-feedback.error, .owned-feedback.warning, .owned-feedback.unknown {
+  color: var(--warning);
+}
+.owned-feedback .feedback-actions { margin: 0; }
+
+/* Match Desktop's narrow chrome without letting wrapped controls set its height. */
+@media (max-width: 900px) {
+  .topbar.task-shell {
+    height: var(--chrome-narrow-height);
+    min-height: var(--chrome-narrow-height);
+    box-sizing: border-box;
+  }
+  .task-shell .topbar-inner {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 40px 40px;
+    height: calc(var(--chrome-narrow-height) - 1px);
+    min-height: calc(var(--chrome-narrow-height) - 1px);
+    box-sizing: border-box;
+    padding: 4px 20px;
+    gap: 7px 8px;
+  }
+  .task-shell .brand {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .task-shell .topbar-account,
+  .task-shell .topbar-right {
+    grid-area: 1 / 2;
+    margin-left: 0;
+    gap: 6px;
+  }
+  .task-shell .account-button > svg {
+    display: none;
+  }
+  .task-shell .mobile-menu {
+    display: inline-flex;
+    grid-area: 2 / 1;
+    justify-self: start;
+  }
+  .task-shell .operation-utility {
+    grid-area: 2 / 2;
+    justify-self: end;
+    margin-left: 0;
+  }
+  .task-shell .nav {
+    position: absolute;
+    z-index: 30;
+    top: 100%;
+    left: 20px;
+    right: 20px;
+    display: none;
+    flex-wrap: wrap;
+    gap: 0;
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .task-shell .nav.open {
+    display: flex;
+  }
+  .task-shell .nav a {
+    padding: 10px 12px;
+  }
 }

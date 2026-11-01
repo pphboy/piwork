@@ -164,7 +164,7 @@ try {
       if (kind === 'snapshot') {
         await recoveredPage.locator('[data-action="find-previous-export"]').click();
         await recoveredPage.locator('#snapshot-query').fill(id); await recoveredPage.locator('[data-action="lookup-snapshot"]').click();
-        await recoveredPage.locator('.export-details > summary').click();
+        await expect(recoveredPage.locator('.export-recovery')).toBeVisible();
         await expect(recoveredPage.locator('.export-snapshot')).toContainText(id);
       } else {
         await recoveredPage.locator('[data-action="work-info"]').click(); await recoveredPage.locator('[data-action="find-work-task"]').click();
