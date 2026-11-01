@@ -157,15 +157,20 @@ try {
   page.on('request', request => { const path = new URL(request.url()).pathname; if (request.method() === 'POST' && (/\/_desktop\/api\/works(?:$|\/[^/]+\/(?:start|stop|retry|delete)$)/).test(path)) lifecycleRequests.push(path); });
   let mainReloads = 0; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !new URL(request.url()).pathname.startsWith('/_desktop/')) mainReloads++; });
   // A new page uses the same authenticated Desktop, but no in-memory task state.
-  const recoverOnNewPage = async (workName, id, kind) => {
+  const recoverOnNewPage = async (workName, id, kind, expectedServiceEntry) => {
     const recoveredPage = await context.newPage();
-    const posts = [], receipts = [];
+    const mutations = [], receipts = [];
     let stage = 'open Works';
     recoveredPage.on('response', response => {
       const path = new URL(response.url()).pathname;
       if (path.startsWith('/_desktop/api/')) receipts.push({ method: response.request().method(), path, status: response.status() });
     });
-    recoveredPage.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
+    recoveredPage.on('request', request => {
+      if (['GET', 'HEAD', 'OPTIONS'].includes(request.method())) return;
+      const path = new URL(request.url()).pathname;
+      mutations.push({ method: request.method(), path,
+        ...(path === '/_desktop/api/service-entries' ? { body: request.postDataJSON() } : {}) });
+    });
     try {
       await recoveredPage.goto(new URL(page.url()).origin + '/');
       await recoveredPage.locator('.works-page').waitFor();
@@ -202,7 +207,16 @@ try {
         await recoveredPage.locator('.operation-technical > summary').click();
         await expect(recoveredPage.locator('.operation-technical')).toContainText(id);
       }
-      assert.deepEqual(posts, [], 'recovering an original task must be read-only');
+      if (expectedServiceEntry) {
+        assert.equal(expectedServiceEntry.workId, originalWorkId, 'Service entry must belong to the selected original Work');
+        await expect.poll(() => receipts.filter(receipt => receipt.method === 'POST'),
+          { message: 'the original Service entry must have one confirmed successful receipt' })
+          .toEqual([{ method: 'POST', path: '/_desktop/api/service-entries', status: 200 }]);
+        assert.deepEqual(mutations, [{ method: 'POST', path: '/_desktop/api/service-entries', body: expectedServiceEntry }],
+          'Start recovery may only bootstrap the exact original Service once; no lifecycle or other write replay');
+      } else {
+        assert.deepEqual(mutations, [], 'recovering an original task must be read-only');
+      }
     } catch (error) {
       const presentation = await recoveredPage.evaluate(() => {
         const dialogs = [...document.querySelectorAll('#modal')];
@@ -729,7 +743,9 @@ try {
   await waitState(workId, 'ready');
   // Start may finish before a pending frame is painted. Recover its exact receipt
   // through this Work's original-task entry rather than requiring a transient card.
-  await recoverOnNewPage('Real Browser Work', startAccepted.operationId, 'operation');
+  // A fresh page registers its ready Service connection; this is not a Start replay.
+  await recoverOnNewPage('Real Browser Work', startAccepted.operationId, 'operation',
+    { workId, serviceId: service.data.serviceId, port: definition.ports[0].containerPort });
   assert.equal(lifecycleRequests.filter(path => path === startPath).length, 1, 'Start recovery must not submit another Start');
   console.log('Real Desktop: original Work Start confirmed');
   const restored = (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/services`)).data.services;
