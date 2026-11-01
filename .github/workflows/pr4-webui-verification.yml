@@ -17,8 +17,10 @@ jobs:
       matrix:
         include:
           - {suite: unit-static, minutes: 35}
-          - {suite: browser, minutes: 45}
-          - {suite: runtime, minutes: 150}
+          - {suite: desktop-browser, minutes: 60}
+          - {suite: console-browser, minutes: 45}
+          - {suite: real-core, minutes: 130}
+          - {suite: integration-go, minutes: 150}
     name: ${{ matrix.suite }}
     concurrency:
       group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}
@@ -71,14 +73,14 @@ jobs:
           git diff --check
           node scripts/check-source-style.mjs --base "$PR_BASE_SHA"
       - name: Desktop browser
-        if: matrix.suite == 'browser' && !cancelled() && steps.build.outcome == 'success'
+        if: matrix.suite == 'desktop-browser' && !cancelled() && steps.build.outcome == 'success'
         run: npm run test:browser -w @piwork/desktop-webui
       - name: Console browser
-        if: matrix.suite == 'browser' && !cancelled() && steps.build.outcome == 'success'
+        if: matrix.suite == 'console-browser' && !cancelled() && steps.build.outcome == 'success'
         run: npm run test:browser -w @piwork/console-webui
       - name: Isolated runtime fixtures and reconstructed schema-4 source
         id: fixtures
-        if: matrix.suite == 'runtime'
+        if: matrix.suite == 'real-core' || matrix.suite == 'integration-go'
         timeout-minutes: 50
         run: |
           docker version
@@ -101,17 +103,17 @@ jobs:
           echo "Reconstructed schema-4 fixture from $old; current-tree bridge changes deterministic driver and Service MCP only. No historical image digest claim."
           df -h /
       - name: Desktop real Core
-        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 30
         run: npm run test:real-core -w @piwork/desktop-webui
       - name: Console real Core
-        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 20
         run: npm run test:real-core -w @piwork/console-webui
       - name: Real Core log export
-        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 20
         run: node apps/desktop-webui/test/log-export-real-core.mjs
       - name: Existing Go Engine integration
-        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        if: matrix.suite == 'integration-go' && !cancelled() && steps.fixtures.outcome == 'success'
         run: make test-integration-go
