@@ -1226,8 +1226,15 @@ test('DWUI-016/017 Create and Stop during preparation converge in list and detai
   await button(page, 'close-modal').click(); await expect(page.locator('.work-row')).toContainText('Preparing');
   await page.locator('[data-action="open-work"]').first().click(); await expect(page.locator('.work-state')).toContainText('Preparing');
   await button(page, 'work-menu').click(); await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click(); await expect(page.locator('#modal')).toContainText('op-stop'); await button(page, 'close-modal').click();
-  await expect(page.locator('.work-header')).toContainText('Stop accepted'); assert.equal(await button(page, 'start-work').count(), 0);
-  observed = 'stopping'; await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('.work-header')).toContainText('Stopping');
+  await expect(page.locator('.work-header-status')).toHaveAttribute('aria-label', 'Observed: Stop accepted');
+  await expect(page.locator('.work-header-status')).toHaveAttribute('title', 'Observed: Stop accepted');
+  await expect(page.locator('.work-header-status .object-control-state')).toContainText('Stop Work');
+  assert.equal(await button(page, 'start-work').count(), 0);
+  observed = 'stopping';
+  await api(page, "await adapter.refreshWorkStatus('work-1')");
+  await expect(page.locator('.work-header-status')).toHaveAttribute('aria-label', 'Observed: Stopping');
+  await expect(page.locator('.work-header-status')).toHaveAttribute('title', 'Observed: Stopping');
+  await expect(page.locator('.work-header-status .object-control-state')).toContainText('Stop Work');
   observed = 'stopped'; state = 'succeeded'; await api(page, "await adapter.checkOperation('op-stop'); await adapter.listWorks(); await adapter.refreshWorkStatus('work-1')");
   await expect(page.getByRole('heading', { name: 'This Work is stopped' })).toBeVisible(); await expect(button(page, 'start-work')).toBeEnabled();
   await button(page, 'back-works').click(); await expect(page.locator('.work-row')).toContainText('Stopped');
@@ -1244,7 +1251,11 @@ test('DWUI-016/017 Start to Ready, terminal readback failure and retry preserve 
     if (r.path === 'works' || r.path === 'works/work-1') return fail ? { status: 503, json: { message: 'Work readback unavailable' } } : { json: r.path === 'works' ? { works: [raw()] } : raw() };
   });
   await button(page, 'start-work').click(); await expect(page.locator('.object-control-state')).toContainText('Start Work'); await expect(page.locator('.object-control-progress')).toHaveCount(0); await expect(page.locator('#modal')).toHaveCount(0);
-  observed = 'starting'; await api(page, "await adapter.refreshWorkStatus('work-1')"); await expect(page.locator('.work-header')).toContainText('Starting');
+  observed = 'starting';
+  await api(page, "await adapter.refreshWorkStatus('work-1')");
+  await expect(page.locator('.work-header-status')).toHaveAttribute('aria-label', 'Observed: Starting');
+  await expect(page.locator('.work-header-status')).toHaveAttribute('title', 'Observed: Starting');
+  await expect(page.locator('.work-header-status .object-control-state')).toContainText('Start Work');
   terminal = true; fail = true; await api(page, "await adapter.checkOperation('original-start'); await adapter.refreshWorkStatus('work-1').catch(()=>{}); await adapter.listWorks().catch(()=>{})");
   assert.equal(await api(page, "return adapter.state.operations[0].state"), 'succeeded');
   await expect(page.locator('.work-state')).toContainText('Work readback unavailable');
@@ -3755,7 +3766,7 @@ test('sticky directory read failure leaves narrow File More and New folder point
   await expect(page.locator('.file-row')).toHaveCount(1);
   failed = true;
   await button(page, 'refresh-files').click();
-  await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Original directory unavailable' })).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error').filter({ hasText: '/ · Workspace cannot be read (503).' })).toHaveCount(1);
   await button(page, 'file-add').click();
   await expect(page.locator('.file-actions-menu')).toBeVisible();
   await page.locator('.file-actions-menu [data-action="new-folder"]').click();
@@ -3764,9 +3775,11 @@ test('sticky directory read failure leaves narrow File More and New folder point
   await expect(page.locator('#modal')).toContainText('Enter a name without path separators.');
   await expect(page.locator('#modal #form-name')).toHaveValue('');
   assert.equal(requests.filter(r => r.method === 'MKCOL').length, 0);
-  await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Original directory unavailable' })).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error').filter({ hasText: '/ · Workspace cannot be read (503).' })).toHaveCount(1);
   await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Enter a name without path separators.' })).toHaveCount(1);
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(2);
+  await expect(page.locator('#app')).not.toContainText('Original directory unavailable');
+  await expect(page.locator('.notice-host')).not.toContainText('Original directory unavailable');
   assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
 

@@ -1675,19 +1675,42 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   assert.ok(await page.locator('#modal [role=option]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
   assert.ok(await page.locator('#modal [role=listbox]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
   await uiuxEvidence(page, '09-long-model-panel-360');
+  // Failure-only geometry evidence: no model labels, draft text, URLs or credentials.
+  const lowHeightState = () => page.evaluate(() => {
+    const element = (node: Element | null) => node ? {
+      id: node.id, action: node.getAttribute('data-action'), role: node.getAttribute('role'),
+      rect: node.getBoundingClientRect().toJSON(),
+    } : null;
+    return {
+      viewport: { width: innerWidth, height: innerHeight },
+      anchor: element(document.querySelector('#response-settings-trigger')),
+      active: element(document.activeElement),
+      modal: element(document.querySelector('#modal')),
+      close: element(document.querySelector('#modal .modal-head [data-action=close-modal]')),
+    };
+  });
+  const beforeLowHeight = await lowHeightState();
   await page.setViewportSize({ width: 800, height: 300 });
-  await expect(page.locator('#modal.chat-response-settings')).toBeVisible();
-  await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toHaveAccessibleName('Close dialog');
-  await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toBeInViewport();
-  const bounds = await page.locator('#modal').boundingBox(); assert(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 300);
-  assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight));
-  await uiuxEvidence(page, '10-settings-low-height');
-  await page.keyboard.press('End');
-  await expect(page.locator('#modal [role=option]').last()).toBeFocused();
-  await expect(page.locator('#modal [role=option]').last()).toBeInViewport();
-  await uiuxEvidence(page, '10b-settings-low-height-scrolled');
-  await page.keyboard.press('Escape');
-  assert.equal(chatWrites(requests).length, 0);
+  const afterLowHeight = await lowHeightState();
+  try {
+    await expect(page.locator('#modal.chat-response-settings')).toBeVisible();
+    await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toHaveAccessibleName('Close dialog');
+    await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toBeInViewport();
+    const bounds = await page.locator('#modal').boundingBox();
+    assert(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 300);
+    assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight));
+    await uiuxEvidence(page, '10-settings-low-height');
+    await page.keyboard.press('End');
+    await expect(page.locator('#modal [role=option]').last()).toBeFocused();
+    await expect(page.locator('#modal [role=option]').last()).toBeInViewport();
+    await uiuxEvidence(page, '10b-settings-low-height-scrolled');
+    await page.keyboard.press('Escape');
+    assert.equal(chatWrites(requests).length, 0);
+  } catch (error) {
+    const failureLowHeight = await lowHeightState().catch(() => null);
+    t.diagnostic(JSON.stringify({ beforeLowHeight, afterLowHeight, failureLowHeight }));
+    throw error;
+  }
 });
 
 test('Compact settings both fields adjust in one panel and serialize the latest complete pair using model supplied levels', async t => {
@@ -2232,7 +2255,7 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  fail=true;
  await page.clock.runFor(5100);
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
- await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.error")).toContain('Request status unavailable');
+ await expect.poll(()=>api(page,"return String(adapter.requestPresence.get('work-1:Tool A')?.error)")).toContain('Request status unavailable');
 
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
  const reads=requests.filter(r=>r.path.endsWith('/agent-requests')).length;await page.clock.runFor(15000);assert.equal(requests.filter(r=>r.path.endsWith('/agent-requests')).length,reads);
@@ -4344,6 +4367,9 @@ test('Service log read reaches its ten-second deadline and only an explicit retr
   assert.equal(logReads.length, 2);
   assert.ok(logReads[0]);
   assert.deepEqual(logReads.map(r => [r.method, r.search]), [['GET', logReads[0].search], ['GET', logReads[0].search]]);
-  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+  const entryWrites = requests.filter(r => r.path === 'service-entries' && r.method === 'POST');
+  assert.equal(entryWrites.length, 1);
+  assert.deepEqual(JSON.parse(entryWrites[0]!.body), { workId: 'work-1', serviceId: 'service-a', port: 80 });
+  assert.equal(requests.filter(r => r.method !== 'GET' && !(r.path === 'service-entries' && r.method === 'POST')).length, 0);
   release();
 });

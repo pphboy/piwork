@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-const {overlayRole,anchoredOverlay,overlayPlacement,menuDestination}=await import(new URL('../browser/overlay-role.js',import.meta.url).href);
+const {overlayRole,anchoredOverlay,overlayAnchorBounds,overlayPlacement,menuDestination}=await import(new URL('../browser/overlay-role.js',import.meta.url).href);
 const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 const extract=(name:string)=>{const value=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];};
 test('commands, value choices and sustained Service tools have explicit bounded roles',()=>{
@@ -307,4 +307,30 @@ test('Sessions retains distinct loading, empty, error and retained-list refresh 
  work.resourceLoading={agent:true};html=c.modalMarkup();assert.match(html,/Loading conversations/);assert.doesNotMatch(html,/No Sessions yet/);
  work.resourceLoading.agent=false;work.resourceErrors.agent='<Read failed>';html=c.modalMarkup();assert.match(html,/Conversations could not be read/);assert.match(html,/&lt;Read failed&gt;/);assert.match(html,/retry-conversation/);assert.doesNotMatch(html,/No Sessions yet|Loading conversations/);
  work.sessions=[{id:'kept',messages:[]}];work.resourceLoading.agent=true;html=c.modalMarkup();assert.match(html,/class="session-list" role="listbox"[^>]*aria-busy="true"/);assert.doesNotMatch(html,/Reading conversations/);assert.match(html,/data-id="kept"/);assert.match(html,/Conversations could not be read/);
+});
+
+
+test('only the owned response picker clamps off-viewport anchors after resize', () => {
+  const viewport = { width: 800, height: 300 };
+  const normal = { left: 300, right: 400, top: 150, bottom: 190 };
+  assert.equal(overlayAnchorBounds('chat-response-settings', normal, viewport), normal);
+  for (const anchor of [
+    { left: 300, right: 400, top: 700, bottom: 740 },
+    { left: 300, right: 400, top: -80, bottom: -40 },
+    { left: 700, right: 780, top: 500, bottom: 540 },
+  ]) {
+    for (const width of [800, 360]) {
+      const current = { width, height: 300 };
+      const bounds = overlayAnchorBounds('chat-response-settings', anchor, current);
+      assert.ok(bounds);
+      const placed = overlayPlacement(bounds, { width: 380, height: 500 }, current);
+      assert.ok(placed.left >= 8);
+      assert.ok(placed.top >= 8);
+      assert.ok(placed.maxHeight > 0);
+      assert.ok(placed.top + placed.maxHeight <= 292);
+    }
+    for (const name of ['account', 'sessions', 'service-picker', 'chat-input-options']) {
+      assert.equal(overlayAnchorBounds(name, anchor, viewport), undefined);
+    }
+  }
 });

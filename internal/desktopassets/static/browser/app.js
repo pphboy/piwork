@@ -17,7 +17,7 @@ import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedba
 import { ChatRunFeedback } from './chat-run-feedback.js';
 import { menuCommands, workHeaderModel, serviceToolbarModel } from './work-chrome.js';
 import { renderChatMarkdown } from './chat-markdown.js';
-import { overlayRole, anchoredOverlay, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
+import { overlayRole, anchoredOverlay, overlayAnchorBounds, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
 import { workCompletionReady, serviceCompletionReady, importCanStart } from './completion-exits.js';
 import { restoreSelection, initialWorkArea, parentDirectory, missingFileTarget } from './work-navigation.js';
@@ -31,7 +31,7 @@ import { ExportFlows } from './export-flow.js';
 import { saveExportFile } from './export-panel-controls.js';
 import { operationKind } from './operation-recovery.js';
 import { operationCauseStatus } from './operation-diagnostics.js';
-import { activityGroups, messageReadingSource } from './chat-projection.js';
+import { activityGroups, messageReadingSource, readingFragmentsChanged } from './chat-projection.js';
 import { ImageDrafts } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates, positionSlowStatus, pruneSlowStatuses } from './action-state.js';
@@ -2268,7 +2268,14 @@ function captureChatAnchor(messages) {
             break;
         anchor = node;
     }
-    return anchor ? { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey, offset: anchor.getBoundingClientRect().top - viewport.top, source: anchor.dataset.sourceKey, text: readingSnippet(messages) } : undefined;
+    if (!anchor)
+        return;
+    const source = anchor.dataset.sourceKey;
+    const fragments = source ? [...messages.querySelectorAll('[data-message-key], [data-activity-key]')]
+        .filter(node => node.dataset.sourceKey === source)
+        .map(node => node.dataset.messageKey ?? node.dataset.activityKey ?? '') : [];
+    return { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey,
+        offset: anchor.getBoundingClientRect().top - viewport.top, source, fragments, text: readingSnippet(messages) };
 }
 /** The first visible characters let a split saved block keep the exact prose
  * the reader was looking at, rather than the old node's top edge. */
@@ -2310,9 +2317,11 @@ function restoreChatAnchor(messages, anchor) {
     const keyed = [...messages.querySelectorAll('[data-message-key], [data-activity-key]')];
     const match = (node) => node.dataset.messageKey === anchor.key || node.dataset.activityKey === anchor.key;
     const sourced = anchor.source ? keyed.filter(node => node.dataset.sourceKey === anchor.source) : [];
-    // A covered live bubble may have been split into several saved blocks. The
-    // same source identity plus the visible characters keeps the prose in place.
-    if (anchor.text && sourced.length && scrollToSnippet(messages, anchor.text, sourced))
+    // Relocate prose only when verified source fragments changed. Ordinary streaming,
+    // layout and stable split history retain the original node's exact pixel offset.
+    const fragments = sourced.map(node => node.dataset.messageKey ?? node.dataset.activityKey ?? '');
+    if (anchor.text && readingFragmentsChanged(anchor.key, anchor.fragments ?? [], fragments)
+        && scrollToSnippet(messages, anchor.text, sourced))
         return;
     let node = keyed.find(node => match(node) && node.getClientRects().length);
     if (!node && sourced.length) {
@@ -2640,8 +2649,8 @@ function positionOverlay(dialog) {
         return;
     }
     dialog.style.maxHeight = 'calc(100dvh - 16px)';
-    const rect = anchor.getBoundingClientRect();
-    if (rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth) {
+    const rect = overlayAnchorBounds(view.modal, anchor.getBoundingClientRect(), { width: innerWidth, height: innerHeight });
+    if (!rect) {
         dismissAnchoredOverlay();
         return;
     }

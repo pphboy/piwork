@@ -197,4 +197,9 @@ export function activityGroups(messages, previous = []) {
 export function messageReadingSource(message) {
     return message.historyDisplaySource ?? message.id;
 }
+/** Only a changed source fragmentation needs prose relocation; stable nodes retain their pixel offset. */
+export function readingFragmentsChanged(anchorKey, previous, current) {
+    return current.length > 0 && (!current.includes(anchorKey) || previous.length !== current.length
+        || previous.some((key, index) => key !== current[index]));
+}
 //# sourceMappingURL=chat-projection.js.map

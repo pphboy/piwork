@@ -135,3 +135,9 @@ export function activityGroups(messages: Message[], previous: ActivityGroup[] = 
 export function messageReadingSource(message: Readonly<Pick<Message, 'id' | 'historyDisplaySource'>>): string | undefined {
   return message.historyDisplaySource ?? message.id;
 }
+
+/** Only a changed source fragmentation needs prose relocation; stable nodes retain their pixel offset. */
+export function readingFragmentsChanged(anchorKey: string, previous: readonly string[], current: readonly string[]): boolean {
+  return current.length > 0 && (!current.includes(anchorKey) || previous.length !== current.length
+    || previous.some((key, index) => key !== current[index]));
+}

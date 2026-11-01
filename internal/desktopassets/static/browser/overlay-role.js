@@ -13,6 +13,17 @@ export function overlayRole(name) {
     return 'modal';
 }
 export function anchoredOverlay(name) { return ['menu', 'popover'].includes(overlayRole(name)); }
+/** A still-owned response picker survives viewport shrink without changing other popover dismissal. */
+export function overlayAnchorBounds(name, anchor, viewport) {
+    const outside = anchor.bottom < 0 || anchor.top > viewport.height || anchor.right < 0 || anchor.left > viewport.width;
+    if (!outside)
+        return anchor;
+    if (name !== 'chat-response-settings')
+        return undefined;
+    const clamp = (value, extent) => Math.max(Math.min(8, extent / 2), Math.min(value, Math.max(extent / 2, extent - 8)));
+    return { left: clamp(anchor.left, viewport.width), right: clamp(anchor.right, viewport.width),
+        top: clamp(anchor.top, viewport.height), bottom: clamp(anchor.bottom, viewport.height) };
+}
 export function overlayPlacement(anchor, size, viewport) {
     const margin = 8, gap = 6, width = Math.min(size.width, Math.max(0, viewport.width - margin * 2));
     const below = viewport.height - anchor.bottom - gap - margin, above = anchor.top - gap - margin;

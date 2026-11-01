@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const {historyMessages,mergeLegacyMessages,upsertTool,activityGroups,messageReadingSource}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
+const {historyMessages,mergeLegacyMessages,upsertTool,activityGroups,messageReadingSource,readingFragmentsChanged}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
 
 test('pure image history stays one user message and never becomes tool Activity',()=>{
  const messages=historyMessages([{entryId:'sdk',runId:'run-image',role:'user',blocks:[{blockId:'img',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:70,sha256:'a'.repeat(64)}}]}]);
@@ -127,4 +127,17 @@ test('reading source starts at the original live message and survives verified s
   assert.equal(messageReadingSource({ id: 'another-run-text-1' }), 'another-run-text-1');
   assert.equal(messageReadingSource({}), undefined);
   assert.deepEqual(live, { id: 'run-1-text-1' });
+});
+
+test('ordinary streaming, layout and stable fragmented history keep the exact node offset', () => {
+  assert.equal(readingFragmentsChanged('live', ['live'], ['live']), false);
+  assert.equal(readingFragmentsChanged('tail', ['prefix', 'tail'], ['prefix', 'tail']), false);
+  assert.equal(readingFragmentsChanged('activity', [], []), false);
+});
+test('verified split, collapse and original-key replacement relocate the same source prose', () => {
+  assert.equal(readingFragmentsChanged('live', ['live'], ['live', 'tail']), true);
+  assert.equal(readingFragmentsChanged('tail', ['prefix', 'tail'], ['prefix']), true);
+  assert.equal(readingFragmentsChanged('old', ['old'], ['replacement']), true);
+  assert.equal(readingFragmentsChanged('tail', ['prefix', 'tail'], ['new-prefix', 'tail']), true);
+  assert.equal(readingFragmentsChanged('gone', ['prefix', 'tail'], ['prefix', 'tail']), true);
 });

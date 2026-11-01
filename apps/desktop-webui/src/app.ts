@@ -18,7 +18,7 @@ import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedba
 import { ChatRunFeedback, type ChatRunTarget } from './chat-run-feedback.js';
 import { menuCommands, workHeaderModel, serviceToolbarModel, type MenuScope } from './work-chrome.js';
 import { renderChatMarkdown } from './chat-markdown.js';
-import { overlayRole, anchoredOverlay, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
+import { overlayRole, anchoredOverlay, overlayAnchorBounds, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
 import { workCompletionReady, serviceCompletionReady, importCanStart } from './completion-exits.js';
 import { restoreSelection, initialWorkArea, parentDirectory, missingFileTarget, type WorkSelection } from './work-navigation.js';
@@ -32,7 +32,7 @@ import { ExportFlows, type ExportFlow } from './export-flow.js';
 import { saveExportFile } from './export-panel-controls.js';
 import { operationKind } from './operation-recovery.js';
 import { operationCauseStatus } from './operation-diagnostics.js';
-import { activityGroups, messageReadingSource } from './chat-projection.js';
+import { activityGroups, messageReadingSource, readingFragmentsChanged } from './chat-projection.js';
 import { ImageDrafts, type DraftImage, type HistoryImage } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates, positionSlowStatus, pruneSlowStatuses, type ActionIntent, type ActionKind, type ActionRecord } from './action-state.js';
@@ -231,7 +231,7 @@ const workspacePanels = new WorkspacePanelsStore();
 const expandedActivity = new Map<string,boolean>();
 const activityLayouts = new Map<string,ReturnType<typeof activityGroups>>();
 let workspaceReturn: LayoutReturn | undefined, chatReturn: LayoutReturn | undefined;
-type ReadingPosition = { scroll: number; pinned: boolean; anchor?: { key: string | undefined; offset: number; source?: string; text?: string } };
+type ReadingPosition = { scroll: number; pinned: boolean; anchor?: { key: string | undefined; offset: number; source?: string; fragments?: readonly string[]; text?: string } };
 const chatReading = new Map<string, ReadingPosition>();
 let pendingWebCommand: {key:string;text:string;kind:string;workId?:string;sessionId?:string;pair?:{ref:string|null;thinking:string|null;profile?:string}}|undefined;
 let importSignInSuspended = false;
@@ -1921,7 +1921,13 @@ function captureChatAnchor(messages:HTMLElement):ReadingPosition['anchor'] {
     if(!anchor.contains(node) || anchor.getBoundingClientRect().top>=viewport.top)break;
     anchor=node;
   }
-  return anchor?{key:anchor.dataset.messageKey??anchor.dataset.activityKey,offset:anchor.getBoundingClientRect().top-viewport.top,source:anchor.dataset.sourceKey,text:readingSnippet(messages)}:undefined;
+  if (!anchor) return;
+  const source = anchor.dataset.sourceKey;
+  const fragments = source ? [...messages.querySelectorAll<HTMLElement>('[data-message-key], [data-activity-key]')]
+    .filter(node => node.dataset.sourceKey === source)
+    .map(node => node.dataset.messageKey ?? node.dataset.activityKey ?? '') : [];
+  return { key: anchor.dataset.messageKey ?? anchor.dataset.activityKey,
+    offset: anchor.getBoundingClientRect().top - viewport.top, source, fragments, text: readingSnippet(messages) };
 }
 /** The first visible characters let a split saved block keep the exact prose
  * the reader was looking at, rather than the old node's top edge. */
@@ -1953,9 +1959,11 @@ function restoreChatAnchor(messages:HTMLElement,anchor:ReadingPosition['anchor']
   const keyed=[...messages.querySelectorAll<HTMLElement>('[data-message-key], [data-activity-key]')];
   const match=(node:HTMLElement)=>node.dataset.messageKey===anchor.key || node.dataset.activityKey===anchor.key;
   const sourced=anchor.source?keyed.filter(node=>node.dataset.sourceKey===anchor.source):[];
-  // A covered live bubble may have been split into several saved blocks. The
-  // same source identity plus the visible characters keeps the prose in place.
-  if(anchor.text&&sourced.length&&scrollToSnippet(messages,anchor.text,sourced))return;
+  // Relocate prose only when verified source fragments changed. Ordinary streaming,
+  // layout and stable split history retain the original node's exact pixel offset.
+  const fragments = sourced.map(node => node.dataset.messageKey ?? node.dataset.activityKey ?? '');
+  if (anchor.text && readingFragmentsChanged(anchor.key, anchor.fragments ?? [], fragments)
+    && scrollToSnippet(messages, anchor.text, sourced)) return;
   let node=keyed.find(node=>match(node) && node.getClientRects().length);
   if(!node && sourced.length){
     const viewport=messages.getBoundingClientRect();
@@ -2236,8 +2244,11 @@ function positionOverlay(dialog: HTMLDialogElement) {
   const anchor=overlayAnchor?root.querySelector<HTMLElement>(overlayAnchor):null;
   if(!anchor?.getClientRects().length || overlayContext!==`${adapter.identityEpoch}:${location.hash}:${view.tab}:${view.path}`){dismissAnchoredOverlay();return;}
   dialog.style.maxHeight='calc(100dvh - 16px)';
-  const rect=anchor.getBoundingClientRect();
-  if(rect.bottom<0 || rect.top>innerHeight || rect.right<0 || rect.left>innerWidth){dismissAnchoredOverlay();return;}
+  const rect=overlayAnchorBounds(view.modal,anchor.getBoundingClientRect(),{width:innerWidth,height:innerHeight});
+  if (!rect) {
+    dismissAnchoredOverlay();
+    return;
+  }
   const placed=overlayPlacement(rect,dialog.getBoundingClientRect(),{width:innerWidth,height:innerHeight});
   dialog.style.left=`${placed.left}px`;dialog.style.top=`${placed.top}px`;dialog.style.maxHeight=`${placed.maxHeight}px`;
 }
