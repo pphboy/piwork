@@ -871,8 +871,13 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.getByRole('button',{name:'Files',exact:true}).click();
     await page.getByRole('button',{name:/^note.txt/}).click();
     await page.getByLabel('Edit note.txt').fill('saved through delivered UI');
+    const notePutsBeforeSave = notePutCalls;
     await page.getByRole('button',{name:'Save file',exact:true}).click();
-    await page.getByText('File saved.',{exact:true}).waitFor(); assert.equal(workspaceText, 'saved through delivered UI');
+    await expect(page.locator('.editor-toolbar').getByText('Saved',{exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Save file',exact:true})).toBeDisabled();
+    await expect(page.getByLabel('Edit note.txt')).toHaveValue('saved through delivered UI');
+    await expect.poll(() => workspaceText).toBe('saved through delivered UI');
+    assert.equal(notePutCalls, notePutsBeforeSave + 1, 'Save must issue exactly one original file PUT');
     await page.getByRole('button',{name:'Back to files'}).click();
     await page.getByRole('button',{name:'Services',exact:true}).click();
     await page.frameLocator('iframe').getByRole('heading',{name:'Notes app'}).waitFor();
