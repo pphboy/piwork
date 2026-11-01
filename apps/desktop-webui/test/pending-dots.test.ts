@@ -49,17 +49,24 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
     : { headless: true, channel: 'chromium' });
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   try {
-    await t.test('both existing initial shells contain one decorative local wait', async () => {
+    await t.test('both initial shells retain one labelled static skeleton before application code', async () => {
+      // This case owns initial HTML only; later cases exercise live pending modules.
+      const entryModules = /\/(?:desktop\/)?browser\/(?:boot|app)\.js$/;
+      await page.route(entryModules, route => route.abort());
       for (const app of ['desktop', 'console']) {
         await page.route('**/style.css', route => route.continue({ url: `${base}/${app}/style.css` }));
         await page.goto(`${base}/${app}/index.html`);
-        await expect(page.locator('.pending-dots')).toHaveCount(1);
-        await expect(page.locator('.pending-dots > i')).toHaveCount(3);
-        await expect(page.locator('.pending-dots')).toHaveAttribute('aria-hidden', 'true');
+        await expect(page.locator('.boot-skeleton')).toHaveCount(1);
+        await expect(page.locator('.boot-skeleton > .skeleton-fill')).toHaveCount(3);
+        await expect(page.locator('.boot-skeleton')).toHaveAttribute('aria-hidden', 'true');
+        await expect(page.locator('.pending-dots')).toHaveCount(0);
+        await expect(page.locator('.app-loading')).toHaveAttribute('role', 'status');
         await expect(page.locator('.app-loading')).toHaveAttribute('aria-busy', 'true');
+        await expect(page.locator('[data-boot-loading]')).toHaveText('Opening Piwork…');
         assert.equal(await page.locator('.app-loading').evaluate(node => getComputedStyle(node).position), 'static');
         await page.unroute('**/style.css');
       }
+      await page.unroute(entryModules);
     });
 
     await page.goto(`${base}/fixture`);

@@ -27,7 +27,12 @@ test('log export actions never stop, apply or cancel another Work', () => {
   const start = source.indexOf('case "export-logs":');
   const end = source.indexOf('case \'export\':', start);
   const actions = source.slice(start, end);
-  assert.match(actions, /adapter\.startLogExport\(\)/);
+  assert.equal((actions.match(/startLogExportWithFeedback\(\)/g) ?? []).length, 2);
+  // Wiring guard only: behavioral identity and delivery contracts have direct module tests.
+  const startWrapper = source.slice(source.indexOf('function startLogExportWithFeedback()'), source.indexOf('function syncExportFeedback()'));
+  assert.equal((startWrapper.match(/adapter\.startLogExport\(\)/g) ?? []).length, 1);
+  assert.match(startWrapper, /exportFeedback\.acceptLog\(adapter\.logExport\)/);
+  assert.doesNotMatch(startWrapper, /lifecycle|stop-work|apply|cancelRun|ensureService/);
   assert.match(actions, /adapter\.deliverLogExport\(\)/);
   assert.match(actions, /adapter\.retryLogExportSameKey\(\)/);
   assert.doesNotMatch(actions, /lifecycle|stop-work|apply|cancelRun|ensureService/);

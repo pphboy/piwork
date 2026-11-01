@@ -234,7 +234,8 @@ test('lost model/runtime responses are read back without replay and survive rest
   await expect(page.locator('#setup-notice')).toContainText('The model save result is unconfirmed');
   releaseStale();
   await readSetupAutomatically(page);
-  await expect(page.locator('#setup-notice')).toContainText('Model save confirmed');
+  await expect(page.locator('.notice-success')).toContainText('Model save confirmed');
+  await expect(page.locator('#quick-setup')).toContainText('Model saved. Continue to bind this model to Core runtime.');
   assert.equal(models,1);assert.equal(tests,1);
   assert.equal(await page.getByLabel('API Key',{exact:true}).count(),0);
   await page.route('**/console/api/admin/runtime',async route=>{if(route.request().method()!=='PUT'){await route.continue();return;}runtimes++;await route.fetch();await route.abort('failed');});
@@ -489,7 +490,13 @@ for(const outcome of ['rejected','lost-response'])test(`a new model ${outcome} a
    assert.equal(posts,2);assert.equal(bindings.length,1);
    failRead=true;await readSetupAutomatically(page);await expect(page.locator('#catalog-note')).toContainText('could not be loaded');await expect(save).toBeDisabled();
    assert.equal(posts,2);assert.equal(bindings.length,1);
-   failRead=false;await readSetupAutomatically(page);await expect(notice).toContainText('Model save confirmed');await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(newRef);await expect(save).toBeEnabled();
+   failRead=false;
+   await readSetupAutomatically(page);
+   await expect(page.locator('.notice-success')).toContainText('Model save confirmed');
+   await expect(page.locator('#quick-setup')).toContainText('Model saved. Continue to bind this model to Core runtime.');
+   await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(newRef);
+   await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
+   await expect(save).toBeEnabled();
    assert.equal(posts,2);assert.equal(bindings.length,1);assert.notEqual(newRef,bindings[0]);await save.click();
   }
   await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(posts,outcome==='rejected'?3:2);assert.deepEqual(bindings,[bindings[0],newRef]);assert.equal(tests,0);assert.equal(works,0);
@@ -550,7 +557,11 @@ test('network errors preserve setup and expired login clears model secrets',asyn
   await page.evaluate(async()=>{const s=await(await fetch('/_web/api/session')).json();await fetch('/_web/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Piwork-Csrf':s.csrfToken},body:'{}'});});
   await page.route('**/_web/api/onboarding',route=>route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({code:'AUTH_REQUIRED'})}));await readSetupAutomatically(page);await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await expect(page.locator('input[type=password]')).toHaveCount(1);await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
   await page.unroute('**/_web/api/onboarding');await page.route('**/_web/api/state',route=>route.abort('failed'));await page.reload();await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.getByRole('heading',{name:'Open your setup link'})).toHaveCount(0);
-  await page.unroute('**/_web/api/state');await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await loginSetup(page,server);await expect(page.locator('#setup-notice')).toBeEmpty();
+  await page.unroute('**/_web/api/state');
+  await page.locator('#setup-app').getByRole('button',{name:'Read current state',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
+  await loginSetup(page,server);
+  await expect(page.locator('#setup-notice')).toBeEmpty();
  } finally {await browser.close();await server.stop();}
 });
 
@@ -839,12 +850,26 @@ test('leaving and returning to Quick setup discards late Test callbacks without 
  }finally{oldRelease();newRelease();await browser.close();await server.stop();}
 });
 
-test('Quick setup sign-out waits once, preserves its model view on failure and revokes only on success',async()=>{
+test('Quick setup sign-out waits once, preserves its model view on unknown response and revokes only on success',async()=>{
  const server=await start({PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'synthetic-password'}),browser=await chromium.launch(browserOptions);let release=()=>{};
  try{
   const page=await browser.newPage();await loginSetup(page,server);const original=await page.getByLabel('Model ID',{exact:true}).elementHandle();let calls=0;const gate=new Promise<void>(r=>{release=r;});
   await page.route('**/console/api/logout',async route=>{calls++;await gate;await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify({code:'CORE_UNAVAILABLE'})});});
-  const trigger=page.getByRole('button',{name:'Administrator account',exact:true});await trigger.click();const signout=page.getByRole('menuitem',{name:'Sign out',exact:true});await signout.click();await expect(signout).toBeDisabled();await expect(signout).toHaveAttribute('aria-busy','true');await signout.evaluate((el:HTMLButtonElement)=>el.click());assert.equal(calls,1);release();await expect(page.locator('#quick-feedback')).toContainText('Sign out was not completed');await expect(signout).toBeEnabled();assert.equal(await original!.evaluate(el=>el===document.querySelector('#model-id')),true);await expect(page.getByRole('menu')).toBeVisible();await page.keyboard.press('Escape');
+  const trigger=page.getByRole('button',{name:'Administrator account',exact:true});
+  await trigger.click();
+  const signout=page.getByRole('menuitem',{name:'Sign out',exact:true});
+  await signout.click();
+  await expect(signout).toBeDisabled();
+  await expect(signout).toHaveAttribute('aria-busy','true');
+  await signout.evaluate((el:HTMLButtonElement)=>el.click());
+  assert.equal(calls,1);
+  release();
+  await expect(page.locator('#quick-feedback')).toContainText('The write result is unknown');
+  await expect(signout).toBeEnabled();
+  assert.equal(calls,1,'Unknown sign-out must not replay automatically');
+  assert.equal(await original!.evaluate(el=>el===document.querySelector('#model-id')),true);
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
   await page.unroute('**/console/api/logout');await trigger.click();await signout.click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await expect(page.locator('#quick-setup')).toHaveCount(0);assert.equal((await page.evaluate(async()=>(await(await fetch('/_web/api/session')).json()).authenticated)),false);
  }finally{release();await browser.close();await server.stop();}
 });
