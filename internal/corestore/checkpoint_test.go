@@ -133,15 +133,23 @@ func TestInitializationBlockedCheckpointDoesNotPublish(t *testing.T) {
 	directory := t.TempDir()
 	id := "installation-wal-initialize-00000001"
 	var release func()
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	// Setup and reader startup are not part of the checkpoint cancellation budget.
+	// Without a deadline SQLite may finish its bounded 5s busy wait after cancel;
+	// the separate close-checkpoint test covers the strict deadline budget.
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := Open(ctx, Options{Directory: directory, InstallationID: id, fault: func(stage string) error {
 		if stage == "after-database-commit" {
 			release = sqlitefixture.HoldReader(t, filepath.Join(directory, databaseTemp(id)))
+			timer := time.AfterFunc(200*time.Millisecond, cancel)
+			t.Cleanup(func() { timer.Stop() })
 		}
 		return nil
 	}})
-	if !errors.Is(err, ErrStorage) || release == nil {
+	if release == nil {
+		t.Fatal("initialization did not reach the held-reader checkpoint", err, ctx.Err())
+	}
+	if !errors.Is(err, ErrStorage) {
 		t.Fatal("unconfirmed initialization published", err)
 	}
 	if _, err := os.Stat(filepath.Join(directory, DatabaseName)); !os.IsNotExist(err) {
