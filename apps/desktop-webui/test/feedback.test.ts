@@ -3371,7 +3371,9 @@ test('file preview failure has one original read notice and successful retry ret
   await expect(page.locator('#file-editor')).toHaveValue('original');
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
   await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
-  await expect.poll(() => api(page, "return [...actions.records.values()].filter(record => record.kind === 'read' && record.work === 'work-1' && record.resource === '/note.txt' && record.error).length;")).toBe(0);
+  // Recovery is observable in the original preview, without importing entry-private action state.
+  await expect(button(page, 'retry-file-preview')).toHaveCount(0);
+  await expect(page.locator('#file-editor')).toBeEditable();
   await expect(page.locator('[data-action-status]')).toHaveCount(0);
   assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/note.txt')).length, 2);
 });
@@ -3393,7 +3395,10 @@ test('failed directory prerequisite never leaves an existing dirty preview loadi
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
   await expect(page.locator('#file-editor')).toHaveValue('keep this unsaved draft');
   await expect(button(page, 'refresh-files')).not.toHaveAttribute('aria-busy', 'true');
-  assert.equal(await api(page, 'return view.fileStatus;'), 'ready');
+  // A failed directory prerequisite leaves the existing editor usable, not a loading replacement.
+  await expect(page.locator('#file-editor')).toBeEditable();
+  await expect(button(page, 'retry-file-preview')).toHaveCount(0);
+  await expect(page.locator('.file-reread')).toHaveCount(0);
   assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/note.txt')).length, reads);
   assert.equal(requests.filter(r => ['PUT', 'COPY', 'MOVE', 'DELETE'].includes(r.method) && r.path.startsWith('/_desktop/files/')).length, 0);
 });
