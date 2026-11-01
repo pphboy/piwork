@@ -323,3 +323,13 @@ GitHub实际run41327583037（head feecb469）的unit/static job已通过：Go目
 已发布后续run在a4f8960头unit/static通过45个Go package与683个Node测试（该头Console152），不把本地更新的155测试回填为那个run结果。原组合browser job运行约39分钟仍停在Desktop，Console未开始；组合runtime的真实Core步骤已失败，但后续全Go Engine integration持续运行，使完整job日志迟迟不能取得。失败仍是失败，不通过改skip或削减断言隐藏。
 
 仅将既有同PR/同仓公开分支、contents只读、固定actions、无secrets/发布的workflow matrix分成unit-static35分钟、desktop-browser60、console-browser45、real-core130、integration-go150。原命令、fixture构建、历史源码hash/label检查、环境与runner逐项比较保持相同；两个runtime suite各自运行原fixture步骤，三个real-Core步骤与全Go integration不再互相阻挡日志。每PR/suite保持不取消运行中的任务，既有run不受手工取消；增加Desktop有限预算不是宣称其会通过。YAML结构、全部shell块bash语法及命令/权限等价检查通过；尚未触发新拆分run，不宣称其执行结果。
+
+### 17:20 实际浏览器失败的诊断与选择器修复
+
+原run41326705682组合browser job达到45分钟上限被取消，日志仅有598个pass/140个failure结果行，不能把部分计数当整套终态。默认Node spec reporter在整套结束前未输出详细栈；最后可见FS52-A失败后长时间无输出，具体挂起位置尚未证明。仅给原全文件test:browser增加TAP即时失败详情与120秒单测预算，同一tsc、全部test glob及concurrency=1保持，不删skip测试、不降低断言；旧失败继续记录。
+
+新拆分run的真实Core日志已可定位：Desktop recoverOnNewPage等待已按获批Header移除的Works h1超时，实际页面已有Work Ready/Open Work；改为与同文件登录后已有检查一致的实际`.works-page`，后续精确workName、原ID与零POST只读恢复断言保持。Console真实Core7pass/1fail，ModelTest的全页Close与新增通知Close歧义；五处同流程动作精确限定原dialog footer（只限定dialog仍会包含移入的notice host），指定模型真实reply、API payload、保存与请求次数断言不变。语法/style通过，真实链尚待新提交重跑，不能写成修复后已全绿。相同真实Core job的log export已通过原same-key recovery/detail retry/两次明确download与零直接Core浏览器请求检查，单项通过不代替Desktop/Console链。
+
+另从两条反馈测试发现确切测试自身错误：api helper只导入adapter，却试图访问app私有actions/view；改用原editor可编辑、retry/reread提示消失和已有notice/actionstatus/草稿/GET次数/零写入断言表达同一恢复约束，不为测试导出或注入app隐藏状态。正式测试tsc与语法/style通过，实际浏览器仍待执行；其余大量旧用例的共同根因要以TAP栈确认，不做全局选择器替换或恢复普通inline Alerts讨好旧测试。
+
+action-hierarchy旧assembly直接Node复现60/62，两条分别缺少已新增的acceptedExportFlow协作者和已抽取confirmedDirectorySelection绑定，并非已证明产品失败。修复直接import实际file-results与ExportFeedbackRegistry，给既有assembly fixture补显式接收/返回同一flow的协作者spy与原identity注册，**不新增regex提取helper**；原Stop/new/reopen/count断言保持并检查原flow对象，文件选择补确认listing清缺失选择、pending listing保留。官方tsc及action-hierarchy62 +file-results18 +export-feedback15共95/95通过。该旧app装配仍使用原VM表面，不能声称整套已迁移为无VM；新增/已抽取模块继续由直接import测试负责。
