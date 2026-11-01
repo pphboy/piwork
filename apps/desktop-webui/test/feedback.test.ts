@@ -3829,3 +3829,37 @@ test('FS52 native XHR mixed uploads preserve 201 and 502 while retrying only the
   assert.equal(requests.filter(r => r.method === 'PUT').length, 4);
   assert.equal(requests.filter(r => ['POST', 'PATCH', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
+
+test('Save unknown HTTP receipt keeps the original draft locked without a false Confirmed result or replay', async t => {
+  const path = '/_desktop/files/works/work-1/files/note.txt';
+  let saved = 'original';
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND') return { status: 207, body: listing(saved, mtime1) };
+    if (r.path === path && r.method === 'GET') return { body: saved, headers: { 'Last-Modified': mtime1 } };
+    if (r.path === path && r.method === 'PUT') {
+      saved = r.body;
+      return { status: 502, json: { message: 'Synthetic acknowledgement lost after write' } };
+    }
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action=open-file][data-path="/note.txt"]').click();
+  await page.locator('#file-editor').fill('original submitted draft');
+  await button(page, 'save-file').click();
+  const notice = page.locator('.notice-host .notice-unknown').filter({ hasText: '/note.txt' });
+  await expect(notice).toContainText('0 paths confirmed; 1 need review');
+  await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
+  await expect(page.locator('[data-action-status]').filter({ hasText: /^Confirmed$/ })).toHaveCount(0);
+  await expect(page.locator('#workspace-main')).toContainText('The previous write needs review');
+  await expect(page.locator('#file-editor')).toHaveValue('original submitted draft');
+  await expect(button(page, 'save-file')).toBeDisabled();
+  await notice.locator('.notice-close').click();
+  await expect(notice).toHaveCount(0);
+  await expect(button(page, 'save-file')).toBeDisabled();
+  await expect(page.locator('#workspace-main')).toContainText('The previous write needs review');
+  await button(page, 'refresh-files').click();
+  await expect(page.locator('.file-reread')).toContainText('original submitted draft');
+  await expect(page.locator('#file-editor')).toHaveValue('original submitted draft');
+  assert.equal(requests.filter(r => r.path === path && r.method === 'PUT').length, 1);
+  assert.equal(requests.filter(r => r.path === path && r.method === 'PUT')[0]?.body, 'original submitted draft');
+  assert.equal(requests.filter(r => ['POST', 'PATCH', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
+});

@@ -2874,6 +2874,7 @@ async function saveFile(record?: ActionRecord) {
   });
   if (epoch !== adapter.identityEpoch) throw new ViewChanged();
   retainFileResults(w.id, [{ source: path }], [result], record);
+  if (result.status !== 'succeeded') confirmFileAttempt(record, [result]);
   if (record) {
     record.refresh = result.versionReadback === 'unconfirmed' ? 'failed' : '';
     record.refreshError = result.versionReadback === 'unconfirmed' ? result.message : undefined;

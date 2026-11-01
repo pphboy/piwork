@@ -265,3 +265,35 @@ test('an invalid Files deep link never becomes a file action or another file', a
   assert.deepEqual(directories, ['/']);
   assert.match(c.filesRestoreNotice, /not valid/);
 });
+
+for (const status of ['unknown', 'failed'] as const) test(`Save ${status} receipt remains non-success after dispatch finish`, async () => {
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const { c } = fixture();
+  const actions = new ActionState();
+  c.actions = actions;
+  Object.assign(c.view, { file: '/draft', fileDraft: 'unsaved draft', fileOriginal: 'old', fileBaseline: 'original-version' });
+  c.assertFileAdmission = () => {};
+  // The existing result owner supplies its original unknown lock; this test
+  // exercises the actual save/receipt assembly and real ActionState lifecycle.
+  c.retainFileResults = (_work: string, _targets: unknown, rows: any[], record: any) => {
+    record.blocked = rows.some(row => row.status === 'unknown');
+    return rows;
+  };
+  c.adapter.saveFile = async () => ({ path: '/draft', status, httpStatus: status === 'unknown' ? 502 : 403, message: 'Synthetic save failure' });
+  const record = actions.begin({ key: 'save:/draft', action: 'save-file', kind: 'files', work: 'one', resource: '/draft', label: 'Saving', target: 'One · /draft' });
+  assert.ok(record);
+  vm.runInContext(extract(['confirmFileAttempt', 'saveFile']), c);
+  try {
+    assert.equal(await c.saveFile(record), false);
+    actions.finish(record);
+    assert.notEqual(String(record.phase), 'Confirmed');
+    assert.equal(record.resultTone, status === 'unknown' ? 'unknown' : 'error');
+    assert.match(String(record.result), /0 paths confirmed; 1 need review/);
+    assert.equal(record.blocked, status === 'unknown');
+    assert.equal(actionNotice(record, 'original-identity')?.tone, status === 'unknown' ? 'unknown' : 'error');
+    assert.equal(c.view.fileDraft, 'unsaved draft');
+    assert.equal(c.view.fileOriginal, 'old');
+    assert.equal(c.view.fileWriteUncertain, status === 'unknown');
+  } finally { actions.clear(); }
+});
