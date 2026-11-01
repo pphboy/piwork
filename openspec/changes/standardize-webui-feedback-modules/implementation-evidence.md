@@ -417,3 +417,24 @@ Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复
 8.1仍缺的本机文件批准受限C分支新增一个待CI的真实XHR混合上传测试：三个真正File经HEAD404与原XHR PUT，服务器记录原字节/If-None-Match并返回201/403/502；只允许原403文件重试一次，未知路径重选也不能追加HEAD/PUT，原成功/未知结果保留。测试不替换XHR或注入进度；UI只断言安全状态/HTTP码，不显示不可信服务器prose。相关直接file测试57/57、正式编译通过，但没有本地启动Chromium或重试待批准上传，不能预记浏览器通过。
 
 20:01父任务29e794正式资源实际CUA通过：fresh455px中文Desktop，原Work1/note.txt输入合成44-byte草稿，fixture先保存字节再502。原inline/notice均为“已确认0个路径；1个需要检查”，不再虚假Confirmed；Unsaved、previous-write-review、Save禁用保持。正常关闭通知只清展示，原草稿/警告/禁用仍在；显式重新读取已保存版本得到原44-byte只读内容，Save仅在原读回后按既有语义恢复可操作。方法账本一原PUT（保留If-Unmodified-Since），随后只有PROPFIND/GET，无自动重发。独立已存在偏好通知被关闭后才进入文件行，不把此操作称为行几何验证；此为合成HTTP实际UI，不冒称真实Core链已通过。最终maintenance、PR-base style145、真实generatedUI逐字一致、Go webapp12.991秒及两宿主build通过（`dist/save-owner-final-gates.log` exit0）。
+
+### 20:20 当前实际 CI 的有限回归收敛（仍非整套通过）
+
+`1941741` 的完整 Desktop 实际结果为1510 tests：1489 pass、20 fail、0 cancelled、1可选跳过；不是此前旧版本的190/285失败。`cfa82cd` 已实际通过Console254、smoke6、Package协议2、unit/static，真实Console8及log-export；Desktop真实链已越过未知Save并到配置Apply之后，仍未到后续完整Export/Import。因此4.3、5.4、8.1、8.2继续未完成。
+
+本批只处理这些实际失败：
+- Service日志初读与手动Refresh使用同一Work+Service逻辑读键，不含无关port；原标签、身份/视图准入不变。直接ActionState+NoticeStore测试覆盖原timeout、重试pending/failed/success、其他Work/Service/identity及write-unknown隔离；实际浏览器的旧timeout退休断言未放宽，待新CI。
+- Work Header插入状态导致的是导航横向约113px移动，不是高度变化。既有状态位置始终占18ch（窄屏10ch），活动control替换可见badge；原observed状态在本地化group标签/title及原业务state保留。56/96高度与实际bbox稳定断言不改，待实际浏览器复核。
+- Settings确认修改后的普通readback pending不再重复输出成功段落；failed readback、未知、blocked、原错误和业务记录保留。旧真实模块直接测试15/16，新实现16/16；不把纯展示抑制称为确认后台Apply。
+- 初次status失败通知Details先锚定当前身份下真实connection触发点，再打开既有popover；无触发点不跳路由，不绕过脏草稿守卫。原错误内容与Escape返回焦点、再次Details/GET恢复浏览器断言保留。
+- 初始live prose以原message id建立读取source identity，之后saved prefix/tail沿原source查找精确snippet；Work/Session作用域不变。现有chat-projection模块直接测试旧表达式13/14、新实现14/14，严格Paragraph13保持断言不改，真正像素/滚动结果仍待浏览器。
+
+测试适配保留实际约束：Requests本地化错误在浏览器内转string；深链失败定位真实`.empty`；命令菜单Escape回原Service触发点；Files在9秒证明pending，另加原10秒deadline、保留行/错误和无自动GET测试；Service presence(limit1)与实际列表(limit25)各恰好一个GET；hosted原服务入口恰好一个指定payload POST且零其他写；空名称新建文件夹验证原目录错误与独立名称校验各一条、零MKCOL。初始壳专用页面挂起entry module而非abort，冻结时钟，真正watchdog失败由既有独立测试负责；低高度设置仍断言panel存在及原header Close可达，未把消失的panel视作成功。
+
+本批最终正式build/embed、生产及浏览器测试编译、52个直接套件704/704、既有assembly140/140、maintenance、PR基线style147文件、generated UI逐字一致、Go webapp13.136秒及CLI build通过。直接套件与assembly结果互不冒称完整浏览器通过；本地未启动Chromium、未重试被阻止的上传授权。实际新浏览器用例均待当前后继CI执行。
+
+真实Core第465行的旧unavailable断言与当前有效契约不符：agent-conversation明确Session不绑定创建环境，AGENTS/Skills/image Apply仍可继续同一Session；agentd chatOptions依据模型/Thinking而非旧context，并已有context-a→context-b保持available的测试。该契约、runtime和测试在主基线与本Change之间无修改；这只是源差异证据，不声称执行过基线完整集成。修正测试验证HTTP200、available、原Session id/模型/Thinking/历史messages+runs保持；之后显式`/new`仍是用户选择，后续Export/Import全部ID、字节与次数断言不变。现有实际Agent跨context测试1/1通过；完整链仍待CI，不改后端去迎合旧断言。
+
+20:20父任务以正式Desktop `b5b81369` +合成HTTP实际复核status503：正常点击原通知Details打开Core连接popover，原503仍可审阅且实际startup触发点expanded；清除原status故障后在popover显式检查连接，只读恢复确认Works及Core/Runtime状态，旧notice退休、无写入。此处不是实际Core连接证明。两宿主build及OpenSpec strict随后通过。现有合成夹具没有Start/Retry业务POST，不为bbox人为制造成功；精确D02/D03几何仍交由既有真实浏览器用例执行。
+
+20:21正式`b5b81369`实际Settings有限复核：合成resourceDelay5000/configAfterSave=read-error，编辑AGENTS后一次Save，立即显示浮动“设置已保存·正在刷新”，`[data-action-status]`为空，没有重复普通成功段落；读回等待期间编辑新草稿，503之后保留已确认修改+刷新未确认的所属恢复事实和一个错误通知，新草稿不变。HTTP账本恰好一次原配置PUT、随后GET、零Apply POST。455px静态Header可访问observed状态正确中文；不称作尚未执行的360px/Start pending bbox通过。
