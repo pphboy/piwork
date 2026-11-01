@@ -1,5 +1,7 @@
+const { ExportFeedbackRegistry } = await import(new URL('../browser/export-feedback.js', import.meta.url).href);
 const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
 const { menuCommands, workHeaderModel, serviceToolbarModel } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
+const { confirmedDirectorySelection } = await import(new URL('../browser/file-results.js', import.meta.url).href);
 const { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } = await import(new URL('../browser/export-panel.js', import.meta.url).href);
 const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
 const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
@@ -24,7 +26,8 @@ function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
   ...localeSandbox,
-    pendingDots, sharedIcon, menuCommands, workHeaderModel, serviceToolbarModel,
+    pendingDots, sharedIcon, menuCommands, workHeaderModel, serviceToolbarModel, confirmedDirectorySelection,
+    acceptedFlows: [], exportFeedback: new ExportFeedbackRegistry(),
     view: { layout:'workspace', modal: '', data: { scope: 'work-header', epoch: '1' }, path: '/', selected: [], file: '', modalError: '' },
     adapter: { identityEpoch: 1, connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [], operations: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
@@ -33,6 +36,13 @@ function fixture() {
     exportFlows: { forWork: () => undefined, get: () => undefined },
     filesRestoreNotice: '', uploadProgressMarkup: () => '', filesUploadState: () => undefined, transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     exportPanelModel, renderExportPanel, renderExportRecoveryPanel, exportPanelInput: () => ({}), actions: { records: new Map() },
+  };
+  // This app-local boundary is an assembly collaborator, not a reimplemented registry.
+  c.acceptedExportFlow = (flow: unknown) => {
+    c.acceptedFlows.push(flow);
+    c.exportFeedback.setIdentity(String(c.adapter.identityEpoch));
+    c.exportFeedback.acceptFlow(flow);
+    return flow;
   };
   c.fileActionsContext="";c.overlayRole=overlayRole;vm.createContext(c); vm.runInContext(helpers, c);
   vm.runInContext(extract('coreConnectionStatus', 'fileReadPending', 'isRequestInspector', 'brand', 'topbar', 'quickAction', 'workRouteFeedback', 'workHeader', 'modalMarkup', 'browserFullscreenAction', 'fileRefreshButton', 'files', 'syncDialogPresentation', 'beginExport', 'workMenuTasks'), c);
@@ -66,19 +76,30 @@ test('Ready uses Open in the list; Stop and information stay with the original W
 
 test('stopped Export creates one new intent immediately; running Export only opens Stop confirmation', () => {
   const { c, work } = fixture(); const started: unknown[] = [], opened: any[] = [];
-  c.exportFlows.start = (...args: unknown[]) => { started.push(args); return { id: 'flow', workId: work.id }; };
+  c.exportFlows.start = (...args: unknown[]) => {
+    started.push(args);
+    return { id: started.length === 1 ? 'flow' : 'flow-2', workId: work.id, workName: work.name, identityEpoch: c.adapter.identityEpoch, phase: 'checking', error: '', autoDeliveryConsumed: false };
+  };
   c.openExportFlow = (flow: any) => opened.push(flow);
   c.openModal = (...args: unknown[]) => opened.push(args);
   c.beginExport(work); assert.equal(started.length, 1); assert.equal(opened[0].id, 'flow');
+  assert.equal(c.acceptedFlows.length, 1);
+  assert.equal(c.acceptedFlows[0], opened[0]);
+  assert.equal(c.exportFeedback.flowOwners()[0].original, opened[0]);
+  assert.equal(c.acceptedFlows[0].workId, work.id);
   work.desired = 'running'; c.beginExport(work);
   assert.equal(started.length, 1); assert.equal(opened[1][0], 'stop-work'); assert.equal(opened[1][1].exportAfterStop, 'true');
+  assert.equal(c.acceptedFlows.length, 1, 'opening Stop confirmation does not register another intent');
   c.beginExport(work, true); assert.equal(started.length, 2);
+  assert.equal(c.acceptedFlows.length, 2);
+  assert.equal(c.acceptedFlows[1], opened[2]);
 });
 
 test('repeated Export while active reopens its exact flow without starting a second one', () => {
   const { c, work } = fixture(); const old = { id: 'original', mode: 'new', terminal: false };
   c.exportFlows.forWork = () => old; c.exportFlows.start = () => assert.fail('duplicate start');
   c.openExportFlow = (flow: any) => assert.equal(flow, old); c.beginExport(work);
+  assert.equal(c.acceptedFlows.length, 0, 'reopening an original flow is not a new accepted intent');
 });
 
 function exportFixture() {
@@ -137,10 +158,16 @@ test('Files has no empty selection strip and keeps checkbox/bulk controls in the
   assert.match(html, /file-select-hit/); assert.match(html, /data-file-select="\/one.txt"/);
   assert.match(html, /data-action="file-add"/);
   assert.equal((html.match(/data-action="refresh-files"/g) || []).length, 1);
-  c.view.selected = ['/one.txt']; html = c.files(work);
+  c.view.selected = ['/one.txt', '/removed.txt'];
+  html = c.files(work);
+  assert.deepEqual(c.view.selected, ['/one.txt'], 'only the confirmed current listing retires a missing selection');
   const toolbar = html.split('<div class="file-table">')[0];
   for (const action of ['file-copy', 'file-move', 'file-delete', 'clear-selection']) assert.match(toolbar, new RegExp(`data-action="${action}"`));
   assert.match(html, /aria-label="Copy selected files"/); assert.doesNotMatch(html, /selection-bar/);
+  c.adapter.directories.get('work-a:/').loading = true;
+  c.view.selected = ['/one.txt', '/not-yet-confirmed.txt'];
+  c.files(work);
+  assert.deepEqual(c.view.selected, ['/one.txt', '/not-yet-confirmed.txt'], 'a pending listing cannot retire original selections');
 });
 
 test('request entries are scoped icon actions and the duplicate footer creation action is absent', () => {
