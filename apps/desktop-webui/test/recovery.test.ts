@@ -83,6 +83,10 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]:visible`).first();
+async function openWorkSettings(page: Page) {
+  await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
+  await page.locator('#modal [data-action="settings"]').click();
+}
 async function openFullscreenOptions(page: Page) {
   if(await button(page,'service-fullscreen').isVisible())return;
   const serviceMenu=page.locator('.service-toolbar [data-action="service-menu"]:visible').first();
@@ -187,7 +191,8 @@ test('R1 serial upload preserves File bytes and confirmation version across crea
 
 test('R2 Advanced and simple forms share a complete draft; empty values, last edit and invalid JSON survive tabs', async t => {
   const { page, requests } = await fixture(t, () => undefined);
-  await button(page, 'settings').click(); await page.locator('[data-tab="Advanced"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-tab="Advanced"]').click();
   const draft = { skills: ['new'], packages: [], agentsMd: '', modelRef: 'edited', mcp: { servers: [{ name: 'retained' }] } };
   await page.locator('#advanced-editor').fill(JSON.stringify(draft)); await page.locator('[data-tab="Skills"]').click(); await expect(page.locator('[data-skill="new"]')).toBeChecked();
   await button(page, 'save-config').click(); assert.deepEqual(JSON.parse(requests.find(r => r.method === 'PUT')!.body).configuration, draft);
@@ -203,7 +208,8 @@ test('R2 Advanced and simple forms share a complete draft; empty values, last ed
 test('R2 failed and unknown saves retain the whole JSON draft, including imported explicit empties', async t => {
   let lost = false;
   const { page, requests } = await fixture(t, r => r.path === 'works/work-1/configuration' && r.method === 'PUT' ? lost ? { abort: true } : { status: 422, json: { message: 'invalid model' } } : undefined);
-  await button(page, 'settings').click(); await page.locator('[data-tab="Advanced"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-tab="Advanced"]').click();
   const draft = { skills: [], packages: [], agentsMd: '', modelRef: 'keep-on-error', tools: { mode: 'retained' } };
   await page.locator('#json-input').setInputFiles({ name: 'config.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(draft)) });
   await button(page, 'save-config').click(); assert.deepEqual(JSON.parse(await page.locator('#advanced-editor').inputValue()), draft);
@@ -317,7 +323,9 @@ test('R5 upload cancellation and late callback cannot resurrect abandoned inspec
 test('R7 catalog errors recover independently, reject malformed arrays, accept empty and preserve drafts/readiness', async t => {
   let skillReply: Reply | undefined, packageReply: Reply | undefined;
   const { page } = await fixture(t, r => r.path === 'skills' ? skillReply : r.path === 'packages' ? packageReply : undefined);
-  await button(page, 'settings').click(); await page.locator('[data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('dirty instructions');
+  await openWorkSettings(page);
+  await page.locator('[data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('dirty instructions');
   skillReply = { status: 503, json: { message: 'skills offline' } }; await api(page, `adapter.state.scenario='env-not-ready'; return adapter.checkCatalog();`);
   // Cached feedback is a localizable message identity; its raw server text and
   // catalog key both remain inspectable across the browser boundary.
@@ -443,7 +451,12 @@ test('Brain package details expose acceptance and fixed checks, and open the ori
   if(r.path==='operations/operation-apply-original')return{json:{operationId:'operation-apply-original',workId:'work-1',kind:'apply-work-configuration',state:'failed',error:apply.error}};
   if(r.path.endsWith('/agent-requests/req-original'))return{json:{request:{requestId:'req-original',goal:'Verify the personal review export',source:{kind:'chat'},state:'needs_attention',disposition:'live',evidenceIds:[],runIds:[],error:{code:'PI_PACKAGE_CANDIDATE_CONFLICT',message:'Apply failed'}},evidence:{items:[],nextCursor:null},runs:[]}};
  });
- await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await expect(page.locator('#app')).toContainText('Saved · Not applied · Loaded');await expect(page.locator('#app')).toContainText('Behavior not confirmed');await button(page,'package-detail').click();await expect(page.locator('#modal')).toContainText('.pi/packages/piwork-brain/');
+ await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await expect(page.locator('#app')).toContainText('Saved · Not applied · Loaded');
+  await expect(page.locator('#app')).toContainText('Behavior not confirmed');
+  await button(page,'package-detail').click();
+  await expect(page.locator('#modal')).toContainText('.pi/packages/piwork-brain/');
  const modal=page.locator('#modal');
  for(const text of ['Active selection at acceptance','Enabled at acceptance · Still matches','Saved selection at acceptance','Changed since acceptance','Verify the personal review export','package:piwork-brain:review_probe','{"mode":"review"}','review-success','export-present','Published','Apply failed','operation-apply-original','The prior active package was restored.'])await expect(modal).toContainText(text);
  for(const privateField of ['artifactDigest','contextId','credentialRef','sha256:'])assert.equal((await modal.innerText()).includes(privateField),false);
@@ -459,7 +472,11 @@ test('Brain details distinguish no Apply, observation failure and loaded behavio
   if(r.path.endsWith('/configuration'))return{json:{desired:{skills:[],packages:[{name:'piwork-brain',enabled:true}],agentsMd:'',mcp:{servers:[]}},active:{},pendingApply:true,runtime:{state:'ready'}}};
   if(r.path.endsWith('/packages'))return fail?{status:503,json:{message:'Package state unavailable'}}:{json:{packages:[{name:'piwork-brain',pendingApply:true,runtime:{availability:'available',loaded:true},candidate}]}};
  });
- await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await button(page,'package-detail').click();const modal=page.locator('#modal');await expect(modal).toContainText('No matching Apply');
+ await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await button(page,'package-detail').click();
+  const modal=page.locator('#modal');
+  await expect(modal).toContainText('No matching Apply');
  fail=true;await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Package observation unavailable. Last confirmed details');await expect(modal).toContainText('Verify the personal review export');
  fail=false;candidate={...brainCandidate,adoption:'unavailable',apply:{availability:'unavailable'}};await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Apply observation unavailable');await expect(modal).toContainText('Behavior observation unavailable');await expect(modal).not.toContainText('Package observation unavailable. Last confirmed details');await expect(modal).not.toContainText('No matching Apply');
  candidate={...brainCandidate,active:true,adoption:'failed',apply:{availability:'available',operationId:'operation-apply-original',state:'succeeded'}};await button(page,'refresh-package-detail').click();await expect(modal).toContainText('Apply succeeded');await expect(modal).toContainText('Behavior checks failed');await expect(modal).not.toContainText('Apply failed');
@@ -2694,7 +2711,8 @@ test('Reconcile configuration: delayed Save confirms only its captured draft and
       return { json: { desired: submitted, active: submitted, pendingApply: false } };
     }
   });
-  await button(page, 'settings').click(); await page.locator('[data-tab="Advanced"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-tab="Advanced"]').click();
   const original = { skills: [], packages: [], agentsMd: '', modelRef: 'preserved-extra', mcp: { servers: [] } };
   await page.locator('#advanced-editor').fill(JSON.stringify(original));
   await button(page, 'save-config').click(); await expect.poll(() => !!submitted).toBe(true);
@@ -3256,7 +3274,7 @@ test('B unsent Chat text participates in native beforeunload and cancelling keep
 
 test('B native beforeunload Settings positive control cancels without saving', async t => {
   const { page, requests } = await fixture(t, () => undefined);
-  await button(page, 'settings').click();
+  await openWorkSettings(page);
   await page.locator('[data-tab="AGENTS.md"]').click();
   await page.locator('#agents-editor').click();
   await page.locator('#agents-editor').fill('unsaved Settings positive control');
@@ -3302,7 +3320,7 @@ for (const scenario of ['dirty-discard', 'read-error-retry']) test(`B brain sour
     if (r.method === 'PROPFIND') return { status: 207, body: `<d:multistatus xmlns:d="DAV:"><d:response><d:href>${href}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>11</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>` };
     if (r.method === 'GET' && r.path === href) return fail ? { status: 503, json: { message: 'Source temporarily unavailable' } } : { body: 'brain source', headers: { 'Last-Modified': mtime1 } };
   });
-  await button(page, 'settings').click();
+  await openWorkSettings(page);
   if (scenario === 'dirty-discard') { await page.locator('[data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('keep until I discard'); }
   await page.locator('[data-tab="Pi Packages"]').click(); await page.locator('[data-action="package-detail"][data-id="piwork-brain"]').click();
   await button(page, 'open-source').click();

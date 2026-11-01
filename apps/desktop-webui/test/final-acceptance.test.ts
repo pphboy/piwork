@@ -80,6 +80,10 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]:visible`).first();
+async function openWorkSettings(page: Page) {
+  await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
+  await page.locator('#modal [data-action="settings"]').click();
+}
 
 // Only the remaining browser evidence is added here. Existing acceptance is reused:
 // - recovery: “UX revision late Work defaults…”, “UX revision Files and ordinary Chat…”;
@@ -365,11 +369,12 @@ for (const source of ['Services', 'Files', 'Chat'] as const) test(`Final 13.3 Se
     await page.locator('[data-action="open-file"][data-path="/tree"]').click();
     await expect(page.locator('.breadcrumbs')).toContainText('tree');
   }
-  await button(page, 'settings').click();
+  await openWorkSettings(page);
   await button(page, 'back-work').click();
   await expect(button(page, `tab-${source}`)).toHaveClass(/active/);
   if (source === 'Files') await expect(page.locator('.breadcrumbs')).toContainText('tree');
-  await button(page, 'settings').click(); await page.locator('[data-tab="AGENTS.md"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-tab="AGENTS.md"]').click();
   const draft = `Unsaved settings from ${source}`;
   await page.locator('#agents-editor').fill(draft);
   const reads = requests.filter(r => r.path.endsWith('/configuration') && r.method === 'GET').length;

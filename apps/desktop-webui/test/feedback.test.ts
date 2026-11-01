@@ -163,6 +163,10 @@ test('Core check retains the Works connection trigger geometry during a delayed 
 });
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).last();
+async function openWorkSettings(page: Page) {
+  await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
+  await page.locator('#modal [data-action="settings"]').click();
+}
 async function openRequests(page: Page, scope: 'work' | 'service' = 'work') {
   const action = scope === 'service' ? 'service-requests' : 'pi-requests';
   const trigger = button(page, action);
@@ -265,7 +269,18 @@ for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (cons
  await page.setViewportSize({width,height:900});await page.emulateMedia({reducedMotion});await page.evaluate(`import('/desktop/browser/locale.js').then(m => m.chooseLocale('${locale}'))`);
  await button(page,'tab-Files').click();await expect(page.locator('.file-row')).toHaveCount(1);
  let trigger=button(page,'refresh-files');let before=await trigger.boundingBox();let neighbor=await page.locator('.file-row').first().boundingBox();held='files';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.file-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
- await button(page,'settings').click();trigger=button(page,'check-catalog');before=await trigger.boundingBox();held='skills';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
+ await openWorkSettings(page);
+  trigger=button(page,'check-catalog');
+  before=await trigger.boundingBox();
+  held='skills';
+  gate=deferred();
+  await trigger.click();
+  await expect(trigger).toHaveAttribute('aria-busy','true');
+  assert.deepEqual(await trigger.boundingBox(),before);
+  gate.resolve();
+  held='';
+  await expect(trigger).not.toHaveAttribute('aria-busy','true');
+  assert.deepEqual(await trigger.boundingBox(),before);
  await button(page,'back-work').click();await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();trigger=button(page,'refresh-logs');before=await trigger.boundingBox();held='works/work-1/services/tool/logs';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await button(page,'close-modal').click();
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('retained draft');trigger=button(page,'sessions');before=await trigger.boundingBox();held='sessions';gate=deferred();await trigger.click();await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','false');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');await expect(page.locator('#composer')).toHaveValue('retained draft');
  await openRequests(page);
@@ -843,7 +858,8 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
     if(r.path==='operations/op-package')return{json:{operationId:'op-package',workId:'work-1',kind:update?'pi-package-update':'pi-package-install',state:'running'}};
     if(accepted&&r.path==='works/work-1/configuration')await readback.promise;
   });
-  await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
   await button(page,update?'update-package':'install-package').click();await page.locator('#install-type').selectOption(source);
   if(source==='npm'||source==='Git')await page.locator('#install-source').fill(source==='npm'?'pkg@1.0.0':'https://example.test/pkg.git');
   else if(source==='ZIP')await page.locator('#package-zip-input').setInputFiles({name:'pkg.zip',mimeType:'application/zip',buffer:Buffer.from('original ZIP fixture bytes')});
@@ -864,7 +880,7 @@ for(const action of ['apply','skill-copy','remove-package'])test(`D14/D16 ${acti
     if(accepted&&r.path==='works/work-1/configuration')await read.promise;
     if(action==='apply'&&r.path==='works/work-1/configuration')return{json:{desired:{skills:[],packages:[],agentsMd:'saved',mcp:{servers:[]}},active:{},pendingApply:true,runtime:{state:'ready'}}};
   });
-  await button(page,'settings').click();
+  await openWorkSettings(page);
   let trigger='apply-config';
   if(action==='skill-copy'){await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();await button(page,'core-skill-copy').click();trigger='confirm-core-skills';}
   if(action==='remove-package'){await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();await button(page,'remove-package').click();trigger='confirm-remove-package';}
@@ -905,7 +921,9 @@ test('D10 user gesture reserves an opener-isolated window; failed async authoriz
 for(const type of ['agents-input','json-input','create-agents-input'])test(`D15 ${type} shows local read and discards a replaced selection or a closed view`,async t=>{
   const {page}=await fixture(t,()=>undefined);
   if(type==='create-agents-input'){await button(page,'back-works').click();await button(page,'new-work').click();await button(page,'toggle-create-advanced').click();}
-  else{await button(page,'settings').click();await page.locator(`[data-action="settings-section"][data-tab="${type==='json-input'?'Advanced':'AGENTS.md'}"]`).click();}
+  else{await openWorkSettings(page);
+  await page.locator(`[data-action="settings-section"][data-tab="${type==='json-input'?'Advanced':'AGENTS.md'}"]`).click();
+  }
   await page.evaluate(()=>{const read=File.prototype.arrayBuffer;(window as any).releaseRead=()=>{};File.prototype.arrayBuffer=function(){if(this.name==='slow.txt')return new Promise<ArrayBuffer>(resolve=>{(window as any).releaseRead=()=>resolve(new TextEncoder().encode('stale file').buffer)});return read.call(this);};});
   await page.locator('#'+type).setInputFiles({name:'slow.txt',mimeType:'text/plain',buffer:Buffer.from('old')});await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Reading selected file');
   const text=type==='json-input'?'{}':'new file';await page.locator('#'+type).setInputFiles({name:'new.txt',mimeType:'text/plain',buffer:Buffer.from(text)});
@@ -1150,7 +1168,8 @@ test('DWUI-012 readonly file callback after Core switch cannot reopen a file or 
 test('DWUI-011/012 a timed-out configuration read preserves focus, draft and local retry',async t=>{
   const gate=deferred();t.after(async()=>gate.resolve());let armed=false;
   const {page,requests}=await fixture(t,async r=>{if(armed&&r.path==='works/work-1/configuration'){await gate.promise;return{status:503,json:{message:'Configuration readback unavailable. '+ 'A bounded diagnostic detail. '.repeat(8)}};}});
-  await button(page,'settings').click();await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
   await page.locator('#agents-editor').fill('draft retained while checking');await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
   armed=true;await button(page,'refresh-config').click();await page.locator('#agents-editor').focus();await page.locator('#agents-editor').evaluate((input:HTMLTextAreaElement)=>input.setSelectionRange(3,9));
   await expect(button(page,'refresh-config')).toHaveAttribute('aria-busy','true');await expect(button(page,'refresh-config').locator('[role="status"]')).toHaveCount(1);
@@ -1497,7 +1516,7 @@ test('DWUI-016 accepted Stop also prevents Apply while saved settings and editor
     if (r.path === 'works/work-1' && stoppedGoal) return { json: { id: 'work-1', name: 'Recovery Work', observedState: 'ready', desiredState: 'stopped' } };
     if (r.path === 'works/work-1/configuration') return { json: { desired: { skills: [], packages: [], agentsMd: 'saved instructions', mcp: { servers: [] } }, active: { skills: [], packages: [], agentsMd: '', mcp: { servers: [] } }, pendingApply: true, runtime: { state: 'ready' } } };
   });
-  await button(page, 'settings').click();
+  await openWorkSettings(page);
   await expect(button(page, 'apply-config')).toBeEnabled();
   await api(page, "await adapter.lifecycle('work-1', 'stop')"); await expect(button(page, 'apply-config')).toBeDisabled();
   await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('settings preserved after accepted Stop');
@@ -1518,7 +1537,7 @@ test('DWUI-OPREC-001 Apply and Package recovery stay in Settings and preserve a 
     if (r.path === 'works/work-1/configuration') return configFails ? { status: 503, json: { message: 'Configuration read unavailable' } } : { json: { desired: { skills: [], packages: [], agentsMd: 'saved', mcp: { servers: [] } }, active: { skills: [], packages: [], agentsMd: '', mcp: { servers: [] } }, pendingApply: true, runtime: { state: 'ready' } } };
   });
   await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
-  await button(page, 'settings').click();
+  await openWorkSettings(page);
   await expect(page.locator('.configuration-state')).toContainText('Applying');
   await expect(page.locator('.configuration-state [data-action="operation"][data-id="original-apply"]')).toBeVisible();
   await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
@@ -1539,7 +1558,8 @@ test('DWUI-OPREC-001 a new Apply remains in Settings after acceptance', async t 
     if (r.path === 'works/work-1/configuration/apply') return { json: { operationId: 'apply-new', workId: 'work-1' } };
     if (r.path === 'operations/apply-new') return { json: { operationId: 'apply-new', workId: 'work-1', kind: 'apply-work-configuration', state: 'running' } };
   });
-  await button(page, 'settings').click(); await button(page, 'apply-config').click();
+  await openWorkSettings(page);
+  await button(page, 'apply-config').click();
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.configuration-state')).toContainText('Applying');
   await expect(page.locator('.configuration-state [data-action="operation"][data-id="apply-new"]')).toBeVisible();
@@ -1552,7 +1572,8 @@ test('DWUI-OPREC-001 an unsaved Apply record stays visible and points to its cop
     if (r.path === 'works/work-1/configuration/apply') return { json: { operationId: 'unsaved-apply', workId: 'work-1', localRecordSaved: false } };
     if (r.path === 'operations/unsaved-apply') return { json: { operationId: 'unsaved-apply', workId: 'work-1', kind: 'apply-work-configuration', state: 'running' } };
   });
-  await button(page, 'settings').click(); await button(page, 'apply-config').click();
+  await openWorkSettings(page);
+  await button(page, 'apply-config').click();
   await expect(page.locator('.settings-page')).toContainText('The record was not saved');
   await page.locator('.settings-page [data-action="operation"][data-id="unsaved-apply"]').click();
   await expect(page.locator('#modal')).toContainText('automatic recovery after reload is not guaranteed');
@@ -1649,7 +1670,7 @@ for (const source of ['service', 'apply'] as const) test(`DWUI-OPREC-003 ${sourc
     await page.locator('#modal [data-action="service-details"][data-id="svc-a"]').click();
     await page.locator('#modal [data-action="operation"][data-id="service-failed"]').click();
   } else {
-    await button(page, 'settings').click();
+    await openWorkSettings(page);
     await page.locator('.settings-page [data-action="operation"][data-id="service-failed"]').click();
   }
   await expect(button(page, 'operation-service-logs')).toBeVisible();
