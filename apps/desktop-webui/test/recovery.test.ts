@@ -2237,9 +2237,9 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  const {page,requests}=await fixture(t,r=>{
   if(r.path.endsWith('/agent-requests'))return fail?{status:503,json:{message:'Request status unavailable'}}:{json:{items:present?[controlRequest('completed','historical')]:[],nextCursor:null}};
   return controlFixture(r);
- });
- await expect(page.locator('iframe')).toBeVisible();await page.clock.install();
- await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.confirmed")).toBe(true);
+ }, false, true, page => page.clock.install());
+ await expect(page.locator('iframe')).toBeVisible();
+ await expect.poll(()=>api(page,"const state=adapter.requestPresence.get('work-1:Tool A');return !!state?.confirmed && !state.loading")).toBe(true);
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A').hasRecords"),false);
  present=true;
@@ -2252,8 +2252,16 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
  await page.keyboard.press('Escape');
  await expect(button(page,'service-menu')).toBeFocused();
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.loading")).toBe(false);
  fail=true;
+ const failedPresence = page.waitForResponse(response => {
+  const url = new URL(response.url());
+  return response.request().method() === 'GET' && url.pathname === '/_desktop/api/works/work-1/agent-requests' &&
+   url.searchParams.get('limit') === '1' && url.searchParams.get('serviceName') === 'Tool A' && response.status() === 503;
+ });
  await page.clock.runFor(5100);
+ await failedPresence;
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.loading")).toBe(false);
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
  await expect.poll(()=>api(page,"return String(adapter.requestPresence.get('work-1:Tool A')?.error)")).toContain('Request status unavailable');
 
