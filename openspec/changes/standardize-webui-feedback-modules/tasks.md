@@ -42,7 +42,7 @@
 ## 6. Serve 与登录/首设依赖
 
 - [x] 6.1 按 S01–S12 实际来源分别接入 Overview、Users/账号、默认 Work 配置、Skills、Packages、Models/Test、Runtime、Package Operation、About 及 hosted Quick setup，不以本任务组示例替代逐族清单；每个所有者以直接契约测试验证确认修改与关联回读失败分开、晚回调不清新 Key/草稿，并更新导航与覆盖表。
-- [ ] 6.2 补齐真实登录/退出/未知受理、独立表单、Desktop admission 与初始壳读取失败/恢复，保留有界安全重试和身份清理；以实际入口浏览器/契约测试验证，不继承原型未绘制的缺口。
+- [x] 6.2 补齐真实登录/退出/未知受理、独立表单、Desktop admission 与初始壳读取失败/恢复，保留有界安全重试和身份清理；以实际入口浏览器/契约测试验证，不继承原型未绘制的缺口。
 - [x] 6.3 验证模型 Test 显式可选且不保存/启动，不以 not-run/失败/成功状态门控 Save/Enable/Choose；验证 Runtime 保存只影响未来 Work、配置保存不等于 ready、无通用 Console Operation，以实际模型管理与 Runtime 测试证明。
 - [ ] 6.4 验证 Package 未知受理仅按既有同 actor/source/key 幂等 Resume 协议恢复，无假取消/百分比；Quick setup 必须 status.ready、preparation.ready、六项组件 ready 且无当前读取失败，只有有效首设意图可跳转，以各所属协议测试证明。
 

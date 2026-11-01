@@ -244,3 +244,14 @@ PR为可审阅Draft，源码、直接测试和正式嵌入同步，不等于整�
 14:48最终有限复核通过：正式Console144/144（0fail/skip），typecheck/build/embed通过；`check-generated ui`再次正式重建两端并核对字节一致，Go `internal/webapp`/`consoleassets`通过，maintenance、五个修改源/测试的style、OpenSpec strict及当前diff检查通过。父任务CUA使用最终正式资源：unacceptedunknown→原GET signed-out清旧unknown；随后同账号人工成功进入Overview，notice为0、无旧signed-out info。429显示两秒禁用/清密码，到期仅人工再次提交成功后notice为0、无旧RATE_LIMITED。HTTP ledger精确四次login POST对应两组各两次明确用户提交（503→200、429→200），其余恢复均GET，没有自动重发。
 
 本批只关闭真实发现的原登录/注销反馈缺陷，6.2仍未勾：独立onboarding创建管理员已知拒绝/未知受理与原GET恢复、onboarding人工登录未知及初始壳重试耗尽等实际入口证据仍未建立；已有控制平面/boot浏览器测试的编写不等于执行。Docker/Core/Unix socket/完整浏览器环境阻点保持原声明；未把合成身份视为真实账号或真实Core认证。下一批限于现有onboarding协议的正式资源夹具与实际UI验证，不开始5.2或新功能。
+
+
+## 15:03 6.2独立首设有限验收完成（24/31）
+
+父任务经管理预览运行原正式setup.html、onboarding.js及其真实依赖/CSP；只使用既有HTTP接口的合成fixture，不注入页面状态、计时器或storage。HTTP夹具自检10/10，资源沿正式dist复制。已知创建400未受理且两密码清空；创建accepted-unknown一次POST后读失败，关闭notice不解锁，原GET确认后导航`/admin/setup`（该目标明确仅合成占位，不宣称真实Admin集成）。未受理创建原GET确认未初始化，恢复人工Create且密码均空，不自动POST。
+
+人工登录unknown后，不同account GET保持原锁与说明；恢复原account GET才导航`/destination`（仅导航事实）。waiting普通用户的真实/setup Sign out一次POST200后进入真实/login。初始state连续503恰好三次自动GET（ledger35/36/37），耗尽后保留所属失败及人工Read；清故障后原Read为GET38+session39，恢复创建表单。真实官方`/setup/browser/onboarding.js`持续503恰好三次asset GET（40/41/42），实际watchdog停止自动重载并提供Retry/return home；清asset故障后点击真实Reload表单，经原恢复303返回`/setup?case=boot`，URL完整保留并出现真实创建表单。全批精确五次明确用户write：已知拒绝创建3、已受理未知创建7、未知登录15、未受理创建23、注销32；所有恢复是GET。
+
+6.2按其确切条款完成：以上独立首设/初始壳证据，结合前批native Console匹配/不匹配/未受理/429/注销真实UI、Admin会话失效清旧草稿与秘密、Desktop admission实际UI及直接契约，以及真实adapter身份epoch/response-body晚结果拒绝、view-scope晚草稿和共享read-deadline契约，覆盖登录/退出/未知、独立表单、准入、有界恢复、身份清理。完整storage拒绝、selective sessionStorage/BFCache和全Playwright矩阵仍属8.1未完成回归，不从未运行测试推断其通过，也不把整个旧浏览器套件追加为6.2隐含门槛。
+
+明确保留2.2已观察残余：onboarding credential unknown与随后read failure同时产生两条相同通用浮动说明、同一Read current state动作，虽来源不同且原unknown表单/锁正确，来源辨识/重复展示仍待有限修复。不能因6.2功能通过声称全部通知策略完成。无真实账号/Core、无主spec同步或归档；剩余2.2、4.3、5.2、5.4、6.4、8.1、8.2未勾。
