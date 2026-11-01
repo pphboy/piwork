@@ -158,7 +158,13 @@ try {
   let mainReloads = 0; page.on('request', request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame() && !new URL(request.url()).pathname.startsWith('/_desktop/')) mainReloads++; });
   // A new page uses the same authenticated Desktop, but no in-memory task state.
   const recoverOnNewPage = async (workName, id, kind) => {
-    const recoveredPage = await context.newPage(); const posts = [];
+    const recoveredPage = await context.newPage();
+    const posts = [], receipts = [];
+    let stage = 'open Works';
+    recoveredPage.on('response', response => {
+      const path = new URL(response.url()).pathname;
+      if (path.startsWith('/_desktop/api/')) receipts.push({ method: response.request().method(), path, status: response.status() });
+    });
     recoveredPage.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
     try {
       await recoveredPage.goto(new URL(page.url()).origin + '/');
@@ -166,20 +172,48 @@ try {
       await recoveredPage.locator('[data-action="account"]').click();
       await expect(recoveredPage.getByRole('menuitem', { name: 'Known operations', exact: true })).toHaveCount(0);
       await recoveredPage.keyboard.press('Escape');
-      await recoveredPage.locator('.work-name').filter({ has: recoveredPage.getByText(workName, { exact: true }) }).click();
+      stage = 'open original Work';
+      const originalWork = recoveredPage.locator('.work-name').filter({ has: recoveredPage.getByText(workName, { exact: true }) });
+      const originalWorkId = await originalWork.getAttribute('data-id');
+      assert.ok(originalWorkId, 'the selected Work must expose its original identity');
+      await originalWork.click();
       await recoveredPage.locator('[data-action="work-menu"]').click();
       if (kind === 'snapshot') {
+        stage = 'lookup original snapshot';
         await recoveredPage.locator('[data-action="find-previous-export"]').click();
         await recoveredPage.locator('#snapshot-query').fill(id); await recoveredPage.locator('[data-action="lookup-snapshot"]').click();
         await expect(recoveredPage.locator('.export-recovery')).toBeVisible();
         await expect(recoveredPage.locator('.export-snapshot')).toContainText(id);
       } else {
-        await recoveredPage.locator('[data-action="work-info"]').click(); await recoveredPage.locator('[data-action="find-work-task"]').click();
-        await recoveredPage.locator('#operation-query').fill(id); await recoveredPage.locator('[data-action="lookup-operation"]').click();
+        stage = 'open original task lookup';
+        await recoveredPage.locator('[data-action="work-info"]').click();
+        await recoveredPage.locator('[data-action="find-work-task"]').click();
+        await recoveredPage.locator('#operation-query').fill(id);
+        stage = 'read original Operation';
+        const [receipt] = await Promise.all([
+          recoveredPage.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/operations/${encodeURIComponent(id)}` && response.request().method() === 'GET'),
+          recoveredPage.locator('[data-action="lookup-operation"]').click(),
+        ]);
+        assert.equal(receipt.status(), 200, 'original Operation lookup must return a confirmed receipt');
+        const operation = await receipt.json();
+        assert.equal(operation.operationId, id, 'lookup must preserve the original Operation ID');
+        assert.equal(operation.workId, originalWorkId, 'lookup must belong to the selected original Work');
+        stage = 'open original Operation technical details';
         await recoveredPage.locator('.operation-technical > summary').click();
         await expect(recoveredPage.locator('.operation-technical')).toContainText(id);
       }
       assert.deepEqual(posts, [], 'recovering an original task must be read-only');
+    } catch (error) {
+      const presentation = await recoveredPage.evaluate(() => {
+        const dialogs = [...document.querySelectorAll('#modal')];
+        return { hash: location.hash, modalCount: dialogs.length, modals: dialogs.map(dialog => ({
+          open: dialog.hasAttribute('open'), className: dialog.className,
+          header: dialog.querySelector('.modal-head h2')?.textContent || '',
+          technicalSummaryCount: dialog.querySelectorAll('.operation-technical > summary').length,
+        })) };
+      }).catch(() => ({ unavailable: true }));
+      console.error('Original task recovery diagnostic', JSON.stringify({ stage, presentation, receipts }));
+      throw error;
     } finally { await recoveredPage.close(); }
   };
   await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
