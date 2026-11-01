@@ -317,3 +317,9 @@ Protocol检查按当前固定两proto、七个实际输出声明精确inventory�
 GitHub实际run41327583037（head feecb469）的unit/static job已通过：Go目标、678项Node测试（158 scripts +16 shared +148 Console +49/8/78/22/199保留workspace测试）、typecheck、正式build、generated检查及123文件PR-base style均由该job执行。此678不是Desktop全部浏览器或本地691直接套件的替代计数；同run浏览器/真实Core job当时尚未完成，旧run另有失败待日志诊断，不宣称整体CI绿色。
 
 旧run暴露`TestLogExportDownloadConcurrencyLimit`时序假设：2MiB响应可已全部进入socket缓冲，客户端只读1KiB不能证明服务端仍持下载slot。本机原测试20次实际6次错误200；新测试只改测试文件，用真实HTTP与实际route在首个body Write设置确定性barrier，并保留ResponseController Unwrap。第一handler明确活跃时第二请求必须409；释放并等handler返回（不是sleep）后第三请求200且全长度，第一请求也完整200。修复20/20、race10/10、整个四项download family通过；不增加生产hook、不削弱并发准入、不将失败归咎于产品而无证据。
+
+### 17:11 CI隔离长套件以取得实际失败日志
+
+已发布后续run在a4f8960头unit/static通过45个Go package与683个Node测试（该头Console152），不把本地更新的155测试回填为那个run结果。原组合browser job运行约39分钟仍停在Desktop，Console未开始；组合runtime的真实Core步骤已失败，但后续全Go Engine integration持续运行，使完整job日志迟迟不能取得。失败仍是失败，不通过改skip或削减断言隐藏。
+
+仅将既有同PR/同仓公开分支、contents只读、固定actions、无secrets/发布的workflow matrix分成unit-static35分钟、desktop-browser60、console-browser45、real-core130、integration-go150。原命令、fixture构建、历史源码hash/label检查、环境与runner逐项比较保持相同；两个runtime suite各自运行原fixture步骤，三个real-Core步骤与全Go integration不再互相阻挡日志。每PR/suite保持不取消运行中的任务，既有run不受手工取消；增加Desktop有限预算不是宣称其会通过。YAML结构、全部shell块bash语法及命令/权限等价检查通过；尚未触发新拆分run，不宣称其执行结果。
