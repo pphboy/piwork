@@ -333,3 +333,5 @@ GitHub实际run41327583037（head feecb469）的unit/static job已通过：Go目
 另从两条反馈测试发现确切测试自身错误：api helper只导入adapter，却试图访问app私有actions/view；改用原editor可编辑、retry/reread提示消失和已有notice/actionstatus/草稿/GET次数/零写入断言表达同一恢复约束，不为测试导出或注入app隐藏状态。正式测试tsc与语法/style通过，实际浏览器仍待执行；其余大量旧用例的共同根因要以TAP栈确认，不做全局选择器替换或恢复普通inline Alerts讨好旧测试。
 
 action-hierarchy旧assembly直接Node复现60/62，两条分别缺少已新增的acceptedExportFlow协作者和已抽取confirmedDirectorySelection绑定，并非已证明产品失败。修复直接import实际file-results与ExportFeedbackRegistry，给既有assembly fixture补显式接收/返回同一flow的协作者spy与原identity注册，**不新增regex提取helper**；原Stop/new/reopen/count断言保持并检查原flow对象，文件选择补确认listing清缺失选择、pending listing保留。官方tsc及action-hierarchy62 +file-results18 +export-feedback15共95/95通过。该旧app装配仍使用原VM表面，不能声称整套已迁移为无VM；新增/已抽取模块继续由直接import测试负责。
+
+17:21调度补充：旧无TAP/单测预算的Desktop job仍占同suite并发组，新的有界诊断可能排队约一小时。只为desktop-browser并发组增加一次固定`-bounded-tap-v1`世代后缀；其他suite组逐字不变，仍cancel-in-progress=false，不取消或隐藏旧run结果，不反复改世代刷并发，不改runner容量/收费设置。此后相同有界版本继续按同组排队；目的是取得当前实际失败栈，不是将测试改为绿灯。
