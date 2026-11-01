@@ -218,3 +218,7 @@ Administration五页GET装配补证（实际360px英文、合成HTTP）：Users�
 - **8.1**：正式type/build/embed/CSP公有资源Go测试及选中官方产物CUA通过；完整现有浏览器集成与reduced-motion全矩阵未执行，本地Chromium权限拒绝不绕过。
 
 PR为可审阅Draft，源码、直接测试和正式嵌入同步，不等于整个Change完成或可合并。无主spec同步、归档、release或deploy。当前正式产物之外的预检服务器/工具链/日志均留忽略workspace，不提交凭据、缓存或测试临时目录。
+
+### 最终入库差异检查的冻结输入例外（12:42）
+
+四组提交后对完整baseline→HEAD（包含此前未跟踪的授权规划）检查，`git diff --check`指出冻结V13 HTML原有两处尾随空白：374、783行。此前“diff检查通过”针对当时已跟踪实现差异，不包含未暂存的新冻结附件；不可扩写为完整PR无空白警告。该文件SHA256仍为`679968a781adba928cbc867e5466d590ebfb7db685d674d56fd43468cc653b76`，与冻结scope-manifest完全一致，故不为消除lint改写已批准输入。精确排除此一个冻结HTML后的完整baseline→HEAD检查通过，生产源码、测试和其他新增文档没有同类警告。PR保留此例外及完整任务未完成声明。
