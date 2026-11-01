@@ -1,0 +1,117 @@
+name: PR 4 WebUI verification
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  verify:
+    if: >-
+      github.repository == 'pphboy/piwork' &&
+      github.event.repository.private == false &&
+      github.event.pull_request.number == 4 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/standardize-webui-feedback-modules'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {suite: unit-static, minutes: 35}
+          - {suite: browser, minutes: 45}
+          - {suite: runtime, minutes: 150}
+    name: ${{ matrix.suite }}
+    concurrency:
+      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    env:
+      CI: 'true'
+      GOTOOLCHAIN: local
+      CGO_ENABLED: '0'
+      PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PIWORK_TEST_NATIVE_HISTORY4_IMAGE: piwork-memory-history4-web-base:acceptance
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Clean SDK state and locked dependencies
+        run: |
+          umask 077
+          export PI_CODING_AGENT_DIR="$RUNNER_TEMP/piwork-sdk-clean"
+          mkdir -m 700 "$PI_CODING_AGENT_DIR"
+          test -z "$(ls -A "$PI_CODING_AGENT_DIR")"
+          printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" >> "$GITHUB_ENV"
+          npm ci
+      - name: Install Chromium
+        if: matrix.suite != 'unit-static'
+        run: |
+          npx --no-install playwright install --with-deps chromium
+          node --input-type=module -e "import {chromium} from '@playwright/test'; console.log('PIWORK_TEST_BROWSER_BIN='+chromium.executablePath())" >> "$GITHUB_ENV"
+      - name: Build current source
+        id: build
+        run: make build
+      - name: Unit, contracts and boundaries
+        if: matrix.suite == 'unit-static' && !cancelled() && steps.build.outcome == 'success'
+        run: make test
+      - name: Generated sources and whitespace
+        if: matrix.suite == 'unit-static' && !cancelled() && steps.build.outcome == 'success'
+        run: |
+          make check-generated check-generated-ui
+          git diff --check
+          node scripts/check-source-style.mjs --base "$PR_BASE_SHA"
+      - name: Desktop browser
+        if: matrix.suite == 'browser' && !cancelled() && steps.build.outcome == 'success'
+        run: npm run test:browser -w @piwork/desktop-webui
+      - name: Console browser
+        if: matrix.suite == 'browser' && !cancelled() && steps.build.outcome == 'success'
+        run: npm run test:browser -w @piwork/console-webui
+      - name: Isolated runtime fixtures and reconstructed schema-4 source
+        id: fixtures
+        if: matrix.suite == 'runtime'
+        timeout-minutes: 50
+        run: |
+          docker version
+          command -v unzip
+          df -h /
+          docker pull python:3.13-slim
+          make native-compatibility-images native-helper-images workstation-fixture
+          old=20fb8334f1dce93bfa79cb6b5c86acf1cc460963
+          legacy="$RUNNER_TEMP/piwork-history4-source"
+          mkdir "$legacy"
+          git archive "$old" | tar -x -C "$legacy"
+          echo "07179ce0116e6c1fb6f5db77f249ec2e1175ac43487d35b6eb0325f201fa73f9  $legacy/internal/workhistory/schema.sql" | sha256sum -c -
+          docker build -f "$legacy/Dockerfile.agentd" --target acceptance --build-arg PIWORK_COMMIT="$old" --build-arg PIWORK_MODIFIED=false --build-arg GOPROXY=https://proxy.golang.org,direct --build-arg NPM_REGISTRY=https://registry.npmjs.org -t piwork-memory-history4:acceptance "$legacy"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' piwork-memory-history4:acceptance)" = "$old"
+          test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.source.modified"}}' piwork-memory-history4:acceptance)" = false
+          test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-history.schema"}}' piwork-memory-history4:acceptance)" = 4
+          make native-history4-web-base-fixture
+          test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.fixture.web-base-history4"}}' "$PIWORK_TEST_NATIVE_HISTORY4_IMAGE")" = true
+          docker image inspect --format '{{.Id}} {{json .RepoDigests}}' piwork-memory-history4:acceptance "$PIWORK_TEST_NATIVE_HISTORY4_IMAGE"
+          echo "Reconstructed schema-4 fixture from $old; current-tree bridge changes deterministic driver and Service MCP only. No historical image digest claim."
+          df -h /
+      - name: Desktop real Core
+        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        timeout-minutes: 30
+        run: npm run test:real-core -w @piwork/desktop-webui
+      - name: Console real Core
+        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        timeout-minutes: 20
+        run: npm run test:real-core -w @piwork/console-webui
+      - name: Real Core log export
+        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        timeout-minutes: 20
+        run: node apps/desktop-webui/test/log-export-real-core.mjs
+      - name: Existing Go Engine integration
+        if: matrix.suite == 'runtime' && !cancelled() && steps.fixtures.outcome == 'success'
+        run: make test-integration-go
