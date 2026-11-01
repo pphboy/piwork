@@ -459,10 +459,19 @@ try {
   console.log('Real Desktop: configuration applied');
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Work', exact: true }).click();
-  // Apply creates a different active context. Keep the earlier Session as history,
-  // then explicitly create the Session whose current context will be exported and continued.
+  // Apply changes the active context, not the Session's eligibility to continue.
+  // Creating /new below is an explicit user choice for the later export/import flow.
   const priorOptions = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}/chat-options`);
-  assert.equal(priorOptions.data.availability, 'unavailable');
+  assert.equal(priorOptions.status, 200, JSON.stringify(priorOptions.data));
+  assert.equal(priorOptions.data.availability, 'available', JSON.stringify(priorOptions.data));
+  assert.equal(priorOptions.data.sessionId, originalSessionId);
+  assert.equal(priorOptions.data.modelRef, savedPair.data.modelRef);
+  assert.equal(priorOptions.data.thinkingLevel, savedPair.data.thinkingLevel);
+  const historyAfterApply = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/sessions/${originalSessionId}`);
+  assert.equal(historyAfterApply.status, 200, JSON.stringify(historyAfterApply.data));
+  assert.equal(historyAfterApply.data.session.sessionId, originalSessionId);
+  assert.deepEqual(historyAfterApply.data.messages, historyBeforeFocus.messages);
+  assert.deepEqual(historyAfterApply.data.runs, historyBeforeFocus.runs);
   await page.locator('#composer').fill('/new');await page.locator('#composer').press('Escape');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.locator('#composer')).toHaveValue('');
