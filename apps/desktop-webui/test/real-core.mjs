@@ -829,6 +829,9 @@ try {
   await expect(page.locator('.import-result')).toContainText('Real Browser Work');
   await expect(page.locator('#import-name')).toBeFocused();
   await page.locator('#import-name').fill('Real Browser Work');
+  let importPosts = 0;
+  const countImportPosts = request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/_desktop/api/work-imports') importPosts++; };
+  page.on('request', countImportPosts);
   const explicitConflictResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/work-imports' && response.request().method() === 'POST', { timeout: 180_000 });
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
   const explicitConflict = await explicitConflictResponse;
@@ -840,6 +843,14 @@ try {
   await expect(page.locator('#modal')).not.toContainText('submitting');
   await page.screenshot({ path: join(screenshotDir, '02-import-name-conflict.png'), fullPage: true });
   await expect(page.locator('.import-result')).toBeVisible();
+  const importNameNotice = page.locator('.notice-host .notice-error')
+    .filter({ hasText: 'This Work name is already in use or reserved. Choose a different name.' });
+  await expect(importNameNotice).toHaveCount(1);
+  await importNameNotice.locator('.notice-close').click();
+  await expect(importNameNotice).toHaveCount(0);
+  await expect(page.locator('#import-name-error')).toContainText('let Core choose one');
+  await expect(page.locator('#import-name')).toHaveValue('Real Browser Work');
+  assert.equal(importPosts, 1, 'acknowledging the original name rejection must not replay Import');
   await page.locator('#import-name').fill('');
   const importResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/work-imports' && response.request().method() === 'POST', { timeout: 180_000 });
   await page.getByRole('button', { name: 'Import Work', exact: true }).last().click();
@@ -876,6 +887,8 @@ try {
   const importedStartResponse = page.waitForResponse(response => new URL(response.url()).pathname === importedStartPath && response.request().method() === 'POST');
   await start.click();
   const importedStartReceipt = await importedStartResponse;
+  assert.equal(importPosts, 2, 'one rejected Import and one explicit accepted retry; no automatic replay');
+  page.off('request', countImportPosts);
   assert.equal(importedStartReceipt.status(), 202, await importedStartReceipt.text());
   const importedStartAccepted = await importedStartReceipt.json();
   assert.ok(importedStartAccepted.operationId);
