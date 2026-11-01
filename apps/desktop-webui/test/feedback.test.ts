@@ -3757,3 +3757,75 @@ test('sticky directory read failure leaves narrow File More and New folder point
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
   assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
+
+test('FS52 native XHR mixed uploads preserve 201 and 502 while retrying only the original 403 file', async t => {
+  const directory = '/_desktop/files/works/work-1/files/';
+  const files = ['success.bin', 'blocked.bin', 'unknown.bin'].map((name, index) => ({
+    name, mimeType: 'application/octet-stream', buffer: Buffer.from([0, 255, index, 128]),
+  }));
+  const puts: { path: string; bytes: Buffer; condition: string | undefined; status: number }[] = [];
+  const previousUploadHandler = nativeUploadHandler;
+  t.after(async () => { nativeUploadHandler = previousUploadHandler; });
+  nativeUploadHandler = async (request, response) => {
+    const path = new URL(request.url!, base).pathname;
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const previous = puts.filter(put => put.path === path).length;
+    const status = path === directory + 'blocked.bin' && previous === 0 ? 403
+      : path === directory + 'unknown.bin' ? 502 : 201;
+    puts.push({ path, bytes: Buffer.concat(chunks), condition: request.headers['if-none-match'], status });
+    response.writeHead(status, { 'Content-Type': 'application/json', 'Last-Modified': mtime2 });
+    response.end(status === 201 ? '' : JSON.stringify({ message: status === 403 ? 'Synthetic upload denied' : 'Synthetic upload acknowledgement unavailable' }));
+  };
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith(directory)) return;
+    if (r.method === 'PUT') return { passthrough: true };
+    if (r.method === 'HEAD') return { status: 404 };
+    if (r.method === 'PROPFIND') return { status: 207, body: listing('original', mtime1) };
+  });
+  await button(page, 'tab-Files').click();
+  await button(page, 'file-add').click();
+  await page.locator('#file-actions [data-action=upload]').click();
+  await page.locator('#upload-input').setInputFiles(files);
+  const rows = page.locator('#modal .transfer-results .transfer-row');
+  const row = (name: string) => rows.filter({ has: page.locator('code', { hasText: '/' + name }) });
+  await expect(rows).toHaveCount(3);
+  await expect(row('success.bin')).toContainText('Confirmed');
+  await expect(row('blocked.bin')).toContainText('Request failed (403)');
+  await expect(row('unknown.bin')).toContainText(/unknown/i);
+  await expect(row('unknown.bin')).toContainText('Result not confirmed (502)');
+  await expect(page.locator('#modal .transfer-results')).not.toContainText('Synthetic upload denied');
+  await expect(page.locator('#modal .transfer-results')).not.toContainText('Synthetic upload acknowledgement unavailable');
+  assert.deepEqual(puts.map(put => put.status), [201, 403, 502]);
+  for (const [index, put] of puts.entries()) {
+    assert.equal(put.path, directory + files[index]!.name);
+    assert.deepEqual(put.bytes, files[index]!.buffer);
+    assert.equal(put.condition, '*');
+  }
+  const retry = page.locator('#modal [data-action=confirm-upload-overwrite][data-upload-mode=retry]');
+  await expect(retry).toBeEnabled();
+  await expect(page.locator('#modal [data-upload-mode=overwrite]')).toHaveCount(0);
+  await retry.click();
+  await expect(row('blocked.bin')).toContainText('Confirmed');
+  await expect(row('success.bin')).toContainText('Confirmed');
+  await expect(row('unknown.bin')).toContainText('Result not confirmed (502)');
+  await expect(retry).toHaveCount(0);
+  await expect(page.locator('#modal [data-upload-mode=overwrite]')).toHaveCount(0);
+  assert.deepEqual(puts.map(put => [put.path, put.status]), [
+    [directory + 'success.bin', 201], [directory + 'blocked.bin', 403],
+    [directory + 'unknown.bin', 502], [directory + 'blocked.bin', 201],
+  ]);
+  assert.deepEqual(puts[3]!.bytes, files[1]!.buffer);
+  assert.equal(puts[3]!.condition, '*');
+  const heads = requests.filter(r => r.method === 'HEAD').map(r => r.path);
+  assert.deepEqual(heads, [directory + 'success.bin', directory + 'blocked.bin', directory + 'unknown.bin', directory + 'blocked.bin']);
+  await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  await button(page, 'file-add').click();
+  await page.locator('#file-actions [data-action=upload]').click();
+  await page.locator('#upload-input').setInputFiles(files[2]!);
+  await expect(page.locator('.notice-host')).toContainText('The earlier result for /unknown.bin is unknown');
+  assert.deepEqual(requests.filter(r => r.method === 'HEAD').map(r => r.path), heads);
+  assert.equal(puts.length, 4);
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 4);
+  assert.equal(requests.filter(r => ['POST', 'PATCH', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
+});
