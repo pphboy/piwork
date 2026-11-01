@@ -297,3 +297,54 @@ for (const status of ['unknown', 'failed'] as const) test(`Save ${status} receip
     assert.equal(c.view.fileWriteUncertain, status === 'unknown');
   } finally { actions.clear(); }
 });
+
+for (const change of ['service hydration', 'session hydration', 'Works-row hydration', 'identity', 'route', 'Work', 'modal', 'modal choice', 'query', 'scope', 'record'] as const) {
+  test(`original Operation lookup owns its history dialog rather than workspace hydration: ${change}`, async () => {
+    const { c } = fixture(), gate = deferred();
+    Object.assign(c.view, { modal: 'operations', data: { workId: 'one' }, operationQuery: ' original-operation ', service: '', port: 0 });
+    // Match the current app's full view key; the legacy assembly fixture's
+    // shorter navigation key cannot reproduce this independent hydration race.
+    c.viewKey = () => `${c.location.hash}:${c.view.modal}:${c.modalChoice}:${c.view.tab}:${c.view.path}:${c.view.service}:${c.view.port}:${c.sessionChoice}`;
+    let currentRecord = true;
+    c.actions.current = () => currentRecord;
+    const record = { kind: 'read' };
+    if (change === 'Works-row hydration') {
+      c.current = () => undefined;
+      c.location.hash = '#/works';
+    }
+    const opened: unknown[] = [];
+    c.reviewOperation = () => {};
+    c.openModal = (name: string, data: unknown) => opened.push({ name, data });
+    c.adapter.checkOperation = async (id: string, explicit: boolean, workId: string) => {
+      assert.equal(id, 'original-operation');
+      assert.equal(explicit, true);
+      assert.equal(workId, 'one');
+      await gate.promise;
+      return { id, workId };
+    };
+    vm.runInContext(extract(['handleAction']), c);
+    const lookup = c.handleAction('lookup-operation', { dataset: {} }, record);
+    if (change === 'service hydration' || change === 'Works-row hydration') {
+      c.view.service = 'service-arrived';
+      c.view.port = 80;
+    }
+    if (change === 'session hydration') c.sessionChoice++;
+    if (change === 'identity') c.adapter.identityEpoch++;
+    if (change === 'route') c.location.hash = '#/work/two';
+    if (change === 'Work') c.current = () => ({ id: 'two' });
+    if (change === 'modal') c.view.modal = 'work-info';
+    if (change === 'modal choice') c.modalChoice++;
+    if (change === 'query') c.view.operationQuery = 'new-operation';
+    if (change === 'scope') c.view.data.workId = 'two';
+    if (change === 'record') currentRecord = false;
+    gate.resolve();
+    if (change.endsWith('hydration')) {
+      await lookup;
+      assert.equal(opened.length, 1);
+      assert.equal(JSON.stringify(opened), JSON.stringify([{ name: 'operation', data: { id: 'original-operation' } }]));
+    } else {
+      await assert.rejects(lookup, c.ViewChanged);
+      assert.equal(opened.length, 0);
+    }
+  });
+}

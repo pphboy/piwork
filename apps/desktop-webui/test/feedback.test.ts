@@ -3888,3 +3888,43 @@ test('Save unknown HTTP receipt keeps the original draft locked without a false 
   assert.equal(requests.filter(r => r.path === path && r.method === 'PUT')[0]?.body, 'original submitted draft');
   assert.equal(requests.filter(r => ['POST', 'PATCH', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
+
+test('original Operation lookup survives late stopped-Work Service hydration without replaying a write', async t => {
+  const services = deferred(), operation = deferred();
+  t.after(async () => {
+    services.resolve();
+    operation.resolve();
+  });
+  let servicesStarted = false, operationStarted = false;
+  const work = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped', controlVersion: 2 };
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works') return { json: { works: [work] } };
+    if (r.path === 'works/work-1') return { json: work };
+    if (r.path === 'works/work-1/services') {
+      servicesStarted = true;
+      await services.promise;
+      return { json: { services: [{ serviceId: 'late-service', name: 'Original stopped Service', enabled: true, observedState: 'stopped', access: { hostname: 'synthetic.work.test', ports: [{ port: 80, url: 'http://synthetic.work.test' }] } }] } };
+    }
+    if (r.path === 'operations/original-stop') {
+      operationStarted = true;
+      await operation.promise;
+      return { json: { operationId: 'original-stop', workId: 'work-1', kind: 'stop-work', state: 'succeeded' } };
+    }
+  }, false, false);
+  await expect.poll(() => servicesStarted).toBe(true);
+  await button(page, 'work-menu').click();
+  await button(page, 'work-info').click();
+  await button(page, 'find-work-task').click();
+  await page.locator('#operation-query').fill('original-stop');
+  await button(page, 'lookup-operation').click();
+  await expect.poll(() => operationStarted).toBe(true);
+  services.resolve();
+  await expect(page.locator('.work-read-feedback')).toHaveCount(0);
+  await expect(page.locator('#modal #operation-query')).toHaveValue('original-stop');
+  operation.resolve();
+  await expect(page.locator('#modal .operation-technical > summary')).toBeVisible();
+  await page.locator('#modal .operation-technical > summary').click();
+  await expect(page.locator('#modal .operation-technical')).toContainText('original-stop');
+  assert.equal(requests.filter(r => r.path === 'operations/original-stop' && r.method === 'GET').length, 1);
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});

@@ -4259,7 +4259,14 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     }
     case "lookup-operation": {
       if (!view.data.workId || !adapter.getWork(view.data.workId)) throw Error(t('ops.lookupMissing'));
-      const op = await stay(adapter.checkOperation(view.operationQuery.trim(), true, view.data.workId));
+      const owner = {
+        identity: adapter.identityEpoch, route: location.hash, currentWorkId: current()?.id,
+        modal: view.modal, choice: modalChoice, workId: view.data.workId, query: view.operationQuery.trim(),
+      };
+      const op = await adapter.checkOperation(owner.query, true, owner.workId);
+      if (owner.identity !== adapter.identityEpoch || owner.route !== location.hash || owner.currentWorkId !== current()?.id ||
+        owner.modal !== view.modal || owner.choice !== modalChoice || owner.workId !== view.data.workId ||
+        owner.query !== view.operationQuery.trim() || record && !actions.current(record)) throw new ViewChanged();
       if (op) { reviewOperation(op, record); openModal("operation", { id: op.id }); }
       else
         throw Error(t('ops.lookupMissing'));
