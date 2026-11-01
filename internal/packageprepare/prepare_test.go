@@ -18,17 +18,17 @@ import (
 )
 
 type fixtureRuntime struct {
-	mu           sync.Mutex
-	work, spool  string
-	planned      map[string]bool
-	live         map[string]bool
-	runs         map[string]int
-	bytes        int64
-	prepareError error
-	blockPrepare bool
-	failCleanup  bool
-	corrupt      string
-	resources    bool
+	mu                sync.Mutex
+	work, spool       string
+	planned           map[string]bool
+	live              map[string]bool
+	runs              map[string]int
+	bytes             int64
+	prepareError      error
+	blockPrepare      bool
+	failCleanupAction string
+	corrupt           string
+	resources         bool
 }
 
 func (f *fixtureRuntime) EnsurePackageResources(context.Context, dockerengine.PackageIdentity) (dockerengine.PackageResources, error) {
@@ -91,7 +91,7 @@ func (f *fixtureRuntime) RunPackageHelper(ctx context.Context, s dockerengine.Pa
 func (f *fixtureRuntime) RemovePackageHelper(_ context.Context, s dockerengine.PackageHelperSpec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.failCleanup {
+	if f.failCleanupAction == s.Action {
 		return errors.New("unconfirmed Engine stop")
 	}
 	delete(f.live, s.Action)
@@ -202,26 +202,41 @@ func TestPrepareSpaceFailureWinsOverCancelledScript(t *testing.T) {
 	}
 }
 
+func TestFixtureCleanupFailureIsScopedToPrepare(t *testing.T) {
+	_, f := prepareFixture(t)
+	f.failCleanupAction = "prepare"
+	for _, action := range []string{"init", "measure", "prepare"} {
+		f.live[action] = true
+	}
+	for _, action := range []string{"measure", "init"} {
+		if err := f.RemovePackageHelper(context.Background(), dockerengine.PackageHelperSpec{Action: action}); err != nil {
+			t.Fatalf("prepare-only fault affected %s cleanup: %v", action, err)
+		}
+		if f.live[action] {
+			t.Fatalf("confirmed %s cleanup retained helper", action)
+		}
+	}
+	if err := f.RemovePackageHelper(context.Background(), dockerengine.PackageHelperSpec{Action: "prepare"}); err == nil {
+		t.Fatal("prepare cleanup fault was not injected")
+	}
+	if len(f.live) != 1 || !f.live["prepare"] {
+		t.Fatal("unconfirmed prepare helper was released", f.live)
+	}
+}
+
 func TestPrepareCleanupPendingRetainsPrimaryFailureAndResources(t *testing.T) {
 	input, f := prepareFixture(t)
 	f.prepareError = &pipackage.InputError{Code: "PI_PACKAGE_DEPENDENCY_INSTALL_FAILED"}
-	// Fail only prepare cleanup, after init has settled successfully.
-	base := input.OnPlanned
-	input.OnPlanned = func(ctx context.Context, s dockerengine.PackageHelperSpec) error {
-		if s.Action == "prepare" {
-			f.mu.Lock()
-			f.failCleanup = true
-			f.mu.Unlock()
-		}
-		return base(ctx, s)
-	}
+	// The monitor may remove a measure helper concurrently with prepare.
+	// Only prepare cleanup is unconfirmed; monitor cleanup must still succeed.
+	f.failCleanupAction = "prepare"
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err := Prepare(ctx, input)
 	if !errors.Is(err, ErrCleanup) || !errors.Is(err, f.prepareError) {
 		t.Fatal("cleanup replaced primary error", err)
 	}
-	if !f.resources || len(f.live) == 0 || len(f.planned) == 0 {
+	if !f.resources || len(f.live) != 1 || !f.live["prepare"] || len(f.planned) != 1 || !f.planned["prepare"] {
 		t.Fatal("unconfirmed resources released", f)
 	}
 }
