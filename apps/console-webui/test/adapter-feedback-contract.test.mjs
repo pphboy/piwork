@@ -353,3 +353,33 @@ test('Overview late health body after identity change cannot overwrite a newer c
   assert.strictEqual(adapter.lastHealth, newer);
   assert.equal(adapter.currentUserId, 'new-identity');
 });
+
+for (const value of [{}, [], { authenticated: 'false' }, { authenticated: true }, { authenticated: true, user: { id: 'original-id' } }, { authenticated: true, user: { id: '', account: 'original' } }]) {
+  test(`session receipt rejects malformed ${JSON.stringify(value)} before changing confirmed identity`, async t => {
+    const adapter = fixture(t, async () => json(value));
+    adapter.session = true;
+    adapter.currentUserId = 'original-id';
+    adapter.account = 'original';
+    adapter.csrf = 'original-csrf';
+    const store = adapter.store;
+    const epoch = adapter.identityEpoch;
+    await assert.rejects(adapter.initialize(), { code: 'INVALID_RESPONSE' });
+    assert.equal(adapter.session, true);
+    assert.equal(adapter.currentUserId, 'original-id');
+    assert.equal(adapter.account, 'original');
+    assert.equal(adapter.csrfToken, 'original-csrf');
+    assert.equal(adapter.identityEpoch, epoch);
+    assert.equal(adapter.store, store);
+  });
+}
+test('valid explicit signed-out and authenticated session receipts remain accepted without optional Core URL', async t => {
+  let value = { authenticated: false, csrfToken: 'signed-out-csrf' };
+  const adapter = fixture(t, async () => json(value));
+  assert.equal(await adapter.initialize(), false);
+  assert.equal(adapter.csrfToken, 'signed-out-csrf');
+  value = { authenticated: true, csrfToken: 'signed-in-csrf', user: { id: 'original-id', account: 'original' } };
+  assert.equal(await adapter.initialize(), true);
+  assert.equal(adapter.currentUserId, 'original-id');
+  assert.equal(adapter.account, 'original');
+  assert.equal(adapter.csrfToken, 'signed-in-csrf');
+});

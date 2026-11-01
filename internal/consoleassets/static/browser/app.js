@@ -1,3 +1,4 @@
+import { retireConfirmedLoginFailure, retireLoginReadbackInfo, retirePreviousLoginFailure, signOutFailure } from './login-feedback.js';
 import { createUserRecovery } from './user-recovery.js';
 import { captureViewGuard } from './view-scope.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
@@ -81,12 +82,12 @@ let statusErrorRenderer = null;
 let renderedStatusError = '';
 let feedbackSequence = 0;
 let activeFeedback = null;
-function localizedFeedback(render) {
+function localizedFeedback(render, owner) {
     // Generic page results cannot borrow a pending/blocked mutation's identity.
     // ActionRecord failures are projected separately by renderConsoleActions.
     const sequence = ++feedbackSequence;
     const context = {
-        owner: { identity: String(adapter.identityEpoch), object: path, task: 'page-result', generation: sequence },
+        owner: owner ?? { identity: String(adapter.identityEpoch), object: path, task: 'page-result', generation: sequence },
         key: sequence,
         text: '',
     };
@@ -141,6 +142,8 @@ let productInfo = null;
 let runtimeEditing = false, defaultEditSection = null, defaultLastSaved = false, overviewDataConfirmed = false, rememberedOperation = null, lastCreatedUser = null, referenceReturn = null;
 let pendingNavigation = null, modalError = "", currentModalTitle = "", submissionPending = false;
 let preflightPending = false, selectionVersion = 0, signingIn = false, loginOutcomeUnknown = false, loginRecoverySequence = 0;
+let loginFailurePresentation = null;
+let loginReadbackInfo = null;
 const actions = new ActionState(() => renderConsoleActions());
 const modelManagement = new ModelManagement(() => { if (path === '/models' || path.startsWith('/models/'))
     renderPage(); }, value => { dirty = value; }, (error, identity) => isCurrentSessionError(error, identity), openModelTestDialog, publishNotice, undefined, owner => notices.resolve(owner));
@@ -1124,13 +1127,25 @@ function loginPage() {
 async function checkConsoleLogin() {
     if (!loginOutcomeUnknown)
         return;
-    const sequence = ++loginRecoverySequence, expected = loginAccount, origin = path;
+    const original = loginFailurePresentation;
+    const sequence = ++loginRecoverySequence, expected = original?.account ?? loginAccount, origin = path;
     adapter.cancelReads(['session']);
     try {
         const authenticated = await adapter.initialize();
         if (sequence !== loginRecoverySequence || origin !== path)
             return;
+        if (original && (!authenticated || adapter.account === expected)) {
+            const retired = retireConfirmedLoginFailure(original, { authenticated, account: adapter.account }, {
+                current: record => actions.current(record),
+                retire: record => { actions.records.delete(record.key); },
+                resolve: owner => notices.resolve(owner),
+            });
+            if (retired && loginFailurePresentation === original)
+                loginFailurePresentation = null;
+        }
         if (authenticated && adapter.account === expected) {
+            if (retireLoginReadbackInfo(loginReadbackInfo, { authenticated, account: adapter.account }, owner => notices.resolve(owner)))
+                loginReadbackInfo = null;
             loginOutcomeUnknown = false;
             feedback = '';
             navigate('/', true);
@@ -1138,7 +1153,8 @@ async function checkConsoleLogin() {
         }
         if (!authenticated) {
             loginOutcomeUnknown = false;
-            feedback = localizedFeedback(() => resultFeedback(t('login.noSessionAfterUnknown'), 'warning'));
+            loginReadbackInfo = { identity: String(adapter.identityEpoch), object: path, task: 'login-readback-info', generation: sequence };
+            feedback = localizedFeedback(() => resultFeedback(t('login.noSessionAfterUnknown'), 'warning'), loginReadbackInfo);
         }
     }
     catch { /* Keep the unknown result and its explicit readback action. */ }
@@ -2488,6 +2504,9 @@ document.addEventListener("submit", async (event) => {
         signingIn = true;
         const record = actions.begin({ key: "login", kind: "identity", label: t('login.signingInLabel'), target: t('login.title'), anchor: "#login-form", view: path });
         loginAccount = String(new FormData(form).get("account") || "");
+        const submittedAccount = loginAccount;
+        const previousFailure = loginFailurePresentation;
+        const loginIdentity = String(actionIdentity);
         const password = form.querySelector("#password").value;
         const button = form.querySelector("button[type=submit]");
         button.disabled = true;
@@ -2497,13 +2516,22 @@ document.addEventListener("submit", async (event) => {
                 const remaining = Math.ceil((rateUntil - Date.now()) / 1000);
                 throw new ConsoleError("RATE_LIMITED", t('login.rateLimited', { seconds: remaining }));
             }
-            await adapter.login(loginAccount, password);
+            await adapter.login(submittedAccount, password);
+            if (retirePreviousLoginFailure(previousFailure, { authenticated: adapter.session, account: adapter.account, identity: loginIdentity }, owner => notices.resolve(owner))
+                && loginFailurePresentation === previousFailure)
+                loginFailurePresentation = null;
+            if (retireLoginReadbackInfo(loginReadbackInfo, { authenticated: adapter.session, account: adapter.account }, owner => notices.resolve(owner)))
+                loginReadbackInfo = null;
             feedback = "";
             navigate("/", true);
         }
         catch (e) {
             if (record)
                 actions.fail(record, e);
+            loginFailurePresentation = record ? {
+                record, account: submittedAccount,
+                notice: { identity: loginIdentity, object: record.view || path, task: record.key, generation: record.token },
+            } : null;
             if (e instanceof ConsoleError && e.code === "RATE_LIMITED")
                 rateUntil = Date.now() + e.retryAfterMs;
             form.querySelector("#password").value = "";
@@ -2742,7 +2770,7 @@ async function handleConsoleAction(button) {
                 renderPage();
             }
             catch (e) {
-                showError(new ConsoleError("SIGNOUT_FAILED", t('login.signOutFailed')));
+                showError(signOutFailure(e));
             }
         };
         if (quickSetup && dirty)

@@ -189,6 +189,11 @@ export class ConsoleAdapter {
     }
     async initialize() {
         const value = await this.request("session");
+        if (typeof value.authenticated !== 'boolean'
+            || (value.authenticated && (typeof value.user?.id !== 'string' || !value.user.id
+                || typeof value.user?.account !== 'string' || !value.user.account))) {
+            throw new ConsoleError('INVALID_RESPONSE', new LocalizedMessage('adapter.error.invalidResponse'));
+        }
         this.csrf = value.csrfToken ?? "";
         if (this.currentUserId && this.currentUserId !== (value.user?.id ?? ""))
             this.clearIdentity();
