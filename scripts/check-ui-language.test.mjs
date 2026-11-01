@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { extractUsedKeys, isProductText, scanSourceText, validateCatalogPair, validateSourceKeys } from './check-ui-language.mjs';
+import { extractUsedKeys, isProductText, scanSourceTokens, scanSourceText, validateCatalogPair, validateSourceKeys } from './check-ui-language.mjs';
+import { sourceStyleIssues } from './check-source-style.mjs';
 import { sharedTerms } from './testdata/ui-language/catalogs/shared.js';
 import { catalog as desktopValid } from './testdata/ui-language/catalogs/desktop-valid.js';
 import { catalog as consoleValid } from './testdata/ui-language/catalogs/console-valid.js';
@@ -152,4 +153,22 @@ test('产品文案判定保留技术值', () => {
   assert.equal(isProductText('in_progress'), false);
   assert.equal(isProductText('application/json'), false);
   assert.equal(isProductText('Work'), false);
+});
+
+
+test('maintenance tokens retain original offsets and lines inside nested template expressions', () => {
+  const source = ['const view = `first', '${({ value: `nested ${import("./edge.js")}`, pattern: /[{}]/ }).value}', 'last`;', 'const after = true;'].join('\n');
+  const tokens = scanSourceTokens(source);
+  for (const token of tokens) {
+    assert.equal(token.line, source.slice(0, token.start).split('\n').length);
+    assert(token.end > token.start);
+  }
+  assert.equal(tokens.find(token => token.value === './edge.js')?.line, 2);
+  assert.equal(tokens.find(token => token.value === 'after')?.line, 4);
+});
+
+
+test('shared maintenance tokens check interpolation statements without treating template data as code', () => {
+  assert.deepEqual(sourceStyleIssues('const text = `read(); write();`;\n', 'feature.ts'), []);
+  assert(sourceStyleIssues('const text = `${(() => { read(); write(); })()}`;\n', 'feature.ts').some(issue => issue.rule === 'one-statement-per-line'));
 });

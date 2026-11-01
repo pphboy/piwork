@@ -71,3 +71,50 @@ test('multiline clauses and side effects keep real dependencies; flat shared cop
   assert(errors.some(error => error.startsWith('Dependency cycle:') && error.includes('apps/ui-shared/notices.js')));
   assert(errors.some(error => error.startsWith('Shared-to-feature')));
 });
+
+test('template expressions expose literal dependencies but template data and nonliteral targets do not', () => {
+  const source = 'const view = `import("./data.js") ${await import("./app.js")} ${require("./module.js")}`;';
+  assert.deepEqual(importSpecifiers(source), ['./app.js', './module.js']);
+  assert.deepEqual(importSpecifiers('await import(`./literal.js`); await import(`./${name}.js`); await import(`${"./computed.js"}`);'), ['./literal.js']);
+});
+
+test('nested template expressions retain braces, strings, comments and regular-expression boundaries', () => {
+  const source = [
+    'const view = `outer ${({ value: `inner ${import("./nested.js")}`,',
+    ' pattern: /[{}]/, text: "}", /* } import("./comment.js") */',
+    ' another: /import("fake")}/ }).value} tail ${require("./last.js")}`;',
+    'const escaped = `\\${import("./escaped-data.js")}`;',
+    'const comment = `${ // } import("./line-comment.js")',
+    ' import("./after-comment.js") }`;',
+  ].join('\n');
+  assert.deepEqual(importSpecifiers(source), ['./nested.js', './last.js', './after-comment.js']);
+});
+
+test('template interpolation reverse dependencies and cycles fail at their actual edges', t => {
+  const { root, write } = fixture(t);
+  write('apps/desktop-webui/src/app.ts', 'export const app = {};');
+  write('apps/desktop-webui/src/feature.ts', 'const view = `${({ nested: `${await import("./app.js")}` }).nested}`;');
+  assert(checkWebuiBoundaries(root).some(error => error.startsWith('Feature-to-entry')));
+  write('apps/desktop-webui/src/feature.ts', 'const view = `${import("./other.js")}`;');
+  write('apps/desktop-webui/src/other.ts', 'const view = `${require("./feature.js")}`;');
+  assert(checkWebuiBoundaries(root).some(error => error.startsWith('Dependency cycle:') && error.includes('feature.ts') && error.includes('other.ts')));
+});
+
+
+test('control-condition regexp statements do not close template expressions or hide imports', t => {
+  const source = 'const x = `${(() => { if (ok) /}}/.test(text); return import("./app.js"); })()}`;';
+  assert.deepEqual(importSpecifiers(source), ['./app.js']);
+  const { root, write } = fixture(t);
+  write('apps/desktop-webui/src/app.ts', 'export const app = {};');
+  write('apps/desktop-webui/src/feature.ts', source);
+  assert(checkWebuiBoundaries(root).some(error => error.startsWith('Feature-to-entry')));
+  const guarded = 'const x = `${(() => { while ((ok)) /}}import("fake")/.test(text); return import("./real.js"); })()}`;';
+  assert.deepEqual(importSpecifiers(guarded), ['./real.js']);
+});
+
+test('division after calls or grouped values does not become a control-statement regexp', () => {
+  const source = 'const x = `${call() / 2 + (value) / scale + obj.if(ok) / 2} ${import("./real.js")}`;';
+  assert.deepEqual(importSpecifiers(source), ['./real.js']);
+  const regexpDivisor = 'const x = `${value / /}}/.test(text)} ${import("./next.js")}`;';
+  assert.deepEqual(importSpecifiers(regexpDivisor), ['./next.js']);
+});

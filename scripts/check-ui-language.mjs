@@ -362,49 +362,97 @@ export function scanSourceTokens(source) {
   const tokens = [];
   let index = 0;
   let line = 1;
-  let last = '';
-  while (index < source.length) {
-    const start = index;
-    const char = source[index];
-    let token;
-    if (/\s/.test(char)) {
-      if (char === '\n') line++;
-      index++;
-      continue;
+  const advance = end => {
+    line += (source.slice(index, end).match(/\n/g) ?? []).length;
+    index = end;
+  };
+  function template() {
+    const token = { kind: 'template', value: '', start: index, end: index, line };
+    tokens.push(token);
+    advance(index + 1);
+    let segment = index;
+    const parts = [];
+    while (index < source.length) {
+      if (source[index] === '\\') {
+        advance(Math.min(index + 2, source.length));
+      } else if (source[index] === '`') {
+        parts.push(source.slice(segment, index));
+        advance(index + 1);
+        break;
+      } else if (source[index] === '$' && source[index + 1] === '{') {
+        parts.push(source.slice(segment, index));
+        advance(index + 1);
+        tokens.push({ kind: 'symbol', value: '{', start: index, end: index + 1, line });
+        advance(index + 1);
+        code(true);
+        segment = index;
+      } else advance(index + 1);
     }
-    if (char === '/' && source[index + 1] === '/') {
-      const end = source.indexOf('\n', index);
-      index = end < 0 ? source.length : end;
-      continue;
-    }
-    if (char === '/' && source[index + 1] === '*') {
-      const end = source.indexOf('*/', index + 2);
-      index = end < 0 ? source.length : end + 2;
-    } else if (char === "'" || char === '\"') {
-      const value = skipQuoted(source, index);
-      index = value.end;
-      token = { kind: 'string', value: value.value };
-    } else if (char === '`') {
-      const value = skipTemplate(source, index);
-      index = value.end;
-      token = { kind: value.value.includes('${…}') ? 'template' : 'string', value: value.value };
-    } else if (char === '/' && (REGEX_ALLOWED_BEFORE.has(last) || REGEX_KEYWORDS.has(last))) {
-      index = skipRegex(source, index);
-      token = { kind: 'regexp', value: '/' };
-    } else if (/[A-Za-z_$]/.test(char)) {
-      index++;
-      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) index++;
-      token = { kind: 'word', value: source.slice(start, index) };
-    } else {
-      index++;
-      token = { kind: 'symbol', value: char };
-    }
-    if (token) {
-      tokens.push({ ...token, start, end: index, line });
-      last = token.value;
-    }
-    line += (source.slice(start, index).match(/\n/g) ?? []).length;
+    if (index === source.length && source[index - 1] !== '`') parts.push(source.slice(segment, index));
+    token.kind = parts.length > 1 ? 'template' : 'string';
+    token.value = parts.join('${…}');
+    token.end = index;
   }
+  function code(interpolation = false) {
+    let last = '';
+    let depth = 0;
+    let regexAfterControl = false;
+    const parentheses = [];
+    const controlWords = new Set(['if', 'while', 'for', 'with', 'switch', 'catch']);
+    while (index < source.length) {
+      const start = index, tokenLine = line, char = source[index];
+      let token;
+      if (/\s/.test(char)) {
+        advance(index + 1);
+        continue;
+      }
+      if (char === '/' && source[index + 1] === '/') {
+        const end = source.indexOf('\n', index);
+        advance(end < 0 ? source.length : end);
+        continue;
+      }
+      if (char === '/' && source[index + 1] === '*') {
+        const end = source.indexOf('*/', index + 2);
+        advance(end < 0 ? source.length : end + 2);
+      } else if (char === "'" || char === '\"') {
+        const value = skipQuoted(source, index);
+        advance(value.end);
+        token = { kind: 'string', value: value.value };
+      } else if (char === '`') {
+        template();
+        last = '`';
+        regexAfterControl = false;
+        continue;
+      } else if (char === '/' && (REGEX_ALLOWED_BEFORE.has(last) || REGEX_KEYWORDS.has(last) || last === '/' || regexAfterControl)) {
+        advance(skipRegex(source, index));
+        token = { kind: 'regexp', value: '/' };
+      } else if (/[A-Za-z_$]/.test(char)) {
+        let end = index + 1;
+        while (end < source.length && /[A-Za-z0-9_$]/.test(source[end])) end++;
+        advance(end);
+        token = { kind: 'word', value: source.slice(start, index) };
+      } else {
+        advance(index + 1);
+        token = { kind: 'symbol', value: char };
+      }
+      if (token) {
+        const previous = tokens.at(-1), beforePrevious = tokens.at(-2);
+        // A control condition is followed by a statement (possibly a regexp),
+        // unlike a function call or grouped value followed by division.
+        if (token.kind === 'symbol' && char === '(') parentheses.push(previous?.kind === 'word'
+          && (controlWords.has(previous.value) && beforePrevious?.value !== '.'
+            || previous.value === 'await' && beforePrevious?.value === 'for'));
+        regexAfterControl = token.kind === 'symbol' && char === ')' && parentheses.pop() === true;
+        tokens.push({ ...token, start, end: index, line: tokenLine });
+        last = token.value;
+        if (interpolation && token.kind === 'symbol') {
+          if (char === '{') depth++;
+          if (char === '}' && depth-- === 0) return;
+        }
+      }
+    }
+  }
+  code();
   return tokens;
 }
 
