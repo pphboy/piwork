@@ -4523,6 +4523,11 @@ function render() {
   }
   const noticeParent = dialog?.matches(':modal') ? dialog : document.body;
   if (noticeHost.element.parentElement !== noticeParent) noticeParent.append(noticeHost.element);
+  noticeHost.setModalRegion(noticeParent === dialog ? {
+    container: dialog,
+    header: dialog.querySelector<HTMLElement>('.modal-head'),
+    footer: dialog.querySelector<HTMLElement>('.modal-footer'),
+  } : null);
   if (activeKey) {
     const replacement = active?.isConnected ? active : root.querySelector<HTMLInputElement>(activeKey);
     if (replacement && replacement !== document.activeElement && (!dialog || nonmodalDialog() || dialog.contains(replacement))) {

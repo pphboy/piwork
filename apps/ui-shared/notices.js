@@ -94,6 +94,38 @@ export class NoticeStore {
   }
 }
 
+/** Display geometry only. Prefer a usable side gap; otherwise keep header/footer controls clear. */
+export function noticeModalPlacement({ width, height, container, headerBottom, footerTop, viewportLeft = 0, viewportTop = 0 }) {
+  const gap = 8;
+  const minimumSideWidth = 240;
+  const viewportRight = viewportLeft + width, viewportBottom = viewportTop + height;
+  const sides = [
+    { left: Math.max(viewportLeft + gap, container.right + gap), right: viewportRight - gap },
+    { left: viewportLeft + gap, right: Math.min(viewportRight - gap, container.left - gap) },
+  ];
+  const side = sides.find(candidate => candidate.right - candidate.left >= minimumSideWidth);
+  if (side && height > gap * 2) {
+    const noticeWidth = Math.min(380, side.right - side.left);
+    const maxHeight = Math.min(320, height - gap * 2);
+    return { left: side.left, top: Math.max(viewportTop + gap, Math.min(container.top + gap, viewportBottom - gap - maxHeight)),
+      width: noticeWidth, maxHeight };
+  }
+  const left = Math.max(viewportLeft + gap, container.left + gap);
+  const right = Math.min(viewportLeft + width - gap, container.right - gap);
+  const start = Math.max(viewportTop + gap, container.top + gap, headerBottom + gap);
+  const end = Math.min(viewportTop + height - gap, container.bottom - gap, footerTop - gap);
+  const body = { top: start, bottom: end };
+  const outside = [
+    { top: viewportTop + gap, bottom: Math.min(viewportTop + height - gap, container.top - gap) },
+    { top: Math.max(viewportTop + gap, container.bottom + gap), bottom: viewportTop + height - gap },
+  ];
+  const candidates = end - start >= 44 ? [body] : [body, ...outside];
+  const slot = candidates.reduce((best, next) => next.bottom - next.top > best.bottom - best.top ? next : best);
+  if (right <= left || slot.bottom <= slot.top) return null;
+  const noticeWidth = Math.min(380, right - left);
+  return { left: right - noticeWidth, top: slot.top, width: noticeWidth, maxHeight: slot.bottom - slot.top };
+}
+
 /** One DOM host; textContent only. Updating language never republishes an event. */
 export function createNoticeHost(store, { document, closeLabel }) {
   const element = document.createElement('aside');
@@ -101,6 +133,71 @@ export function createNoticeHost(store, { document, closeLabel }) {
   element.setAttribute('aria-live', 'polite');
   element.setAttribute('aria-relevant', 'additions');
   const nodes = new Map();
+  const window = document.defaultView;
+  let modalRegion = null;
+  let frame;
+  const resizeObserver = window?.ResizeObserver ? new window.ResizeObserver(schedulePlacement) : null;
+  function place() {
+    if (modalRegion && (!modalRegion.container.isConnected || modalRegion.container.matches('dialog:not([open])'))) {
+      setModalRegion(null);
+      return;
+    }
+    if (!modalRegion) {
+      element.removeAttribute('data-modal-region');
+      element.removeAttribute('data-modal-placement-constrained');
+      for (const key of ['left', 'top', 'width', 'max-height']) element.style.removeProperty(`--notice-modal-${key}`);
+      return;
+    }
+    const container = modalRegion.container.getBoundingClientRect();
+    const header = modalRegion.header?.getBoundingClientRect();
+    const footer = modalRegion.footer?.getBoundingClientRect();
+    const placement = noticeModalPlacement({
+      width: window.visualViewport?.width || document.documentElement.clientWidth || window.innerWidth,
+      height: window.visualViewport?.height || window.innerHeight,
+      viewportLeft: window.visualViewport?.offsetLeft || 0, viewportTop: window.visualViewport?.offsetTop || 0,
+      container, headerBottom: header?.bottom ?? container.top, footerTop: footer?.top ?? container.bottom,
+    });
+    if (!placement) {
+      // No positive body or outside gap exists. Keep the notice visible under global placement,
+      // rather than silently hiding an unresolved result in a zero-height container.
+      element.removeAttribute('data-modal-region');
+      element.setAttribute('data-modal-placement-constrained', '');
+      return;
+    }
+    element.removeAttribute('data-modal-placement-constrained');
+    element.setAttribute('data-modal-region', '');
+    for (const [key, value] of Object.entries(placement)) {
+      const name = `--notice-modal-${key === 'maxHeight' ? 'max-height' : key}`;
+      const pixels = `${value}px`;
+      if (element.style.getPropertyValue(name) !== pixels) element.style.setProperty(name, pixels);
+    }
+  }
+  function schedulePlacement() {
+    if (frame !== undefined) return;
+    frame = window?.requestAnimationFrame(() => { frame = undefined;
+    place(); });
+  }
+  function setModalRegion(region) {
+    if (modalRegion?.container !== region?.container || modalRegion?.header !== region?.header || modalRegion?.footer !== region?.footer) {
+      resizeObserver?.disconnect();
+      listen(false);
+      if (frame !== undefined) window?.cancelAnimationFrame(frame);
+      frame = undefined;
+      modalRegion = region;
+      if (region) {
+        for (const node of [region.container, region.header, region.footer]) if (node) resizeObserver?.observe(node);
+        listen(true);
+      }
+    }
+    place();
+  }
+  function listen(active) {
+    const method = active ? 'addEventListener' : 'removeEventListener';
+    window?.[method]('resize', schedulePlacement);
+    document[method]('scroll', schedulePlacement, true);
+    window?.visualViewport?.[method]('resize', schedulePlacement);
+    window?.visualViewport?.[method]('scroll', schedulePlacement);
+  }
 
   function render() {
     const items = store.items();
@@ -144,12 +241,17 @@ export function createNoticeHost(store, { document, closeLabel }) {
       node.querySelector('.notice-close').textContent = closeLabel();
     }
     element.hidden = !items.length;
+    place();
   }
 
   return {
     element,
     render,
+    setModalRegion,
     destroy() {
+      resizeObserver?.disconnect();
+      if (frame !== undefined) window?.cancelAnimationFrame(frame);
+      listen(false);
       element.remove();
       nodes.clear();
     },

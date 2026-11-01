@@ -394,6 +394,13 @@ dialog, dialog::backdrop { animation:none; transition:none; }
   display: none;
 }
 
+/* A modal-owned notice floats in measured body space, never over its header/footer controls. */
+.notice-host[data-modal-region] {
+  inset: var(--notice-modal-top) auto auto var(--notice-modal-left);
+  width: var(--notice-modal-width);
+  max-height: var(--notice-modal-max-height);
+}
+
 html,
 body,
 #app {

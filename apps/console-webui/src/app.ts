@@ -70,6 +70,8 @@ function syncNotices() {
   const modal = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]')].at(-1);
   const parent = modal || document.body;
   if (noticeHost!.element.parentElement !== parent) parent.append(noticeHost!.element);
+  noticeHost!.setModalRegion(modal ? { container: modal,
+    header: modal.querySelector<HTMLElement>('.dialog-heading'), footer: modal.querySelector<HTMLElement>('.dialog-footer') } : null);
   noticeHost!.render();
 }
 function publishNotice(notice: NoticeEvent) {

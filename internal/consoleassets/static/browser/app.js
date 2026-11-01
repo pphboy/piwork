@@ -26,6 +26,8 @@ function syncNotices() {
     const parent = modal || document.body;
     if (noticeHost.element.parentElement !== parent)
         parent.append(noticeHost.element);
+    noticeHost.setModalRegion(modal ? { container: modal,
+        header: modal.querySelector('.dialog-heading'), footer: modal.querySelector('.dialog-footer') } : null);
     noticeHost.render();
 }
 function publishNotice(notice) {

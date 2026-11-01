@@ -22,5 +22,16 @@ export class NoticeStore {
 export function createNoticeHost(store: NoticeStore, options: { document: Document; closeLabel: () => string }): {
   readonly element: HTMLElement;
   render(): void;
+  setModalRegion(region: { readonly container: HTMLElement; readonly header: HTMLElement | null; readonly footer: HTMLElement | null } | null): void;
   destroy(): void;
 };
+
+export function noticeModalPlacement(input: {
+  readonly width: number;
+  readonly height: number;
+  readonly viewportLeft?: number;
+  readonly viewportTop?: number;
+  readonly container: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number };
+  readonly headerBottom: number;
+  readonly footerTop: number;
+}): { readonly left: number; readonly top: number; readonly width: number; readonly maxHeight: number } | null;
