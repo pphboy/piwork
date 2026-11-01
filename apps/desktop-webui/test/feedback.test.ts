@@ -3928,3 +3928,42 @@ test('original Operation lookup survives late stopped-Work Service hydration wit
   assert.equal(requests.filter(r => r.path === 'operations/original-stop' && r.method === 'GET').length, 1);
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
 });
+
+test('original snapshot lookup survives late stopped-Work Service hydration without replaying a write', async t => {
+  const services = deferred(), snapshot = deferred();
+  t.after(async () => {
+    services.resolve();
+    snapshot.resolve();
+  });
+  let servicesStarted = false, snapshotStarted = false;
+  const work = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped', controlVersion: 2 };
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works') return { json: { works: [work] } };
+    if (r.path === 'works/work-1') return { json: work };
+    if (r.path === 'works/work-1/services') {
+      servicesStarted = true;
+      await services.promise;
+      return { json: { services: [{ serviceId: 'late-service', name: 'Original stopped Service', enabled: true, observedState: 'stopped', access: { hostname: 'synthetic.work.test', ports: [{ port: 80, url: 'http://synthetic.work.test' }] } }] } };
+    }
+    if (r.path === 'work-snapshots/original-snapshot') {
+      snapshotStarted = true;
+      await snapshot.promise;
+      return { json: { snapshotId: 'original-snapshot', operationId: 'original-export', workId: 'work-1', state: 'succeeded', size: 42, digest: 'a'.repeat(64), expiresAt: '2099-01-01T00:00:00Z' } };
+    }
+  }, false, false);
+  await expect.poll(() => servicesStarted).toBe(true);
+  await button(page, 'work-menu').click();
+  await button(page, 'find-previous-export').click();
+  await page.locator('#snapshot-query').fill('original-snapshot');
+  await button(page, 'lookup-snapshot').click();
+  await expect.poll(() => snapshotStarted).toBe(true);
+  services.resolve();
+  await expect(page.locator('.work-read-feedback')).toHaveCount(0);
+  await expect(page.locator('#modal #snapshot-query')).toHaveValue('original-snapshot');
+  snapshot.resolve();
+  await expect(page.locator('#modal .export-snapshot')).toBeVisible();
+  await expect(page.locator('#modal .export-snapshot')).toContainText('original-snapshot');
+  await expect(page.locator('#modal .export-snapshot')).toContainText('original-export');
+  assert.equal(requests.filter(r => r.path === 'work-snapshots/original-snapshot' && r.method === 'GET').length, 1);
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});

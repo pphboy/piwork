@@ -5293,7 +5293,15 @@ async function handleAction(action, el, record, requestEntry) {
             const workId = el.dataset.workId || view.data.workId || view.data.id;
             if (!workId)
                 throw new Error(t('export.snapshotMismatch'));
-            const snap = await stay(adapter.fetchSnapshot(view.snapshotQuery.trim(), true, workId));
+            const owner = {
+                identity: adapter.identityEpoch, route: location.hash, currentWorkId: current()?.id,
+                modal: view.modal, choice: modalChoice, workId: view.data.workId, id: view.data.id, query: view.snapshotQuery.trim(),
+            };
+            const snap = await adapter.fetchSnapshot(owner.query, true, workId);
+            if (owner.identity !== adapter.identityEpoch || owner.route !== location.hash || owner.currentWorkId !== current()?.id ||
+                owner.modal !== view.modal || owner.choice !== modalChoice || owner.workId !== view.data.workId || owner.id !== view.data.id ||
+                owner.query !== view.snapshotQuery.trim() || record && !actions.current(record))
+                throw new ViewChanged();
             if (snap)
                 openModal("export-recovery", { id: snap.workId, snapshotId: snap.id });
             else

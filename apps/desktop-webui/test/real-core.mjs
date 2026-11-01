@@ -186,7 +186,16 @@ try {
       if (kind === 'snapshot') {
         stage = 'lookup original snapshot';
         await recoveredPage.locator('[data-action="find-previous-export"]').click();
-        await recoveredPage.locator('#snapshot-query').fill(id); await recoveredPage.locator('[data-action="lookup-snapshot"]').click();
+        await recoveredPage.locator('#snapshot-query').fill(id);
+        const [receipt] = await Promise.all([
+          recoveredPage.waitForResponse(response => new URL(response.url()).pathname === `/_desktop/api/work-snapshots/${encodeURIComponent(id)}` && response.request().method() === 'GET'),
+          recoveredPage.locator('[data-action="lookup-snapshot"]').click(),
+        ]);
+        assert.equal(receipt.status(), 200, 'original snapshot lookup must return a confirmed receipt');
+        const snapshot = await receipt.json();
+        assert.equal(snapshot.snapshotId, id, 'lookup must preserve the original snapshot ID');
+        assert.equal(snapshot.workId, originalWorkId, 'snapshot must belong to the selected original Work');
+        stage = 'show original snapshot receipt';
         await expect(recoveredPage.locator('.export-recovery')).toBeVisible();
         await expect(recoveredPage.locator('.export-snapshot')).toContainText(id);
       } else {
