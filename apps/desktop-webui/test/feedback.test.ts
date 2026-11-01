@@ -3564,7 +3564,7 @@ test('FS52-ZH acknowledged versioned Save does not become a translated readback 
   await expect(page.locator('.editor-toolbar')).toContainText('未保存');
   const acknowledged = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/note.txt') && response.status() === 204);
   await button(page, 'save-file').click();
-  await (await acknowledged).finished();
+  assert.equal((await acknowledged).status(), 204);
   await expect(page.locator('.editor-toolbar')).toContainText('已保存');
   await expect(button(page, 'save-file')).not.toHaveAttribute('aria-busy', 'true');
   await expect(button(page, 'save-file').locator('.pending-dots')).toHaveCount(0);
