@@ -13,7 +13,7 @@ import { acceptedChatSubmissionOwns, type OriginalChatSubmission } from './chat-
 import { AboutReadFeedback } from './about-read-feedback.js';
 import { ReadFeedbackBindings, type ReadFeedbackProjection } from './read-feedback.js';
 
-import { operationFeedback, operationFeedbackSource, OperationFeedbackRegistry, type OperationFeedbackOwner, type OperationFeedback } from './operation-feedback.js';
+import { importReadbackRecovered, operationFeedback, operationFeedbackSource, OperationFeedbackRegistry, type OperationFeedbackOwner, type OperationFeedback } from './operation-feedback.js';
 import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedbackVisible } from './admission-feedback.js';
 import { ChatRunFeedback, type ChatRunTarget } from './chat-run-feedback.js';
 import { menuCommands, workHeaderModel, serviceToolbarModel, type MenuScope } from './work-chrome.js';
@@ -1072,7 +1072,20 @@ function syncNotices() {
       }, actions.current(record));
       if (proof.recovered) actions.retireConfirmedRefresh(record);
     });
-    const event = resourceReadOwnedActions.has(record) || saveReadback.recovered || saveReadback.owned && settingsSourceVisible ? undefined : actionNotice(record, noticeIdentity(), () => actions.message(record), {
+    const operationOwner = actionOperationOwners.get(record);
+    const importRecovered = () => !!operationOwner && importReadbackRecovered(operationOwner, adapter.getOperation(operationOwner.operationId), record, {
+      identity: noticeIdentity(), currentRecord: actions.current(record),
+      synchronizationPending: adapter.workSynchronizationPending(operationOwner.workId),
+      work: adapter.getWork(operationOwner.workId), worksCheckedAt: adapter.worksChecked,
+      worksError: adapter.worksError, worksLoading: adapter.worksLoading,
+    });
+    const recoveredImport = importRecovered();
+    if (recoveredImport) queueMicrotask(() => {
+      if (!importRecovered()) return;
+      notices.resolve(operationOwner!);
+      actions.retireConfirmedRefresh(record);
+    });
+    const event = recoveredImport || resourceReadOwnedActions.has(record) || saveReadback.recovered || saveReadback.owned && settingsSourceVisible ? undefined : actionNotice(record, noticeIdentity(), () => actions.message(record), {
       label: () => t('common.details'),
       run: () => {
         if (!actions.current(record)) return;
@@ -1088,7 +1101,6 @@ function syncNotices() {
         }
       },
     });
-    const operationOwner = actionOperationOwners.get(record);
     if (event) {
       if (record.kind === 'read') {
         const prior = readNoticeOwners.get(record.key);
@@ -2954,7 +2966,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     record.successFeedback = 'owner';
       retainOperationFeedback(record, op);
       actions.confirm(record, new LocalizedMessage('action.accepted', { id: op.id }));
-    if (op.workId) void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId)); // i18n-exempt: server operation kind
+    if (op.workId && !(operationKind(op.kind) === 'transfer:import' && !['succeeded', 'failed', 'superseded'].includes(op.state))) void actions.refresh(record, () => op.kind === 'Delete Work' ? adapter.listWorks() : adapter.loadWork(op.workId)); // i18n-exempt: server operation kind
   } };
   const show = (op: Operation) => { accept(op); runAndShow(op); };
   const filesConfirmed = (results: TransferResult[]) => {

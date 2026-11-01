@@ -354,3 +354,34 @@ for (const kind of ['Operation', 'snapshot'] as const) {
     });
   }
 }
+
+test('accepted unpublished Import observes its original task without an eager Work GET', async () => {
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const { c } = fixture();
+  const actions = new ActionState();
+  c.actions = actions;
+  c.view.importName = 'Imported';
+  c.retainOperationFeedback = () => {};
+  const reads: string[] = [], writes: string[] = [];
+  c.adapter.importWork = async () => {
+    writes.push('work-imports');
+    return { id: 'original-import', workId: 'unpublished-work', kind: 'Import Work', state: 'accepted' };
+  };
+  c.adapter.loadWork = async (id: string) => {
+    reads.push(id);
+    throw new Error('Unpublished Work 404');
+  };
+  const record = actions.begin({ key: 'original-import-request', action: 'confirm-import', kind: 'transfer', label: 'Import', target: 'Original package' });
+  assert.ok(record);
+  vm.runInContext(extract(['handleAction']), c);
+  try {
+    await c.handleAction('confirm-import', { dataset: {} }, record);
+    actions.finish(record);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(writes, ['work-imports']);
+    assert.deepEqual(reads, []);
+    assert.equal(record.businessId, 'original-import');
+    assert.equal(record.refresh, '');
+    assert.ok(record.result);
+  } finally { actions.clear(); }
+});

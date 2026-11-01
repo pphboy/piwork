@@ -157,3 +157,92 @@ test('a pruned terminal receipt can still recover its live request readback fail
   assert.equal(registry.owners().length, 0);
   store.destroy();
 });
+
+test('confirmed original Import publication retires only its stale associated Work read failure', async () => {
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const { operationFeedbackSource } = await import(new URL('../browser/operation-feedback.js', import.meta.url).href);
+  const failedAt = Date.parse('2026-11-01T22:00:00Z');
+  const actions = new ActionState(() => {}, () => failedAt);
+  const record = actions.begin({ key: 'import-original', action: 'confirm-import', kind: 'transfer', label: 'Import', target: 'Original package' });
+  assert.ok(record);
+  const registry = new OperationFeedbackRegistry();
+  registry.setIdentity('identity-one');
+  const owner = registry.accept({ id: 'original-import', workId: 'imported-work', kind: 'Import Work' }, `${record.generation}:${record.token}`);
+  record.businessId = owner.operationId;
+  record.successFeedback = 'owner';
+  actions.confirm(record, 'Accepted');
+  await actions.refresh(record, async () => { throw new Error('Original Work read 404'); });
+  const operation = { id: owner.operationId, workId: owner.workId, checkedWorkId: owner.workId, checkedKind: 'import_work', state: 'succeeded' };
+  const { importReadbackRecovered } = await import(new URL('../browser/operation-feedback.js', import.meta.url).href);
+  const facts = { identity: owner.identity, currentRecord: true, synchronizationPending: false,
+    work: { id: owner.workId, checkedAt: '2026-11-01T22:00:01Z', statusError: '' },
+    worksCheckedAt: '2026-11-01T22:00:02Z', worksError: '', worksLoading: false };
+  const store = new NoticeStore();
+  store.setIdentity(owner.identity);
+  const event = actionNotice(record, owner.identity, () => actions.message(record));
+  assert.ok(event);
+  store.publish({ ...event, ...owner });
+  store.publish({ ...event, task: 'unrelated-unknown', key: 'unknown', tone: 'unknown' });
+  try {
+    assert.equal(importReadbackRecovered(owner, operation, record, facts), true);
+    store.resolve(owner);
+    assert.deepEqual(store.items().map((item: any) => item.task), ['unrelated-unknown']);
+    assert.equal(actions.retireConfirmedRefresh(record), true);
+    assert.equal(record.refreshFailedAt, undefined);
+    const outcome = operationFeedback(owner, operation);
+    assert.equal(outcome?.state, 'succeeded');
+    assert.equal(operationFeedbackSource(outcome, record), 'operation');
+    assert.equal(actionNotice(record, owner.identity, () => actions.message(record)), undefined);
+    assert.equal(record.result, 'Accepted');
+  } finally { actions.clear(); }
+});
+
+for (const change of ['pending', 'blocked', 'unknown', 'request error', 'other action', 'other operation', 'other Work', 'identity', 'new record', 'generation', 'operation pending', 'operation read error', 'unverified operation', 'sync pending', 'Work read error', 'list error', 'list loading', 'missing failure time', 'old Work receipt', 'equal Work receipt', 'old list receipt', 'equal list receipt'] as const) {
+  test(`Import readback recovery rejects ${change} without clearing original failure`, async () => {
+    const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+    const { importReadbackRecovered } = await import(new URL('../browser/operation-feedback.js', import.meta.url).href);
+    const failedAt = Date.parse('2026-11-01T22:00:00Z');
+    const actions = new ActionState(() => {}, () => failedAt);
+    const record = actions.begin({ key: 'import-original', action: 'confirm-import', kind: 'transfer', label: 'Import', target: 'Original package' });
+    assert.ok(record);
+    const registry = new OperationFeedbackRegistry();
+    registry.setIdentity('identity-one');
+    const owner = registry.accept({ id: 'original-import', workId: 'imported-work', kind: 'Import Work' }, `${record.generation}:${record.token}`);
+    record.businessId = owner.operationId;
+    actions.confirm(record, 'Accepted');
+    await actions.refresh(record, async () => { throw new Error('Original Work read 404'); });
+    const operation: any = { id: owner.operationId, workId: owner.workId, checkedWorkId: owner.workId, checkedKind: 'import_work', state: 'succeeded' };
+    const facts = { identity: owner.identity, currentRecord: true, synchronizationPending: false,
+      work: { id: owner.workId, checkedAt: '2026-11-01T22:00:01Z', statusError: '' },
+      worksCheckedAt: '2026-11-01T22:00:02Z', worksError: '', worksLoading: false };
+    if (change === 'pending') record.pending = true;
+    if (change === 'blocked') record.blocked = true;
+    if (change === 'unknown') record.resultTone = 'unknown';
+    if (change === 'request error') record.error = 'Original write error';
+    if (change === 'other action') record.action = 'save-config';
+    if (change === 'other operation') record.businessId = 'other-operation';
+    if (change === 'other Work') facts.work.id = 'other-work';
+    if (change === 'identity') facts.identity = 'other-identity';
+    if (change === 'new record') facts.currentRecord = false;
+    if (change === 'generation') record.token++;
+    if (change === 'operation pending') operation.state = 'running';
+    if (change === 'operation read error') operation.observationError = 'Read failed';
+    if (change === 'unverified operation') delete operation.checkedKind;
+    if (change === 'sync pending') facts.synchronizationPending = true;
+    if (change === 'Work read error') facts.work.statusError = 'Read failed';
+    if (change === 'list error') facts.worksError = 'List failed';
+    if (change === 'list loading') facts.worksLoading = true;
+    if (change === 'missing failure time') delete record.refreshFailedAt;
+    if (change === 'old Work receipt') facts.work.checkedAt = '2026-11-01T21:59:59Z';
+    if (change === 'equal Work receipt') facts.work.checkedAt = new Date(failedAt).toISOString();
+    if (change === 'old list receipt') facts.worksCheckedAt = '2026-11-01T21:59:59Z';
+    if (change === 'equal list receipt') facts.worksCheckedAt = new Date(failedAt).toISOString();
+    try {
+      assert.equal(importReadbackRecovered(owner, operation, record, facts), false);
+      assert.equal(record.refresh, 'failed');
+      assert.equal(record.refreshError, 'Original Work read 404');
+      assert.equal(record.result, 'Accepted');
+    } finally { actions.clear(); }
+  });
+}

@@ -108,6 +108,7 @@ export class ActionState {
             return false;
         record.refresh = '';
         record.refreshError = undefined;
+        record.refreshFailedAt = undefined;
         record.refreshErrorMessage = undefined;
         this.changed();
         return true;
@@ -117,6 +118,7 @@ export class ActionState {
             return;
         record.refresh = 'refreshing';
         record.refreshError = undefined;
+        record.refreshFailedAt = undefined;
         record.refreshErrorMessage = undefined;
         this.changed();
         try {
@@ -129,6 +131,7 @@ export class ActionState {
         catch (error) {
             if (this.current(record)) {
                 record.refresh = 'failed';
+                record.refreshFailedAt = this.now();
                 record.refreshError = this.formatError(error);
                 record.refreshErrorMessage = () => this.formatError(error);
             }

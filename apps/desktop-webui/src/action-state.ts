@@ -30,6 +30,8 @@ export interface ActionRecord extends ActionIntent {
   /** A named feature owner publishes this result; the action keeps its original locks. */
   notificationProjection?: 'ledger-secondary' | 'sign-in-owner' | 'chat-submission-owner';
   refresh: '' | 'refreshing' | 'failed'; refreshError?: string;
+  /** Local clock fence for a later confirmed read; never a write receipt. */
+  refreshFailedAt?: number;
   ownerPosition?: { left: number; top: number; bottom: number; scrollX: number; scrollY: number };
   ownerDialog?: HTMLDialogElement;
 }
@@ -121,6 +123,7 @@ export class ActionState {
     if (!this.current(record) || !record.result || record.pending || record.error || record.blocked || record.resultTone === 'unknown' || record.refresh !== 'failed') return false;
     record.refresh = '';
     record.refreshError = undefined;
+    record.refreshFailedAt = undefined;
     record.refreshErrorMessage = undefined;
     this.changed();
     return true;
@@ -129,12 +132,14 @@ export class ActionState {
     if (!this.current(record)) return;
     record.refresh = 'refreshing';
     record.refreshError = undefined;
+    record.refreshFailedAt = undefined;
     record.refreshErrorMessage = undefined;
     this.changed();
     try { await read(); if (this.current(record)) { record.refresh = ''; record.checkedAt = new Date(this.now()).toISOString(); } }
     catch (error) {
       if (this.current(record)) {
         record.refresh = 'failed';
+        record.refreshFailedAt = this.now();
         record.refreshError = this.formatError(error);
         record.refreshErrorMessage = () => this.formatError(error);
       }

@@ -53,4 +53,15 @@ export function operationFeedbackSource(outcome, action) {
         return 'action';
     return outcome ? 'operation' : 'action';
 }
+export function importReadbackRecovered(owner, operation, record, facts) {
+    if (!facts.currentRecord || owner.identity !== facts.identity || owner.generation !== `${record.generation}:${record.token}` ||
+        !operationKindMatches(owner.kind, 'import_work') || record.action !== 'confirm-import' || record.kind !== 'transfer' ||
+        record.businessId !== owner.operationId || !record.result || record.pending || record.blocked || record.error ||
+        record.resultTone === 'unknown' || record.refresh !== 'failed' || record.refreshFailedAt === undefined)
+        return false;
+    if (operationFeedback(owner, operation)?.state !== 'succeeded' || facts.synchronizationPending ||
+        facts.work?.id !== owner.workId || facts.work.statusError || facts.worksError || facts.worksLoading)
+        return false;
+    return Date.parse(facts.work.checkedAt || '') > record.refreshFailedAt && Date.parse(facts.worksCheckedAt || '') > record.refreshFailedAt;
+}
 //# sourceMappingURL=operation-feedback.js.map

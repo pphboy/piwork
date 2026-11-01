@@ -68,3 +68,28 @@ export function operationFeedbackSource(outcome: OperationFeedback | undefined, 
   if (action.error || action.refresh === 'failed') return 'action';
   return outcome ? 'operation' : 'action';
 }
+
+/** Facts from the original Import's completed publication reads, not cached history. */
+export interface ImportReadbackFacts {
+  readonly identity: string;
+  readonly currentRecord: boolean;
+  readonly synchronizationPending: boolean;
+  readonly work?: {
+    readonly id: string;
+    readonly checkedAt?: string;
+    readonly statusError?: string;
+  };
+  readonly worksCheckedAt?: string;
+  readonly worksError?: string;
+  readonly worksLoading: boolean;
+}
+export function importReadbackRecovered(owner: OperationFeedbackOwner, operation: ObservedOperation | undefined,
+  record: Readonly<import('./action-state.js').ActionRecord>, facts: ImportReadbackFacts): boolean {
+  if (!facts.currentRecord || owner.identity !== facts.identity || owner.generation !== `${record.generation}:${record.token}` ||
+    !operationKindMatches(owner.kind, 'import_work') || record.action !== 'confirm-import' || record.kind !== 'transfer' ||
+    record.businessId !== owner.operationId || !record.result || record.pending || record.blocked || record.error ||
+    record.resultTone === 'unknown' || record.refresh !== 'failed' || record.refreshFailedAt === undefined) return false;
+  if (operationFeedback(owner, operation)?.state !== 'succeeded' || facts.synchronizationPending ||
+    facts.work?.id !== owner.workId || facts.work.statusError || facts.worksError || facts.worksLoading) return false;
+  return Date.parse(facts.work.checkedAt || '') > record.refreshFailedAt && Date.parse(facts.worksCheckedAt || '') > record.refreshFailedAt;
+}
