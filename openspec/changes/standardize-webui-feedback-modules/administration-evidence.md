@@ -125,3 +125,13 @@ Quick setup 既有 API Protocol selector（OpenAI Responses / Anthropic Messages
 16:53正式152资源实际CUA修复后通过（app SHA256 `850c99772b1fa5aa9468b3d1f4a7af1ba7ee5735e2af01b5231ff9312a434801`）：A Disable Details恢复原target/error；另开Create user并输入new-unsaved-draft后旧Details不替换新form/草稿。Reset credential已知400后两密码清空，关闭→Details恢复原account/error而两个DOM value长度仍0。B Skill Disable恢复原target/error。C npm fixture-package@1.0.0原拒绝恢复locked表单与Edit as new intent，点击后只开放新意图编辑而没有POST。D未解决的真实冲突仍可见；Keep draft后只有浮动普通receipt、main无重复，原草稿保持。该identity ledger精确四次POST400（disable/reset/Skill/npm），Details和new-intent动作无重放、零配置PATCH；没有创建实际账号或安装实际包。
 
 结合此前两端真实360px、长中英文、键盘关闭/焦点返回、模态单宿主共存、通知关闭不改业务锁及此次有限factory/callsite复核，任务2.2完成，累计26/31。这个判断不把警告一概删掉，也不声称未运行的全量浏览器、真实Core或所有File输入路径通过；8.1/8.2等剩余集成条件仍独立保持。
+
+## 17:02 原错误分类穿过dialog边界的独立复核
+
+16:58独立源码检查发现已知400恢复成功不足以证明unknown安全：catalogActionDialog catch调用dialogFeedback未传原异常，helper用new Error(message)重建后，RESULT_UNKNOWN会丢为READ_FAILED且blocked=false，继而可能被新已知失败恢复准入。相同触达的Skill/Package catch也遗漏cause（两者另有专属unknown清理/Resume）；User/Create user已正确传cause。修复仅给这三个真实异步catch传原e，本地校验文案不改、协议/锁规则不重写。
+
+直接实际adapter→ActionState→恢复模块新增证明catalog丢响应仍RESULT_UNKNOWN/blocked且不进入known恢复；Skill实际XHR503保留write锁而read owner可读；Package lost acceptance仍ACCEPTANCE_UNKNOWN，原same-key/同payload显式Resume继续可用。Console155/155通过，正式typecheck/build/embed及再次UI生成字节比较通过，style127/依赖检查通过。直接模块测试不执行app catch装配本身；另新增实际浏览器close→Details不得恢复/重放用例，并给原Package浏览器Resume增加enabled断言，只有语法检查完成，不能冒称该自动浏览器已执行。
+
+忽略目录fixture只对原合成catalog目标增加unknown503控制，ledger明确“outcome unconfirmed; retained synthetic read snapshot”，GET不变不代表受理或未受理。待父任务用正式155资源验证这条实际app链；不把此前known400结果扩写为unknown覆盖。新dialog helper的唯一消费者/无运行依赖/安全准入与原cause边界已补入既有维护Skill导航。
+
+17:02正式155资源实际CUA通过，app SHA256 `f56eddf48463cf4d06aa70798d5211e170fba6a94adce2e961c55457f0838e84`：合成Skill Disable一次POST503/CORE_UNAVAILABLE经真实adapter成为“写入结果未知”；关闭→Details不恢复已知失败form，只聚焦Refresh。额外从原页面重新打开Disable并显式Submit，在没有readback时仍被原record拒绝，ledger始终一次POST（seq7），没有重放。该新form按钮视觉上可点击、实际提交准入拒绝，不能写成“按钮已禁用”。新identity恢复known400模式后，一次Skill Disable400关闭→Details仍正确恢复原fixture-skill/error。未知与已知两条实际app装配均得到独立证据，没有真实Core写入或据此声称未知结果已确认。
