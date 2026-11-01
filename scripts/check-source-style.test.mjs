@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { sourceStyleIssues, newStyleIssues } from './check-source-style.mjs';
 
@@ -41,4 +44,49 @@ test('unavailable gofmt fails with the required action, not a stack trace or a p
   assert.match(result.stderr, /No Go formatting result was obtained/);
   assert.doesNotMatch(result.stderr, /at ModuleJob|at async|throw result/);
   assert.doesNotMatch(result.stdout, /style checked/);
+});
+
+
+test('explicit commit baseline checks committed PR changes in a clean checkout', t => {
+  const root = mkdtempSync(join(tmpdir(), 'piwork-style-base-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, 'scripts'));
+  for (const name of ['check-source-style.mjs', 'check-ui-language.mjs']) {
+    copyFileSync(new URL(name, import.meta.url), join(root, 'scripts', name));
+  }
+  const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git(['init', '--quiet']);
+  git(['config', 'user.name', 'Synthetic Fixture']);
+  git(['config', 'user.email', 'fixture@example.invalid']);
+  const legacy = 'function legacy() { read(); write(); }\n';
+  writeFileSync(join(root, 'feature.ts'), legacy);
+  git(['add', '.']);
+  git(['commit', '--quiet', '-m', 'synthetic baseline']);
+  const base = git(['rev-parse', 'HEAD']);
+  writeFileSync(join(root, 'feature.ts'), legacy + 'function added() { open(); close(); }\n');
+  writeFileSync(join(root, 'new.ts'), 'const added = true;   \n');
+  git(['add', '.']);
+  git(['commit', '--quiet', '-m', 'synthetic bad committed change']);
+  assert.equal(git(['status', '--porcelain']), '');
+  const run = args => spawnSync(process.execPath, [join(root, 'scripts/check-source-style.mjs'), ...args], { cwd: root, encoding: 'utf8' });
+  const dirtyDefault = run([]);
+  assert.equal(dirtyDefault.status, 0);
+  assert.match(dirtyDefault.stdout, /checked \(0 files\)/);
+  const checked = run(['--base', base]);
+  assert.equal(checked.status, 1);
+  assert.match(checked.stderr, /feature.ts:2: one-statement-per-line/);
+  assert.match(checked.stderr, /new.ts:1: trailing-whitespace/);
+  assert.doesNotMatch(checked.stderr, /feature.ts:1:/);
+  const explicit = run(['--base', base, 'feature.ts']);
+  assert.equal(explicit.status, 1);
+  assert.match(explicit.stderr, /feature.ts:2: one-statement-per-line/);
+  assert.doesNotMatch(explicit.stderr, /new.ts/);
+  const invalid = run(['--base', 'nonexistent-synthetic-ref']);
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /baseline is not an available commit/);
+  assert.equal(run(['--base']).status, 1);
+  assert.equal(run(['--unknown']).status, 1);
+  writeFileSync(join(root, 'feature.ts'), legacy + 'function added() {\n  open();\n  close();\n}\n');
+  writeFileSync(join(root, 'new.ts'), 'const added = true;\n');
+  assert.equal(run(['--base', base]).status, 0);
 });

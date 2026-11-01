@@ -94,9 +94,38 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (result.status !== 0) throw new Error(`git ${args[0]} failed`);
     return result.stdout;
   }
-  const explicit = process.argv.slice(2);
+  const explicit = [];
+  let base = 'HEAD';
+  let suppliedBase = false;
+  const args = process.argv.slice(2);
+  for (let index = 0; index < args.length; index++) {
+    const argument = args[index];
+    if (argument === '--') {
+      explicit.push(...args.slice(index + 1));
+      break;
+    }
+    if (argument === '--base') {
+      if (suppliedBase || !args[index + 1] || args[index + 1].startsWith('--')) {
+        console.error('Usage: check-source-style.mjs [--base <commit-ref>] [--] [files...]');
+        process.exit(1);
+      }
+      suppliedBase = true;
+      base = args[++index];
+    } else if (argument.startsWith('--')) {
+      console.error(`Unknown option: ${argument}`);
+      process.exit(1);
+    } else explicit.push(argument);
+  }
+  if (suppliedBase) {
+    const revision = spawnSync('git', ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`], { cwd: root, encoding: 'utf8' });
+    if (revision.status !== 0) {
+      console.error(`Style baseline is not an available commit: ${base}`);
+      process.exit(1);
+    }
+    base = revision.stdout.trim();
+  }
   const paths = explicit.length ? explicit : [...new Set([
-    ...git(['diff', '--name-only', 'HEAD', '-z']).split('\0'),
+    ...git(['diff', '--name-only', base, '-z', '--']).split('\0'),
     ...git(['ls-files', '--others', '--exclude-standard', '-z']).split('\0'),
   ])];
   let failed = false;
@@ -118,7 +147,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       }
       continue;
     }
-    const baseline = spawnSync('git', ['show', `HEAD:${file}`], { cwd: root, encoding: 'utf8' });
+    const baseline = spawnSync('git', ['show', `${base}:${file}`], { cwd: root, encoding: 'utf8' });
     const issues = newStyleIssues(readFileSync(resolve(root, file), 'utf8'), baseline.status === 0 ? baseline.stdout : '', file);
     for (const issue of issues) console.error(`${file}:${issue.line}: ${issue.rule}`);
     failed ||= issues.length > 0;
