@@ -1,0 +1,2056 @@
+{
+  "mockOnly": true,
+  "baseline": {
+    "repository": "pphboy/piwork",
+    "sha": "7c2325552a6db6e6777120c24135c16e458adcd5",
+    "checkout": "/workspace/scratch/6e9b883ab761/piwork",
+    "sourceVerified": "2026-11-01",
+    "networkRefreshed": false,
+    "productionChanges": false
+  },
+  "definition": "Representative source-family samples; not all backend branches are interactive or tested.",
+  "families": [
+    {
+      "id": "D01",
+      "name": "Core admission, session and connection",
+      "status": "representative",
+      "scenarioIds": [
+        "D01:idle",
+        "D01:pending",
+        "D01:slow",
+        "D01:succeeded",
+        "D01:failed",
+        "D01:unknown",
+        "D01:empty",
+        "D01:refresh",
+        "D01:refresh-failed"
+      ],
+      "source": [
+        "core-admission.ts:1-17",
+        "adapter.ts:278,403-405",
+        "app.ts:905-947,3695-3714"
+      ],
+      "notYetInteractive": [
+        "session_loading",
+        "session_unavailable",
+        "signed_out",
+        "sign_in_unknown",
+        "credential_cleanup_required",
+        "checking",
+        "recovering",
+        "ready",
+        "unconfigured",
+        "unreachable",
+        "unconfirmed",
+        "paused",
+        "retained_workspace_blocked"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "connection",
+        "mode": "read",
+        "selector": ".drawer-body"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "session_loading",
+        "session_unavailable",
+        "signed_out",
+        "sign_in_unknown",
+        "credential_cleanup_required",
+        "checking",
+        "recovering",
+        "ready",
+        "unconfigured",
+        "failed",
+        "unreachable",
+        "unconfirmed",
+        "paused",
+        "retained_workspace_blocked"
+      ]
+    },
+    {
+      "id": "D02",
+      "name": "Works list and retained reads",
+      "status": "representative",
+      "scenarioIds": [
+        "D02:idle",
+        "D02:pending",
+        "D02:slow",
+        "D02:succeeded",
+        "D02:failed",
+        "D02:unknown",
+        "D02:empty",
+        "D02:refresh",
+        "D02:refresh-failed"
+      ],
+      "source": [
+        "app.ts:965-977",
+        "adapter.ts:606,950-995"
+      ],
+      "notYetInteractive": [
+        "search_no_matches",
+        "core_offline",
+        "environment_not_ready"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "page": "works",
+        "mode": "read",
+        "selector": "#works-list",
+        "buttons": [
+          "refresh-works"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "search_no_matches",
+        "core_offline",
+        "environment_not_ready"
+      ]
+    },
+    {
+      "id": "D03",
+      "name": "Work lifecycle projection",
+      "status": "representative",
+      "scenarioIds": [
+        "D03:idle",
+        "D03:pending",
+        "D03:slow",
+        "D03:succeeded",
+        "D03:failed",
+        "D03:unknown",
+        "D03:preparing",
+        "D03:ready",
+        "D03:stopped",
+        "D03:degraded",
+        "D03:starting",
+        "D03:stopping",
+        "D03:deleted"
+      ],
+      "source": [
+        "lifecycle.ts:22-57",
+        "app.ts:238-280,410-436,979-1017",
+        "completion-exits.ts"
+      ],
+      "notYetInteractive": [
+        "stopped_startable",
+        "create_accepted",
+        "start_accepted",
+        "Preparing",
+        "Starting",
+        "Ready",
+        "Degraded",
+        "stop_accepted",
+        "Stopping",
+        "stop_unconfirmed",
+        "delete_accepted",
+        "Deleted",
+        "Failed_retryable",
+        "Unknown",
+        "access_revoked",
+        "succeeded_but_work_not_confirmed"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "page": "work",
+        "workId": "w-research",
+        "tab": "services",
+        "mode": "work",
+        "buttons": [
+          "start-work"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "stopped_startable",
+        "create_accepted",
+        "start_accepted",
+        "Preparing",
+        "Starting",
+        "Ready",
+        "Degraded",
+        "stop_accepted",
+        "Stopping",
+        "stop_unconfirmed",
+        "delete_accepted",
+        "Deleted",
+        "Failed_retryable",
+        "Unknown",
+        "access_revoked",
+        "succeeded_but_work_not_confirmed"
+      ]
+    },
+    {
+      "id": "D04",
+      "name": "Create/stop/delete and unsent forms",
+      "status": "representative",
+      "scenarioIds": [
+        "D04:idle",
+        "D04:pending",
+        "D04:slow",
+        "D04:succeeded",
+        "D04:failed",
+        "D04:unknown"
+      ],
+      "source": [
+        "app.ts:795-811,1805-1863",
+        "draft-revision.ts",
+        "control-rules.ts"
+      ],
+      "notYetInteractive": [
+        "editable_draft",
+        "field_invalid",
+        "name_conflict",
+        "submitting",
+        "accepted",
+        "unknown_with_original_id",
+        "unknown_without_id",
+        "confirmed_failure",
+        "completed",
+        "unsaved_close_confirmation"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "page": "works",
+        "overlay": "new-work",
+        "mode": "action",
+        "buttons": [
+          "submit-new-work"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "editable_draft",
+        "field_invalid",
+        "name_conflict",
+        "submitting",
+        "accepted",
+        "unknown_with_original_id",
+        "unknown_without_id",
+        "confirmed_failure",
+        "completed",
+        "unsaved_close_confirmation"
+      ]
+    },
+    {
+      "id": "D05",
+      "name": "Service catalog and viewport",
+      "status": "representative",
+      "scenarioIds": [
+        "D05:idle",
+        "D05:pending",
+        "D05:slow",
+        "D05:succeeded",
+        "D05:failed",
+        "D05:unknown",
+        "D05:empty",
+        "D05:refresh",
+        "D05:refresh-failed",
+        "D05:ready",
+        "D05:starting",
+        "D05:stopped"
+      ],
+      "source": [
+        "app.ts:1029-1123",
+        "adapter.ts:serviceEntryUrl/serviceEmbed/servicePreviewUnconfirmed"
+      ],
+      "notYetInteractive": [
+        "no_services",
+        "no_declared_port",
+        "disabled",
+        "Starting",
+        "Recovering",
+        "Running_once",
+        "Completed_once",
+        "Stopped",
+        "Failed",
+        "Unknown",
+        "Removed",
+        "entry_pending",
+        "entry_error",
+        "embed_denied",
+        "preview_unconfirmed",
+        "external_open_blocked",
+        "ready_iframe"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "services",
+        "mode": "read",
+        "selector": "#service-frame-holder"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "no_services",
+        "no_declared_port",
+        "disabled",
+        "Starting",
+        "Recovering",
+        "Running_once",
+        "Completed_once",
+        "Stopped",
+        "Failed",
+        "Unknown",
+        "Removed",
+        "entry_pending",
+        "entry_error",
+        "embed_denied",
+        "preview_unconfirmed",
+        "external_open_blocked",
+        "ready_iframe"
+      ]
+    },
+    {
+      "id": "D06",
+      "name": "Service controls, logs and cleanup",
+      "status": "representative",
+      "scenarioIds": [
+        "D06:idle",
+        "D06:pending",
+        "D06:slow",
+        "D06:succeeded",
+        "D06:failed",
+        "D06:unknown"
+      ],
+      "source": [
+        "app.ts:282-326,438-458,1901-1920,2145-2189",
+        "adapter.ts:1536-1548"
+      ],
+      "notYetInteractive": [
+        "submit_start_stop_restart_remove",
+        "accepted_pending",
+        "unknown_locked",
+        "succeeded_waiting_observation",
+        "removed_target",
+        "unassigned_original_task",
+        "logs_initial",
+        "logs_loading",
+        "logs_ready",
+        "logs_read_error_cached",
+        "logs_truncated",
+        "cleanup_unconfirmed",
+        "cleanup_diagnostics"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "manage-services",
+        "mode": "service",
+        "buttons": [
+          "service-start",
+          "service-stop",
+          "service-restart"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "submit_start_stop_restart_remove",
+        "accepted_pending",
+        "unknown_locked",
+        "failed",
+        "succeeded_waiting_observation",
+        "removed_target",
+        "unassigned_original_task",
+        "logs_initial",
+        "logs_loading",
+        "logs_ready",
+        "logs_read_error_cached",
+        "logs_truncated",
+        "cleanup_unconfirmed",
+        "cleanup_diagnostics"
+      ]
+    },
+    {
+      "id": "D07",
+      "name": "File browser and selection",
+      "status": "representative",
+      "scenarioIds": [
+        "D07:idle",
+        "D07:pending",
+        "D07:slow",
+        "D07:succeeded",
+        "D07:failed",
+        "D07:unknown",
+        "D07:empty",
+        "D07:refresh",
+        "D07:refresh-failed"
+      ],
+      "source": [
+        "app.ts:1519-1553",
+        "adapter.ts:343"
+      ],
+      "notYetInteractive": [
+        "selected_multiple",
+        "directory",
+        "file",
+        "special_entry",
+        "restore_selection_failed"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "files",
+        "mode": "read",
+        "selector": "#files-list",
+        "buttons": [
+          "refresh-files"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "selected_multiple",
+        "directory",
+        "file",
+        "special_entry",
+        "restore_selection_failed"
+      ]
+    },
+    {
+      "id": "D08",
+      "name": "File preview and editor",
+      "status": "representative",
+      "scenarioIds": [
+        "D08:idle",
+        "D08:pending",
+        "D08:slow",
+        "D08:succeeded",
+        "D08:failed",
+        "D08:unknown",
+        "D08:empty",
+        "D08:refresh",
+        "D08:refresh-failed"
+      ],
+      "source": [
+        "app.ts:1557-1621",
+        "models.ts:61-65",
+        "image-content.ts"
+      ],
+      "notYetInteractive": [
+        "loading",
+        "text_ready",
+        "image_ready",
+        "download_only_binary",
+        "download_only_oversized",
+        "download_only_unsupported",
+        "download_only_document",
+        "missing",
+        "unavailable",
+        "error",
+        "dirty_draft",
+        "no_modification_baseline",
+        "reread_changed_type",
+        "reread_saved_version"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "files",
+        "mode": "read",
+        "selector": "#files-editor"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "idle",
+        "loading",
+        "text_ready",
+        "image_ready",
+        "download_only_binary",
+        "download_only_oversized",
+        "download_only_unsupported",
+        "download_only_document",
+        "missing",
+        "unavailable",
+        "error",
+        "dirty_draft",
+        "no_modification_baseline",
+        "reread_changed_type",
+        "reread_saved_version"
+      ]
+    },
+    {
+      "id": "D09",
+      "name": "File writes and batch mutation",
+      "status": "representative",
+      "scenarioIds": [
+        "D09:idle",
+        "D09:pending",
+        "D09:slow",
+        "D09:succeeded",
+        "D09:failed",
+        "D09:unknown"
+      ],
+      "source": [
+        "app.ts:1953-1996,2230-2317",
+        "file-results.ts:54-184"
+      ],
+      "notYetInteractive": [
+        "all_succeeded",
+        "confirmed_failed",
+        "partial_results",
+        "unknown_paths_locked",
+        "overwrite_consent",
+        "precondition_412",
+        "saved_but_readback_unconfirmed",
+        "not_submitted",
+        "retry_failed_subset"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "files",
+        "mode": "action",
+        "buttons": [
+          "save-file"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "pending",
+        "all_succeeded",
+        "confirmed_failed",
+        "partial_results",
+        "unknown_paths_locked",
+        "overwrite_consent",
+        "precondition_412",
+        "saved_but_readback_unconfirmed",
+        "not_submitted",
+        "retry_failed_subset"
+      ]
+    },
+    {
+      "id": "D10",
+      "name": "File upload",
+      "status": "representative",
+      "scenarioIds": [
+        "D10:idle",
+        "D10:pending",
+        "D10:slow",
+        "D10:succeeded",
+        "D10:failed",
+        "D10:unknown"
+      ],
+      "source": [
+        "app.ts:628-675,3110-3133,4104-4135",
+        "file-results.ts:180-184"
+      ],
+      "notYetInteractive": [
+        "choosing",
+        "preflight",
+        "uploading_known_bytes",
+        "uploading_unknown_total",
+        "verification",
+        "ready",
+        "partial",
+        "overwrite_consent"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "files",
+        "mode": "action",
+        "buttons": [
+          "upload-files"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "choosing",
+        "preflight",
+        "uploading_known_bytes",
+        "uploading_unknown_total",
+        "verification",
+        "ready",
+        "failed",
+        "unknown",
+        "partial",
+        "overwrite_consent"
+      ]
+    },
+    {
+      "id": "D11",
+      "name": "Configuration save and apply",
+      "status": "representative",
+      "scenarioIds": [
+        "D11:idle",
+        "D11:pending",
+        "D11:slow",
+        "D11:succeeded",
+        "D11:failed",
+        "D11:unknown"
+      ],
+      "source": [
+        "app.ts:1623-1647,2319-2338,3245",
+        "configuration.ts:1-37",
+        "models.ts:136-153"
+      ],
+      "notYetInteractive": [
+        "in_use",
+        "dirty",
+        "invalid_json",
+        "saving",
+        "saved_not_applied",
+        "applying",
+        "apply_unknown_locked",
+        "apply_failed",
+        "applied_confirmed",
+        "saved_but_refresh_unconfirmed",
+        "draft_during_other_apply"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "settings",
+        "mode": "action",
+        "buttons": [
+          "settings-save",
+          "settings-apply"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "in_use",
+        "dirty",
+        "invalid_json",
+        "saving",
+        "saved_not_applied",
+        "applying",
+        "apply_unknown_locked",
+        "apply_failed",
+        "applied_confirmed",
+        "saved_but_refresh_unconfirmed",
+        "draft_during_other_apply"
+      ]
+    },
+    {
+      "id": "D12",
+      "name": "Skills, packages and candidate adoption",
+      "status": "representative",
+      "scenarioIds": [
+        "D12:idle",
+        "D12:pending",
+        "D12:slow",
+        "D12:succeeded",
+        "D12:failed",
+        "D12:unknown"
+      ],
+      "source": [
+        "app.ts:1648-1675,2002-2038,3314-3393,4527-4544"
+      ],
+      "notYetInteractive": [
+        "selected",
+        "not_selected",
+        "saved_copy_unavailable",
+        "enabled",
+        "disabled",
+        "saved_not_applied",
+        "loaded",
+        "not_loaded",
+        "runtime_unconfirmed",
+        "install_upload",
+        "install_accepted",
+        "install_unknown",
+        "install_failed",
+        "remove_confirm",
+        "candidate_preparing",
+        "candidate_succeeded",
+        "candidate_failed",
+        "candidate_superseded",
+        "candidate_cleanup_pending",
+        "adoption_verified",
+        "adoption_failed",
+        "adoption_not_confirmed"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "settings",
+        "overlay": "install-package",
+        "mode": "action",
+        "buttons": [
+          "submit-package"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "selected",
+        "not_selected",
+        "saved_copy_unavailable",
+        "enabled",
+        "disabled",
+        "saved_not_applied",
+        "loaded",
+        "not_loaded",
+        "runtime_unconfirmed",
+        "install_upload",
+        "install_accepted",
+        "install_unknown",
+        "install_failed",
+        "remove_confirm",
+        "candidate_preparing",
+        "candidate_succeeded",
+        "candidate_failed",
+        "candidate_superseded",
+        "candidate_cleanup_pending",
+        "adoption_verified",
+        "adoption_failed",
+        "adoption_not_confirmed"
+      ]
+    },
+    {
+      "id": "D13",
+      "name": "Sessions, history and command reads",
+      "status": "representative",
+      "scenarioIds": [
+        "D13:idle",
+        "D13:pending",
+        "D13:slow",
+        "D13:succeeded",
+        "D13:failed",
+        "D13:unknown",
+        "D13:empty",
+        "D13:refresh",
+        "D13:refresh-failed"
+      ],
+      "source": [
+        "app.ts:1125-1178,1180-1189,1469-1513,1863-1869",
+        "models.ts:102-120",
+        "adapter.ts:130-223"
+      ],
+      "notYetInteractive": [
+        "new_empty_session",
+        "history_more",
+        "history_exhausted",
+        "history_snapshot_expired",
+        "history_partial_or_order_unconfirmed",
+        "unavailable_session",
+        "commands_loading",
+        "commands_empty",
+        "commands_error",
+        "commands_filter_no_match"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "chat",
+        "mode": "read",
+        "selector": "#chat-messages,#chat-content,#agent-body"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "new_empty_session",
+        "history_more",
+        "history_exhausted",
+        "history_snapshot_expired",
+        "history_partial_or_order_unconfirmed",
+        "unavailable_session",
+        "commands_loading",
+        "commands_empty",
+        "commands_error",
+        "commands_filter_no_match"
+      ]
+    },
+    {
+      "id": "D14",
+      "name": "Message submission, Run and tool execution",
+      "status": "representative",
+      "scenarioIds": [
+        "D14:idle",
+        "D14:pending",
+        "D14:slow",
+        "D14:succeeded",
+        "D14:failed",
+        "D14:unknown"
+      ],
+      "source": [
+        "app.ts:1269-1272,1338-1366,1448-1499,1884",
+        "models.ts:24-32,93,121-135"
+      ],
+      "notYetInteractive": [
+        "sending",
+        "submission_unknown",
+        "submission_failed",
+        "submission_accepted",
+        "run_accepted",
+        "run_running",
+        "run_cancelling",
+        "run_succeeded",
+        "run_failed",
+        "run_cancelled",
+        "run_interrupted",
+        "tool_running",
+        "tool_succeeded",
+        "tool_failed",
+        "tool_waiting"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "chat",
+        "mode": "chat",
+        "buttons": [
+          "send",
+          "send-message",
+          "send-chat"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "sending",
+        "submission_unknown",
+        "submission_failed",
+        "submission_accepted",
+        "run_accepted",
+        "run_running",
+        "run_cancelling",
+        "run_succeeded",
+        "run_failed",
+        "run_cancelled",
+        "run_interrupted",
+        "tool_running",
+        "tool_succeeded",
+        "tool_failed",
+        "tool_waiting"
+      ]
+    },
+    {
+      "id": "D15",
+      "name": "Session model and thinking",
+      "status": "representative",
+      "scenarioIds": [
+        "D15:idle",
+        "D15:pending",
+        "D15:slow",
+        "D15:succeeded",
+        "D15:failed",
+        "D15:unknown"
+      ],
+      "source": [
+        "app.ts:1203-1243,1757-1772",
+        "adapter.ts:291-292"
+      ],
+      "notYetInteractive": [
+        "clean",
+        "dirty",
+        "saving",
+        "unknown_locked",
+        "default_available",
+        "default_unavailable",
+        "saved_model_unavailable",
+        "catalog_unconfirmed",
+        "session_unavailable",
+        "thinking_unsupported",
+        "thinking_unconfirmed",
+        "compatibility_profile_required",
+        "normal_requires_confirmation"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "chat",
+        "mode": "action",
+        "buttons": [
+          "model-picker"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "clean",
+        "dirty",
+        "saving",
+        "unknown_locked",
+        "default_available",
+        "default_unavailable",
+        "saved_model_unavailable",
+        "catalog_unconfirmed",
+        "session_unavailable",
+        "thinking_unsupported",
+        "thinking_unconfirmed",
+        "compatibility_profile_required",
+        "normal_requires_confirmation"
+      ]
+    },
+    {
+      "id": "D16",
+      "name": "Image attachment/history",
+      "status": "representative",
+      "scenarioIds": [
+        "D16:idle",
+        "D16:pending",
+        "D16:slow",
+        "D16:succeeded",
+        "D16:failed",
+        "D16:unknown"
+      ],
+      "source": [
+        "app.ts:772-784",
+        "images.ts:4-39",
+        "adapter.ts:236-276"
+      ],
+      "notYetInteractive": [
+        "capability_reading",
+        "capability_unavailable",
+        "draft_reading",
+        "draft_ready",
+        "invalid_type",
+        "invalid_dimensions",
+        "size_or_count_limit",
+        "history_loading",
+        "history_ready",
+        "history_error"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "chat",
+        "mode": "action",
+        "buttons": [
+          "chat-attach"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "capability_reading",
+        "capability_unavailable",
+        "draft_reading",
+        "draft_ready",
+        "invalid_type",
+        "invalid_dimensions",
+        "size_or_count_limit",
+        "history_loading",
+        "history_ready",
+        "history_error"
+      ]
+    },
+    {
+      "id": "D17",
+      "name": "Pi Request inspection/cancellation",
+      "status": "representative",
+      "scenarioIds": [
+        "D17:idle",
+        "D17:pending",
+        "D17:slow",
+        "D17:succeeded",
+        "D17:failed",
+        "D17:unknown",
+        "D17:empty",
+        "D17:refresh",
+        "D17:refresh-failed"
+      ],
+      "source": [
+        "app.ts:1338-1340,1923-1940",
+        "adapter.ts:1179-1238",
+        "control-rules.ts:canCancelPiRequest"
+      ],
+      "notYetInteractive": [
+        "running",
+        "waiting_result",
+        "waiting_apply",
+        "needs_attention",
+        "completed",
+        "cancelled",
+        "cancelling",
+        "historical",
+        "read_unconfirmed",
+        "cancellation_pending",
+        "cancellation_accepted",
+        "cancellation_unknown",
+        "retry_unknown",
+        "evidence_more"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "requests",
+        "mode": "read",
+        "selector": ".drawer-body"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "pending",
+        "running",
+        "waiting_result",
+        "waiting_apply",
+        "needs_attention",
+        "completed",
+        "cancelled",
+        "cancelling",
+        "failed",
+        "historical",
+        "read_unconfirmed",
+        "cancellation_pending",
+        "cancellation_accepted",
+        "cancellation_unknown",
+        "retry_unknown",
+        "evidence_more"
+      ]
+    },
+    {
+      "id": "D18",
+      "name": "Import inspection and submission",
+      "status": "representative",
+      "scenarioIds": [
+        "D18:idle",
+        "D18:pending",
+        "D18:slow",
+        "D18:succeeded",
+        "D18:failed",
+        "D18:unknown"
+      ],
+      "source": [
+        "app.ts:579-627,2061-2096",
+        "adapter.ts:31,327-339",
+        "completion-exits.ts:importCanStart"
+      ],
+      "notYetInteractive": [
+        "no_file",
+        "receiving_known_bytes",
+        "receiving_unknown_total",
+        "validating",
+        "forwarding",
+        "inspection_verified",
+        "inspection_failed",
+        "binding_requirements",
+        "sign_in_required",
+        "name_conflict",
+        "submitting",
+        "accepted",
+        "unknown_original_id",
+        "unknown_missing_id",
+        "operation_failed",
+        "imported_stopped",
+        "start_after_import_pending",
+        "start_after_import_unknown",
+        "work_ready",
+        "cleanup_pending"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "import",
+        "overlayData": {
+          "file": {
+            "name": "Product Studio.work",
+            "size": 8388608
+          }
+        },
+        "mode": "action",
+        "buttons": [
+          "submit-import"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "no_file",
+        "receiving_known_bytes",
+        "receiving_unknown_total",
+        "validating",
+        "forwarding",
+        "inspection_verified",
+        "inspection_failed",
+        "binding_requirements",
+        "sign_in_required",
+        "name_conflict",
+        "submitting",
+        "accepted",
+        "unknown_original_id",
+        "unknown_missing_id",
+        "operation_failed",
+        "imported_stopped",
+        "start_after_import_pending",
+        "start_after_import_unknown",
+        "work_ready",
+        "cleanup_pending"
+      ]
+    },
+    {
+      "id": "D19",
+      "name": "Work export flow and progress-only Details",
+      "status": "representative",
+      "scenarioIds": [
+        "D19:idle",
+        "D19:pending",
+        "D19:slow",
+        "D19:succeeded",
+        "D19:failed",
+        "D19:unknown",
+        "D19:checking",
+        "D19:stopping",
+        "D19:exporting",
+        "D19:snapshot",
+        "D19:preparing",
+        "D19:transferring",
+        "D19:ready",
+        "D19:delivered",
+        "D19:paused",
+        "D19:expired",
+        "D19:revoked"
+      ],
+      "source": [
+        "export-flow.ts:5-22,92-458",
+        "app.ts:1703-1724",
+        "export-admission.ts"
+      ],
+      "notYetInteractive": [
+        "stop_confirmation_required",
+        "snapshot_preparing",
+        "snapshot_validating",
+        "snapshot_verified",
+        "preparing_download",
+        "transferring_known_bytes",
+        "snapshot_expired",
+        "snapshot_unavailable",
+        "readback_only",
+        "reopen_existing"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "mode": "export",
+        "tab": "services"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "checking",
+        "stop_confirmation_required",
+        "stopping",
+        "exporting",
+        "snapshot_preparing",
+        "snapshot_validating",
+        "snapshot_verified",
+        "preparing_download",
+        "transferring_known_bytes",
+        "ready",
+        "delivered",
+        "paused",
+        "unknown",
+        "failed",
+        "snapshot_expired",
+        "snapshot_unavailable",
+        "revoked",
+        "readback_only",
+        "reopen_existing"
+      ]
+    },
+    {
+      "id": "D20",
+      "name": "Diagnostic log export",
+      "status": "representative",
+      "scenarioIds": [
+        "D20:idle",
+        "D20:pending",
+        "D20:slow",
+        "D20:succeeded",
+        "D20:failed",
+        "D20:unknown"
+      ],
+      "source": [
+        "adapter.ts:24-30",
+        "app.ts:2041-2054"
+      ],
+      "notYetInteractive": [
+        "creating",
+        "collecting",
+        "packing",
+        "ready_complete",
+        "ready_with_gaps",
+        "interrupted",
+        "expired",
+        "delivered"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "v13-log-export",
+        "mode": "log",
+        "buttons": [
+          "v13-log-start"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "creating",
+        "collecting",
+        "packing",
+        "ready_complete",
+        "ready_with_gaps",
+        "failed",
+        "interrupted",
+        "expired",
+        "unknown",
+        "delivered"
+      ]
+    },
+    {
+      "id": "D21",
+      "name": "Explicit Operation/history recovery",
+      "status": "representative",
+      "scenarioIds": [
+        "D21:idle",
+        "D21:pending",
+        "D21:slow",
+        "D21:succeeded",
+        "D21:failed",
+        "D21:unknown",
+        "D21:empty",
+        "D21:refresh",
+        "D21:refresh-failed"
+      ],
+      "source": [
+        "app.ts:333-394,1796,2099-2125",
+        "models.ts:211-250",
+        "operation-recovery.ts"
+      ],
+      "notYetInteractive": [
+        "accepted",
+        "preparing",
+        "running",
+        "superseded",
+        "observation_paused",
+        "observation_error",
+        "local_record_not_saved",
+        "historical_terminal_hint",
+        "missing_original_id",
+        "wrong_target_or_kind"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "recent-activity",
+        "mode": "read",
+        "selector": ".drawer-body"
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "accepted",
+        "pending",
+        "preparing",
+        "running",
+        "succeeded",
+        "failed",
+        "unknown",
+        "superseded",
+        "observation_paused",
+        "observation_error",
+        "local_record_not_saved",
+        "historical_terminal_hint",
+        "missing_original_id",
+        "wrong_target_or_kind"
+      ]
+    },
+    {
+      "id": "D22",
+      "name": "About, preference and recovery utilities",
+      "status": "representative",
+      "scenarioIds": [
+        "D22:idle",
+        "D22:pending",
+        "D22:slow",
+        "D22:succeeded",
+        "D22:failed",
+        "D22:unknown",
+        "D22:empty",
+        "D22:refresh",
+        "D22:refresh-failed"
+      ],
+      "source": [
+        "app.ts:909-937,1871-1877,4580-4588",
+        "adapter.ts:405"
+      ],
+      "notYetInteractive": [
+        "about_initial",
+        "about_loaded",
+        "about_unavailable",
+        "notes_unavailable",
+        "preferences_loading",
+        "preferences_saving",
+        "preferences_clearing",
+        "preferences_unconfirmed",
+        "clipboard_denied",
+        "external_open_blocked"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "overlay": "about-piwork",
+        "mode": "read",
+        "selector": ".drawer-body",
+        "buttons": [
+          "refresh-about"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "about_initial",
+        "about_loaded",
+        "about_unavailable",
+        "notes_unavailable",
+        "preferences_loading",
+        "preferences_saving",
+        "preferences_clearing",
+        "preferences_unconfirmed",
+        "clipboard_denied",
+        "external_open_blocked"
+      ]
+    },
+    {
+      "id": "D23",
+      "name": "Cross-surface action/notification ownership",
+      "status": "representative",
+      "scenarioIds": [
+        "D23:idle",
+        "D23:pending",
+        "D23:slow",
+        "D23:succeeded",
+        "D23:failed",
+        "D23:unknown"
+      ],
+      "source": [
+        "action-state.ts:4-270",
+        "app.ts:497-568,709-717,3795-3818"
+      ],
+      "notYetInteractive": [
+        "accepted",
+        "confirmed",
+        "unknown_blocked",
+        "readback_refreshing",
+        "readback_failed",
+        "owner_disappeared",
+        "stale_identity",
+        "notification_dismissed"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "tab": "settings",
+        "mode": "action",
+        "buttons": [
+          "settings-save"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "idle",
+        "pending",
+        "slow",
+        "accepted",
+        "confirmed",
+        "failed",
+        "unknown_blocked",
+        "readback_refreshing",
+        "readback_failed",
+        "owner_disappeared",
+        "stale_identity",
+        "notification_dismissed"
+      ]
+    },
+    {
+      "id": "S01",
+      "name": "Overview",
+      "status": "representative",
+      "scenarioIds": [
+        "S01:idle",
+        "S01:pending",
+        "S01:slow",
+        "S01:succeeded",
+        "S01:failed",
+        "S01:unknown",
+        "S01:empty",
+        "S01:refresh",
+        "S01:refresh-failed",
+        "S01:ready",
+        "S01:unconfigured",
+        "S01:preparing",
+        "S01:configured-blocked",
+        "S01:stale",
+        "S01:unreachable"
+      ],
+      "source": [
+        "app.ts:896-948"
+      ],
+      "notYetInteractive": [
+        "runtime_unconfigured",
+        "preparation_active",
+        "configured_not_ready",
+        "blocked",
+        "stale_health",
+        "no_confirmed_health",
+        "checks_true_false_unknown"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "overview",
+        "mode": "read",
+        "selector": ".serve-lead,.serve-panel",
+        "buttons": [
+          "serve-refresh"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "ready",
+        "runtime_unconfigured",
+        "preparation_active",
+        "configured_not_ready",
+        "blocked",
+        "stale_health",
+        "no_confirmed_health",
+        "checks_true_false_unknown"
+      ]
+    },
+    {
+      "id": "S02",
+      "name": "Users and account actions",
+      "status": "representative",
+      "scenarioIds": [
+        "S02:idle",
+        "S02:pending",
+        "S02:slow",
+        "S02:succeeded",
+        "S02:failed",
+        "S02:unknown"
+      ],
+      "source": [
+        "app.ts:1259-1284,1651-1705,1731-1813",
+        "adapter.ts:24-40"
+      ],
+      "notYetInteractive": [
+        "administrator",
+        "user",
+        "enabled",
+        "disabled",
+        "current_account",
+        "create_validation",
+        "reset_validation",
+        "known_success",
+        "LAST_ADMIN",
+        "USER_NOT_FOUND",
+        "create_unknown",
+        "self_change_revokes_session"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "users",
+        "dialog": "user-add",
+        "mode": "action",
+        "buttons": [
+          "serve-dialog-submit"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "administrator",
+        "user",
+        "enabled",
+        "disabled",
+        "current_account",
+        "create_validation",
+        "reset_validation",
+        "known_success",
+        "LAST_ADMIN",
+        "USER_NOT_FOUND",
+        "create_unknown",
+        "self_change_revokes_session"
+      ]
+    },
+    {
+      "id": "S03",
+      "name": "Default Work configuration",
+      "status": "representative",
+      "scenarioIds": [
+        "S03:idle",
+        "S03:pending",
+        "S03:slow",
+        "S03:succeeded",
+        "S03:failed",
+        "S03:unknown"
+      ],
+      "source": [
+        "app.ts:1012-1230,1287-1299,2250-2288,2315-2390"
+      ],
+      "notYetInteractive": [
+        "unavailable",
+        "clean",
+        "dirty",
+        "empty_skills_packages_instructions",
+        "ordered_skills",
+        "disabled_or_removed_reference",
+        "catalog_journey_preserves_draft",
+        "external_field_conflict",
+        "review_conflict",
+        "keep_draft",
+        "use_core",
+        "save_pending",
+        "save_success",
+        "save_unknown",
+        "readback_matches",
+        "readback_differs",
+        "AGENTS_oversized",
+        "AGENTS_non_utf8",
+        "AGENTS_imported"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "defaults",
+        "mode": "action",
+        "buttons": [
+          "serve-default-save"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "unavailable",
+        "clean",
+        "dirty",
+        "empty_skills_packages_instructions",
+        "ordered_skills",
+        "disabled_or_removed_reference",
+        "catalog_journey_preserves_draft",
+        "external_field_conflict",
+        "review_conflict",
+        "keep_draft",
+        "use_core",
+        "save_pending",
+        "save_success",
+        "save_unknown",
+        "readback_matches",
+        "readback_differs",
+        "AGENTS_oversized",
+        "AGENTS_non_utf8",
+        "AGENTS_imported"
+      ]
+    },
+    {
+      "id": "S04",
+      "name": "Skills catalog/detail/upload",
+      "status": "representative",
+      "scenarioIds": [
+        "S04:idle",
+        "S04:pending",
+        "S04:slow",
+        "S04:succeeded",
+        "S04:failed",
+        "S04:unknown"
+      ],
+      "source": [
+        "app.ts:1324-1384,1463-1483,1816-1892,1897-2016,2455-2477",
+        "adapter.ts:303-335"
+      ],
+      "notYetInteractive": [
+        "enabled",
+        "disabled",
+        "default_selected",
+        "not_default_selected",
+        "object_missing",
+        "add_directory",
+        "update_directory",
+        "directory_picker_unsupported",
+        "preflight_valid",
+        "invalid_name",
+        "name_mismatch",
+        "missing_SKILL_md",
+        "upload_limit",
+        "uploading",
+        "validating",
+        "uploaded_confirmed",
+        "unknown_check_original_skill",
+        "default_reference_blocked",
+        "typed_name_remove_confirmation"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "skills",
+        "dialog": "skill-add",
+        "mode": "action",
+        "buttons": [
+          "serve-dialog-submit"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "enabled",
+        "disabled",
+        "default_selected",
+        "not_default_selected",
+        "object_missing",
+        "add_directory",
+        "update_directory",
+        "directory_picker_unsupported",
+        "preflight_valid",
+        "invalid_name",
+        "name_mismatch",
+        "missing_SKILL_md",
+        "upload_limit",
+        "uploading",
+        "validating",
+        "uploaded_confirmed",
+        "unknown_check_original_skill",
+        "default_reference_blocked",
+        "typed_name_remove_confirmation"
+      ]
+    },
+    {
+      "id": "S05",
+      "name": "Packages catalog/detail/submission",
+      "status": "representative",
+      "scenarioIds": [
+        "S05:idle",
+        "S05:pending",
+        "S05:slow",
+        "S05:succeeded",
+        "S05:failed",
+        "S05:unknown"
+      ],
+      "source": [
+        "app.ts:1389-1461,1816-1892,1897-1957,2019-2129,2807-2825",
+        "adapter.ts:272-292,337-395"
+      ],
+      "notYetInteractive": [
+        "enabled",
+        "disabled",
+        "default_reference_blocked",
+        "object_missing",
+        "metadata_absent",
+        "npm_source",
+        "git_source",
+        "directory_source",
+        "zip_source",
+        "source_discard_confirmation",
+        "source_validation",
+        "invalid_manifest",
+        "invalid_zip",
+        "upload_limit",
+        "uploading",
+        "verifying",
+        "submission_accepted",
+        "acceptance_unknown",
+        "intent_conflict",
+        "package_busy",
+        "update",
+        "remove_confirmation",
+        "published"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "packages",
+        "dialog": "package-add",
+        "mode": "action",
+        "buttons": [
+          "serve-dialog-submit"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "enabled",
+        "disabled",
+        "default_reference_blocked",
+        "object_missing",
+        "metadata_absent",
+        "npm_source",
+        "git_source",
+        "directory_source",
+        "zip_source",
+        "source_discard_confirmation",
+        "source_validation",
+        "invalid_manifest",
+        "invalid_zip",
+        "upload_limit",
+        "uploading",
+        "verifying",
+        "submission_accepted",
+        "acceptance_unknown",
+        "intent_conflict",
+        "package_busy",
+        "update",
+        "remove_confirmation",
+        "published",
+        "failed"
+      ]
+    },
+    {
+      "id": "S06",
+      "name": "Models list/add/detail/actions",
+      "status": "representative",
+      "scenarioIds": [
+        "S06:idle",
+        "S06:pending",
+        "S06:slow",
+        "S06:succeeded",
+        "S06:failed",
+        "S06:unknown"
+      ],
+      "source": [
+        "model-management.ts:15-82",
+        "model-form.ts:24-48",
+        "adapter.ts:29-40,223-225"
+      ],
+      "notYetInteractive": [
+        "missing_model",
+        "enabled_key_available",
+        "enabled_key_unavailable",
+        "disabled_key_available",
+        "disabled_key_unavailable",
+        "optional_display_name",
+        "existing_key_preserved_blank",
+        "save_pending",
+        "enable_pending",
+        "disable_pending",
+        "delete_pending",
+        "default_pending",
+        "success",
+        "committed_refresh_failed",
+        "unknown_locked",
+        "invalid_field",
+        "model_in_use_rejection"
+      ],
+      "note": "Action-feedback sample: demonstrates pending/terminal/unknown ownership; full object lifecycle/readback is not implemented. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "models",
+        "dialog": "model-add",
+        "mode": "action",
+        "buttons": [
+          "serve-dialog-submit"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "missing_model",
+        "enabled_key_available",
+        "enabled_key_unavailable",
+        "disabled_key_available",
+        "disabled_key_unavailable",
+        "optional_display_name",
+        "existing_key_preserved_blank",
+        "save_pending",
+        "enable_pending",
+        "disable_pending",
+        "delete_pending",
+        "default_pending",
+        "slow",
+        "success",
+        "committed_refresh_failed",
+        "unknown_locked",
+        "invalid_field",
+        "model_in_use_rejection"
+      ]
+    },
+    {
+      "id": "S07",
+      "name": "Model test details",
+      "status": "representative",
+      "scenarioIds": [
+        "S07:idle",
+        "S07:pending",
+        "S07:slow",
+        "S07:succeeded",
+        "S07:failed",
+        "S07:unknown"
+      ],
+      "source": [
+        "model-form.ts:50-67",
+        "model-management.ts:77-82",
+        "packages/contracts/src/ai-model-management.ts:43-58"
+      ],
+      "notYetInteractive": [
+        "none",
+        "success_reply",
+        "success_truncated",
+        "authentication",
+        "model",
+        "rate-limit",
+        "network",
+        "timeout",
+        "protocol",
+        "response-limit",
+        "request_not_started",
+        "result_unavailable",
+        "result_incomplete",
+        "stale_revision",
+        "diagnostic_id",
+        "field_recovery"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "models",
+        "dialog": "model-add",
+        "mode": "test",
+        "buttons": [
+          "serve-dialog-test"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "none",
+        "pending",
+        "slow",
+        "success_reply",
+        "success_truncated",
+        "authentication",
+        "model",
+        "rate-limit",
+        "network",
+        "timeout",
+        "protocol",
+        "response-limit",
+        "request_not_started",
+        "result_unavailable",
+        "result_incomplete",
+        "stale_revision",
+        "diagnostic_id",
+        "field_recovery"
+      ]
+    },
+    {
+      "id": "S08",
+      "name": "Runtime configuration/readiness",
+      "status": "representative",
+      "scenarioIds": [
+        "S08:idle",
+        "S08:pending",
+        "S08:slow",
+        "S08:succeeded",
+        "S08:failed",
+        "S08:unknown"
+      ],
+      "source": [
+        "app.ts:683-704,950-1010,2250-2269,2295-2311"
+      ],
+      "notYetInteractive": [
+        "unconfigured",
+        "saved_summary",
+        "editing",
+        "no_eligible_models",
+        "selected_model_missing",
+        "model_catalog_failed",
+        "release_defaults_missing",
+        "saving",
+        "saved_ready",
+        "saved_not_ready",
+        "saved_readiness_unconfirmed",
+        "write_unknown",
+        "readback",
+        "model_required"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "runtime",
+        "mode": "action",
+        "buttons": [
+          "serve-runtime-save"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "unconfigured",
+        "saved_summary",
+        "editing",
+        "no_eligible_models",
+        "selected_model_missing",
+        "model_catalog_failed",
+        "release_defaults_missing",
+        "saving",
+        "saved_ready",
+        "saved_not_ready",
+        "saved_readiness_unconfirmed",
+        "write_unknown",
+        "readback",
+        "model_required"
+      ]
+    },
+    {
+      "id": "S09",
+      "name": "Package Operation lookup/detail",
+      "status": "representative",
+      "scenarioIds": [
+        "S09:idle",
+        "S09:pending",
+        "S09:slow",
+        "S09:succeeded",
+        "S09:failed",
+        "S09:unknown",
+        "S09:empty",
+        "S09:refresh",
+        "S09:refresh-failed"
+      ],
+      "source": [
+        "app.ts:1486-1558,2104-2129,2166-2191",
+        "package-phase.ts:3-31",
+        "adapter.ts:92-100,272-298"
+      ],
+      "notYetInteractive": [
+        "no_id",
+        "remembered_id",
+        "unavailable",
+        "running",
+        "superseded",
+        "queued",
+        "source",
+        "prepare",
+        "validate",
+        "publish",
+        "cleanup-pending",
+        "unrecognized_phase",
+        "observation_interrupted",
+        "resume_original_id",
+        "diagnostic",
+        "terminal_retry_new_submission"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "operations",
+        "mode": "read",
+        "selector": "#serve-op-result",
+        "buttons": [
+          "serve-op-find"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "no_id",
+        "remembered_id",
+        "unavailable",
+        "running",
+        "succeeded",
+        "failed",
+        "superseded",
+        "queued",
+        "source",
+        "prepare",
+        "validate",
+        "publish",
+        "cleanup-pending",
+        "unrecognized_phase",
+        "observation_interrupted",
+        "resume_original_id",
+        "diagnostic",
+        "terminal_retry_new_submission"
+      ]
+    },
+    {
+      "id": "S10",
+      "name": "About",
+      "status": "representative",
+      "scenarioIds": [
+        "S10:idle",
+        "S10:pending",
+        "S10:slow",
+        "S10:succeeded",
+        "S10:failed",
+        "S10:unknown",
+        "S10:empty",
+        "S10:refresh",
+        "S10:refresh-failed"
+      ],
+      "source": [
+        "app.ts:2911-2918"
+      ],
+      "notYetInteractive": [
+        "build_unavailable",
+        "build_available",
+        "modified_build",
+        "release_notes_present",
+        "release_notes_absent",
+        "refreshing",
+        "stale_error"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "about",
+        "mode": "read",
+        "selector": ".serve-panel",
+        "buttons": [
+          "serve-refresh-about"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "build_unavailable",
+        "build_available",
+        "modified_build",
+        "release_notes_present",
+        "release_notes_absent",
+        "refreshing",
+        "stale_error"
+      ]
+    },
+    {
+      "id": "S11",
+      "name": "Hosted Quick setup model",
+      "status": "representative",
+      "scenarioIds": [
+        "S11:idle",
+        "S11:pending",
+        "S11:slow",
+        "S11:succeeded",
+        "S11:failed",
+        "S11:unknown"
+      ],
+      "source": [
+        "quick-setup.ts:7,31-45,95-151,283-324,338-405"
+      ],
+      "notYetInteractive": [
+        "loading",
+        "read_error",
+        "suggested_model",
+        "choose_existing",
+        "no_eligible_saved_model",
+        "catalog_unavailable",
+        "release_incomplete",
+        "field_invalid",
+        "test_pending",
+        "test_succeeded",
+        "test_failed",
+        "model_saved_runtime_rejected",
+        "model_unknown",
+        "runtime_unknown",
+        "readback_confirmed",
+        "readback_ambiguous",
+        "unsaved_leave_confirmation"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "setup",
+        "mode": "action",
+        "buttons": [
+          "console-save",
+          "console-test"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "loading",
+        "read_error",
+        "suggested_model",
+        "choose_existing",
+        "no_eligible_saved_model",
+        "catalog_unavailable",
+        "release_incomplete",
+        "field_invalid",
+        "test_pending",
+        "test_succeeded",
+        "test_failed",
+        "model_saved_runtime_rejected",
+        "model_unknown",
+        "runtime_unknown",
+        "readback_confirmed",
+        "readback_ambiguous",
+        "unsaved_leave_confirmation"
+      ]
+    },
+    {
+      "id": "S12",
+      "name": "Hosted Quick setup preparation",
+      "status": "representative",
+      "scenarioIds": [
+        "S12:idle",
+        "S12:pending",
+        "S12:slow",
+        "S12:succeeded",
+        "S12:failed",
+        "S12:unknown",
+        "S12:unconfigured",
+        "S12:preparing",
+        "S12:retrying",
+        "S12:ready"
+      ],
+      "source": [
+        "quick-setup.ts:45,159-257,326-336"
+      ],
+      "notYetInteractive": [
+        "no_snapshot",
+        "dependencies_pending",
+        "retry_delay",
+        "read_interrupted",
+        "stale_snapshot",
+        "components_ready_core_unconfirmed"
+      ],
+      "note": "Representative read/state projection. Detailed source labels are audit mapping, not exhaustive backend branch execution.",
+      "route": {
+        "area": "console",
+        "consoleTab": "setup",
+        "mode": "setup",
+        "selector": ".serve-setup-body,.serve-slab,.serve-panel",
+        "buttons": [
+          "console-save"
+        ]
+      },
+      "sourceLabelsNotClaimedFullyInteractive": [
+        "no_snapshot",
+        "dependencies_pending",
+        "preparing",
+        "retrying",
+        "retry_delay",
+        "failed",
+        "unconfigured",
+        "read_interrupted",
+        "stale_snapshot",
+        "ready",
+        "components_ready_core_unconfirmed"
+      ]
+    }
+  ],
+  "deferred": [
+    "Full Console login/standalone onboarding forms absent from uploaded V12",
+    "Real Core/model/authentication/filesystem integration",
+    "Rare branch/error-specific readback and recovery beyond representative fixture controls"
+  ]
+}

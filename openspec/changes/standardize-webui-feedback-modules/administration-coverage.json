@@ -1,0 +1,607 @@
+{
+  "change": "standardize-webui-feedback-modules",
+  "scope": "Administration, hosted Quick setup, actual login/initial-shell boundaries",
+  "stateNamesAreReviewLabelsNotNewDTOs": true,
+  "families": [
+    {
+      "id": "S01",
+      "name": "Overview",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: readPage, statusPage, refreshHealth, reportReadFailure",
+        "apps/console-webui/src/adapter.ts: health, lastHealth (atomic confirmed aggregate)"
+      ],
+      "observableStates": [
+        "ready",
+        "runtime_unconfigured",
+        "preparation_active",
+        "configured_not_ready",
+        "blocked",
+        "stale_health",
+        "no_confirmed_health",
+        "checks_true_false_unknown"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "Host进程Start/Stop不属于管理状态；runtime配置不是通用Operation。",
+      "tests": [
+        "apps/console-webui/test/management-flow.spec.mjs: S08 Overview / stale Ready / polling",
+        "apps/console-webui/test/feedback.spec.mjs: availability cases",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: Overview aggregation, both source failures, retained lastHealth and late identity"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S02",
+      "name": "Users and account actions",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: usersPage, createUserDialog, userActionDialog, refreshConfirmed",
+        "apps/console-webui/src/action-state.ts: ActionState",
+        "apps/console-webui/src/adapter.ts: createUser, userAction, users",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "administrator",
+        "user",
+        "enabled",
+        "disabled",
+        "current_account",
+        "create_validation",
+        "reset_validation",
+        "known_success",
+        "LAST_ADMIN",
+        "USER_NOT_FOUND",
+        "create_unknown",
+        "self_change_revokes_session"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "账号修改没有Package幂等Resume协议，也没有虚构百分比；未知通过账号列表读回。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: user confirmation",
+        "apps/console-webui/test/feedback.spec.mjs: S03 user variants / committed lost response",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S03",
+      "name": "Default Work configuration",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: defaultsPage, defaultDraft, defaultConflicts, saveDefaults, readback",
+        "apps/console-webui/src/adapter.ts: defaults, saveDefaults",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "unavailable",
+        "clean",
+        "dirty",
+        "empty_skills_packages_instructions",
+        "ordered_skills",
+        "disabled_or_removed_reference",
+        "catalog_journey_preserves_draft",
+        "external_field_conflict",
+        "review_conflict",
+        "keep_draft",
+        "use_core",
+        "save_pending",
+        "save_success",
+        "save_unknown",
+        "readback_matches",
+        "readback_differs",
+        "AGENTS_oversized",
+        "AGENTS_non_utf8",
+        "AGENTS_imported"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "默认配置保存不Apply现有Work；无通用Operation/任务百分比。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: default draft",
+        "apps/console-webui/test/feedback.spec.mjs: Defaults / AGENTS preflight",
+        "apps/console-webui/test/management-flow.spec.mjs: S11 retained draft",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S04",
+      "name": "Skills catalog/detail/upload",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: skillsPage, skillDetails, uploadChooser, submitSkill, catalogActionDialog",
+        "apps/console-webui/src/adapter.ts: inspectSkillFiles, uploadSkill, catalogAction",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "enabled",
+        "disabled",
+        "default_selected",
+        "not_default_selected",
+        "object_missing",
+        "add_directory",
+        "update_directory",
+        "directory_picker_unsupported",
+        "preflight_valid",
+        "invalid_name",
+        "name_mismatch",
+        "missing_SKILL_md",
+        "upload_limit",
+        "uploading",
+        "validating",
+        "uploaded_confirmed",
+        "unknown_check_original_skill",
+        "default_reference_blocked",
+        "typed_name_remove_confirmation"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "创建必须真实目录及SKILL.md，name-only创建不是能力；未知上传不能重新发送代替核对。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: Skill directory",
+        "apps/console-webui/test/feedback.spec.mjs: S04 add/update/toggle/remove / S02 preflight",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: catalog read retention",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S05",
+      "name": "Packages catalog/detail/submission",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: packagesPage, packageDetails, submitPackage, packageIntent",
+        "apps/console-webui/src/adapter.ts: submitPackage, intents, inspectPackageFiles",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "enabled",
+        "disabled",
+        "default_reference_blocked",
+        "object_missing",
+        "metadata_absent",
+        "npm_source",
+        "git_source",
+        "directory_source",
+        "zip_source",
+        "source_discard_confirmation",
+        "source_validation",
+        "invalid_manifest",
+        "invalid_zip",
+        "upload_limit",
+        "uploading",
+        "verifying",
+        "submission_accepted",
+        "acceptance_unknown",
+        "intent_conflict",
+        "package_busy",
+        "update",
+        "remove_confirmation",
+        "published",
+        "failed"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "Console source只有npm/Git/directory/ZIP，不加入Desktop Core catalog；accepted不是published；cancelled不是Package Operation枚举。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: Package four sources / lost acceptance",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: exact stable source/key Resume",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S06",
+      "name": "Models list/add/detail/actions",
+      "currentOwners": [
+        "apps/console-webui/src/model-management.ts: ModelManagement",
+        "apps/console-webui/src/model-port.ts: ModelPort",
+        "apps/console-webui/src/model-form.ts: modelDraftIssue"
+      ],
+      "observableStates": [
+        "missing_model",
+        "enabled_key_available",
+        "enabled_key_unavailable",
+        "disabled_key_available",
+        "disabled_key_unavailable",
+        "optional_display_name",
+        "existing_key_preserved_blank",
+        "save_pending",
+        "enable_pending",
+        "disable_pending",
+        "delete_pending",
+        "default_pending",
+        "slow",
+        "success",
+        "committed_refresh_failed",
+        "unknown_locked",
+        "invalid_field",
+        "model_in_use_rejection"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "DTO无model.default布尔字段；id与modelRef不能互换；Test不是Save/Enable/Choose前置门槛。",
+      "tests": [
+        "apps/console-webui/test/model-management.test.mjs",
+        "apps/console-webui/test/feedback.spec.mjs: model cases",
+        "apps/console-webui/test/management-flow.spec.mjs: S10 cases"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S07",
+      "name": "Model test details",
+      "currentOwners": [
+        "apps/console-webui/src/model-management.ts: test, testResult, revision",
+        "apps/console-webui/src/model-form.ts: ModelTestRecord, modelTestSummary, modelTestDetails",
+        "apps/console-webui/src/model-port.ts: test"
+      ],
+      "observableStates": [
+        "none",
+        "pending",
+        "slow",
+        "success_reply",
+        "success_truncated",
+        "authentication",
+        "model",
+        "rate-limit",
+        "network",
+        "timeout",
+        "protocol",
+        "response-limit",
+        "request_not_started",
+        "result_unavailable",
+        "result_incomplete",
+        "stale_revision",
+        "diagnostic_id",
+        "field_recovery"
+      ],
+      "readLifecycle": [
+        "not-run",
+        "pending",
+        "slow",
+        "result",
+        "unavailable",
+        "stale-revision"
+      ],
+      "protocolBoundary": "Test没有配置保存/生命周期副作用或通用Operation；结果未知属于Test结果未取得，不成为配置写锁。",
+      "tests": [
+        "apps/console-webui/test/model-management.test.mjs: optional Test",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: Test error category",
+        "apps/console-webui/test/feedback.spec.mjs: all Test reason categories / stale / dialogs"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S08",
+      "name": "Runtime configuration/readiness",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: runtimePage, runtimeDraft, saveRuntime, readback",
+        "apps/console-webui/src/adapter.ts: saveRuntimeSelection, runtime, health",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "unconfigured",
+        "saved_summary",
+        "editing",
+        "no_eligible_models",
+        "selected_model_missing",
+        "model_catalog_failed",
+        "release_defaults_missing",
+        "saving",
+        "saved_ready",
+        "saved_not_ready",
+        "saved_readiness_unconfirmed",
+        "write_unknown",
+        "readback",
+        "model_required"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "Runtime保存只影响未来Work；返回配置而非Operation；readiness失败不是保存失败。",
+      "tests": [
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: Runtime has no Operation",
+        "apps/console-webui/test/feedback.spec.mjs: W3 and S05",
+        "apps/console-webui/test/management-flow.spec.mjs: S09",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S09",
+      "name": "Package Operation lookup/detail",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: operationPage, refreshOperation, rememberedOperation, interruptedOperation",
+        "apps/console-webui/src/adapter.ts: operation",
+        "apps/console-webui/src/package-phase.ts: packagePhaseView",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "no_id",
+        "remembered_id",
+        "unavailable",
+        "running",
+        "succeeded",
+        "failed",
+        "superseded",
+        "queued",
+        "source",
+        "prepare",
+        "validate",
+        "publish",
+        "cleanup-pending",
+        "unrecognized_phase",
+        "observation_interrupted",
+        "resume_original_id",
+        "diagnostic",
+        "terminal_retry_new_submission"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "Operation DTO只有running/succeeded/failed/superseded，unknown是观察不确定而非DTO枚举；无全局历史/假取消。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: R6 phase enums / serial observation",
+        "apps/console-webui/test/management-flow.spec.mjs: S13",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S10",
+      "name": "About",
+      "currentOwners": [
+        "apps/console-webui/src/app.ts: productInfoPage, productInfo, readPage",
+        "apps/console-webui/src/adapter.ts: about",
+        "apps/console-webui/src/view-scope.ts: captureViewGuard (read-only callback admission facts; app currentView delegate)"
+      ],
+      "observableStates": [
+        "build_unavailable",
+        "build_available",
+        "modified_build",
+        "release_notes_present",
+        "release_notes_absent",
+        "refreshing",
+        "stale_error"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "不存在的build/commit/notes不能推断补造；无后台任务或百分比。",
+      "tests": [
+        "apps/console-webui/test/console.spec.mjs: About text safety",
+        "apps/console-webui/test/management-flow.spec.mjs: S14",
+        "apps/console-webui/test/adapter-feedback-contract.test.mjs: family transport reads/writes, identity and retained snapshots",
+        "apps/console-webui/test/action-state-contract.test.mjs: actual ActionState confirmed/readback/unknown admission",
+        "apps/console-webui/test/view-scope.test.mjs: actual shared app callback route/load/identity/dialog guard"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S11",
+      "name": "Hosted Quick setup model",
+      "currentOwners": [
+        "apps/console-webui/src/quick-setup.ts: mountQuickSetup, readCurrent, continueSetup, resolveUnknown",
+        "apps/console-webui/src/quick-setup-port.ts: QuickSetupPort"
+      ],
+      "observableStates": [
+        "loading",
+        "read_error",
+        "suggested_model",
+        "choose_existing",
+        "no_eligible_saved_model",
+        "catalog_unavailable",
+        "release_incomplete",
+        "field_invalid",
+        "test_pending",
+        "test_succeeded",
+        "test_failed",
+        "model_saved_runtime_rejected",
+        "model_unknown",
+        "runtime_unknown",
+        "readback_confirmed",
+        "readback_ambiguous",
+        "unsaved_leave_confirmation"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "完整首设Create admin/Sign in由onboarding.ts及Console登录边界单列覆盖，不因hosted prototype未绘制而豁免；不新增Launcher。",
+      "tests": [
+        "apps/console-webui/test/quick-setup-recovery.test.mjs: mounted actual feature 32 cases",
+        "apps/console-webui/test/quick-setup-port.test.mjs",
+        "apps/console-webui/test/quick-setup.spec.mjs"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    },
+    {
+      "id": "S12",
+      "name": "Hosted Quick setup preparation",
+      "currentOwners": [
+        "apps/console-webui/src/quick-setup.ts: acceptSnapshot, preparationPresentation, maybeAutoEnter, autoEnter",
+        "apps/console-webui/src/setup-readiness.ts: preparationIsReady",
+        "apps/console-webui/src/quick-setup-port.ts: readSnapshot"
+      ],
+      "observableStates": [
+        "no_snapshot",
+        "dependencies_pending",
+        "preparing",
+        "retrying",
+        "retry_delay",
+        "failed",
+        "unconfigured",
+        "read_interrupted",
+        "stale_snapshot",
+        "ready",
+        "components_ready_core_unconfirmed"
+      ],
+      "readLifecycle": [
+        "initial-no-data",
+        "confirmed-content",
+        "confirmed-empty",
+        "initial-error",
+        "retained-refresh",
+        "retained-refresh-error",
+        "bounded-read-unconfirmed"
+      ],
+      "protocolBoundary": "没有由时长推导的真实百分比或ETA；六组件全部ready也不能替代当前status.ready/preparation.ready与无读错。",
+      "tests": [
+        "apps/console-webui/test/setup-readiness.test.mjs",
+        "apps/console-webui/test/quick-setup-recovery.test.mjs: ready without intent / read paths",
+        "apps/console-webui/test/quick-setup.spec.mjs: six components / intent invalidation"
+      ],
+      "validation": "Direct module tests run where listed in evidence; browser suites and real Core chain must be recorded separately; no full-family pass implied."
+    }
+  ],
+  "additionalOwners": [
+    {
+      "entry": "Console /login",
+      "owner": "apps/console-webui/src/app.ts: loginPage, signingIn, loginOutcomeUnknown, checkConsoleLogin; adapter.ts session/read deadline",
+      "states": [
+        "initial-session",
+        "signed-out",
+        "submitting",
+        "rate-limited",
+        "rejected",
+        "acceptance-unknown",
+        "same-account-confirmed",
+        "conflicting-account",
+        "readback-unavailable",
+        "signed-out-confirmed"
+      ],
+      "tests": [
+        "boot-recovery.spec.mjs",
+        "feedback.spec.mjs",
+        "language.spec.mjs"
+      ]
+    },
+    {
+      "entry": "Sign out",
+      "owner": "app.ts sign-out; ConsoleAdapter.signOut/clearIdentity",
+      "states": [
+        "pending",
+        "confirmed-revoked",
+        "unavailable-not-completed",
+        "identity-replaced",
+        "late-response"
+      ],
+      "tests": [
+        "controlplane-compat.spec.mjs",
+        "feedback.spec.mjs"
+      ]
+    },
+    {
+      "entry": "Initial shell and availability",
+      "owner": "app.ts startConsole/readAvailability/readPage",
+      "states": [
+        "first-skeleton",
+        "ten-second-unconfirmed",
+        "safe-two-retries",
+        "manual-retry",
+        "late-old-read",
+        "retained-page-read-error",
+        "identity-cleared"
+      ],
+      "tests": [
+        "boot-recovery.spec.mjs",
+        "feedback.spec.mjs"
+      ]
+    },
+    {
+      "entry": "Independent onboarding",
+      "owner": "apps/console-webui/src/onboarding.ts",
+      "states": [
+        "state-read",
+        "session-read",
+        "create-admin",
+        "manual-login",
+        "unknown-creation",
+        "unknown-login",
+        "readback",
+        "pagehide-bfcache",
+        "shared-assets-failure"
+      ],
+      "tests": [
+        "controlplane-compat.spec.mjs",
+        "boot-recovery.spec.mjs",
+        "language.spec.mjs"
+      ]
+    }
+  ]
+}

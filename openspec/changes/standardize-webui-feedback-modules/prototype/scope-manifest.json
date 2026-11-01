@@ -1,0 +1,385 @@
+{
+  "schemaVersion": 1,
+  "change": "standardize-webui-feedback-modules",
+  "role": "Frozen V13 visual/interaction reference; OpenSpec requirements govern production acceptance",
+  "productionBaseline": {
+    "repository": "pphboy/piwork",
+    "commit": "7c2325552a6db6e6777120c24135c16e458adcd5"
+  },
+  "prototypeSource": {
+    "repository": "piwork-loading-prototype",
+    "commit": "ea80fa4c8e46d96ba91dce298f06e9d79c036c7c",
+    "standalone": "prototype/Piwork_UI_Review_V13.html",
+    "edition": "V13, latest Library v4 handoff; no Library object ID asserted",
+    "mockOnly": true
+  },
+  "artifacts": [
+    {
+      "path": "prototype/Piwork_UI_Review_V13.html",
+      "sourcePath": "dist/Piwork_UI_Review_V13.html",
+      "bytes": 1315587,
+      "sha256": "679968a781adba928cbc867e5466d590ebfb7db685d674d56fd43468cc653b76"
+    },
+    {
+      "path": "prototype/source-coverage.json",
+      "sourcePath": "dist/v13/source-coverage.json",
+      "bytes": 38993,
+      "sha256": "2895fe7a27c521ff44b85c40ddfbe812a8bb0639cbbb3c0c98ad0dd66c0032ea"
+    },
+    {
+      "path": "prototype/coverage-manifest.json",
+      "sourcePath": "dist/v13/coverage-manifest.json",
+      "bytes": 55361,
+      "sha256": "9b71f7a7c3b8e965dc354b49a1f86fb2c86b24c43117c4e5fe087d432e6d03fe"
+    }
+  ],
+  "canonicalLogo": {
+    "path": "apps/ui-shared/assets/piwork-logo.png",
+    "sha256": "bed999510609e8e24b96a4f4f0aaa7c3572384248fd2bc37cce943190abd95ab",
+    "policy": "Reuse original bytes; do not redraw"
+  },
+  "scope": {
+    "included": [
+      "Desktop WebUI",
+      "Serve management UI",
+      "Actual login/session/admission and standalone form state branches",
+      "Hosted Quick setup",
+      "Shared-module regression of standalone first setup"
+    ],
+    "excluded": [
+      "Launcher redesign",
+      "Third-party Service iframe internal UI",
+      "New backend protocols or global operation center"
+    ],
+    "allActualStatesRequired": true,
+    "prototypeScenarioCountIsNotAcceptanceLimit": true,
+    "appliesTo": "Product UI implementation represented by V13; projectwide maintenance governance is separately specified below"
+  },
+  "prototypeCoverage": {
+    "desktopFamilies": 23,
+    "serveFamilies": 12,
+    "familyCount": 35,
+    "representativeScenarioEntries": 277,
+    "notAProofOfBackendCoverage": true,
+    "frozenLimitations": [
+      "Full Console login/standalone onboarding forms absent from uploaded V12",
+      "Real Core/model/authentication/filesystem integration",
+      "Rare branch/error-specific readback and recovery beyond representative fixture controls"
+    ]
+  },
+  "productionGapDisposition": [
+    {
+      "gap": "Login/session/admission, standalone forms and initial shell not fully drawn in V12/V13",
+      "disposition": "Included implementation and acceptance, not deferred",
+      "tasks": [
+        "1.2",
+        "5.1",
+        "6.2"
+      ]
+    },
+    {
+      "gap": "Real Core/model/authentication/filesystem and browser file delivery",
+      "disposition": "Required integration evidence; never infer from synthetic fixtures",
+      "tasks": [
+        "4.3",
+        "6.3",
+        "6.4",
+        "8.1",
+        "8.2"
+      ]
+    },
+    {
+      "gap": "Rare error/readback/recovery and actual source states beyond representative fixtures",
+      "disposition": "Enumerate actual reachable states per family, test or explicitly justify not-applicable; no silent omission",
+      "tasks": [
+        "1.2",
+        "5.1",
+        "5.2",
+        "5.3",
+        "5.4",
+        "6.1"
+      ]
+    },
+    {
+      "gap": "Legacy V12 bridge generic state escape ports",
+      "disposition": "Prototype-only limitation; forbidden production boundary",
+      "requirements": [
+        "WMB-001",
+        "WMB-006",
+        "WMB-007"
+      ]
+    }
+  ],
+  "familyAcceptanceIndex": [
+    {
+      "id": "D01",
+      "name": "Core admission, session and connection",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D02",
+      "name": "Works list and retained reads",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D03",
+      "name": "Work lifecycle projection",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 13,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D04",
+      "name": "Create/stop/delete and unsent forms",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D05",
+      "name": "Service catalog and viewport",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 12,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D06",
+      "name": "Service controls, logs and cleanup",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D07",
+      "name": "File browser and selection",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D08",
+      "name": "File preview and editor",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D09",
+      "name": "File writes and batch mutation",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D10",
+      "name": "File upload",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D11",
+      "name": "Configuration save and apply",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D12",
+      "name": "Skills, packages and candidate adoption",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D13",
+      "name": "Sessions, history and command reads",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D14",
+      "name": "Message submission, Run and tool execution",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D15",
+      "name": "Session model and thinking",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D16",
+      "name": "Image attachment/history",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D17",
+      "name": "Pi Request inspection/cancellation",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D18",
+      "name": "Import inspection and submission",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D19",
+      "name": "Work export flow and progress-only Details",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 17,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D20",
+      "name": "Diagnostic log export",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D21",
+      "name": "Explicit Operation/history recovery",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D22",
+      "name": "About, preference and recovery utilities",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "D23",
+      "name": "Cross-surface action/notification ownership",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S01",
+      "name": "Overview",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 15,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S02",
+      "name": "Users and account actions",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S03",
+      "name": "Default Work configuration",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S04",
+      "name": "Skills catalog/detail/upload",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S05",
+      "name": "Packages catalog/detail/submission",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S06",
+      "name": "Models list/add/detail/actions",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S07",
+      "name": "Model test details",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S08",
+      "name": "Runtime configuration/readiness",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S09",
+      "name": "Package Operation lookup/detail",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S10",
+      "name": "About",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 9,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S11",
+      "name": "Hosted Quick setup model",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 6,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    },
+    {
+      "id": "S12",
+      "name": "Hosted Quick setup preparation",
+      "prototypeStatus": "representative",
+      "representativeScenarioEntries": 10,
+      "productionAcceptance": "Pending implementation; actual states and tests required"
+    }
+  ],
+  "validationScope": {
+    "formalOpenSpecPreparation": true,
+    "businessImplementationPerformed": false,
+    "projectSkillInstalled": false,
+    "productionTestsRunInPreparation": false,
+    "prototypeIsNotBackendTestResult": true
+  },
+  "notes": [
+    "Frozen source-coverage/coverage-manifest retain original historical exclusions and deferred labels; they describe prototype limits only. This scope manifest and normative spec deltas expressly include production gap closure.",
+    "The standalone snapshot and its embedded review prose are visual evidence, not a replacement for the current proposal/design/specs/tasks."
+  ],
+  "projectMaintenanceScope": {
+    "requirementSource": "specs/project-maintainability/spec.md",
+    "included": [
+      "Go backend, CLI and helpers",
+      "TypeScript Agent and retained packages",
+      "Desktop/Serve UI",
+      "Configuration and defaults",
+      "Protocols, generation and embedded resources",
+      "Current documentation, bilingual deployment and examples"
+    ],
+    "notRepresentedOrValidatedByPrototype": true,
+    "wholeRepositoryRewrite": false,
+    "businessConfigurationImplementationPerformed": false
+  }
+}
