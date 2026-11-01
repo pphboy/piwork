@@ -301,3 +301,11 @@ E真实旧构建证明：选中的fixture Skill与@fixture/tools保持，Save一
 五个新增FS52实际浏览器回归使用既有正式app/CSS、真实UI动作及受控HTTP route/ledger，覆盖过时文件读、中文Save、确认Save的GET恢复、Apply读错准入、部分结果与当前选择。没有regex/VM提取或隐藏app状态写入；中文用例等待真实PUT204完成和已保存/not-busy，不能把pending禁用当成功。官方测试tsc通过，尚未运行浏览器，不计入691直接套件或虚称新用例通过。
 
 新增仅PR4/同仓公开分支运行的GitHub Actions验证配置，contents只读、checkout不持久化凭据、无秘密/上传制品/部署/镜像发布/合并；固定官方action提交，三个独立Linux runner分离unit/static、完整两端browser及真实Docker/Core链。使用显式PR base style检查，不再把clean checkout零文件当PR style证明。历史schema4测试镜像拟从20fb8334精确源码重建，SQL hash与冻结v4一致，再用既有bridge；仅称重建夹具，不冒认原历史digest。该合法隔离运行环境不是重试绕过本地socket/Chromium限制。workflow尚未触发；网络、磁盘、时长、可选旧Core/其他history/SELinux/真实模型等实际执行与skip须以runner日志逐项记录，不能预先宣布环境已解决或所有CI通过。
+
+### 16:35 余下两项已复现检查漏检修复
+
+Protocol检查按当前固定两proto、七个实际输出声明精确inventory，在原before/after之外拒绝遗漏及未变化的额外文件；不会删除额外文件。旧负例中假生成器主动rm旧文件的失真已改为真正覆盖式行为，并验证重复拒绝和原文件保留。全套实际pinned history/protocol/HTTP生成通过，238 Go DTO schemas、8128 TS oracle fixtures及其他输出字节一致。额外真实负例以独占创建的合成obsolete `.pb.go`运行实际protocol generator：检查确实exit1并指出多余文件，原合成bytes原样保留；只删除本次明确创建的合成文件后重新生成通过。没有删除或重置用户文件、没有将修正后的生成物静默归零。
+
+依赖scanner现在只递归扫描template插值的执行表达式，忽略模板data，并保留原offset/行号。测试覆盖literal import/require、反向entry边、循环、嵌套template、字符串/注释/regexp以及静态无插值template target；真正非literal specifier仍是明确未解析限制。额外独立审查构造`if(ok) /}}/`发现第一候选仍会错把regexp括号当插值闭合，真实RED后用有界控制括号上下文区分regexp语句和除法，补正反例再GREEN；不是声称写了完整JavaScript parser。
+
+最终scripts/shared174/174、0skip/fail；实际全PR显式base检查123个源码文件通过，maintenance/文档/strict/diff通过。新scanner直接消费者另比较118个TS/JS/MJS/CSS相对真实base，无新增误报；该只读检查不替代完整CLI/Go检查。此前三项P2假绿都有具体负例与修复，旧“全绿”不被回写为当时已覆盖。GitHub实际验证run41326705682已在先前CI提交头运行，不能把本地新guard结果冒称那个旧head已执行新逻辑；每个远程run继续按自身commit、日志与skip记录。
