@@ -225,6 +225,11 @@ export function renderActionStates(root, actions, view, intentFor, visibleRecord
             continue;
         if (record.action === 'check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh === '')
             continue;
+        // Confirmation is already owned by its Notice; an ordinary readback wait
+        // must not duplicate that success. Failed/unknown results keep recovery.
+        if (!record.pending && record.result && !record.error && !record.blocked && record.refresh === 'refreshing' &&
+            record.resultTone !== 'error' && record.resultTone !== 'unknown')
+            continue;
         // Short results are owned by the single notice host; ordinary reads stay silent.
         if (!record.pending && !record.error && !record.blocked && record.refresh === '')
             continue;

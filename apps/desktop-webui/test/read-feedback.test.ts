@@ -282,3 +282,59 @@ test('configuration read failure denies Apply without rewriting retained pending
     assert.deepEqual(config.active.skills, ['original']);
   }
 });
+
+for (const outcome of ['success', 'pending', 'failure', 'other-service', 'other-work', 'identity'] as const) {
+  test(`original Service log timeout recovery is scoped to its confirmed read: ${outcome}`, async () => {
+    const { serviceLogReadIdentity } = await import(new URL('../browser/service-read-feedback.js', import.meta.url).href);
+    const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+    const { actionNotice, confirmedReadRecovery } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+    const actions = new ActionState();
+    const store = new NoticeStore();
+    store.setIdentity('original');
+    const intent = (action: string, work = 'one', service = 'service-a') => ({
+      ...serviceLogReadIdentity(action, work, service), action, kind: 'read', work,
+      label: action, target: service, anchor: action,
+    });
+    try {
+      const original = actions.begin(intent('service-details'));
+      actions.fail(original, new Error('Original log read timed out'));
+      const event = actionNotice(original, 'original', () => actions.message(original));
+      assert.ok(event);
+      store.publish(event);
+      const retry = actions.begin(intent('refresh-logs', outcome === 'other-work' ? 'two' : 'one', outcome === 'other-service' ? 'service-b' : 'service-a'));
+      assert.ok(retry);
+      if (outcome === 'identity') {
+        actions.clear();
+        store.setIdentity('new');
+      }
+      else if (outcome === 'failure') actions.fail(retry, new Error('Still unavailable'));
+      else if (outcome !== 'pending') actions.finish(retry);
+      if (actions.current(retry) && confirmedReadRecovery(retry) === original.key) store.resolve(event);
+      assert.equal(store.items().length, outcome === 'success' || outcome === 'identity' ? 0 : 1);
+      if (outcome === 'success') {
+        assert.equal(actions.current(original), false);
+        assert.equal(retry.error, undefined);
+        assert.equal(actionNotice(retry, 'original', () => actions.message(retry)), undefined);
+      }
+      if (outcome === 'identity') {
+        actions.finish(original);
+        assert.equal(actions.current(original), false);
+        assert.equal(store.publish(event), false);
+      }
+      if (outcome === 'other-service' || outcome === 'other-work') assert.equal(actions.current(original), true);
+    } finally {
+      actions.clear();
+      store.destroy();
+    }
+  });
+}
+
+test('Service log read identity never adopts Service writes, entry checks or missing targets', async () => {
+  const { serviceLogReadIdentity } = await import(new URL('../browser/service-read-feedback.js', import.meta.url).href);
+  assert.deepEqual(serviceLogReadIdentity('service-details', 'one', 'service-a'), serviceLogReadIdentity('refresh-logs', 'one', 'service-a'));
+  for (const action of ['service-action', 'confirm-service-control', 'retry-service-entry', 'refresh-temporary-cleanups']) {
+    assert.equal(serviceLogReadIdentity(action, 'one', 'service-a'), undefined);
+  }
+  assert.equal(serviceLogReadIdentity('refresh-logs', undefined, 'service-a'), undefined);
+  assert.equal(serviceLogReadIdentity('refresh-logs', 'one', undefined), undefined);
+});

@@ -8,7 +8,7 @@ import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-n
 import { fileReadFeedback, FileReadNoticeOwners, fileReadContextCurrent } from './file-read-feedback.js';
 import { WorkReadFeedback, workReadMatches, type WorkReadFacts } from './work-read-feedback.js';
 import { SettingsReadFeedback, SettingsSaveReadback, configurationReadAllowsApply, settingsReadMatches, type SettingsReadFacts } from './settings-read-feedback.js';
-import { ServiceReadFeedback, serviceReadMatches, type ServiceReadFacts } from './service-read-feedback.js';
+import { ServiceReadFeedback, serviceReadMatches, serviceLogReadIdentity, type ServiceReadFacts } from './service-read-feedback.js';
 import { acceptedChatSubmissionOwns, type OriginalChatSubmission } from './chat-submission-feedback.js';
 import { AboutReadFeedback } from './about-read-feedback.js';
 import { ReadFeedbackBindings, type ReadFeedbackProjection } from './read-feedback.js';
@@ -32,7 +32,7 @@ import { ExportFlows, type ExportFlow } from './export-flow.js';
 import { saveExportFile } from './export-panel-controls.js';
 import { operationKind } from './operation-recovery.js';
 import { operationCauseStatus } from './operation-diagnostics.js';
-import { activityGroups } from './chat-projection.js';
+import { activityGroups, messageReadingSource } from './chat-projection.js';
 import { ImageDrafts, type DraftImage, type HistoryImage } from './images.js';
 import { editAdvanced, synchronizeConfiguration } from './configuration.js';
 import { ActionState, renderActionStates, positionSlowStatus, pruneSlowStatuses, type ActionIntent, type ActionKind, type ActionRecord } from './action-state.js';
@@ -622,8 +622,9 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   const serviceId = el.dataset.serviceId || el.dataset.id || view.data.serviceId || view.service;
   const servicePort = action === 'select-service' ? w?.services.find(service => service.id === serviceId)?.ports[0] : Number(el.dataset.port) || view.port;
   const fallbackResource = action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation','load-earlier-history','reload-history','check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action==='settings' ? w?.id : ['cancel-pi-request','retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
-  const resource = fileActionResource(action, view.file, fallbackResource);
-  const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
+  const logRead = serviceLogReadIdentity(action, w?.id, serviceId);
+  const resource = logRead?.resource ?? fileActionResource(action, view.file, fallbackResource);
+  const key = logRead?.key ?? `${kind}:${w?.id || 'local'}:${resource}:${action}`;
   const chatAction = ['new-session','send-message','retry-chat-submission','cancel-run','resume-run','check-session-model','save-model','retry-conversation','load-earlier-history','reload-history'].includes(action);
   const anchor = `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`;
   return { key, kind, work: w?.id, resource, action, label, target: action === 'create-work' ? view.createName || t('target.newWork') : chatAction ? w?.name || t('target.chat') : `${w?.name || adapter.state.core.address || (adapter.hosted ? t('target.server') : t('target.localCli'))}${resource && resource !== w?.id ? ` · ${resource}` : ''}`,
@@ -909,6 +910,11 @@ function resourceReadFeedback(): ResourceReadEntry[] {
       label: () => t('common.details'),
       run: () => {
         if (identity !== noticeIdentity()) return;
+        if (source === 'status') {
+          const trigger = root.querySelector<HTMLElement>('[data-action="connection"]');
+          if (!trigger) return;
+          trigger.focus({ preventScroll: true });
+        }
         openModal(source === 'status' ? 'connection' : 'operations', source === 'status' ? {} : { workId: current()?.id || '' });
       },
     }),
@@ -1526,7 +1532,7 @@ function workRouteFeedback(w: Work): string {
 }
 function workHeader(w: Work, standalone = false, navigation = '') {
   const model = workHeaderModel({ id: w.id, name: w.name, status: adapter.project(w).label, standalone });
-  return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), model.backAction, "icon-button quiet", `aria-label="${esc(t(model.backLabelKey))}"`)}<span class="header-divider"></span><img class="work-brand-logo" src="/desktop/piwork-logo.png" alt="" width="28" height="28"><h1 title="${esc(w.name)}">${esc(w.name)}</h1>${badge(adapter.project(w).label)}${controlMarkup(workControl(w), true)}${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div>${navigation}<div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-header" data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
+  return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), model.backAction, "icon-button quiet", `aria-label="${esc(t(model.backLabelKey))}"`)}<span class="header-divider"></span><img class="work-brand-logo" src="/desktop/piwork-logo.png" alt="" width="28" height="28"><h1 title="${esc(w.name)}">${esc(w.name)}</h1><span class="work-header-status" role="group" aria-label="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}" title="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}">${controlMarkup(workControl(w), true) || badge(adapter.project(w).label)}</span>${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div>${navigation}<div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-header" data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
 }
 function workTabs(settings: boolean) {
   return `<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${([['Services', t('work.tabServices')], ['Files', t('work.tabFiles')], ['Chat', t('work.tabChat')]] as const).map(([value, label]) => btn(label, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div></nav>`;
@@ -2024,7 +2030,8 @@ function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Me
  const author=m.role==='assistant'&&(!m.runId||!seenAuthors.has(m.runId));if(m.runId&&m.role==='assistant')seenAuthors.add(m.runId);
  let body=m.role==='assistant'&&!m.historyIncomplete?renderChatMarkdown(m.text,{workId:w.id}):esc(m.text);
  if(textWait===index&&messageIndex===group.messages.length-1)body=inlineReplyTail(body,wait);
- return `<div class="message ${m.role}" data-message-key="${esc(key)}"${m.historyDisplaySource?` data-source-key="${esc(m.historyDisplaySource)}"`:''}>${author?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text${m.role==='assistant'?' chat-markdown':''}">${body}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.pendingImages?.length?`<div class="chat-message-images">${m.pendingImages.map(image=>`<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>`:''}${messageSubmissionMarkup(w,m)}${messageHistoryMarkup(sessionId,m)}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>`:''}</div>`;
+ const readingSource = messageReadingSource(m);
+ return `<div class="message ${m.role}" data-message-key="${esc(key)}"${readingSource?` data-source-key="${esc(readingSource)}"`:''}>${author?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text${m.role==='assistant'?' chat-markdown':''}">${body}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.pendingImages?.length?`<div class="chat-message-images">${m.pendingImages.map(image=>`<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>`:''}${messageSubmissionMarkup(w,m)}${messageHistoryMarkup(sessionId,m)}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>`:''}</div>`;
  }).join('')+execution;
  }).join('');
 }

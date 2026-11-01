@@ -872,7 +872,7 @@ pre,
   border-left: 1px solid var(--border);
   margin-right: 3px;
 }
-.work-header-main > .status {
+.work-header-status > .status {
   margin-left: 3px;
 }
 .work-tabs {
@@ -2779,11 +2779,11 @@ dd > .button {
   .header-divider {
     display: none;
   }
-  .work-header-main > .status {
+  .work-header-status > .status {
     font-size: 9px;
     gap: 3px;
   }
-  .work-header-main > .status > i {
+  .work-header-status > .status > i {
     width: 4px;
     height: 4px;
   }
@@ -4101,6 +4101,27 @@ a.button.primary { color:var(--on-accent,#fff); }
   max-width: 230px;
   font-size: 14px;
 }
+/* The original observed/task status shares one allocation before and during a read/write. */
+.work-header-status {
+  display: flex;
+  align-items: center;
+  flex: 0 0 18ch;
+  inline-size: 18ch;
+  min-width: 0;
+  overflow: hidden;
+}
+.work-header-status > .status,
+.work-header .work-header-status > .object-control-state {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.work-header-status > .object-control-state.has-problem > small {
+  display: inline;
+}
 .work-header > .work-tabs {
   height: 100%;
   min-height: 0;
@@ -4182,6 +4203,10 @@ a.button.primary { color:var(--on-accent,#fff); }
     grid-template-rows: 55px 40px;
     gap: 0;
     padding: 0 10px;
+  }
+  .work-header-status {
+    flex-basis: 10ch;
+    inline-size: 10ch;
   }
   .work-header:has(> .work-tabs) .work-header-main {
     grid-column: 1;

@@ -193,4 +193,8 @@ export function activityGroups(messages, previous = []) {
         }
     return groups;
 }
+/** Display identity only; the enclosing Work/Session owns the reading anchor. */
+export function messageReadingSource(message) {
+    return message.historyDisplaySource ?? message.id;
+}
 //# sourceMappingURL=chat-projection.js.map

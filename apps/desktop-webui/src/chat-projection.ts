@@ -130,3 +130,8 @@ export function activityGroups(messages: Message[], previous: ActivityGroup[] = 
   }
   return groups;
 }
+
+/** Display identity only; the enclosing Work/Session owns the reading anchor. */
+export function messageReadingSource(message: Readonly<Pick<Message, 'id' | 'historyDisplaySource'>>): string | undefined {
+  return message.historyDisplaySource ?? message.id;
+}

@@ -20,4 +20,11 @@ export function serviceReadMatches(record, facts) {
         return record.action === 'check-preview' && record.resource === `service:${facts.serviceId}:${facts.port}`;
     return record.action === 'refresh-temporary-cleanups' && record.resource === `cleanup:service:${facts.serviceId}`;
 }
+/** Both entry and explicit retry read the same port-independent Service log snapshot. */
+export function serviceLogReadIdentity(action, workId, serviceId) {
+    if (!workId || !serviceId || !['service-details', 'refresh-logs'].includes(action))
+        return undefined;
+    const resource = `service-logs:${serviceId}`;
+    return { resource, key: `read:${workId}:${resource}` };
+}
 //# sourceMappingURL=service-read-feedback.js.map

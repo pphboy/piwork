@@ -206,3 +206,62 @@ test('retained request and readback errors use their narrow display formatter at
   assert.equal(write.blocked, undefined);
   actions.clear();
 });
+
+test('confirmed Save readback wait does not duplicate its result in a generic local region', async () => {
+  const { renderActionStates } = await import(moduleURL);
+  const oldDocument = globalThis.document;
+  const oldStyle = globalThis.getComputedStyle;
+  const nodes: any[] = [];
+  const region: any = { getClientRects: () => [{}], querySelector: () => null, prepend: (node: any) => nodes.push(node), append: (node: any) => nodes.push(node) };
+  const root: any = { textContent: '', querySelectorAll: (selector: string) => selector === 'main, .main-panel, .agent-panel' ? [region] : [] };
+  Object.assign(globalThis, { document: { createElement: () => ({ dataset: {}, setAttribute: () => {}, append: () => {} }) }, getComputedStyle: () => ({ visibility: 'visible' }) });
+  const actions = new ActionState();
+  let release!: () => void;
+  try {
+    const record = actions.begin({ ...intent('save-config', 'configuration'), action: 'save-config' });
+    actions.confirm(record, 'Settings saved');
+    const readback = actions.refresh(record, () => new Promise<void>(resolve => { release = resolve; }));
+    renderActionStates(root, actions, '', () => undefined);
+    assert.equal(nodes.length, 0, 'the success Notice owns the confirmed result during ordinary readback');
+    assert.equal(record.result, 'Settings saved');
+    assert.equal(record.refresh, 'refreshing');
+    release();
+    await readback;
+    await actions.refresh(record, async () => { throw new Error('Original readback offline'); });
+    renderActionStates(root, actions, '', () => undefined);
+    assert.equal(nodes.length, 1, 'failed readback must retain its local recovery');
+    assert.match(nodes[0].textContent, /Original readback offline/);
+    assert.equal(record.result, 'Settings saved');
+  } finally {
+    release?.();
+    actions.clear();
+    Object.assign(globalThis, { document: oldDocument, getComputedStyle: oldStyle });
+  }
+});
+
+test('readback suppression never hides an unknown, partial failure, or a pending write', async () => {
+  const { renderActionStates } = await import(moduleURL);
+  const oldDocument = globalThis.document;
+  const oldStyle = globalThis.getComputedStyle;
+  const oldWindow = globalThis.window;
+  const nodes: any[] = [];
+  const region: any = { getClientRects: () => [{}], getBoundingClientRect: () => ({ left: 0, top: 0 }), querySelector: () => null, prepend: (node: any) => nodes.push(node), append: (node: any) => nodes.push(node) };
+  const root: any = { textContent: '', querySelectorAll: (selector: string) => selector === 'main, .main-panel, .agent-panel' ? [region] : [] };
+  Object.assign(globalThis, { document: { createElement: () => ({ dataset: {}, style: {}, getBoundingClientRect: () => ({ width: 10, height: 10 }), setAttribute: () => {}, append: () => {} }) }, getComputedStyle: () => ({ visibility: 'visible' }), window: { innerWidth: 1440, innerHeight: 1000 } });
+  try {
+    for (const state of ['unknown', 'error', 'blocked', 'pending'] as const) {
+      const actions = new ActionState();
+      try {
+        const record = actions.begin({ ...intent(state), action: 'confirm-transfer' });
+        if (state !== 'pending') actions.confirm(record, 'Original paths need review');
+        record.refresh = 'refreshing';
+        if (state === 'unknown' || state === 'error') record.resultTone = state;
+        if (state === 'blocked') record.blocked = true;
+        nodes.length = 0;
+        renderActionStates(root, actions, '', () => undefined);
+        assert.equal(nodes.length, 1, state);
+        if (state === 'blocked' || state === 'pending') assert.ok(actions.conflict(intent(state)));
+      } finally { actions.clear(); }
+    }
+  } finally { Object.assign(globalThis, { document: oldDocument, getComputedStyle: oldStyle, window: oldWindow }); }
+});

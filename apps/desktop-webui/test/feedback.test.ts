@@ -3251,7 +3251,7 @@ test('Requests first read rejection after closing its inspector is retained loca
   await expect.poll(() => api(page, "return adapter.requests.get('work-1:')?.loading")).toBe(false);
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.notice-host')).not.toContainText('Closed inspector read failed');
-  assert.match(await api(page, "return adapter.requests.get('work-1:')?.error"), /Closed inspector read failed/);
+  assert.match(await api(page, "return String(adapter.requests.get('work-1:')?.error)"), /Closed inspector read failed/);
   await openRequests(page);
   await expect(page.locator('#modal .request-list')).toContainText('No requests');
   assert.equal(requests.filter(r => r.path === 'works/work-1/agent-requests').length, 2);
@@ -3498,6 +3498,13 @@ test('startup status failure has one original actionable notice and retained con
   await expect(notice).toHaveCount(1);
   await notice.getByRole('button', { name: 'Details', exact: true }).click();
   await expect(page.locator('#modal')).toContainText('Original startup status unavailable');
+  const connection = button(page, 'connection');
+  await expect(connection).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(connection).toHaveAttribute('aria-expanded', 'false');
+  await expect(connection).toBeFocused();
+  await notice.getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page.locator('#modal')).toContainText('Original startup status unavailable');
   failed = false;
   await button(page, 'check-connection').click();
   await expect(notice).toHaveCount(0);
@@ -3509,7 +3516,7 @@ test('deep Work bootstrap collection failure recovers through the canonical Work
   const { page, requests } = await fixture(t, r => failed && r.path === 'works' ? { status: 503, json: { message: 'Original bootstrap Works unavailable' } } : undefined, false, false, undefined, true);
   const notice = page.locator('.notice-error').filter({ hasText: 'Original bootstrap Works unavailable' });
   await expect(notice).toHaveCount(1);
-  await expect(page.locator('main')).toContainText('Original bootstrap Works unavailable');
+  await expect(page.locator('#app > .empty')).toContainText('Original bootstrap Works unavailable');
   await notice.getByRole('button', { name: 'Details', exact: true }).click();
   await expect(page).toHaveURL(/#\/works$/);
   await expect(notice).toHaveCount(1);
@@ -3748,13 +3755,18 @@ test('sticky directory read failure leaves narrow File More and New folder point
   await expect(page.locator('.file-row')).toHaveCount(1);
   failed = true;
   await button(page, 'refresh-files').click();
-  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Original directory unavailable' })).toHaveCount(1);
   await button(page, 'file-add').click();
   await expect(page.locator('.file-actions-menu')).toBeVisible();
   await page.locator('.file-actions-menu [data-action="new-folder"]').click();
   await expect(page.locator('#modal #form-name')).toBeVisible();
-  await expect(page.locator('#modal [data-action="confirm-folder"]')).toBeDisabled();
-  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await page.locator('#modal [data-action="confirm-folder"]').click();
+  await expect(page.locator('#modal')).toContainText('Enter a name without path separators.');
+  await expect(page.locator('#modal #form-name')).toHaveValue('');
+  assert.equal(requests.filter(r => r.method === 'MKCOL').length, 0);
+  await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Original directory unavailable' })).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error').filter({ hasText: 'Enter a name without path separators.' })).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(2);
   assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
 

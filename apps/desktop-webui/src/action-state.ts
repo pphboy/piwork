@@ -197,6 +197,10 @@ export function renderActionStates(root: HTMLElement, actions: ActionState, view
     // A confirmed file batch has a short toast; pending, unknown and readback failures remain local.
     if(record.kind==='files' && record.successFeedback==='toast' && !record.pending && !record.error && !record.blocked && record.refresh!=='failed')continue;
     if(record.action==='check-catalog' && !record.pending && !record.error && !record.blocked && record.refresh==='')continue;
+    // Confirmation is already owned by its Notice; an ordinary readback wait
+    // must not duplicate that success. Failed/unknown results keep recovery.
+    if (!record.pending && record.result && !record.error && !record.blocked && record.refresh === 'refreshing' &&
+      record.resultTone !== 'error' && record.resultTone !== 'unknown') continue;
     // Short results are owned by the single notice host; ordinary reads stay silent.
     if (!record.pending && !record.error && !record.blocked && record.refresh === '') continue;
     if (!actions.visible(record) || record.view && record.view !== view || !visibleRecord(record)) continue;

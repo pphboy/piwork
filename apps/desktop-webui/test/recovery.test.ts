@@ -1676,7 +1676,9 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   assert.ok(await page.locator('#modal [role=listbox]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
   await uiuxEvidence(page, '09-long-model-panel-360');
   await page.setViewportSize({ width: 800, height: 300 });
-  await expect(page.locator('#modal .modal-footer .button')).toBeInViewport();
+  await expect(page.locator('#modal.chat-response-settings')).toBeVisible();
+  await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toHaveAccessibleName('Close dialog');
+  await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toBeInViewport();
   const bounds = await page.locator('#modal').boundingBox(); assert(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 300);
   assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight));
   await uiuxEvidence(page, '10-settings-low-height');
@@ -2225,7 +2227,8 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
  await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
  await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await button(page,'close-modal').click();
+ await page.keyboard.press('Escape');
+ await expect(button(page,'service-menu')).toBeFocused();
  fail=true;
  await page.clock.runFor(5100);
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
@@ -2280,7 +2283,8 @@ test('Controls Service detail reads only associated replies, returns list focus 
  await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
  await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
  await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await button(page,'close-modal').click();
+ await page.keyboard.press('Escape');
+ await expect(button(page,'service-menu')).toBeFocused();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
 });
 
@@ -3572,7 +3576,7 @@ test('C Download saved version returns server bytes without saving or changing e
   assert.equal(requests.filter(r => r.method === 'PUT').length, 0); assert.equal(requests.filter(r => r.method === 'GET' && r.path === cFileRoot + 'note.txt').length, before + 1);
 });
 
-for (const ending of ['success','failure','focus-moved'] as const) test(`Files slow refresh ${ending} preserves keyboard intent and rejects duplicate reads`,async t=>{
+for (const ending of ['success','failure','focus-moved'] as const) test(`Files bounded pending refresh ${ending} preserves keyboard intent and rejects duplicate reads`,async t=>{
  let armed=false,release!:()=>void;const gate=new Promise<void>(done=>release=done);t.after(async()=>release());
  const {page,requests}=await fixture(t,async r=>{
   if(r.method==='PROPFIND' && armed){await gate;if(ending==='failure')return{status:503,json:{message:'Original directory temporarily unavailable'}};}
@@ -3581,12 +3585,48 @@ for (const ending of ['success','failure','focus-moved'] as const) test(`Files s
  await page.setViewportSize({width:ending==='focus-moved'?1440:360,height:900});await button(page,'tab-Files').click();await expect(page.locator('[data-action=open-file][data-path="/note.txt"]')).toBeVisible();await page.clock.install();
  const refresh=page.locator('.file-refresh[data-action=refresh-files]'),before=requests.filter(r=>r.method==='PROPFIND').length;armed=true;await refresh.focus();await refresh.press('Enter');
  await expect(refresh).toHaveAttribute('aria-disabled','true');await expect(refresh).toBeFocused();await expect.poll(()=>requests.filter(r=>r.method==='PROPFIND').length).toBe(before+1);
- await refresh.press('Enter');await refresh.evaluate((node:HTMLButtonElement)=>node.click());await page.clock.runFor(10001);
- await expect(refresh).toHaveAttribute('aria-label','Still reading files…');await expect(refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
+ await refresh.press('Enter');
+ await refresh.evaluate((node:HTMLButtonElement)=>node.click());
+ await page.clock.runFor(9000);
+ await expect(refresh).toHaveAttribute('aria-label','Reading files…');
+ await expect(refresh).toBeFocused();
+ assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
  if(ending==='focus-moved')await page.locator('#composer').focus();release();await expect(refresh).not.toHaveAttribute('aria-disabled','true');await expect(refresh).toBeEnabled();
  await expect(ending==='focus-moved'?page.locator('#composer'):refresh).toBeFocused();assert.equal(requests.filter(r=>r.method==='PROPFIND').length,before+1);
  if(ending==='failure')await expect(page.locator('.read-failure')).toContainText('Workspace cannot be read (503)');
  assert.equal(requests.filter(r=>['PUT','DELETE','MOVE','COPY','MKCOL'].includes(r.method)).length,0);
+});
+
+test('Files ten-second read deadline retains rows and original error without automatic reread', async t => {
+  let armed = false, release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  t.after(async () => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.method === 'PROPFIND' && armed) await gate;
+    return cFilesReply(r);
+  });
+  await button(page, 'tab-Files').click();
+  const row = page.locator('[data-action=open-file][data-path="/note.txt"]');
+  await expect(row).toBeVisible();
+  await page.clock.install();
+  const before = requests.filter(r => r.method === 'PROPFIND').length;
+  const refresh = page.locator('.file-refresh[data-action=refresh-files]');
+  armed = true;
+  await refresh.focus();
+  await refresh.press('Enter');
+  await expect.poll(() => requests.filter(r => r.method === 'PROPFIND').length).toBe(before + 1);
+  await page.clock.runFor(10001);
+  await expect(refresh).not.toHaveAttribute('aria-disabled', 'true');
+  await expect(refresh).toBeFocused();
+  await expect(row).toBeVisible();
+  await expect(page.locator('.read-failure')).toContainText('The read timed out');
+  await page.clock.runFor(15000);
+  assert.equal(requests.filter(r => r.method === 'PROPFIND').length, before + 1);
+  release();
+  await page.clock.runFor(100);
+  await expect(row).toBeVisible();
+  await expect(page.locator('.read-failure')).toContainText('The read timed out');
+  assert.equal(requests.filter(r => ['PUT','DELETE','MOVE','COPY','MKCOL'].includes(r.method)).length, 0);
 });
 
 for(const gesture of ['double-click','enter-then-click'] as const)test(`C New folder ${gesture} submits exactly once while its first write is pending`,async t=>{
@@ -4223,7 +4263,10 @@ for (const code of ['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED']) {
     await expect(page.locator('.topbar-works')).toBeVisible();
     await button(page, 'account').click();
     await expect(page.getByRole('menuitem', { name: 'Administration', exact: true })).toHaveAttribute('href', '/admin');
-    assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+    const entryWrites = requests.filter(r => r.path === 'service-entries' && r.method === 'POST');
+    assert.equal(entryWrites.length, 1);
+    assert.deepEqual(JSON.parse(entryWrites[0]!.body), { workId: 'work-1', serviceId: 'service-a', port: 80 });
+    assert.equal(requests.filter(r => r.method !== 'GET' && !(r.path === 'service-entries' && r.method === 'POST')).length, 0);
   });
 }
 
@@ -4255,7 +4298,15 @@ test('Requests menu origin restores Service trigger and late list read does not 
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
   await expect(page.locator('#model-select')).toBeFocused();
-  assert.equal(requests.filter(r => r.path.endsWith('/agent-requests')).length, 1);
+  const reads = requests.filter(r => r.path.endsWith('/agent-requests'));
+  assert.equal(reads.length, 2);
+  for (const limit of ['1', '25']) {
+    const matching = reads.filter(r => new URLSearchParams(r.search).get('limit') === limit);
+    assert.equal(matching.length, 1);
+    assert.equal(matching[0]!.method, 'GET');
+    assert.equal(new URLSearchParams(matching[0]!.search).get('serviceName'), 'Tool A');
+    assert.equal(new URLSearchParams(matching[0]!.search).has('cursor'), false);
+  }
   assert.equal(chatWrites(requests).length, 0);
 });
 

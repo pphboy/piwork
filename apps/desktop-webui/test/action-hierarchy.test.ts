@@ -255,3 +255,29 @@ test('cached Work header owns route reading and ten-second feedback without repl
 for(const label of ['Preparing','Starting','Start accepted','Work status not confirmed'])test(`unconfirmed ${label} never offers the ready Open shortcut`,()=>{
  const {c,work}=fixture();c.adapter.project=()=>({action:'stop',label,usable:false});const html=c.quickAction(work);assert.doesNotMatch(html,/data-action="open-work"/);assert.match(html,/data-action="check-work"/);
 });
+
+test('Work header keeps one allocated status slot and preserves observed status when task feedback replaces its badge', async () => {
+  const { c, work } = fixture();
+  c.adapter.project = () => ({ label: 'Stopped', action: 'start', usable: false });
+  const initial = c.workHeader(work);
+  assert.equal(initial.split('class="work-header-status"').length - 1, 1);
+  assert.match(initial, /role="group" aria-label="Observed: Stopped" title="Observed: Stopped"/);
+  assert.match(initial, /class="status stopped"/);
+  c.controlMarkup = () => '<span class="object-control-state" role="status" aria-busy="true">Start · Submitting</span>';
+  const pending = c.workHeader(work);
+  assert.equal(pending.split('class="work-header-status"').length - 1, 1);
+  assert.match(pending, /aria-label="Observed: Stopped"/);
+  assert.match(pending, /Start · Submitting/);
+  assert.doesNotMatch(pending, /class="status stopped"/);
+  const { i18n } = await import(new URL('../browser/locale.js', import.meta.url).href);
+  try {
+    i18n.setLocale('zh-CN');
+    const chinese = c.workHeader(work);
+    assert.ok(chinese.includes(`aria-label="${c.t('service.observed')}: ${c.stateText('Stopped')}"`));
+    assert.ok(!chinese.includes('Observed: Stopped'));
+  } finally { i18n.setLocale('en'); }
+  const css = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('flex: 0 0 18ch;'));
+  assert.ok(css.includes('flex-basis: 10ch;'));
+  assert.ok(css.includes('.work-header .work-header-status > .object-control-state'));
+});

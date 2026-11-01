@@ -50,23 +50,36 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   try {
     await t.test('both initial shells retain one labelled static skeleton before application code', async () => {
-      // This case owns initial HTML only; later cases exercise live pending modules.
+      // Hold entry modules without an error event: aborting them correctly invokes
+      // the real boot-failure UI, which belongs to the separate boot failure tests.
       const entryModules = /\/(?:desktop\/)?browser\/(?:boot|app)\.js$/;
-      await page.route(entryModules, route => route.abort());
       for (const app of ['desktop', 'console']) {
-        await page.route('**/style.css', route => route.continue({ url: `${base}/${app}/style.css` }));
-        await page.goto(`${base}/${app}/index.html`);
-        await expect(page.locator('.boot-skeleton')).toHaveCount(1);
-        await expect(page.locator('.boot-skeleton > .skeleton-fill')).toHaveCount(3);
-        await expect(page.locator('.boot-skeleton')).toHaveAttribute('aria-hidden', 'true');
-        await expect(page.locator('.pending-dots')).toHaveCount(0);
-        await expect(page.locator('.app-loading')).toHaveAttribute('role', 'status');
-        await expect(page.locator('.app-loading')).toHaveAttribute('aria-busy', 'true');
-        await expect(page.locator('[data-boot-loading]')).toHaveText('Opening Piwork…');
-        assert.equal(await page.locator('.app-loading').evaluate(node => getComputedStyle(node).position), 'static');
-        await page.unroute('**/style.css');
+        const shell = await browser.newPage({ viewport: { width: 960, height: 600 } });
+        let release!: () => void;
+        const entryGate = new Promise<void>(resolve => release = resolve);
+        try {
+          const initialTime = new Date('2026-01-01T00:00:00Z');
+          await shell.clock.install({ time: initialTime });
+          await shell.clock.pauseAt(new Date(initialTime.getTime() + 1000));
+          await shell.route(entryModules, async route => {
+            await entryGate;
+            if (!shell.isClosed()) await route.continue();
+          });
+          await shell.route('**/style.css', route => route.continue({ url: `${base}/${app}/style.css` }));
+          await shell.goto(`${base}/${app}/index.html`, { waitUntil: 'commit' });
+          await expect(shell.locator('.boot-skeleton')).toHaveCount(1);
+          await expect(shell.locator('.boot-skeleton > .skeleton-fill')).toHaveCount(3);
+          await expect(shell.locator('.boot-skeleton')).toHaveAttribute('aria-hidden', 'true');
+          await expect(shell.locator('.pending-dots')).toHaveCount(0);
+          await expect(shell.locator('.app-loading')).toHaveAttribute('role', 'status');
+          await expect(shell.locator('.app-loading')).toHaveAttribute('aria-busy', 'true');
+          await expect(shell.locator('[data-boot-loading]')).toHaveText('Opening Piwork…');
+          assert.equal(await shell.locator('.app-loading').evaluate(node => getComputedStyle(node).position), 'static');
+        } finally {
+          await shell.close();
+          release();
+        }
       }
-      await page.unroute(entryModules);
     });
 
     await page.goto(`${base}/fixture`);

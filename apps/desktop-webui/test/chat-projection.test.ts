@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-const {historyMessages,mergeLegacyMessages,upsertTool,activityGroups}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
+const {historyMessages,mergeLegacyMessages,upsertTool,activityGroups,messageReadingSource}=await import(new URL('../browser/chat-projection.js',import.meta.url).href);
 
 test('pure image history stays one user message and never becomes tool Activity',()=>{
  const messages=historyMessages([{entryId:'sdk',runId:'run-image',role:'user',blocks:[{blockId:'img',type:'image',image:{imageIndex:0,mimeType:'image/png',byteSize:70,sha256:'a'.repeat(64)}}]}]);
@@ -115,4 +115,16 @@ test('Activity groups split by real prose retain distinct keys and never merge e
  const after=activityGroups([call('second'),{id:'prose',runId:'run-a',role:'assistant',text:'Real prose'},call('first')],before);
  assert.deepEqual(after.map((g:any)=>g.activity),[true,false,true]);assert.equal(new Set(after.map((g:any)=>g.key)).size,3);
  assert.deepEqual(activityGroups(after.flatMap((g:any)=>g.messages),after).map((g:any)=>g.key),after.map((g:any)=>g.key));
+});
+
+test('reading source starts at the original live message and survives verified saved prefix/tail splits', () => {
+  const live = Object.freeze({ id: 'run-1-text-1' });
+  const prefix = Object.freeze({ id: 'saved-prefix-0', historyDisplaySource: live.id });
+  const tail = Object.freeze({ id: 'run-1-text-1-remaining-900', historyDisplaySource: live.id });
+  assert.equal(messageReadingSource(live), live.id);
+  assert.equal(messageReadingSource(prefix), live.id);
+  assert.equal(messageReadingSource(tail), live.id);
+  assert.equal(messageReadingSource({ id: 'another-run-text-1' }), 'another-run-text-1');
+  assert.equal(messageReadingSource({}), undefined);
+  assert.deepEqual(live, { id: 'run-1-text-1' });
 });
