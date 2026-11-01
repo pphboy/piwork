@@ -47,6 +47,75 @@ func TestDesktopNameConflictProjectsOnlySafeNameField(t *testing.T) {
 	}
 }
 
+func TestNativeDesktopTemporaryCleanupReads(t *testing.T) {
+	for _, item := range []struct {
+		suffix string
+		status int
+	}{
+		{"/temporary-cleanups/service-1", 200},
+		{"/temporary-cleanups?runId=run-1", 200},
+		{"/temporary-cleanups/service-1", 403},
+		{"/temporary-cleanups?runId=run-1", 403},
+	} {
+		t.Run(item.suffix+http.StatusText(item.status), func(t *testing.T) {
+			suffix := item.suffix
+			var forwarded string
+			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/me" {
+					_, _ = io.WriteString(w, `{"id":"user-1","account":"owner","role":"user"}`)
+					return
+				}
+				if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer synthetic-token" {
+					t.Errorf("unexpected forwarding method or authentication")
+				}
+				forwarded = r.URL.RequestURI()
+				if item.status == http.StatusForbidden {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, `{"code":"PERMISSION_DENIED","message":"Access denied"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"items":[],"truncated":false}`)
+			}))
+			defer core.Close()
+			api, err := client.New(core.URL, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &nativeDesktop{api: api, store: client.CredentialStore{Path: filepath.Join(t.TempDir(), "credentials", "credential.json")},
+				port: 17891, origin: "http://desktop.localhost:17891", sessions: map[string]desktopSession{
+					"local": {csrf: "csrf", end: time.Now().Add(time.Hour)},
+				}, identity: desktopIdentity{coreURL: core.URL, credential: &client.Credential{
+					Version: 1, CoreURL: core.URL, Token: "synthetic-token", ExpiresAt: "2099-01-01T00:00:00Z",
+					User: client.Identity{ID: "user-1", Account: "owner", Role: "user"},
+				}, checked: true}}
+			r := httptest.NewRequest(http.MethodGet, d.origin+"/_desktop/api/works/work-1"+suffix, nil)
+			r.Header.Set("Cookie", d.cookieName()+"=local")
+			r.Header.Set("Origin", d.origin)
+			response := httptest.NewRecorder()
+			d.ServeHTTP(response, r)
+			if response.Code != item.status || forwarded != "/api/v1/works/work-1"+suffix {
+				t.Fatalf("cleanup read returned %d: %s; forwarded %q", response.Code, response.Body.String(), forwarded)
+			}
+			if strings.Contains(response.Body.String(), "synthetic-token") {
+				t.Fatal("Core credential leaked")
+			}
+			for _, boundary := range []string{"missing-session", "foreign-origin"} {
+				forwarded = ""
+				r := httptest.NewRequest(http.MethodGet, d.origin+"/_desktop/api/works/work-1"+suffix, nil)
+				if boundary == "foreign-origin" {
+					r.Header.Set("Cookie", d.cookieName()+"=local")
+					r.Header.Set("Origin", "http://foreign.invalid")
+				}
+				response := httptest.NewRecorder()
+				d.ServeHTTP(response, r)
+				if response.Code < 400 || forwarded != "" {
+					t.Fatalf("%s bypassed local boundary: %d, forwarded %q", boundary, response.Code, forwarded)
+				}
+			}
+		})
+	}
+}
+
 func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	type forwarded struct {
 		method string
@@ -172,6 +241,18 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 	before := len(calls)
 	mu.Unlock()
 	for _, item := range []struct{ method, path, payload, csrf string }{
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?runId=", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?unexpected=run-1", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?runId=run-1&runId=run-2", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?runId=../run-1", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?runId=%252f", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups?runId=run-1&%broken", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups/service-1?unknown=true", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups/%2e%2e", "", ""},
+		{"GET", "/_desktop/api/works/work-1/temporary-cleanups/service%2fother", "", ""},
+		{"GET", "/_desktop/api/works/%2e%2e/temporary-cleanups/service-1", "", ""},
+		{"POST", "/_desktop/api/works/work-1/temporary-cleanups/service-1", "", "csrf"},
+		{"DELETE", "/_desktop/api/works/work-1/temporary-cleanups?runId=run-1", "", "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null,"credential":"not-allowed"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"invalid"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":null,"thinkingProfile":"messages-adaptive-v1"}`, "csrf"},

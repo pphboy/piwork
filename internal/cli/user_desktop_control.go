@@ -224,8 +224,9 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		return plan, handled, err
 	}
 	feedbackRead := r.Method == http.MethodGet && len(parts) >= 3 && (len(parts) <= 4 || len(parts) == 5 && parts[4] == "retry-submission") && parts[0] == "works" && parts[2] == "agent-requests"
+	cleanupRead := r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "works" && parts[2] == "temporary-cleanups"
 	imageHistory := r.Method == http.MethodGet && len(parts) == 4 && parts[0] == "works" && parts[2] == "sessions"
-	if r.URL.RawQuery != "" && !feedbackRead && !imageHistory && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
+	if r.URL.RawQuery != "" && !feedbackRead && !imageHistory && !cleanupRead && !(len(parts) == 5 && parts[0] == "works" && parts[2] == "services" && parts[4] == "logs") {
 		return desktopControl{}, true, errors.New("INVALID_INPUT")
 	}
 	method := r.Method
@@ -314,6 +315,25 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 			}
 		}
 	}
+	if parts[2] == "temporary-cleanups" && method == http.MethodGet {
+		path := base + "/temporary-cleanups"
+		if len(parts) == 4 {
+			serviceID, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			return create(method, path+"/"+serviceID, nil, 200)
+		}
+		if len(parts) == 3 {
+			query, err := url.ParseQuery(r.URL.RawQuery)
+			if err != nil || len(query) != 1 || len(query["runId"]) != 1 || !desktopIDPattern.MatchString(query.Get("runId")) {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"?"+query.Encode(), nil, 200)
+		}
+		return desktopControl{}, false, nil
+	}
+
 	if parts[2] == "services" {
 		servicePath := base + "/services"
 		if len(parts) == 3 && method == http.MethodGet {
