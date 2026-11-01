@@ -405,3 +405,15 @@ Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复
 19:18父任务正式455×772 Settings底栏代表性验证：保留sticky偏好读错，仅编辑本地AGENTS草稿；顶部/底部两个真实Save存在。底栏最初部分低于视口，正常键盘Tab滚动进入后Save为601.62–641.62，中心实际命中save-config，通知63.99–171.79不重叠；正常Discard恢复原Synthetic instructions，没有PUT/Apply。此为实际导航/底栏可达性与不重放证明，不是配置写入成功证明。
 
 19:18最终44801正式资源实际复验通过：fresh reload后正常Service options→Requests，实际filter为原Synthetic notes、heading Service Requests与原Work1保持；Escape关闭后document.activeElement确为data-action=service-menu、aria-label=Service选项，不再落tab-Services。原sticky偏好读错仍在，没有force或先关闭通知绕过。结合已经执行的模态/非模态、宽窄屏、背景Header、composer、Files菜单、Settings底栏及Console菜单/首次读失败/语言/跨页原读恢复，2.2与6.1有限验收恢复完成；连同真实Package协议6.4当前27/31。剩余4.3、5.4、8.1、8.2仍等待当前正式CI真实链/完整浏览器及最终核对，不能以本批CUA或直接套件代替。
+
+### 20:00 当前1941741真实CI发现与原Save回执修复
+
+当前头六场景Desktop smoke实际6/6、0fail/0skip通过，包含此前真实Pause指针截获；该子集不替代完整Desktop。当前Console完整253/254，唯一失败为新Models重入测试在窄屏直接点击隐藏导航链接；改正常Menu→`.nav.open`原Users/Models入口，保留两个原source通知2→1与零写入断言，未改产品代码。当前真实Core Console8/8与log-export、unit及Package协议已有PASS，Desktop真实链进一步到原Save丢响应场景，未到Export/Import，4.3/5.4仍未完成。
+
+真实Desktop Core保存原note.txt后模拟丢失响应：原Core字节已提交，编辑器保持Unsaved与“previous write needs review”，但同一原ActionRecord与sticky通知错误显示Confirmed。不能仅把旧文案断言换掉掩盖产品问题。根因是单文件saveFile已保留unknown锁，却在non-success返回前未设置回执，dispatch.finish使用缺省Confirmed；只在原结果保留后复用既有confirmFileAttempt处理non-succeeded，已确认成功/版本读回、原锁、HTTP协议、草稿及identity/view guard不变。只读核对其余显式blocked赋值：Work/Service控制抛回原error由fail处理，批量/重试已确认原ledger，未扩大修改。
+
+既有navigation-review装配已有saveFile源绑定；沿该旧测试边界使用实际ActionState和原confirmFileAttempt验证，不新增regex/VM helper或生产模块。固定旧app下两条unknown/failed断言实际RED均为phase错误Confirmed（0/2）；修复后整个39/39、0skip通过。此仍是明确的legacy assembly，不称新直接模块抽取。694/694直接套件、正式build/embed/test编译/style通过；新增真实浏览器Save未知回执用例保留一PUT、原草稿、0confirmed/1review、关闭通知仍锁定及显式GET。真实Core用例同时保留独立Core字节、原accepted PUT计数，另用持续浏览器计数验证通知关闭/读回不重发PUT；以实际file-reread字节作为读完成证据，不等待204 body。
+
+8.1仍缺的本机文件批准受限C分支新增一个待CI的真实XHR混合上传测试：三个真正File经HEAD404与原XHR PUT，服务器记录原字节/If-None-Match并返回201/403/502；只允许原403文件重试一次，未知路径重选也不能追加HEAD/PUT，原成功/未知结果保留。测试不替换XHR或注入进度；UI只断言安全状态/HTTP码，不显示不可信服务器prose。相关直接file测试57/57、正式编译通过，但没有本地启动Chromium或重试待批准上传，不能预记浏览器通过。
+
+20:01父任务29e794正式资源实际CUA通过：fresh455px中文Desktop，原Work1/note.txt输入合成44-byte草稿，fixture先保存字节再502。原inline/notice均为“已确认0个路径；1个需要检查”，不再虚假Confirmed；Unsaved、previous-write-review、Save禁用保持。正常关闭通知只清展示，原草稿/警告/禁用仍在；显式重新读取已保存版本得到原44-byte只读内容，Save仅在原读回后按既有语义恢复可操作。方法账本一原PUT（保留If-Unmodified-Since），随后只有PROPFIND/GET，无自动重发。独立已存在偏好通知被关闭后才进入文件行，不把此操作称为行几何验证；此为合成HTTP实际UI，不冒称真实Core链已通过。最终maintenance、PR-base style145、真实generatedUI逐字一致、Go webapp12.991秒及两宿主build通过（`dist/save-owner-final-gates.log` exit0）。
