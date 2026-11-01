@@ -255,3 +255,39 @@ PR为可审阅Draft，源码、直接测试和正式嵌入同步，不等于整�
 6.2按其确切条款完成：以上独立首设/初始壳证据，结合前批native Console匹配/不匹配/未受理/429/注销真实UI、Admin会话失效清旧草稿与秘密、Desktop admission实际UI及直接契约，以及真实adapter身份epoch/response-body晚结果拒绝、view-scope晚草稿和共享read-deadline契约，覆盖登录/退出/未知、独立表单、准入、有界恢复、身份清理。完整storage拒绝、selective sessionStorage/BFCache和全Playwright矩阵仍属8.1未完成回归，不从未运行测试推断其通过，也不把整个旧浏览器套件追加为6.2隐含门槛。
 
 明确保留2.2已观察残余：onboarding credential unknown与随后read failure同时产生两条相同通用浮动说明、同一Read current state动作，虽来源不同且原unknown表单/锁正确，来源辨识/重复展示仍待有限修复。不能因6.2功能通过声称全部通知策略完成。无真实账号/Core、无主spec同步或归档；剩余2.2、4.3、5.2、5.4、6.4、8.1、8.2未勾。
+
+### 2.2首设来源辨识有限修复（15:11，浏览器复核待定）
+
+对15:03明确观察到的两条相同说明，只修独立onboarding的来源投影：读取失败、原账号创建结果未知、原账号登录结果未知使用不同的惰性双语消息；原kind/account在发布时捕获标量，不从后来的credentialUnknown取值。read与credential的原owner/task/generation和恢复动作、未知锁、dismiss/resolve不变，不能因read成功但账号不同就合并消除原未知。新增窄`onboarding-feedback`只有locale依赖，四项直接测试覆盖同callback EN/ZH、原账号快照、实际NoticeStore独立生命周期及普通消息不误标；Console正式148/148、typecheck/build/embed通过。原controlplane浏览器用例新增来源不同断言，仅记录已编写/语法检查，未冒充执行。
+
+集成检查先运行真实Go setup依赖遍历，RED明确为新`/setup/browser/onboarding-feedback.js`返回404。随后仅在既有精确公开allowlist增加此纯模块，同步GET/HEAD/CSP断言；不公开adapter/app或整个目录，不用合成fixture掩盖真实handler缺失。此处资源修复随实现和正式输出同批交付。全2.2其他owner、长文本/模态矩阵仍未因此完成。
+
+### 5.2有限真实入口A–E验收进行中（15:18）
+
+忽略combined fixture已改为两端正式dist逐文件复制，而非旧Node转换；Desktop196、Console87 browser文件当时逐字节一致，HTTP handler自检16个断言通过。后续源码修复另按正式build同步，不把旧fixture当新版本。fixture仅真实DAV/现有配置DTO合成响应，写入ledger记录bytes/目标/原版本头而非任意用户内容，不虚构进度或Core状态。
+
+父任务实际UI A通过：预览GET503期间原dirty draft保留，原Retry成功恢复精确草稿及只读已保存比较、notice0；Keep editing保留，显式Discard后切换正确文件。迟到其他文件Refresh后选择note，新内容/路径正确，但旧目录读取的CONNECTION_CHANGED仍误投影浮动错误。修复仅在原refresh-files目录/预览读的成功及失败边界核对捕获identity/view/fileChoice/path，obsolete只丢弃仍当前的原read ActionRecord并按ViewChanged退出；当前真实连接错误仍保留，较新记录和其他unknown写锁不动。直接窄上下文+真实ActionState回归通过，正式51个原套件679/679、0skip/fail；不是模拟DOM的伪full-app RED，真实前测为父任务CUA。
+
+B实际UI通过：三个目标DELETE分别204成功、403失败、502未知；关闭notice不解锁批量Delete；原Refresh只PROPFIND不重放DELETE，显式勾选已知失败项Retry只再次DELETE该项，原未知保留历史unknown、不假绿。D确认note.txt PUT204显示Saved，但实际客户端没有自动关联GET/PROPFIND，故早期夹具指南“自动回读”假设已纠正：本例只验证确认Save后显式Refresh失败，真实自动关联回读由配置E验证。D又发现单文件Save等待说明沿用了隐藏批量选择的三个路径，而实际PUT正确指向note.txt；正在只修Save动作metadata，不全局清batchselection。此批仍未结束、5.2未勾。
+
+15:33后续有界修复：Save/dirty-save的原动作resource只取editorPath，其余动作沿旧fallback，未改PUT或清批量选择。另确认当前表格toolbar仍把已不存在的原三路径当3 selected，而原批次ledger/UnknownFileLocks已有独立恢复所有权；仅在当前Work/path目录已有成功checkedAt、非loading且无error时，表格selection与当前可见行相交，失败/未确认/预览不清选择，原结果与未知锁不变。增加三项直接回归后，原51个正式编译套件682/682、0skip/fail（相对677基线共五项）；相关正式build/embed完成，实际UI复核待父任务当前E结束。
+
+C原生上传的当前证据明确未通过mixed HTTP分支：浏览器实际选取三个44-byte合成下载文件，三次HEAD到达fixture，但零upload PUT，UI三个无httpStatus unknown。实际adapter在XHR error/abort或send同步异常时保留unknown；真实fixture403/502必有PUT ledger与httpStatus，因此失败发生在fixture HTTP收到写入之前，不能归咎旧批量锁或假造403/502结果。浏览器产生上传批准回调，完成状态不能证明实际发出；在支持的浏览器审批/传输证据确认前，不重放、不假XHR、不以此宣称产品upload成功或缺陷。
+
+E真实旧构建证明：选中的fixture Skill与@fixture/tools保持，Save一次配置PUT200后自动GET503，原保存已确认但readback失败；原显式GET恢复确认Not applied后，旧Save.refreshError仍以inline及notice残留。随后Apply一次POST202/原Operation GET成功但关联配置GET503，旧快照又显示Not applied并开放Apply；清故障原GET后实际Configuration in use/选择及Loaded事实正确，始终一PUT一Apply POST。修复沿真实所有者：`SettingsSaveReadback`只绑定实际成功Save的只读record、identity/Work/config确认版本；同Work新成功GET且无reading/error才允许ActionState自身退休原refresh字段，原result/unknown/其他记录不变，延迟回调再次核对当前receipt。只在原匹配资源读取notice已存在时不再重复发布Save关联读失败。Header优先表达当前配置读取未确认，保留旧事实而不推断applied；Apply按钮及实际入口均拒绝当前配置GET错误，显式Refresh仍可用，不改服务端协议/原Operation。
+
+正式51直接套件最终685/685、0skip/fail（新增原Save恢复及错Work/身份/同receipt/loading/error/新记录/unknown反例、配置Apply读错准入），Console148/148；相关正式build/embed与fixture16断言通过，两端正式资源再次逐文件一致。真实修复后A/D/selection/E及首设来源文案CUA仍由父任务复核，当前不提前勾5.2或2.2。
+
+15:40–41首设来源文案实际CUA通过：未知创建+读失败分别显示原synthetic-label-owner创建结果未知与当前状态读取失败；编辑可见account不改变原notice账号，切ZH两条来源/正文翻译而原账号不变。另用真实人工登录unknown及不同账号GET验证：read失败notice清除，原synthetic-label-login未知notice和锁保持、不自动POST。创建已初始化管理员的导航只作为原创建readback事实，未冒充人工登录账号不匹配证据。上述是正式资源/合成HTTP，不证明真实Core创建或认证。
+
+15:47父任务实际中文发现Save旧代码以本地化result.message与英文`Confirmed`比较，成功中文“已确认”被错误标为refresh未确认；这是本批真实缺陷而非fixture文案。最小修复给frontend-only TransferResult增加结构化versionReadback（confirmed/unconfirmed），只在已确认Save后由有效PUT version或匹配已保存内容的GET/version产生；未确认version保持已确认写入与独立版本回读失败，未知write无此字段。app仅消费此事实，不再以语言字符串判断语义；不改变HTTP DTO、PUT路径、版本保护或未知锁。正式实际adapter EN/ZH各验204有效version与204后GET503，另验502未知不重放，新增五项后原51套件690/690、0skip/fail；正式build/embed通过。父任务此前已复核Save等待目标正确为/note.txt、过时其他文件读取不再发连接变化notice；最终中文成功路径待新资源复核。
+
+## 15:54 5.2有限功能验收完成（25/31）
+
+最终正式资源实际CUA：A过时其他文件读不再发布连接变化错误，新路径/内容正确；D隐含旧other.txt选择时，Save等待目标仍精确/note.txt。原部分删除三路径读取后，当前表格只保留实际存在的blocked.txt为1 selected，原三路径结果ledger及unknown行仍在。E保存PUT200后GET503显示“尚未确认”、一条canonical读取错误及原保存事实；匹配GET恢复清旧refresh错误，Not applied及普通合法Saved成功notice（没有错误notice）。Apply一次POST202/原Operation成功但GET503时，仍“尚未确认”且Apply实际禁用；新GET才显示Configuration in use、旧错误消失且无再次Apply。配置全过程精确一PUT、一Apply POST，所选Skill/Package保持。
+
+15:53–54最终中文Save：真实24-byte“中文保存确认回归”一次PUT204，保留原ifUnmodifiedSince，已保存/合法成功notice、error notice为0，不再有“刷新未确认：已确认”；草稿正确，Save/Discard按已保存正常禁用。直接实际uploadReview投影另以冻结输入验证overwrite仅明确需同意失败、retry仅已知失败、unknown不进入重试、成功排除且原行不变；不执行旧regex/VM renderer冒充直接模块测试。最终原51正式套件691/691（0skip/fail），Console148/148。
+
+5.2依其任务原文的D07–D12功能、局部/部分/未知写、旧草稿/新选择、确认结果后读回失败测试矩阵完成：以上实际入口加既有actual adapter原生File204/unknown准入、共享writeFile已知403/409/412与408/5xx未知分类、原路径/覆写同意/晚回调/未知锁直接契约共同支撑。**C真实浏览器native XHR成功/403/502与上传进度未通过，受待确认的浏览器文件上传批准阻挡，零PUT不能算其通过；不重试或假造XHR。**该明确浏览器集成缺口继续列入8.1，不把整个浏览器矩阵隐含追加为5.2门槛，也不宣称真实Core或所有上传浏览器场景已测。2.2尚有普通info重复与未恢复的已知失败独立dialog owner待有限验收；4.3/5.4/6.4/8.1/8.2原环境/集成缺口保留。
+
+15:56提交前最终集成检查：全workspace typecheck通过；两端官方生成重建与内嵌字节一致；Go webapp/consoleassets通过（12.17秒）并重新build正式宿主入口；maintenance、17个修改源/测试的增量style/gofmt、文档归属、OpenSpec strict及当前diff均通过。Console当前官方dist148/148再次通过；Desktop精确51套件691/691日志保留。未执行或环境失败的完整Go/Unix socket/Chromium/Core/C native上传证据不被这些选择性绿灯覆盖。

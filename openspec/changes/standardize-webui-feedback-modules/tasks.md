@@ -35,7 +35,7 @@
 ## 5. Desktop 全部来源状态
 
 - [x] 5.1 按 D01–D06 的实际来源逐功能接入会话/Core 准入、Works、创建/生命周期、Service 目录/入口/日志反馈；验证关键初读十秒有界收敛、空态与失败分开、未知不重放与原对象恢复，并将对应测试链接写回覆盖表。
-- [ ] 5.2 按 D07–D12 的实际来源逐功能接入文件浏览/预览/编辑/上传、Save/Apply、Skills/Packages 等反馈；以局部失败、部分/未知写入、旧草稿、新选择与确认结果后读回失败测试验证，不造通用 Operation 或假进度。
+- [x] 5.2 按 D07–D12 的实际来源逐功能接入文件浏览/预览/编辑/上传、Save/Apply、Skills/Packages 等反馈；以局部失败、部分/未知写入、旧草稿、新选择与确认结果后读回失败测试验证，不造通用 Operation 或假进度。
 - [x] 5.3 按 D13–D17 的实际来源逐功能接入 Chat/history/Run/tools、模型/Thinking、图像与 Requests；验证旧历史与草稿保留、unknown 不再次提交 prompt、Model+Thinking 一组摘要/自动保存、Requests 与消息结果独立，并维护对应直接/浏览器测试与索引。
 - [ ] 5.4 按 D18–D23 的实际来源核对 Import/Export/log export、原 ID 恢复及 About/偏好等余项；逐项依据附件真实名称校正归组，验证 Import 完成仍 Stopped 且只显式 Start、无可见 Work 固定恢复入口与安全诊断不丢失。
 
