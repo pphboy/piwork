@@ -2064,6 +2064,7 @@ function catalogActionDialog(
             : e instanceof ConsoleError && e.code === "PACKAGE_BUSY"
               ? NavLink(t('module.findOperation'), "/operations", "btn secondary")
               : "",
+          e,
         );
         const submit = document.querySelector("#dialog-submit"); if (submit) submit.textContent =
           `${verb} ${noun}`;
@@ -2216,6 +2217,7 @@ async function submitSkill() {
             `data-name="${esc(selection.name)}"`,
           )
         : "",
+      e,
     );
     const submit = document.querySelector("#dialog-submit"); if (submit) submit.textContent = t('upload.uploadSkill');
     if (unknown && dialogRecord) dialogRecord.recover = undefined;
@@ -2325,6 +2327,7 @@ async function submitPackage(form: FormData) {
             "new-package-intent",
             "secondary",
           ),
+      e,
     );
     const submit = document.querySelector<HTMLButtonElement>("#dialog-submit");
     if (submit) {

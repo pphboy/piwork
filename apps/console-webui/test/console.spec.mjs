@@ -285,7 +285,12 @@ test('Package lost acceptance recovers original key and payload without duplicat
   await login(page);await page.goto(base+'/packages');let dropped=false;
   await page.route('**/console/api/admin/packages',async route=>{if(route.request().method()==='POST'&&!dropped){dropped=true;await route.fetch();await route.abort('failed');}else await route.continue();});
   await page.getByRole('button',{name:'Install Package',exact:true}).click();await page.getByLabel('Source specification').fill('tools@1.0.0');await page.locator('#dialog-submit').click();
-  await expect(page.getByText(/acceptance response was lost/)).toBeVisible();const first=packageAccepts.at(-1);await page.getByRole('button',{name:'Resume this submission',exact:true}).click();await expect(page.getByRole('heading',{name:'Package operation',exact:true})).toBeVisible();expect(packageAccepts.at(-1)).toEqual(first);
+  await expect(page.locator('#dialog-feedback')).toContainText(/acceptance response was lost/);
+  await expect(page.getByRole('button',{name:'Resume this submission',exact:true})).toBeEnabled();
+  const first=packageAccepts.at(-1);
+  await page.getByRole('button',{name:'Resume this submission',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Package operation',exact:true})).toBeVisible();
+  expect(packageAccepts.at(-1)).toEqual(first);
 });
 test('malformed successful runtime response requires readback rather than claiming success',async({page})=>{
   await login(page);await page.goto(base+'/runtime');await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
@@ -335,4 +340,27 @@ test('R6 actual Core phase enums drive progress and raw details, including readb
 test("About Piwork displays remote Core notes as text",async({page})=>{
  await login(page);
  await page.goto(base+"/about");await expect(page.getByRole('heading',{name:'About Piwork',exact:true})).toBeVisible();await expect(page.locator('main')).toContainText('core-about-fixture');await expect(page.locator('main')).toContainText('<script>');expect(await page.evaluate(()=>window.notesExecuted)).toBeUndefined();await expect(page.getByRole('link',{name:'All releases'})).toHaveAttribute('href','https://github.com/pphboy/piwork/releases');
+});
+
+test('catalog lost response stays unknown after dialog close and Details cannot restore or replay a mutation', async ({ page }) => {
+  packageDetailExists = true;
+  packageDetailEnabled = true;
+  packageDetailDefault = false;
+  let writes = 0;
+  await login(page);
+  await page.goto(base + '/packages/tools');
+  await page.route('**/console/api/admin/packages/tools/disable', async route => {
+    writes++;
+    await route.abort('failed');
+  });
+  await page.locator('[data-action="catalog-toggle"]').click();
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('.notice-unknown')).toHaveCount(1);
+  await page.locator('dialog [data-action="close-dialog"]').first().click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await page.locator('.notice-unknown').getByRole('button', { name: 'Details', exact: true }).click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await expect(page.locator('.notice-unknown')).toHaveCount(1);
+  expect(writes).toBe(1);
+  expect(packageDetailEnabled).toBe(true);
 });

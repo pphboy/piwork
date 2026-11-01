@@ -383,3 +383,47 @@ test('valid explicit signed-out and authenticated session receipts remain accept
   assert.equal(adapter.account, 'original');
   assert.equal(adapter.csrfToken, 'signed-in-csrf');
 });
+
+test('actual Skill upload uncertainty retains ActionState lock and permits only a read owner', async t => {
+  const { ActionState } = await import(new URL('action-state.js', moduleURL));
+  const { requests, selection } = xhrFixture(t);
+  const adapter = fixture(t, async () => { throw new Error('Unexpected fetch'); });
+  const actions = new ActionState();
+  t.after(() => actions.clear());
+  const intent = { key: 'skill-upload', kind: 'configuration', view: '/skills', label: 'Upload', target: 'skill-original' };
+  const record = actions.begin(intent);
+  const uploading = adapter.uploadSkill(selection, 'skill-original');
+  requests[0].reply(503, { code: 'CORE_UNAVAILABLE' });
+  let cause;
+  try { await uploading; } catch (error) { cause = error; }
+  actions.fail(record, cause);
+  assert.equal(record.errorCode, 'RESULT_UNKNOWN');
+  assert.equal(record.blocked, true);
+  assert.equal(actions.conflict(intent), record);
+  assert.equal(actions.conflict({ key: 'read-skills', kind: 'read', view: '/skills', label: 'Read', target: 'skill-original' }), undefined);
+  assert.equal(requests.length, 1);
+});
+test('actual Package acceptance uncertainty retains original key and remains eligible for explicit Resume', async t => {
+  const { ActionState } = await import(new URL('action-state.js', moduleURL));
+  const payloads = [];
+  const adapter = fixture(t, async (_url, options) => {
+    payloads.push(JSON.parse(options.body));
+    if (payloads.length === 1) throw new Error('Synthetic lost response');
+    return json({ operationId: 'original-operation' }, 202);
+  });
+  const actions = new ActionState();
+  t.after(() => actions.clear());
+  const owner = { key: 'package-submit', kind: 'configuration', view: '/packages', label: 'Install', target: 'fixture' };
+  const record = actions.begin(owner);
+  const intent = { key: 'original-key', kind: 'npm', source: 'fixture@1.0.0', name: 'fixture', addDefault: false };
+  let cause;
+  try { await adapter.submitPackage(intent); } catch (error) { cause = error; }
+  actions.fail(record, cause);
+  assert.equal(record.errorCode, 'ACCEPTANCE_UNKNOWN');
+  assert.equal(record.blocked, false);
+  assert.equal(actions.conflict(owner), undefined);
+  assert.equal(payloads.length, 1);
+  const operation = await adapter.submitPackage(intent);
+  assert.equal(operation.id, 'original-operation');
+  assert.deepEqual(payloads[1], payloads[0]);
+});

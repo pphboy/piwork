@@ -52,3 +52,31 @@ test('pending or successful records cannot restore a failed context despite matc
     assert.equal(restored, false, state);
   }
 });
+
+test('actual catalog adapter lost response remains unknown and cannot enter known-failure restoration', async t => {
+  const { ConsoleAdapter } = await import(new URL('adapter.js', root));
+  const { ActionState } = await import(new URL('action-state.js', root));
+  const originalFetch = globalThis.fetch;
+  let writes = 0, restored = 0;
+  globalThis.fetch = async () => { writes++;
+  throw new Error('Synthetic response lost'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const adapter = new ConsoleAdapter(), actions = new ActionState();
+  t.after(() => actions.clear());
+  const record = actions.begin({ key: 'catalog-original', kind: 'configuration', view: '/skills/original', label: 'Disable', target: 'original' });
+  let cause;
+  try { await adapter.catalogAction('skills', 'original', 'disable'); } catch (error) { cause = error; }
+  assert.equal(cause.code, 'RESULT_UNKNOWN');
+  // The dialog owner must pass this original error, not new Error(cause.message).
+  actions.fail(record, cause);
+  assert.equal(record.errorCode, 'RESULT_UNKNOWN');
+  assert.equal(record.blocked, true);
+  const details = createKnownDialogRecovery({ identity: adapter.identityEpoch, view: record.view },
+    () => ({ identity: adapter.identityEpoch, view: record.view, current: actions.current(record) && !record.blocked,
+      failed: !record.pending && !!record.error && !record.result, otherDialog: false }),
+    () => { restored++; }, () => assert.fail('Closed dialog'));
+  details();
+  assert.equal(restored, 0);
+  assert.equal(writes, 1);
+  assert.equal(record.blocked, true);
+});

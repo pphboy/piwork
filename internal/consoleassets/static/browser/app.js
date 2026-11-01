@@ -1854,7 +1854,7 @@ function catalogActionDialog(kind, name, action, recovery) {
                 ? Button(t('catalog.reviewReference'), "resolve-default-reference", "secondary")
                 : e instanceof ConsoleError && e.code === "PACKAGE_BUSY"
                     ? NavLink(t('module.findOperation'), "/operations", "btn secondary")
-                    : "");
+                    : "", e);
             const submit = document.querySelector("#dialog-submit");
             if (submit)
                 submit.textContent =
@@ -1977,7 +1977,7 @@ async function submitSkill() {
             ["RESULT_UNKNOWN", "UPLOAD_INTERRUPTED"].includes(e.code);
         dialogFeedback(err(e), unknown ? "warning" : "error", unknown
             ? Button(t('upload.readSkill'), "check-skill", "secondary", `data-name="${esc(selection.name)}"`)
-            : "");
+            : "", e);
         const submit = document.querySelector("#dialog-submit");
         if (submit)
             submit.textContent = t('upload.uploadSkill');
@@ -2074,7 +2074,7 @@ async function submitPackage(form) {
             dialogRecord.recover = undefined;
         dialogFeedback(err(e), ambiguous ? "warning" : "error", ambiguous
             ? ""
-            : Button(t('upload.editNewIntent'), "new-package-intent", "secondary"));
+            : Button(t('upload.editNewIntent'), "new-package-intent", "secondary"), e);
         const submit = document.querySelector("#dialog-submit");
         if (submit) {
             submit.textContent = t('package.resumeSubmission');
