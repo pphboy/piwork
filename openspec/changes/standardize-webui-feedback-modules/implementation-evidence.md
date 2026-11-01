@@ -335,3 +335,9 @@ GitHub实际run41327583037（head feecb469）的unit/static job已通过：Go目
 action-hierarchy旧assembly直接Node复现60/62，两条分别缺少已新增的acceptedExportFlow协作者和已抽取confirmedDirectorySelection绑定，并非已证明产品失败。修复直接import实际file-results与ExportFeedbackRegistry，给既有assembly fixture补显式接收/返回同一flow的协作者spy与原identity注册，**不新增regex提取helper**；原Stop/new/reopen/count断言保持并检查原flow对象，文件选择补确认listing清缺失选择、pending listing保留。官方tsc及action-hierarchy62 +file-results18 +export-feedback15共95/95通过。该旧app装配仍使用原VM表面，不能声称整套已迁移为无VM；新增/已抽取模块继续由直接import测试负责。
 
 17:21调度补充：旧无TAP/单测预算的Desktop job仍占同suite并发组，新的有界诊断可能排队约一小时。只为desktop-browser并发组增加一次固定`-bounded-tap-v1`世代后缀；其他suite组逐字不变，仍cancel-in-progress=false，不取消或隐藏旧run结果，不反复改世代刷并发，不改runner容量/收费设置。此后相同有界版本继续按同组排队；目的是取得当前实际失败栈，不是将测试改为绿灯。
+
+### 17:30 有限旧装配用例修复与重新打开2.2
+
+对未启动Chromium的六个剩余旧assembly文件实际直接执行，149项仅54pass/95fail，集中在缺失sharedIcon/确认目录选择/新feedback所有者/DOM closest等fixture协作者，不把这些直接称为95个产品bug。分别补实际共享、admission、work-chrome、file-results、read-feedback、settings-read-feedback模块import；app-local已存在装配边界仅用显式窄fixture协作者，未新增regex抽函数。导航保留原record/Operation身份及不同route/modal/identity晚响应约束并增加实际原receiptspy断言。不存在的/A.txt选择夹具改为确认listing确有该行，保留bulk-controls断言；Works状态夹具显式toolbar slot只验证原状态/控件委托，不冒称生产toolbar几何。废弃view.toast计时测试改直接NoticeStore控制clock验证3秒与替换旧计时器；file汇总测试改实际resultTone/actionNotice并保持unknown锁优先。官方编译与全部七个旧assembly文件合计211/211、0skip通过，旧VM表面仍明确保留，不称全部已去VM或浏览器已通过。
+
+独立Console browser run实际226pass/25fail。逐项初步定位24项为旧brand/notification owner/模态按钮范围/pending源/读回时序断言需适配，保留文案、请求次数、草稿、未知锁及语言约束，不用.first或force隐藏歧义；其中一项有真实产品缺陷：窄屏notice截获dialog右上Close指针。父任务用正式155资源、实际455×772视口及合成accepted-unknown Create user重现：heading29.86–114.25、footer677.07–741.96、Close中心y67.86，notice63.99–171.79，elementFromPoint实际为notice-unknown；正常点击不能关闭，密码已清空且submit仍锁定。此前known400功能通过不能豁免此几何缺陷，任务2.2重新打开，当前25/31，待窄/宽屏原Close、footer及notice自身恢复/Close可操作再重新判断。

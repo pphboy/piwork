@@ -135,3 +135,15 @@ Quick setup 既有 API Protocol selector（OpenAI Responses / Anthropic Messages
 忽略目录fixture只对原合成catalog目标增加unknown503控制，ledger明确“outcome unconfirmed; retained synthetic read snapshot”，GET不变不代表受理或未受理。待父任务用正式155资源验证这条实际app链；不把此前known400结果扩写为unknown覆盖。新dialog helper的唯一消费者/无运行依赖/安全准入与原cause边界已补入既有维护Skill导航。
 
 17:02正式155资源实际CUA通过，app SHA256 `f56eddf48463cf4d06aa70798d5211e170fba6a94adce2e961c55457f0838e84`：合成Skill Disable一次POST503/CORE_UNAVAILABLE经真实adapter成为“写入结果未知”；关闭→Details不恢复已知失败form，只聚焦Refresh。额外从原页面重新打开Disable并显式Submit，在没有readback时仍被原record拒绝，ledger始终一次POST（seq7），没有重放。该新form按钮视觉上可点击、实际提交准入拒绝，不能写成“按钮已禁用”。新identity恢复known400模式后，一次Skill Disable400关闭→Details仍正确恢复原fixture-skill/error。未知与已知两条实际app装配均得到独立证据，没有真实Core写入或据此声称未知结果已确认。
+
+## 17:35 模态通知避让真实交互边界
+
+共享host增加显示专用`setModalRegion({container,header,footer}|null)`，只消费两端实际dialog DOM边界；纯`noticeModalPlacement`优先放在header.bottom+8与footer.top−8间的浮动可滚动区域，限制viewport/横向边界，短body可使用真实dialog外空隙。ResizeObserver只观察三边界而不是host，滚动/viewport变化按一帧合并，只有变化的CSS值才写入；modal更换、关闭、detached与destroy清理监听/observer并恢复普通全局CSS。没有改NoticeStore事件、unknown锁、请求或模态业务语义。极端物理上没有任何正高度空隙时返回普通可见host并标明受限，不造零高度隐藏未知结果；不声称任意不可能几何都不重叠。
+
+纯几何/生命周期新三项后shared全套19/19，Console155/155、Desktop原51套件691/691通过；两端官方build/embed/test编译完成。首次窄屏实际CUA使用455×772：原heading bottom114.25，notice改为122.24–230.04，footer677.07–741.96；Close中心命中原close-dialog，正常点击真正关闭。原unknown notice保留并回全局top64，Details可点击聚焦原Refresh，notice Close可点击；关闭notice后再次显式同账号Submit仍零额外POST（该identity只有一次原502），footer Cancel也可用。没有forceclick，没有把视觉可点击错误写成已解锁。宽屏/resize/reparent与Desktop同共享组件验证仍待后续，任务2.2此时保持重新打开。
+
+17:42最终sidegap版本（共享notices SHA256 `efb117e6f132bdb508c03e910c86846663476bbe73cf1dd56b3c8cbf10a25f7c`）实际CUA通过：宽1190×849 Console dialog x305–885，notice x893–1182/宽289，完全在外且未裁切，原输入不再被不必要遮挡；notice Details、原Close与notice Close可用。保持同dialog打开，实际缩窄窗口/缩放为455×772后host自动回到122.24–230.04，仍位于header114.25与footer677.07之间；正常Close真正关闭，unknown保留并恢复全局位置。没有forceclick或脚本修改页面。
+
+Desktop用新官方资源显式重新载入合成combined入口（旧tab切fixture服务时的invalid response不当作产品bug）：一次blocked.txt DELETE403后，455×772 header bottom165.26、host173.25–281.05、footer top608.58，原Close命中close-modal且正常关闭。文件每路径失败仍可见；Details没有重开file modal，不能宣称其有该行为。再宽1190×849重开原Delete确认，dialog x335–855，host x863–1182/宽319在外；footer Cancel与notice Close可用，原每路径失败保留，ledger始终一次DELETE无额外写入。原业务结果与通知关闭不混同。
+
+最终shared20/20（含sidegap及active closed/detached/replaced/destroy清理）、Console155/155、Desktop原直接691/691、旧assembly211/211，各自准确范围通过；两端官方生成再次字节相同，Go webapp12.53秒、maintenance、PR-base style134、依赖/docs/diff通过。两端实际窄/宽、resize与reparent证明新P1修复后，2.2重新完成，累计26/31；完整自动browser/真实链仍以各自CI新头结果为准，不被这些有限通过替代。
