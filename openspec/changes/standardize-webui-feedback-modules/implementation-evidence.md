@@ -345,3 +345,63 @@ action-hierarchy旧assembly直接Node复现60/62，两条分别缺少已新增�
 ### 17:56 六场景诊断入口不替代全套
 
 为在旧完整Desktop job结束前取得代表性TAP失败栈，现有同PR只读workflow追加desktop-smoke独立20分钟job，仅从两个既有正式编译test文件选择原已失败六例：登录/退出、窄Create几何、D19一次原交付、Chat unknown原key、文件预览读恢复、FS52-A过时文件回调。逐个源码名称唯一、精确锚定，仍120秒单测预算；同官方build/Chromium/pinned actions/无secret配置。原全部71文件Desktop命令、其他jobs及并发组逐字比较未改，不取消旧run、无新增断言豁免。此子集的过滤/通过只用于诊断，绝不作为8.1全浏览器通过。YAML/bash/六个唯一源名称与原steps/安全配置相同检查通过，尚未执行该job。
+
+### 18:09 实际完整Console通过与Desktop剩余失败
+
+2427f074头实际完整Console浏览器251/251通过；对应真实Core Console8/8及log export链通过，后续efb0264真实Core亦重复这两项通过。Desktop真实Core仍在Send message处被全局notice截获；日志显示501 DESKTOP_ROUTE_UNAVAILABLE，但当时没有请求路径，不能仅凭文案断定来源。efb0264的六例诊断实际0pass/6fail、0skip：四项真实notice指针截获，文件预览预期一个error实际两个，过时文件读取预期零error实际一个。原断言保留，尚非全套浏览器通过。
+
+父任务另以正式资源、1190×849实际视口及原文件GET503证明独立几何缺陷：Send中心(1144,751)实际命中notice-error，通知y746–833，而Send y734–768；只填本地草稿，没有Send。该事实不依赖501或测试默认夹具，因此2.2再次打开为25/31，既有modal几何通过不能代替全局保护。拟仅共享DOM展示边界保护可见原控件、modal优先，不改业务状态/身份/通知内容或用force click绕过。
+
+CLI控制路由有独立可执行RED：实际adapter调用的两个既有cleanup GET，在nativeDesktop.ServeHTTP分别返回501（service路径）及400（runId过滤）且未到Core。仅补严格Work/service/run标识与query校验的这两个GET转发；不增加写入或通用proxy。测试验证原用户token只用于转发、不泄露，缺本机会话/异源拒绝、Core403原样保留及12项非法query/path/method不转发；既有Core owner-after-deletion/其他用户与管理员拒绝测试继续通过。此源级修复尚不能回填未记录路径的真实Core501归因；真实浏览器增加仅method/pathname/status>=400诊断，不记录query/body/header/token。
+
+原首轮全Go integration终态含17项失败。只读基线diff确认相关Core/Engine/Agent运行实现与这些测试未由本次UI提交改写，但没有执行同环境baseline，因此不称“基线已失败”。七项有当前契约/实现与旧断言漂移证据（schema、持续Session、Service内存、busy码），一项缺真正旧镜像，三项仅疑似readiness时序，六项原因未定，均保留失败事实，不盲改期待或重写无关后端。该旧4e1e24d run中两个精确Package HTTP/actor-scope测试有实际PASS行（30.61秒、39.72秒）；新增独立package-protocol job按当前头重跑原两例、原镜像/权限与15分钟Go预算，逐个PASS行检查避免零例/skip假绿。完整Go job仍保留，子集不替代整套。
+
+18:13选择性核验：共享23/23（其中notices16）、Console155/155、Desktop既有51直接套件691/691通过；两端官方build/内嵌shared字节一致，新增CLI正式build成功，Go webapp通过13.02秒（consoleassets无测试文件），边界/style/docs/diff通过。几何当前仅保护可见composer且modal优先，尚待实际浏览器确认，不称全部全局/非模态/模态正文动作均已避让。feedback浏览器夹具确实遗漏健康GET preferences，补一条`{coreUrl:null}`默认响应，显式handler仍先执行，PUT与专用失败不被掩盖，原错误数量断言不变。browser.test.ts则使用真实CLI偏好端点，不是相同遗漏，未盲加无效mock；既有离线偏好Go测试通过。
+
+18:17旧完整TAP进一步显示FS52-ZH达到120秒预算；当前测试在无body的204响应上等待`response.finished()`，后续真正“已保存”、not-busy、零error与单次PUT断言尚未到达。测试改为等待实际204 receipt并保留全部后续业务确认断言，不把pending禁用当完成；官方tsc/style通过，浏览器重跑仍待CI。另实际455px窄屏全局notice y63.99–150.78截获Chat导航（按钮y55.45、高40），正常指针失败；键盘进入只用于分离composer检查，不冒称指针通过。共享边界继续仅按真实页Header/Toolbar与composer DOM计算可用区，不以固定96px掩盖问题。
+
+### 18:20 Package/首设协议分层验收（6.4完成，2.2仍打开）
+
+新5406dfc头独立package-protocol实际两个精确测试通过：`TestCorePackageHTTPPublishesAndReplaysFrozenContent` 36.42秒、`TestNativeAdministratorPackageScopeAndAcceptedJobSurviveRevocation` 34.93秒。原测试证明真实Core/Engine的同source/key原冻结内容重放、不同actor不复用、接受后撤权不撤销原job及权限拒绝；不是mock推断。与已执行Console251/251中相同未变Package/Quick setup owner的原key Resume、无假Cancel/百分比、真实ready/preparation六组件与有效首设意图准入，以及直接模块负例合并，满足6.4的分层协议验收。明确不是一次串起浏览器与Core的单一E2E，且全Go17项旧run失败仍记录；4.3/5.4真实Desktop导入导出链未因此完成。当前任务26/31（2.2仍待其余已知几何验证）。
+
+同5406真实Desktop路径日志显示原cleanup GET现在到达Core并返回404，不再是Desktop路由501；该缺失对象的真实读错误继续显示，不通过吞404让测试绿。Send现被原已知名称冲突409等notice阻挡，仍由展示几何修复负责。Console真实Core8/8与log export链再次通过。
+
+18:20新unit run暴露packageprepare清理测试失败；本地原测试50次及GOMAXPROCS8下1000次均通过，不能声称复现原调度。源级夹具却与“只让prepare清理失败”注释矛盾：global failCleanup会同时让并发measure清理失败，使监控错误合法成为主返回。仅测试夹具改为action-scoped fault，保留原primary与ErrCleanup双重断言，并加强只剩prepare live/planned及资源保留。新增确定性测试验证init/measure清理正常、prepare清理失败；忽略目录overlay恢复旧global行为立即RED指向measure，不需sleep。修复后两例×1000、完整package七项、完整package race×10通过。没有改Prepare生产错误优先级或清理准入。
+
+18:22补充仅测试侧的源证据修正：recovery/final-acceptance与feedback一样确实由本地路由模拟Desktop并遗漏默认偏好GET，各补健康默认，显式失败handler优先不变；native browser与静态pending-dots不是该夹具，不乱加mock。真实CLI Service用例原精确`File saved.`已不属于当前Save owner，改为实际editor Saved、Save disabled、原草稿、服务端收到的完整bytes及恰好一次PUT，后续iframe连续性断言不变。两处图片夹具旧相对cwd路径在npm workspace实际ENOENT，改沿邻近既有compiled-module URL；本机从workspace cwd执行旧路径负例和新路径PNG签名正例通过，正式tsc/style通过。以上仍待真实浏览器重跑，不把修测试等同产品验收。
+
+### 18:38 首次读取与通知控制区的后续实际复核
+
+Console实际455px Menu触发按钮已由页Header避让修复，但展开导航超出topbar固有高度，User access链接仍被notice覆盖；不能只测trigger就称菜单可用。仅按既有实际瞬时菜单建立notice1000/menu1001层级，保留notice及原unknown锁，不抬高整个Header、inspector或backdrop，仍待最终正常指针复核。非模态Operation drawer的Pause在宽屏原被全局notice覆盖；按可见drawer header/footer布局区后正常点击可暂停且无新Create，但左侧notice又覆盖可交互背景Search，故非模态区额外按实际pageHeader剪裁可用top，true-modal背景inert规则不改。相关新回归以实际DOM边界而非固定像素高度处理。
+
+同次确认6.1真实缺陷：Users所有GET503，首错显示Data unavailable，原auto retry因shell已存在而误把users默认[]当确认数据。再次打开6.1（25/31），实现独立PageReadState仅保存identity/view/path的loading/unavailable/confirmed回执与时间，不接业务数组/API/cache；shell/locale重绘均不能确认数据。只按当前真实成功读确认，失败刷新保留已有同scope回执，旧scope晚结果拒绝。实际复核已观察首错及全部自动/显式失败重试、EN/ZH切换仍unavailable；真实GET成功显示一账户并清原错；再次503保留一账户；新Models503不借Users数据。读notice原pagekey懒翻译，Runtime数据确认与独立health读失败notice的退休条件分开。最终正常菜单/已有notice语言切换与CI实际新browser回归仍待确认，不提前勾回。
+
+18:40后续旧头4a46ab2完整Go integration终态451pass/16fail/6skip；其中前一run失败的Package activation这次通过，其余旧类别仍失败。它支持按各次实际结果区分不稳定执行与确定性缺陷，不证明未运行baseline，也不回写旧失败为通过。当前头精确Package两协议绿色与这些全套旧头事实分别记录。
+
+18:42最终非模态样本实际通过：宽屏Operation drawer的notice在左侧但现在top64，背景Search原输入y16.75–38.25正常点击/输入，drawer仍打开；Pause正常切到Resume且不新建Create。Export另以真实偏好GET503 sticky error验证：stopped Work2原Export一次POST，宽屏Details/Pause可正常点击；455×772 panel y355.36–755.82，notice y218.35–347.16完全在panel上方，Resume/Pause/Hide正常指针可用；BODY host/show非模态、privacy warning、Details无Operation ID保持。ledger分别含此前原Create一次POST、Work2原Export一次POST及基线service-entries一次POST，不冒称全部POST为零。pending合成夹具未执行Prepare/实际下载/真实archive，不能关闭4.3真实链。
+
+18:54 a444dc29正式资源实际复核收敛：Models503→Users503保留两个独立读notice，返回Models的真实GET200显示合成模型后只退休旧Models读notice，Users失败独立保留；同身份且零写入。只在Console feature选择同identity/path/read旧数字generation，并调用NoticeStore原精确resolve，不修改共享store或清除write unknown。之前加载中8秒GET期间实际EN→ZH仍显示loading骨架，不出现默认表格；首错/自动与手动重试/语言/确认成功/失败刷新/新route隔离也已实际通过。重新完成6.1（26/31）；新增直接owner与notice回归使Console161/161通过，actual-app新增浏览器回归仍待CI，不宣称整套绿色。
+
+最终Console瞬时菜单层级实际455px通过：Models503 sticky error下正常展开导航并点击User access真实进入Users；原Models错误保留，Account→Language正常点击；中文后旧notice仍正确叫“AI模型”，不误用当前Users标题。Users刷新失败仍保留确认的一账户，自己的notice为“用户”而非泛Core。2.2还保持打开，直到Desktop实际pane toolbar/File More触发区的已确认遮挡修复与正常指针复核完成。
+
+### 19:09 有限主要命令行避让与 Requests 原触发点
+
+共享展示只接实际header及显式toolbars/footers只读DOM集合：可见顶部取最深边界，底部同时考虑editor/settings-savebar/composer，而不是第一项命中；统一排除断开、inert、隐藏及祖先裁剪区域。Desktop新增零依赖`notice-page-region`仅收集10项既有主要顶部行和3项底栏，不扫描body按钮或iframe，不复制共享几何、不读取业务状态。直接query-port测试验证精确清单与原节点，真实布局仍由浏览器验证。非模态inspector保留BODY通知宿主/show/aria-modal=false，外侧通知也避让仍可交互的背景Header；原modal优先不变。
+
+父任务以正式资源实际455×772验证File More：旧通知曾覆盖按钮；修复后按钮中心实际命中file-add，通知移到196.89–304.69、位于Files工具栏下。正常More→New folder→Cancel可用，焦点回原file-add，原sticky偏好错误保留且没有MKCOL；Work menu→Settings正常指针操作也成功。宽屏原Create inspector的Pause与背景Search、455px Export非模态Pause/Resume/Hide已经分别实际验证，均保持原POST身份与次数；这些有限事实不冒称全部浏览器矩阵通过。
+
+Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复原Service菜单。仅在实际anchored菜单内捕获既有overlayAnchor，直接触发仍用focusKey，refresh保留原entry；原Work/Service/identity与新dialog准入未变。新增实际HTTP浏览器回归保留原Service返回断言，并验证延迟Requests GET不能夺走新Response settings的model焦点；已正式编译，尚未本地运行Chromium。官方Desktop build/embed及52个直接套件694/694、0skip通过，不把新浏览器用例编译称为执行。
+
+旧TAP的已确认导航/反馈契约迁移保留原请求、草稿、未知锁和身份断言：20个Settings入口经显式Work菜单；20个展开Requests场景经原Service或Chat菜单，验证原Work/Service/filter且无旧toolbar shortcut；6个Files确认通知沿原目标与路径汇总、logout沿BODY警告、Export技术ID改通过实际原GET/POST账本证明且Details不显示。Work Header按冻结V13不加Account；原Export/Account共存从Works原行菜单开始，两个Run认证错误先完成原错误/help断言再显式Back到Works全局Account。首设成功通知归notice host且保留Model saved事实，502退出保持unknown而非伪装known failure。均属已批准布局/状态契约迁移，不能据此宣称旧完整浏览器失败已经全部修复。
+
+19:10最终生产源集成门禁实际通过：全部workspace typecheck、maintenance、相对PR原base的style142文件、真实重新生成两端UI逐字一致、Console161/161与共享29/29，Go webapp12.030秒及两个宿主build成功；consoleassets/desktopassets明确无独立test文件。日志为ignored `dist/final-owner-gates.log` exit0。旧Pause5缺失sharedIcon协作者改直接导入实际共享模块，仅补已有assembly参数；Log export入口guard改为原具名wrapper委托，明确只是source wiring检查而非行为单元证明；两个正式编译Node套件10/10、0skip通过。initial-shell浏览器断言按真实静态labelled skeleton校验，后续pending dots动画/固定slot/reduced-motion用例不变，尚待CI实际执行。
+
+19:14实际Requests焦点复验发现第一版捕获位置仍错误：正式3830资源Service options→Requests的filter正确，但Escape后实际焦点落到tab-Services而非原Service菜单。原因不是浏览器不支持，而是既有dispatchAction先cloneNode(false)，handler收到无父节点副本，closest检查必然失效；前述694直接测试不覆盖此DOM事件链，不能据此称焦点修复完成。将原selector快照限定到dispatch入口真实clicked节点、在克隆前捕获并仅向Requests handler传可选entry标量，保留原关闭恢复与作用域guards，实际浏览器待复验。
+
+19:16克隆前捕获版本正式生成物再次逐字校验通过，Desktop typecheck、相对原PR-base style145文件、Go webapp13.150秒及两个宿主build均通过（`dist/final-focus-gates.log` exit0）。最终Desktop app SHA256 `44801a9ce84588701d92b102dba34f132f7a8964e3c5db627bdaf9e1e8f36095`；Console app `e2844f9ebabe014e36b37bbe0db051ebfce94852a2597efe6334918d8c165506`；共享notices `1b1ebfc17b1e4e55ee302258596a7865f154e4571e17624ce30fc83a889b6c34`。三个hash均指官方构建/内嵌，非预览转换产物；功能浏览器结果另记，不从hash推断通过。
+
+19:16同一最终源重跑Desktop52直接套件694/694、0skip；另外实际dispatch协作者涉及的compact-work-controls/file-target/modal-presentation/overlay-role四个旧装配文件88/88、0skip，无需新增fixture协作者或改变断言。两个结果集合分别记录，不机械相加冒称互斥覆盖或浏览器通过。Logs两条改在真实10秒预算前断言pending再释放成功/失败，另加明确10秒超时后只手动重读同GET的浏览器回归；既有diagnostic deadline六项直接测试6/6通过。Cleanup失败重读保留原确认事实与503，Run reconnect普通读取静默结束，unknown路径只对原502行核验原锁/无Retry；都保留请求次数，不用成功toast/隐藏旧数据制造绿灯。新浏览器断言仍待正式CI。
+
+19:18父任务正式455×772 Settings底栏代表性验证：保留sticky偏好读错，仅编辑本地AGENTS草稿；顶部/底部两个真实Save存在。底栏最初部分低于视口，正常键盘Tab滚动进入后Save为601.62–641.62，中心实际命中save-config，通知63.99–171.79不重叠；正常Discard恢复原Synthetic instructions，没有PUT/Apply。此为实际导航/底栏可达性与不重放证明，不是配置写入成功证明。
+
+19:18最终44801正式资源实际复验通过：fresh reload后正常Service options→Requests，实际filter为原Synthetic notes、heading Service Requests与原Work1保持；Escape关闭后document.activeElement确为data-action=service-menu、aria-label=Service选项，不再落tab-Services。原sticky偏好读错仍在，没有force或先关闭通知绕过。结合已经执行的模态/非模态、宽窄屏、背景Header、composer、Files菜单、Settings底栏及Console菜单/首次读失败/语言/跨页原读恢复，2.2与6.1有限验收恢复完成；连同真实Package协议6.4当前27/31。剩余4.3、5.4、8.1、8.2仍等待当前正式CI真实链/完整浏览器及最终核对，不能以本批CUA或直接套件代替。
