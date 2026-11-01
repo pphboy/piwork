@@ -194,8 +194,8 @@ test('delivered workspaces retain every management deep link, mobile layout, and
       await login(page);
       const brand = page.getByRole('link',{name:'Piwork overview',exact:true});
       await expect(brand).toHaveAttribute('href','/admin');
-      await expect(brand).toHaveText('Core');
-      await expect(brand.getByText('Core',{exact:true})).toBeVisible();
+      await expect(brand).toHaveText('Administration');
+      await expect(brand.getByText('Administration',{exact:true})).toBeVisible();
       await expect(page.getByRole('button',{name:'Administrator account',exact:true})).toBeVisible();
       await expect(brand.locator('img')).toHaveAttribute('alt','');
       await expect.poll(()=>brand.locator('img').evaluate(image=>image.complete && image.naturalWidth > 0)).toBe(true);
@@ -246,7 +246,9 @@ test('user confirmation, credential reset, last administrator, and localized con
   await expect(page.getByText('At least one enabled administrator must remain.',{exact:true})).toBeVisible(); expect(users[0].enabled).toBe(true);
   await page.keyboard.press('Escape'); await page.getByRole('button',{name:'Create user',exact:true}).click();
   await page.getByLabel('Account',{exact:true}).fill('new-user'); await page.getByLabel('Password',{exact:true}).fill('replacement-password'); await page.getByLabel('Confirm password').fill('replacement-password'); await page.locator('#dialog-submit').click();
-  await expect(page.getByText(/CONFLICT/)).toBeVisible(); expect(await page.locator('body').innerText()).not.toContain('账号已存在'); expect(await page.locator('#new-password').inputValue()).toBe('');
+  await expect(page.locator('#dialog-feedback')).toContainText('CONFLICT');
+  expect(await page.locator('body').innerText()).not.toContain('账号已存在');
+  expect(await page.locator('#new-password').inputValue()).toBe('');
 });
 test('default draft submits only edited fields and retains unknown public configuration', async ({page}) => {
   await login(page); await page.goto(base+'/default-work');
@@ -295,7 +297,10 @@ test('Package lost acceptance recovers original key and payload without duplicat
 test('malformed successful runtime response requires readback rather than claiming success',async({page})=>{
   await login(page);await page.goto(base+'/runtime');await page.getByRole('button',{name:'Edit runtime',exact:true}).click();
   await page.route('**/console/api/admin/runtime',route=>route.request().method()==='PUT'?route.fulfill({status:200,contentType:'application/json',body:'{}'}):route.continue());
-  await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');await page.getByRole('button',{name:'Save runtime',exact:true}).click();await expect(page.getByText(/Read current runtime before saving again/)).toBeVisible();await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
+  await page.getByLabel('AI model',{exact:true}).selectOption('model-test-00000001');
+  await page.getByRole('button',{name:'Save runtime',exact:true}).click();
+  await expect(page.locator('main .owned-feedback').filter({hasText:'Read current runtime before saving again'})).toBeVisible();
+  await expect(page.getByLabel('API Key',{exact:true})).toHaveCount(0);
 });
 test('Operation observation is serial and does not re-submit acceptance',async({page})=>{
   operationState='running';operationDelayMs=1200;operationMaxInFlight=0;const accepts=packageAccepts.length;

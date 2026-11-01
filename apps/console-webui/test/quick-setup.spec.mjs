@@ -200,19 +200,19 @@ for(const path of ['state','session'])test(`ordinary ${path} reads have one loca
  const state=await identityFixture(page,{entry:'/setup#setup=synthetic-obsolete-proof',waitForForm:false,handle:async r=>{
   if(r.path!==path)return null;if(failures){await failed.promise;return{status:502,json:{message:`Synthetic ${path} failure`}};}await recovery.promise;return null;
  }});
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#setup-app .console-read-skeleton[aria-busy=true]')).toHaveCount(1);
  await expect(page.locator('#credentials')).toHaveCount(0);
  expect(new URL(page.url()).hash).toBe('');
  await page.clock.fastForward(10001);await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText('The read timed out');expect(state.requests.filter(r=>r.path===path)).toHaveLength(1);expect(identityWrites(state)).toEqual([]);
  failed.resolve();
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(0);
+ await expect(page.locator('#setup-app .console-read-skeleton')).toHaveCount(0);
  await expect(page.locator('#setup-status')).toHaveText('');
  failures=false;
- const retry=page.getByRole('button',{name:'Read current state',exact:true});
+ const retry=page.locator('#setup-app [data-action=refresh]');
  await retry.click();
  await expect(retry).toBeEnabled();
  await expect(retry).toHaveAttribute('aria-busy','true');
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(retry.locator('[data-pending-action=refresh] .pending-dots')).toHaveCount(1);
  await expect.poll(()=>state.requests.filter(r=>r.path===path).length).toBe(2);
  recovery.resolve();await expect(page.getByRole('heading',{name:'Create your administrator',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Create administrator',exact:true})).toBeEnabled();await expect(page.locator('#setup-status')).toHaveText('');await page.clock.fastForward(10001);await expect(page.locator('#setup-status')).toHaveText('');expect(identityWrites(state)).toEqual([]);expectPlainSession(state);await expect(page.getByRole('button',{name:'Check setup access',exact:true})).toHaveCount(0);await expect(page.locator('body')).not.toContainText('Open your setup link');expect(await page.evaluate(()=>JSON.stringify({...localStorage,...sessionStorage}))).not.toContain('synthetic-obsolete-proof');
 });
@@ -228,8 +228,8 @@ for(const outcome of ['uncommitted network failure','committed server error','co
  await expect.poll(()=>state.requests.filter(r=>r.path==='state').length).toBe(2);
  await expect(page.locator('#password')).toHaveValue('');
  await expect(page.locator('#confirm-password')).toHaveValue('');
- await expect(page.locator('#credentials .pending-dots')).toHaveCount(0);
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#credentials [data-credential-pending] .pending-dots')).toHaveCount(0);
+ await expect(page.locator('#credential-recovery [data-pending-action=refresh] .pending-dots')).toHaveCount(1);
  await expect(page.getByRole('button',{name:'Create administrator',exact:true})).toBeDisabled();
  await page.locator('#credentials').evaluate(form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));expect(identityWrites(state).map(r=>r.path)).toEqual(['setup/administrator']);readback.resolve();
  await expect(page.getByRole('heading',{name:state.initialized?'Sign in to Piwork':'Create your administrator',exact:true})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText(state.initialized?'Administrator setup is complete. Sign in to continue.':'Creation was not confirmed. Enter your password again');await expect(page.locator('#account')).toHaveValue('admin');await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#setup-status')).toHaveText('');await expect(page.locator('#credentials [type=submit]')).toBeEnabled();expect(state.requests.map(r=>r.path)).toEqual(['state','session','setup/administrator','state','session']);expect(identityWrites(state)).toHaveLength(1);expect(new URL(page.url()).pathname).toBe('/setup');
@@ -243,7 +243,13 @@ test('failed administrator readback stops pending and only an explicit read reco
   if(r.path==='state'&&s.initialized&&failReadback)return{status:502,json:{message:'Synthetic readback unavailable'}};return null;
  }});
  await fillCredentials(page);await page.getByRole('button',{name:'Create administrator',exact:true}).click();await expect(page.getByRole('heading',{name:'Create your administrator',exact:true})).toBeVisible();await expect(page.locator('#setup-notice')).toContainText('The result is not confirmed');await expect(page.locator('.pending-dots')).toHaveCount(0);await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#confirm-password')).toHaveValue('');await expect(page.locator('#credentials [type=submit]')).toBeDisabled();expect(identityWrites(state)).toHaveLength(1);
- failReadback=false;await page.getByRole('button',{name:'Read current state',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();await expect(page.locator('#password')).toHaveValue('');await expect(page.locator('#credentials [type=submit]')).toBeEnabled();expect(identityWrites(state).map(r=>r.path)).toEqual(['setup/administrator']);expectPlainSession(state);
+ failReadback=false;
+  await page.locator('#credential-recovery [data-action=refresh]').click();
+  await expect(page.getByRole('heading',{name:'Sign in to Piwork',exact:true})).toBeVisible();
+  await expect(page.locator('#password')).toHaveValue('');
+  await expect(page.locator('#credentials [type=submit]')).toBeEnabled();
+  expect(identityWrites(state).map(r=>r.path)).toEqual(['setup/administrator']);
+  expectPlainSession(state);
 });
 
 for(const creating of [true,false])test(`${creating?'administrator creation':'sign-in'} rejection clears secrets and awaits ordinary session CSRF recovery before another submit`,async({page})=>{
@@ -277,10 +283,10 @@ for(const path of ['state','session'])test(`a late ${path} response after pagehi
  state.initialized=true;
  await restoreIdentityPage(page);
  await expect.poll(()=>reads).toBe(2);
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#setup-app .console-read-skeleton[aria-busy=true]')).toHaveCount(1);
  oldRead.resolve();
  await page.waitForTimeout(50);
- await expect(page.locator('[data-pending-action=logout] .pending-dots')).toHaveCount(1);
+ await expect(page.locator('#setup-app .console-read-skeleton[aria-busy=true]')).toHaveCount(1);
  await expect(page.locator('#credentials')).toHaveCount(0);
  expect(new URL(page.url()).pathname).toBe('/setup');
  expect(identityWrites(state)).toEqual([]);

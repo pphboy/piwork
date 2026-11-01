@@ -191,7 +191,10 @@ async function modelsFixture(page,intercept=()=>undefined){
  },'/models');return{models,writes,tests,requests};
 }
 
-async function closeModelTest(page){await page.getByRole('button',{name:'Close',exact:true}).click();await expect(page.locator('dialog')).toHaveCount(0);}
+async function closeModelTest(page){
+  await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
+  await expect(page.locator('dialog')).toHaveCount(0);
+}
 
 for(const reason of ['provider-authentication','model-unavailable','rate-limited','dns','tls','connection','network','timeout','provider-error','protocol-mismatch','empty-reply','response-too-large'])test(`message Test ${reason} feedback explains recovery and never blocks save or expires administrator login`,async({page})=>{
   let calls=0;
@@ -236,8 +239,20 @@ test('Messages models have independent lifecycle and distinguish identical IDs o
 });
 for(const change of ['endpoint','Key'])test(`AI model Test readback invalidates a changed saved ${change}`,async({page})=>{
  const state=await modelsFixture(page);state.models.push({id:'managed-readback',name:'Saved model',api:'openai-responses',baseUrl:'https://old-fixture.invalid/v1',model:'gpt-5.1',modelRef:'model-readback',enabled:true,credentialAvailable:true});
- await page.getByRole('button',{name:'Read current data',exact:true}).click();await page.getByRole('link',{name:'Saved model',exact:true}).click();await page.getByLabel('Model ID',{exact:true}).fill('unsaved-model-draft');await page.getByRole('button',{name:'Test',exact:true}).click();await closeModelTest(page);
- if(change==='endpoint')state.models[0].baseUrl='https://new-fixture.invalid/v1';await page.getByRole('button',{name:'Read current data',exact:true}).click();await expect(page.locator('#model-test-result')).toContainText('Configuration changed');await expect(page.getByLabel('Model ID',{exact:true})).toHaveValue('unsaved-model-draft');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>state.tests.length).toBe(2);expect(state.tests.at(-1).modelId).toBe('managed-readback');expect(state.tests.at(-1).model).toBe('unsaved-model-draft');expect(state.writes).toHaveLength(0);
+ await page.locator('main [data-model-action=read]').click();
+  await page.getByRole('link',{name:'Saved model',exact:true}).click();
+  await page.getByLabel('Model ID',{exact:true}).fill('unsaved-model-draft');
+  await page.getByRole('button',{name:'Test',exact:true}).click();
+  await closeModelTest(page);
+ if(change==='endpoint')state.models[0].baseUrl='https://new-fixture.invalid/v1';
+  await page.locator('main [data-model-action=read]').click();
+  await expect(page.locator('#model-test-result')).toContainText('Configuration changed');
+  await expect(page.getByLabel('Model ID',{exact:true})).toHaveValue('unsaved-model-draft');
+  await page.getByRole('button',{name:'Test',exact:true}).click();
+  await expect.poll(()=>state.tests.length).toBe(2);
+  expect(state.tests.at(-1).modelId).toBe('managed-readback');
+  expect(state.tests.at(-1).model).toBe('unsaved-model-draft');
+  expect(state.writes).toHaveLength(0);
 });
 
 test('AI model readback invalidates a Test still in flight without discarding visible connection drafts',async({page})=>{
@@ -247,7 +262,9 @@ test('AI model readback invalidates a Test still in flight without discarding vi
     await page.getByLabel('Display name (optional)',{exact:true}).fill('Unsaved provider');await page.getByLabel('Base URL',{exact:true}).fill('https://draft-fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-inflight-key');await page.getByLabel('Model ID',{exact:true}).fill('draft-model');
     await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>started).toBe(true);
     await closeModelTest(page);
-    await page.getByRole('button',{name:'Read current data',exact:true}).click();await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue('https://draft-fixture.invalid/v1');await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-inflight-key');
+    await page.locator('main [data-model-action=read]').click();
+  await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue('https://draft-fixture.invalid/v1');
+  await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-inflight-key');
     gate.resolve();await expect(page.locator('#model-test-result')).toContainText('Configuration changed');await expect(page.locator('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:'View test result',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('previous configuration');await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual late reply');expect(state.writes).toHaveLength(0);
   }finally{gate.resolve();}
@@ -305,7 +322,9 @@ test('AI model lost acceptance requires explicit readback and expired sessions c
   });
   await page.getByLabel('Display name (optional)',{exact:true}).fill('Unconfirmed');await page.getByLabel('Model ID',{exact:true}).fill('unknown');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-uncertain');await page.getByRole('button',{name:'Add model',exact:true}).click();
   await expect(page.locator('main')).toContainText('unconfirmed');await expect(page.getByRole('button',{name:'Add model',exact:true})).toBeDisabled();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
-  lost=false;await page.getByRole('button',{name:'Read current data',exact:true}).click();await expect(page.getByRole('button',{name:'Add model',exact:true})).toBeEnabled();
+  lost=false;
+  await page.locator('main [data-model-action=read]').click();
+  await expect(page.getByRole('button',{name:'Add model',exact:true})).toBeEnabled();
   expired=true;await page.getByLabel('API Key',{exact:true}).fill('synthetic-expired');await page.getByLabel('Model ID',{exact:true}).fill('one');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page).toHaveURL(base+'/login');await expect(page.locator('#model-key')).toHaveCount(0);
   expect(state.writes).toHaveLength(0);
 });
@@ -372,7 +391,7 @@ test('a committed user creation with a lost Core response stays locked until Use
   await page.locator('#new-password').fill('synthetic-password');
   await page.locator('#confirm-password').fill('synthetic-password');
   await page.locator('#dialog-submit').click();
-  await expect(page.locator('#toast-root')).toContainText('new-user');
+  await expect(page.locator('.notice-host')).toContainText('new-user');
   expect(requests.filter(r => r.path === 'admin/users' && r.method === 'POST')).toHaveLength(1);
   await page.locator('[data-action="close-dialog"]').first().click();
   await page.locator('[data-action="refresh"]').click();
@@ -430,7 +449,11 @@ for(const kind of ['skills','packages'])for(const action of ['disable','enable',
     },'/'+kind+'/item');
     await page.locator(`[data-action="${action==='remove'?'catalog-remove':'catalog-toggle'}"]`).click();if(action==='remove')await page.locator('#confirm-name').fill('item');
     await page.locator('#dialog-submit').click();await expect(page.locator('#dialog-submit [role="status"]')).toContainText('item');post.resolve();
-    await expect(page.locator('main')).toContainText(`item ${action==='remove'?'removed':action==='enable'?'enabled':'disabled'}`);await expect(page.locator('dialog')).toHaveCount(0);get.resolve();await expect(page.locator('main')).toContainText('not confirmed');expect(requests.filter(r=>r.method!=='GET').length).toBe(1);
+    await expect(page.locator('.notice-host .notice-message').filter({hasText:`item ${action==='remove'?'removed':action==='enable'?'enabled':'disabled'}`})).toBeVisible();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  get.resolve();
+  await expect(page.locator('main')).toContainText('not confirmed');
+  expect(requests.filter(r=>r.method!=='GET').length).toBe(1);
   }finally{post.resolve();get.resolve();}
 });
 
@@ -462,7 +485,8 @@ for (const phase of ['PUT', 'readiness']) for (const outcome of ['success', 'fai
     await expect(page.locator('#apiKey')).toHaveCount(0);
     await page.locator('#runtime-form button[type="submit"]').click();
     await expect.poll(() => phase === 'PUT' ? waiting : page.evaluate(() => !!window.oldRuntimeReadinessWaiting)).toBe(true);
-    if (phase === 'readiness') { await expect(page.locator('main')).toContainText('Runtime saved'); await expect(page.locator('#apiKey')).toHaveCount(0); }
+    if (phase === 'readiness') { await expect(page.locator('.notice-host .notice-message').filter({hasText:'Runtime saved'})).toBeVisible();
+  await expect(page.locator('#apiKey')).toHaveCount(0); }
     await page.locator('a[data-nav][href="/default-work"]').first().click();
     if (phase === 'PUT') await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
     await expect(page).toHaveURL(base + '/default-work');
@@ -494,7 +518,13 @@ test('S05 runtime saved confirmation precedes readiness; newer non-sensitive edi
     },'/runtime');
     await page.locator('[data-action="edit-runtime"]').first().click();await page.locator('#modelRef').selectOption('model-test-00000001');await page.locator('#runtime-form button[type="submit"]').click();
     await expect(page.locator('#runtime-form button[type="submit"] .pending-dots')).toHaveCount(1);await page.locator('#modelRef').selectOption('model-test-00000002');post.resolve();
-    await expect(page.locator('main')).toContainText('Runtime saved');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');await expect(page.locator('#apiKey')).toHaveCount(0);health.resolve();await expect(page.locator('main')).toContainText('readiness could not be confirmed');await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');expect(requests.filter(r=>r.method==='PUT').length).toBe(1);
+    await expect(page.locator('.notice-host .notice-message').filter({hasText:'Runtime saved'})).toBeVisible();
+  await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');
+  await expect(page.locator('#apiKey')).toHaveCount(0);
+  health.resolve();
+  await expect(page.locator('main')).toContainText('readiness could not be confirmed');
+  await expect(page.locator('#modelRef')).toHaveValue('model-test-00000002');
+  expect(requests.filter(r=>r.method==='PUT').length).toBe(1);
   }finally{post.resolve();health.resolve();}
 });
 
@@ -554,7 +584,12 @@ for (const update of [false, true]) test(`S04 Skill ${update ? 'update' : 'add'}
       if(accepted&&r.method==='GET'&&(r.path==='admin/skills'||r.path==='admin/default-work')){await reads.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}
     },update?'/skills/skill':'/skills');
     await page.locator(`[data-action="${update?'update-skill':'add-skill'}"]`).click();await page.locator('#upload-files').setInputFiles(dir);await page.locator('#dialog-submit').click();
-    await expect(page.locator('#dialog-submit .pending-dots')).toHaveCount(1);post.resolve();await expect(page.locator('main')).toContainText('Skill skill confirmed');await expect(page.locator('dialog')).toHaveCount(0);reads.resolve();await expect(page.locator('main')).toContainText('not confirmed');
+    await expect(page.locator('#dialog-submit .pending-dots')).toHaveCount(1);
+  post.resolve();
+  await expect(page.locator('.notice-host .notice-message').filter({hasText:'Skill skill confirmed'})).toBeVisible();
+  await expect(page.locator('dialog')).toHaveCount(0);
+  reads.resolve();
+  await expect(page.locator('main')).toContainText('not confirmed');
     const request=requests.find(r=>r.method===(update?'PUT':'POST'));expect(request.body).toContain('filename="SKILL.md"');expect(requests.filter(r=>r.method===(update?'PUT':'POST')).length).toBe(1);
   }finally{post.resolve();reads.resolve();await rm(root,{recursive:true,force:true});}
 });
@@ -601,7 +636,11 @@ test('S05 Defaults save confirms the submitted draft while newer edits remain un
     const requests=await fixture(page,async r=>{if(r.path==='admin/default-work'&&r.method==='PATCH'){await gate.promise;return{json:{baseImage:'agent:test',configuration:{skills:[],packages:[],agentsMd:'submitted'}}};}},'/default-work');
     await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();await page.locator('#agentsMd').fill('submitted');await page.locator('[data-action="save-defaults"]').click();
     await expect(page.locator('[data-action="save-defaults"] .pending-dots')).toHaveCount(1);await page.locator('#agentsMd').fill('newer unsaved draft');await expect(page.locator('[data-action="save-defaults"]')).toBeDisabled();
-    gate.resolve();await expect(page.locator('main')).toContainText('Defaults saved');await expect(page.locator('#agentsMd')).toHaveValue('newer unsaved draft');await expect(page.locator('#dirty-label')).toContainText('fields changed');expect(requests.filter(r=>r.method==='PATCH').length).toBe(1);
+    gate.resolve();
+  await expect(page.locator('.notice-host .notice-message').filter({hasText:'Defaults saved'})).toBeVisible();
+  await expect(page.locator('#agentsMd')).toHaveValue('newer unsaved draft');
+  await expect(page.locator('#dirty-label')).toContainText('fields changed');
+  expect(requests.filter(r=>r.method==='PATCH').length).toBe(1);
   }finally{gate.resolve();}
 });
 

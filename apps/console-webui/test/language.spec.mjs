@@ -220,6 +220,7 @@ test('onboarding unknown login stays with its original account across conflictin
   await expect(page.locator('#account')).toHaveValue('newer-draft');
   expect(await page.locator('#account').evaluate(node => node === window.originalAccountInput)).toBe(true);
   expect(posts).toBe(1);
+  await expect(page.locator('#credential-recovery [data-action=refresh]')).toHaveAttribute('aria-busy', 'false');
   sessionAccount = 'original-user';
   await page.locator('#credential-recovery [data-action="refresh"]').click();
   await expect(page).toHaveURL(base + '/admin/setup');
@@ -404,14 +405,14 @@ test('已有 Core 状态反馈随语言切换，且不会再次刷新', async ({
     await page.goto(`${base}/admin`);
     await expect(page.locator('[data-action="refresh-status"]')).toBeVisible();
     await page.locator('[data-action="refresh-status"]').click();
-    await expect(page.locator('.feedback').filter({ hasText: en['status.refreshed'] })).toBeVisible();
+    await expect(page.locator('.notice-host .notice-message').filter({ hasText: en['status.refreshed'] })).toBeVisible();
     const before = reads;
     await selectLanguage(page, 'zh-CN');
-    await expect(page.locator('.feedback').filter({ hasText: zh['status.refreshed'] })).toBeVisible();
-    await expect(page.locator('.feedback').filter({ hasText: en['status.refreshed'] })).toHaveCount(0);
+    await expect(page.locator('.notice-host .notice-message').filter({ hasText: zh['status.refreshed'] })).toBeVisible();
+    await expect(page.locator('.notice-host .notice-message').filter({ hasText: en['status.refreshed'] })).toHaveCount(0);
     expect(reads).toBe(before);
     await selectLanguage(page, 'en');
-    await expect(page.locator('.feedback').filter({ hasText: en['status.refreshed'] })).toBeVisible();
+    await expect(page.locator('.notice-host .notice-message').filter({ hasText: en['status.refreshed'] })).toBeVisible();
     expect(reads).toBe(before);
   } finally {
     await context.close();
@@ -795,7 +796,7 @@ test('Quick setup 模型保存请求在途时切换语言只提交一次并保�
 
     state.modelsGate.resolve();
     // 在途保存完成后，反馈使用切换后的语言（catalog 值），绑定仍只发起一次。
-    await expect(page.locator('#setup-notice')).toContainText(en['setup.modelSaved.binding']);
+    await expect(page.locator('.notice-host .notice-message').filter({hasText:en['setup.modelSaved.binding']})).toBeVisible();
     await expect.poll(() => bindings().length).toBe(1);
 
     state.runtimeGate.resolve();
