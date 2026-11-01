@@ -335,6 +335,7 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 	for path, contentType := range map[string]string{
 		"/setup": "text/html", "/login": "text/html",
 		"/setup/browser/onboarding.js":          "text/javascript",
+		"/setup/browser/onboarding-feedback.js": "text/javascript",
 		"/setup/browser/components.js":          "text/javascript",
 		"/setup/browser/model-form.js":          "text/javascript",
 		"/setup/browser/pending.js":             "text/javascript",
@@ -382,6 +383,7 @@ func TestSetupLanguageModulesSupportHeadAndKeepCSP(t *testing.T) {
 		"/setup/browser/i18n.js",
 		"/setup/browser/locale.js",
 		"/setup/browser/read-deadline.js",
+		"/setup/browser/onboarding-feedback.js",
 		"/setup/browser/notices.js",
 		"/setup/browser/feedback-policy.js",
 		"/setup/browser/feedback-primitives.js",

@@ -129,6 +129,8 @@ test('unknown sign-in keeps its local lock after notice dismissal and never repe
   } });
   await signIn(page);
   await expect(page.locator('.notice-unknown')).toHaveCount(1);
+  await expect(page.locator('.notice-unknown .notice-message')).toContainText('Sign-in result for synthetic-user');
+  await expect(page.locator('.notice-host .notice-message').filter({ hasText: 'Reading current state failed:' })).toHaveCount(1);
   await expect(page.locator('#credentials [type=submit]')).toBeDisabled();
   await expect(page.locator('#password')).toHaveValue('');
   await page.locator('.notice-unknown .notice-close').click();

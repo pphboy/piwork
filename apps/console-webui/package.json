@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs && node ../../scripts/sync-console-assets.mjs",
     "test:browser": "playwright test -c playwright.config.mjs console.spec.mjs feedback.spec.mjs quick-setup.spec.mjs management-flow.spec.mjs controlplane-compat.spec.mjs language.spec.mjs boot-recovery.spec.mjs",
     "test:real-core": "playwright test -c playwright.config.mjs real-core.spec.mjs",
-    "test:unit": "node --test test/feedback-policy.test.mjs test/setup-readiness.test.mjs test/model-management.test.mjs test/adapter-feedback-contract.test.mjs test/quick-setup-recovery.test.mjs test/quick-setup-port.test.mjs test/action-state-contract.test.mjs test/view-scope.test.mjs test/user-recovery.test.mjs test/login-feedback.test.mjs"
+    "test:unit": "node --test test/feedback-policy.test.mjs test/setup-readiness.test.mjs test/model-management.test.mjs test/adapter-feedback-contract.test.mjs test/quick-setup-recovery.test.mjs test/quick-setup-port.test.mjs test/action-state-contract.test.mjs test/view-scope.test.mjs test/user-recovery.test.mjs test/login-feedback.test.mjs test/onboarding-feedback.test.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

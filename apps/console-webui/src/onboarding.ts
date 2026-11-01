@@ -1,3 +1,4 @@
+import { onboardingNoticeMessage } from './onboarding-feedback.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
 import { resultNotice, readFailureNotice } from './feedback-policy.js';
 import { createLanguagePicker } from './i18n.js';
@@ -102,13 +103,14 @@ function tell(text: FeedbackText, error = false, task = 'credential') {
   notices.setIdentity(String(identity));
   if (text) {
     const owner = noticeOwner(task);
+    const noticeMessage = onboardingNoticeMessage(text, { task, credential: credentialUnknown });
     const recovery = { label: () => t('onboarding.readState'), run: () => {
       if (owner.identity === String(identity) && !writing) void load(credentialUnknown?.kind === 'administrator');
     } };
     const item = task === 'read'
-      ? readFailureNotice(owner, 'READ_FAILED', () => messageText(text), recovery)
+      ? readFailureNotice(owner, 'READ_FAILED', noticeMessage, recovery)
       : resultNotice(owner, { phase: credentialUnknown ? 'unknown' : error ? 'failed' : 'confirmed',
-        unknown: !!credentialUnknown, error, message: () => messageText(text), ...(error ? { recovery } : {}) });
+        unknown: !!credentialUnknown, error, message: noticeMessage, ...(error ? { recovery } : {}) });
     if (item) notices.publish(item);
   }
   updateNotice();
