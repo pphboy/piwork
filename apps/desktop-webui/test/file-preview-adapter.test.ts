@@ -339,3 +339,41 @@ test('adapter file preview: a 403 with a valid session stays local to the target
   assert.ok(f.adapter.getWork('one'));
   assert.deepEqual(f.adapter.getWork('one').files.find((file: any) => file.path === '/note.txt').preview, { kind: 'text', content: 'old' });
 });
+
+for (const language of ['en', 'zh-CN']) test(`Save version receipt is structured in ${language}, not inferred from translated confirmation`, async t => {
+  const { i18n } = await import(new URL('../browser/locale.js', import.meta.url).href);
+  i18n.setLocale(language);
+  t.after(() => i18n.setLocale('en'));
+  const f = await fixture(t);
+  seed(f.adapter, [{ path: '/note.txt', name: 'note.txt', kind: 'file', size: 3, modified: mtime1 }]);
+  f.respond((path, method) => method === 'PUT' ? { status: 204, headers: { 'Last-Modified': mtime2 } } : undefined);
+  const result = await f.adapter.saveFile('one', '/note.txt', 'new', mtime1);
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.versionReadback, 'confirmed');
+  assert.equal(result.modified, mtime2);
+  assert.equal(f.requests.filter((request: any) => request.method === 'PUT').length, 1);
+  assert.equal(f.requests.filter((request: any) => request.method === 'GET' && request.path === base + 'note.txt').length, 0);
+});
+
+for (const language of ['en', 'zh-CN']) test(`Save acknowledgement survives failed version readback in ${language}`, async t => {
+  const { i18n } = await import(new URL('../browser/locale.js', import.meta.url).href);
+  i18n.setLocale(language);
+  t.after(() => i18n.setLocale('en'));
+  const f = await fixture(t);
+  seed(f.adapter, [{ path: '/note.txt', name: 'note.txt', kind: 'file', size: 3, modified: mtime1 }]);
+  f.respond((_path, method) => method === 'PUT' ? { status: 204 } : { status: 503 });
+  const result = await f.adapter.saveFile('one', '/note.txt', 'new', mtime1);
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.versionReadback, 'unconfirmed');
+  assert.equal(result.modified, '');
+  assert.equal(f.requests.filter((request: any) => request.method === 'PUT').length, 1);
+});
+
+test('Save unknown acknowledgement cannot become a confirmed version readback', async t => {
+  const f = await fixture(t);
+  f.respond(() => ({ status: 502 }));
+  const result = await f.adapter.saveFile('one', '/note.txt', 'new', mtime1);
+  assert.equal(result.status, 'unknown');
+  assert.equal(result.versionReadback, undefined);
+  assert.equal(f.requests.filter((request: any) => request.method === 'PUT').length, 1);
+});

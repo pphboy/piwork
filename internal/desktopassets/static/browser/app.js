@@ -4,9 +4,9 @@ import { pendingDots } from './pending.js';
 import { sharedIcon } from './feedback-primitives.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
 import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-notices.js';
-import { fileReadFeedback, FileReadNoticeOwners } from './file-read-feedback.js';
+import { fileReadFeedback, FileReadNoticeOwners, fileReadContextCurrent } from './file-read-feedback.js';
 import { WorkReadFeedback, workReadMatches } from './work-read-feedback.js';
-import { SettingsReadFeedback, settingsReadMatches } from './settings-read-feedback.js';
+import { SettingsReadFeedback, SettingsSaveReadback, configurationReadAllowsApply, settingsReadMatches } from './settings-read-feedback.js';
 import { ServiceReadFeedback, serviceReadMatches } from './service-read-feedback.js';
 import { acceptedChatSubmissionOwns } from './chat-submission-feedback.js';
 import { AboutReadFeedback } from './about-read-feedback.js';
@@ -22,7 +22,7 @@ import { workCompletionReady, serviceCompletionReady, importCanStart } from './c
 import { restoreSelection, initialWorkArea, parentDirectory, missingFileTarget } from './work-navigation.js';
 import { renameField, validLocalName, canSubmitName, canDismissLightModal, pointOutsideDialog, canCancelPiRequest, modalActionRelevant } from './control-rules.js';
 import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from './draft-revision.js';
-import { FileMutationResults, UnknownFileLocks, uploadReview } from './file-results.js';
+import { FileMutationResults, UnknownFileLocks, uploadReview, fileActionResource, confirmedDirectorySelection } from './file-results.js';
 import { exportWorkConflict } from './export-admission.js';
 import { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } from './export-panel.js';
 import { ExportFeedbackRegistry, exportFlowNotice, logExportNotice, logExportTargetAvailable, logExportReadRecovered } from './export-feedback.js';
@@ -677,7 +677,8 @@ function actionIntent(el, action = el.dataset.action || '') {
     const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview', 'select-service', 'open-controlled-service'].includes(action);
     const serviceId = el.dataset.serviceId || el.dataset.id || view.data.serviceId || view.service;
     const servicePort = action === 'select-service' ? w?.services.find(service => service.id === serviceId)?.ports[0] : Number(el.dataset.port) || view.port;
-    const resource = action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const fallbackResource = action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+    const resource = fileActionResource(action, view.file, fallbackResource);
     const key = `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'retry-chat-submission', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
     const anchor = `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`;
@@ -953,6 +954,7 @@ let bootstrapWorksIdentity = '';
 let routeLoad = 0;
 const workReadErrors = new Map();
 const settingsReadNotices = new SettingsReadFeedback();
+const settingsSaveReadback = new SettingsSaveReadback();
 const serviceReadNotices = new ServiceReadFeedback();
 const resourceReadOwnedActions = new ReadFeedbackBindings();
 function resourceReadFeedback() {
@@ -1163,7 +1165,30 @@ function syncNotices() {
             readNoticeOwners.delete(record.key);
             resourceReadOwnedActions.bind(record, resourceAttribution.projection.owner);
         }
-        const event = resourceReadOwnedActions.has(record) ? undefined : actionNotice(record, noticeIdentity(), () => actions.message(record), {
+        const settingsWork = record.work ? adapter.getWork(record.work) : undefined;
+        const saveReadback = settingsSaveReadback.observe(record, {
+            identity: noticeIdentity(), workId: settingsWork?.id, source: 'configuration',
+            reading: !!settingsWork?.resourceLoading?.configuration, error: settingsWork?.resourceErrors?.configuration,
+            checkedAt: settingsWork?.resourceChecked?.configuration,
+        }, actions.current(record));
+        const settingsSourceVisible = resourceReads.some(entry => entry.projection.owner.object === record.work && entry.projection.owner.task === 'settings-read:configuration' && !!entry.projection.event);
+        if (saveReadback.recovered || saveReadback.owned && settingsSourceVisible) {
+            const previous = actionNotice(record, noticeIdentity(), () => actions.message(record));
+            if (previous)
+                notices.resolve(previous);
+        }
+        if (saveReadback.recovered)
+            queueMicrotask(() => {
+                const work = record.work ? adapter.getWork(record.work) : undefined;
+                const proof = settingsSaveReadback.observe(record, {
+                    identity: noticeIdentity(), workId: work?.id, source: 'configuration',
+                    reading: !!work?.resourceLoading?.configuration, error: work?.resourceErrors?.configuration,
+                    checkedAt: work?.resourceChecked?.configuration,
+                }, actions.current(record));
+                if (proof.recovered)
+                    actions.retireConfirmedRefresh(record);
+            });
+        const event = resourceReadOwnedActions.has(record) || saveReadback.recovered || saveReadback.owned && settingsSourceVisible ? undefined : actionNotice(record, noticeIdentity(), () => actions.message(record), {
             label: () => t('common.details'),
             run: () => {
                 if (!actions.current(record))
@@ -2433,6 +2458,9 @@ function files(w) {
         const parent = x.path.slice(0, x.path.lastIndexOf("/")) || "/";
         return parent === view.path;
     });
+    // Only the current table's validated listing can retire invisible selection.
+    // Original mutation results and unknown locks remain independent owners.
+    view.selected = confirmedDirectorySelection(view.selected, list.map(file => file.path), directory);
     const upload = filesUploadState();
     // Helpers stay out of the idle path: with no upload the trigger is the plain menu button.
     const uploadLabel = upload ? uploadTriggerLabel(upload) : t('files.moreActions');
@@ -2542,9 +2570,9 @@ function settingsPage(w) {
     const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || t('settings.applyFailed') : '');
     const unknown = !!applyRecord?.blocked || unfinishedApply.some(item => item.state === 'unknown');
     const attention = view.configDirty || pending || applying || applyError || unknown || configurationError;
-    const stateLabel = view.configDirty ? t('settings.unsavedChanges') : applyRecord?.pending ? t('settings.submittingApply') : applying && !applyBusy ? t('settings.applyPaused') : applying ? t('settings.applying') : unknown ? t('settings.applyNotConfirmed') : applyError ? t('settings.applyFailed') : pending ? t('settings.notApplied') : t('settings.configInUse');
-    const stateBody = (view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : pending ? t('settings.savedNotActive') : '') + (applyOperation?.localRecordSaved === false ? ` ${t('recovery.recordNotSaved')}` : '');
-    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(applyOperation.id)}"`) + btn(t('common.details'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn(t('settings.saveChanges'), 'save-config', 'primary') : pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable ? '' : `disabled title="${esc(t('settings.applyDisabledTitle'))}"`) : ''}`;
+    const stateLabel = view.configDirty ? t('settings.unsavedChanges') : applyRecord?.pending ? t('settings.submittingApply') : applying && !applyBusy ? t('settings.applyPaused') : applying ? t('settings.applying') : unknown ? t('settings.applyNotConfirmed') : applyError ? t('settings.applyFailed') : configurationError ? t('common.notConfirmed') : pending ? t('settings.notApplied') : t('settings.configInUse');
+    const stateBody = (view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : configurationError ? t('settings.configPreserved') : pending ? t('settings.savedNotActive') : '') + (applyOperation?.localRecordSaved === false ? ` ${t('recovery.recordNotSaved')}` : '');
+    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(applyOperation.id)}"`) + btn(t('common.details'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${view.configDirty ? btn(t('settings.saveChanges'), 'save-config', 'primary') : pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable && configurationReadAllowsApply(configurationError) ? '' : `disabled title="${esc(t(configurationError ? 'common.notConfirmed' : 'settings.applyDisabledTitle'))}"`) : ''}`;
     const otherApplyTasks = settingsTaskRows(applyOperations.filter(item => item.id !== applyOperation?.id || view.configDirty));
     const languageSection = `<section class="settings-language" aria-label="${esc(t('lang.menu'))}"><h2>${t('lang.menu')}</h2>${languageTrigger('quiet', 'settings')}</section>`;
     return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>${t('settings.title')}</h1>${!attention ? `<div class="configuration-compact">${badge(t('settings.configInUse'))}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}${otherApplyTasks}<nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((tab) => btn(tab === "Skills" ? t('settings.tabSkills') : tab === "Pi Packages" ? t('settings.tabPackages') : tab === "AGENTS.md" ? t('settings.tabAgents') : t('settings.tabAdvanced'), "settings-section", view.settingsTab === tab ? "tab active" : "tab", `data-tab="${tab}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importFile')}`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? t('settings.previousActive') : t('settings.configInUse')}</span><span>${t('settings.savedConfiguration')}</span></div><label class="field">${t('settings.desiredAgents')}<textarea id="agents-editor" class="code-editor" rows="13">${esc(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>` : `<div class="section-heading"><div><h2>${t('settings.advancedTitle')}</h2><p>${t('settings.advancedBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importJson')}`, "import-json", "small")}</div><label class="field">${t('settings.configurationJson')}<textarea id="advanced-editor" aria-label="${esc(t('settings.configurationJson'))}" class="code-editor" rows="17" spellcheck="false">${esc(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">${t('settings.advancedHelp')}</p>`}</div>${view.configDirty ? `<div class="settings-savebar"><span>${t('settings.unsavedBar')}</span><div class="actions">${btn(t('settings.discardChanges'), "discard-config")}${btn(t('settings.saveChanges'), "save-config", "primary")}</div></div>` : ""}${languageSection}</main>`;
@@ -3292,8 +3320,8 @@ async function saveFile(record) {
         throw new ViewChanged();
     retainFileResults(w.id, [{ source: path }], [result], record);
     if (record) {
-        record.refresh = result.message === 'Confirmed' ? '' : 'failed';
-        record.refreshError = result.message;
+        record.refresh = result.versionReadback === 'unconfirmed' ? 'failed' : '';
+        record.refreshError = result.versionReadback === 'unconfirmed' ? result.message : undefined;
     }
     if (key !== location.hash || path !== view.file)
         throw new ViewChanged();
@@ -3302,7 +3330,7 @@ async function saveFile(record) {
         view.fileBaseline = result.modified ?? "";
         view.fileUnprotected = false;
         view.fileReread = null;
-        if (!record && result.message !== 'Confirmed')
+        if (!record && result.versionReadback === 'unconfirmed')
             toast(result.message, 'warning');
         return true;
     }
@@ -3324,6 +3352,7 @@ async function saveConfig(record) {
         throw new ViewChanged();
     if (record) {
         actions.confirm(record, new LocalizedMessage('save.settingsSaved'));
+        settingsSaveReadback.bind(record, { identity: noticeIdentity(), workId: w.id, source: 'configuration', reading: false, checkedAt: w.resourceChecked?.configuration });
         void actions.refresh(record, () => adapter.loadConfiguration(w.id));
     }
     if (key !== location.hash)
@@ -4571,6 +4600,16 @@ async function handleAction(action, el, record) {
                 const epoch = adapter.identityEpoch, snapshot = unknownFiles.reviewSnapshot(currentWork.id), origin = ownedView();
                 const directories = [...new Set([view.path, ...snapshot.directories])], read = [];
                 const previousFile = view.file, previousFileStatus = view.fileStatus, previousFileChoice = fileChoice;
+                const originalRead = { identity: epoch, view: origin, choice: previousFileChoice, path: previousFile || view.path };
+                const requireOriginalRead = () => {
+                    if (fileReadContextCurrent(originalRead, {
+                        identity: adapter.identityEpoch, view: ownedView(), choice: fileChoice, path: view.file || view.path,
+                    }))
+                        return;
+                    if (record && actions.current(record))
+                        actions.discardRead(record);
+                    throw new ViewChanged();
+                };
                 if (view.file) {
                     view.fileStatus = "loading";
                     render();
@@ -4578,12 +4617,12 @@ async function handleAction(action, el, record) {
                 try {
                     for (const directory of directories) {
                         await adapter.loadDirectory(currentWork.id, directory);
-                        if (epoch !== adapter.identityEpoch)
-                            throw new ViewChanged();
+                        requireOriginalRead();
                         read.push(directory);
                     }
                 }
                 catch (error) {
+                    requireOriginalRead();
                     // No preview read began. Keep the original preview/draft instead of an endless spinner.
                     if (epoch === adapter.identityEpoch && origin === ownedView() && view.file === previousFile && fileChoice === previousFileChoice && view.fileStatus === 'loading')
                         view.fileStatus = previousFileStatus;
@@ -4602,8 +4641,7 @@ async function handleAction(action, el, record) {
                     const keepDraft = dirty() || view.fileWriteUncertain;
                     try {
                         const fresh = await adapter.readFile(currentWork.id, openPath);
-                        if (epoch !== adapter.identityEpoch || openPath !== view.file)
-                            throw new ViewChanged();
+                        requireOriginalRead();
                         if (fresh.kind === "directory") {
                             view.path = fresh.path;
                             view.file = "";
@@ -4620,14 +4658,12 @@ async function handleAction(action, el, record) {
                     }
                     catch (error) {
                         if (error instanceof DOMException && error.name === 'AbortError') {
-                            if (epoch !== adapter.identityEpoch || openPath !== view.file)
-                                throw new ViewChanged();
+                            requireOriginalRead();
                             view.fileStatus = "unavailable";
                             view.fileError = t('fileRead.interrupted');
                         }
                         else {
-                            if (epoch !== adapter.identityEpoch || openPath !== view.file)
-                                throw new ViewChanged();
+                            requireOriginalRead();
                             const status = error instanceof DesktopError ? error.httpStatus : undefined;
                             view.fileStatus = missingFileTarget(status) ? "missing"
                                 : status && [401, 403, 502, 503, 504].includes(status) ? "unavailable" : "error";
@@ -4915,6 +4951,8 @@ async function handleAction(action, el, record) {
             break;
         case "apply-config":
             if (currentWork) {
+                if (!configurationReadAllowsApply(currentWork.resourceErrors?.configuration))
+                    throw new Error(t('common.notConfirmed'));
                 const origin = ownedView(), epoch = adapter.identityEpoch;
                 const op = await adapter.applyConfiguration(currentWork.id);
                 if (epoch !== adapter.identityEpoch || record && !actions.current(record))

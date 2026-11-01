@@ -222,3 +222,42 @@ test('actual ActionState retirement removes only the attributed read, never anot
     actions.clear();
   }
 });
+
+test('obsolete Files read ownership discards only its original read, never a newer record or unknown write', async t => {
+  const { fileReadContextCurrent } = await import(new URL('../browser/file-read-feedback.js', import.meta.url).href);
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const actions = new ActionState();
+  t.after(() => actions.clear());
+  const original = { identity: 1, view: 'work:Files:/', choice: 3, path: '/other.txt' };
+  const read = actions.begin({ key: 'old-read', kind: 'read', action: 'refresh-files', work: 'work', resource: '/other.txt', label: 'Refresh', target: 'Original file' });
+  const write = actions.begin({ key: 'write', kind: 'files', work: 'work', resource: '/unknown.txt', label: 'Save', target: 'Unknown file' });
+  actions.fail(write, Object.assign(new Error('Original unknown'), { code: 'RESULT_UNKNOWN' }));
+  for (const changed of [{ identity: 2 }, { view: 'another view' }, { choice: 4 }, { path: '/note.txt' }]) {
+    assert.equal(fileReadContextCurrent(original, { ...original, ...changed }), false);
+  }
+  if (!fileReadContextCurrent(original, { ...original, choice: 4, path: '/note.txt' })) actions.discardRead(read);
+  actions.fail(read, Object.assign(new Error('Old listing discarded'), { code: 'CONNECTION_CHANGED' }));
+  actions.finish(read);
+  assert.equal(actions.current(read), false);
+  assert.equal(read.error, undefined);
+  assert.equal(read.checkedAt, undefined);
+  assert.equal(write.blocked, true);
+  const newer = actions.begin({ key: 'old-read', kind: 'read', action: 'refresh-files', work: 'work', resource: '/note.txt', label: 'Refresh', target: 'Current file' });
+  actions.discardRead(read);
+  assert.equal(actions.current(newer), true);
+  assert.equal(newer.pending, true);
+});
+
+test('a real failure of the current original Files read stays actionable, even with CONNECTION_CHANGED code', async t => {
+  const { fileReadContextCurrent } = await import(new URL('../browser/file-read-feedback.js', import.meta.url).href);
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
+  const actions = new ActionState();
+  t.after(() => actions.clear());
+  const original = { identity: 1, view: 'work:Files:/', choice: 3, path: '/other.txt' };
+  const read = actions.begin({ key: 'read', kind: 'read', work: 'work', resource: '/other.txt', label: 'Refresh', target: 'Original file' });
+  assert.equal(fileReadContextCurrent(original, { ...original }), true);
+  actions.fail(read, Object.assign(new Error('Current connection failed'), { code: 'CONNECTION_CHANGED' }));
+  assert.equal(actionNotice(read, 'identity', () => actions.message(read)).tone, 'error');
+  assert.match(read.error, /Current connection failed/);
+});

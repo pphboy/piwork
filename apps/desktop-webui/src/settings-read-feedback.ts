@@ -26,3 +26,30 @@ export function settingsReadMatches(record: Readonly<ActionRecord>, facts: Setti
   if (record.work !== facts.workId) return false;
   return facts.source === 'configuration' ? ['settings', 'refresh-config'].includes(record.action || '') : record.action === 'refresh-packages';
 }
+
+/** Only a confirmed Save's associated configuration GET may own its readback error. */
+export class SettingsSaveReadback {
+  private bindings = new WeakMap<Readonly<ActionRecord>, { identity: string; workId: string; receipt?: string; failed?: boolean }>();
+  bind(record: Readonly<ActionRecord>, facts: SettingsReadFacts): void {
+    if (record.kind !== 'configuration' || !['save-config', 'dirty-config-save'].includes(record.action || '') || !record.result || record.pending || record.blocked || record.resultTone === 'unknown' || record.error || facts.source !== 'configuration' || record.work !== facts.workId) return;
+    this.bindings.set(record, { identity: facts.identity, workId: facts.workId!, receipt: facts.checkedAt });
+  }
+  observe(record: Readonly<ActionRecord>, facts: SettingsReadFacts, current: boolean): { owned: boolean; recovered: boolean } {
+    const binding = this.bindings.get(record);
+    const eligible = current && binding && binding.identity === facts.identity && binding.workId === facts.workId && facts.source === 'configuration'
+      && !record.pending && !record.blocked && record.resultTone !== 'unknown' && !record.error && record.refresh === 'failed';
+    if (!eligible) return { owned: false, recovered: false };
+    if (!binding.failed) {
+      binding.receipt = facts.checkedAt;
+      binding.failed = true;
+    }
+    const owned = !!facts.error && String(facts.error) === String(record.refreshErrorMessage?.() || record.refreshError);
+    const recovered = !facts.reading && !facts.error && !!facts.checkedAt && facts.checkedAt !== binding.receipt;
+    return { owned, recovered };
+  }
+}
+
+/** A retained pendingApply value is not current admission after its GET failed. */
+export function configurationReadAllowsApply(error: SettingsReadFacts['error']): boolean {
+  return !error;
+}

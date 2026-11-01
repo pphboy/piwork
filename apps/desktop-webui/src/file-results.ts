@@ -184,3 +184,19 @@ export function uploadReview(rows: readonly FilePathResult[]) {
     unknown: rows.filter(row=>row.status==='unknown'),
   };
 }
+
+/** A single editor save never inherits a hidden batch dialog's retained targets. */
+export function fileActionResource(action: string, editorPath: string, fallbackResource: string | undefined): string | undefined {
+  return action === 'save-file' || action === 'dirty-save' ? editorPath : fallbackResource;
+}
+
+/** Table selection is not the original mutation ledger or its unknown-write locks. */
+export function confirmedDirectorySelection(selected: readonly string[], visiblePaths: readonly string[], read?: {
+  readonly checkedAt?: string;
+  readonly loading: boolean;
+  readonly error?: unknown;
+}): string[] {
+  if (!read?.checkedAt || read.loading || read.error) return [...selected];
+  const visible = new Set(visiblePaths);
+  return selected.filter(path => visible.has(path));
+}

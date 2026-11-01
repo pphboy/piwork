@@ -159,3 +159,58 @@ test('identity clear makes old snapshots inert, including same work/path/action 
   assert.deepEqual(locks.completeReview(old, ['/']), { released: [], actions: [] });
   assert.equal(locks.conflict('one', [{ source: '/a' }]), fresh);
 });
+
+test('single-file Save feedback uses its editor path without clearing retained batch targets', async () => {
+  const { fileActionResource } = await import(new URL('../browser/file-results.js', import.meta.url).href);
+  const selected = Object.freeze(['/success.txt', '/blocked.txt', '/unknown.txt']);
+  const retained = JSON.stringify(selected);
+  assert.equal(fileActionResource('save-file', '/note.txt', retained), '/note.txt');
+  assert.equal(fileActionResource('dirty-save', '/note.txt', retained), '/note.txt');
+  assert.equal(fileActionResource('confirm-file-delete', '/note.txt', retained), retained);
+  assert.equal(fileActionResource('confirm-transfer', '/note.txt', retained), retained);
+  assert.equal(fileActionResource('save-file', '', retained), '');
+  assert.deepEqual(selected, ['/success.txt', '/blocked.txt', '/unknown.txt']);
+});
+
+test('confirmed directory selection intersects visible rows without resolving original unknown writes', async () => {
+  const { confirmedDirectorySelection } = await import(moduleURL);
+  const targets = [{ source: '/A' }, { source: '/B' }, { source: '/C' }];
+  const ledger = new FileMutationResults(targets);
+  ledger.record(targets, [succeeded('/A'), failed('/B'), unknown('/C')]);
+  const locks = new UnknownFileLocks();
+  const lock = locks.add('one', targets[2], action(1));
+  const selected = Object.freeze(['/A', '/B', '/C']);
+  assert.deepEqual(confirmedDirectorySelection(selected, ['/B', '/note'], { checkedAt: 'confirmed', loading: false }), ['/B']);
+  assert.deepEqual(selected, ['/A', '/B', '/C']);
+  assert.deepEqual(ledger.retryTargets(['/A', '/B', '/C']), [targets[1]]);
+  assert.equal(ledger.results[2].status, 'unknown');
+  assert.equal(locks.conflict('one', [targets[2]]), lock);
+});
+
+test('unconfirmed, failed, and superseding pending listings cannot retire current selection', async () => {
+  const { confirmedDirectorySelection } = await import(moduleURL);
+  const selected = ['/A', '/B'];
+  for (const read of [undefined, { loading: false }, { checkedAt: 'old', loading: true }, { checkedAt: 'old', loading: false, error: '503' }]) {
+    assert.deepEqual(confirmedDirectorySelection(selected, [], read), selected);
+  }
+  assert.deepEqual(confirmedDirectorySelection(selected, [], { checkedAt: 'new', loading: false }), []);
+});
+
+test('upload review separates explicit overwrite consent from failed retry and preserves unknown rows', async () => {
+  const { uploadReview } = await import(moduleURL);
+  const rows = Object.freeze([
+    Object.freeze({ ...failed('/exists'), needsConsent: true }),
+    Object.freeze({ ...failed('/denied'), notSubmitted: true }),
+    Object.freeze(succeeded('/done')),
+    Object.freeze(unknown('/lost')),
+  ]);
+  const snapshot = structuredClone(rows);
+  const review = uploadReview(rows);
+  assert.deepEqual(review.overwrite.map((row: any) => row.path), ['/exists']);
+  assert.deepEqual(review.retry.map((row: any) => row.path), ['/denied']);
+  assert.deepEqual(review.unknown.map((row: any) => row.path), ['/lost']);
+  assert.equal(review.overwrite[0], rows[0]);
+  assert.equal(review.retry[0], rows[1]);
+  assert.equal(review.unknown[0], rows[3]);
+  assert.deepEqual(rows, snapshot);
+});

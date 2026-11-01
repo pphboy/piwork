@@ -218,3 +218,67 @@ test('deferred read retirement revalidates only its original proof without consu
   episodes.observe(facts({ owner: { ...owner, identity: 'changed-identity' }, error: '' }), recovery);
   assert.equal(second.currentConfirmation(), false);
 });
+
+test('confirmed Save readback recovery retires only the exact original refresh failure', async () => {
+  const { SettingsSaveReadback } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const actions = new ActionState();
+  const record = actions.begin({ key: 'save', kind: 'configuration', action: 'save-config', work: 'one', label: 'Save', target: 'one' })!;
+  actions.confirm(record, 'Saved');
+  const tracker = new SettingsSaveReadback();
+  const facts = { identity: 'identity-one', workId: 'one', source: 'configuration', reading: false, checkedAt: 'old' };
+  tracker.bind(record, facts);
+  await actions.refresh(record, async () => { throw new Error('503'); });
+  assert.equal(tracker.observe(record, { ...facts, error: '503' }, actions.current(record)).owned, true);
+  for (const changed of [facts, { ...facts, reading: true, checkedAt: 'new' }, { ...facts, error: '503', checkedAt: 'new' }, { ...facts, workId: 'two', checkedAt: 'new' }, { ...facts, identity: 'identity-two', checkedAt: 'new' }]) {
+    assert.equal(tracker.observe(record, changed, actions.current(record)).recovered, false);
+  }
+  assert.equal(tracker.observe(record, { ...facts, checkedAt: 'new' }, false).recovered, false);
+  record.blocked = true;
+  assert.equal(tracker.observe(record, { ...facts, checkedAt: 'new' }, true).recovered, false);
+  assert.equal(actions.retireConfirmedRefresh(record), false);
+  record.blocked = false;
+  assert.equal(tracker.observe(record, { ...facts, checkedAt: 'new' }, true).recovered, true);
+  assert.equal(actions.retireConfirmedRefresh(record), true);
+  assert.equal(record.refresh, '');
+  assert.equal(record.refreshError, undefined);
+  assert.equal(record.result, 'Saved');
+  actions.clear();
+});
+
+test('Save readback binding cannot adopt unknown writes or replacement actions', async () => {
+  const { SettingsSaveReadback } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
+  const { ActionState } = await import(new URL('../browser/action-state.js', import.meta.url).href);
+  const actions = new ActionState();
+  const intent = { key: 'save', kind: 'configuration', action: 'save-config', work: 'one', label: 'Save', target: 'one' };
+  const original = actions.begin(intent)!;
+  actions.confirm(original, 'Saved');
+  const tracker = new SettingsSaveReadback();
+  const facts = { identity: 'identity-one', workId: 'one', source: 'configuration', reading: false, checkedAt: 'old' };
+  tracker.bind(original, facts);
+  await actions.refresh(original, async () => { throw new Error('503'); });
+  tracker.observe(original, { ...facts, error: '503' }, true);
+  const newer = actions.begin(intent)!;
+  assert.equal(actions.current(original), false);
+  assert.equal(tracker.observe(original, { ...facts, checkedAt: 'new' }, actions.current(original)).recovered, false);
+  assert.equal(actions.retireConfirmedRefresh(original), false);
+  newer.blocked = true;
+  newer.error = 'unknown write';
+  tracker.bind(newer, facts);
+  assert.equal(tracker.observe(newer, { ...facts, checkedAt: 'new' }, true).recovered, false);
+  assert.equal(actions.retireConfirmedRefresh(newer), false);
+  assert.equal(newer.blocked, true);
+  assert.equal(newer.error, 'unknown write');
+  actions.clear();
+});
+
+test('configuration read failure denies Apply without rewriting retained pending or active facts', async () => {
+  const { configurationReadAllowsApply } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
+  for (const pendingApply of [true, false]) {
+    const config = Object.freeze({ pendingApply, active: Object.freeze({ skills: ['original'] }) });
+    assert.equal(configurationReadAllowsApply('503'), false);
+    assert.equal(configurationReadAllowsApply(undefined), true);
+    assert.equal(config.pendingApply, pendingApply);
+    assert.deepEqual(config.active.skills, ['original']);
+  }
+});

@@ -17,7 +17,7 @@ import { MetadataReads, ObservationDeferred, ObservationStopped } from './observ
 import { coreAdmission } from './core-admission.js';
 type Data = Record<string, any>;
 import type { ImageInput, HistoryImage } from './images.js';
-export interface TransferResult { path: string; status: 'succeeded' | 'failed' | 'unknown'; message: string; httpStatus?: number; modified?: string; needsConsent?: boolean; notSubmitted?: boolean }
+export interface TransferResult { path: string; status: 'succeeded' | 'failed' | 'unknown'; message: string; httpStatus?: number; modified?: string; needsConsent?: boolean; notSubmitted?: boolean; versionReadback?: 'confirmed' | 'unconfirmed' }
 export function fileVersion(value: string | null | undefined): string {
   const time = value ? Date.parse(value) : NaN;
   return Number.isFinite(time) ? new Date(time).toUTCString() : '';
@@ -2611,8 +2611,10 @@ export class DesktopAdapter {
       // GET with the saved bytes when PUT does not return a version.
       if (!result.modified) {
         try { const fresh = await this.readFile(id, path); if (fresh.preview?.kind === 'text' && fresh.preview.content === content) result.modified = fileVersion(fresh.modified); }
-        catch { result.message = localizedText('d.error.savedVersionUnconfirmed'); }
+        catch { /* The acknowledged write remains succeeded; version proof is separate. */ }
       }
+      result.versionReadback = result.modified ? 'confirmed' : 'unconfirmed';
+      if (result.versionReadback === 'unconfirmed') result.message = localizedText('d.error.savedVersionUnconfirmed');
       if (file) file.modified = result.modified ?? '';
     }
     this.emit(); return result;

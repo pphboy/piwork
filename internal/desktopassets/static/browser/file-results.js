@@ -153,4 +153,15 @@ export function uploadReview(rows) {
         unknown: rows.filter(row => row.status === 'unknown'),
     };
 }
+/** A single editor save never inherits a hidden batch dialog's retained targets. */
+export function fileActionResource(action, editorPath, fallbackResource) {
+    return action === 'save-file' || action === 'dirty-save' ? editorPath : fallbackResource;
+}
+/** Table selection is not the original mutation ledger or its unknown-write locks. */
+export function confirmedDirectorySelection(selected, visiblePaths, read) {
+    if (!read?.checkedAt || read.loading || read.error)
+        return [...selected];
+    const visible = new Set(visiblePaths);
+    return selected.filter(path => visible.has(path));
+}
 //# sourceMappingURL=file-results.js.map

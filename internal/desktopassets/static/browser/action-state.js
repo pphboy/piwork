@@ -103,6 +103,15 @@ export class ActionState {
         this.records.delete(record.key);
         this.changed();
     }
+    retireConfirmedRefresh(record) {
+        if (!this.current(record) || !record.result || record.pending || record.error || record.blocked || record.resultTone === 'unknown' || record.refresh !== 'failed')
+            return false;
+        record.refresh = '';
+        record.refreshError = undefined;
+        record.refreshErrorMessage = undefined;
+        this.changed();
+        return true;
+    }
     async refresh(record, read) {
         if (!this.current(record))
             return;

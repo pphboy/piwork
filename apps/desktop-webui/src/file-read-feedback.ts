@@ -84,3 +84,15 @@ export class FileReadNoticeOwners {
     return owner.identity === current.identity && owner.object === current.object && owner.task === current.task && owner.generation === current.generation ? owner : undefined;
   }
 }
+
+export interface FileReadContext {
+  readonly identity: number;
+  readonly view: string;
+  readonly choice: number;
+  readonly path: string;
+}
+/** A replaced selection is not a connection failure in the newly selected file. */
+export function fileReadContextCurrent(original: FileReadContext, current: FileReadContext): boolean {
+  return original.identity === current.identity && original.view === current.view
+    && original.choice === current.choice && original.path === current.path;
+}

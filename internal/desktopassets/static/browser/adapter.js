@@ -4448,10 +4448,11 @@ export class DesktopAdapter {
                     if (fresh.preview?.kind === 'text' && fresh.preview.content === content)
                         result.modified = fileVersion(fresh.modified);
                 }
-                catch {
-                    result.message = localizedText('d.error.savedVersionUnconfirmed');
-                }
+                catch { /* The acknowledged write remains succeeded; version proof is separate. */ }
             }
+            result.versionReadback = result.modified ? 'confirmed' : 'unconfirmed';
+            if (result.versionReadback === 'unconfirmed')
+                result.message = localizedText('d.error.savedVersionUnconfirmed');
             if (file)
                 file.modified = result.modified ?? '';
         }
