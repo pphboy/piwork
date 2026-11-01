@@ -775,20 +775,24 @@ test('narrow expanded navigation and account language remain clickable above an 
 });
 
 test('confirmed Models re-entry clears only its older read notice while independent Users failure remains', async ({ page }) => {
+  await page.setViewportSize({ width: 455, height: 772 });
   let modelsFail = true;
-  await fixture(page, request => {
+  const requests = await fixture(page, request => {
     if (request.path === 'admin/users' || request.path === 'admin/models' && modelsFail) {
       return { status: 503, json: { code: 'CORE_UNAVAILABLE' } };
     }
   }, '/models');
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
-  await page.locator('.nav a[href="/users"]').click();
+  await page.locator('[data-action="menu"]').click();
+  await page.locator('.nav.open a[href="/users"]').click();
   await expect(page.locator('main').getByRole('heading', { name: 'Data unavailable', exact: true })).toBeVisible();
   await expect(page.locator('.notice-host .notice')).toHaveCount(2);
   modelsFail = false;
-  await page.locator('.nav a[href="/models"]').click();
+  await page.locator('[data-action="menu"]').click();
+  await page.locator('.nav.open a[href="/models"]').click();
   await expect(page.locator('main')).toContainText('Test model');
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
   await expect(page.locator('.notice-host')).toContainText('Users ·');
   await expect(page.locator('.notice-host')).not.toContainText('Models ·');
+  expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
 });
