@@ -301,7 +301,7 @@ try {
   await expect(page.locator('#composer')).toHaveValue('/model');
   await page.locator('#modal [data-action=choose-chat-setting][data-option-value=""]').click();
   await expect(page.locator('#composer')).toHaveValue('');
-  await page.locator('#modal').getByRole('button', { name: 'Close', exact: true }).click();
+  await page.locator('#modal .modal-footer').getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.locator('#composer').fill('/skill:workspace-review "preserved argument"');
   await page.locator('#composer').press('Escape');

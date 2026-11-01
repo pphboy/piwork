@@ -891,7 +891,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await expect(completedExecution).not.toContainText('Run succeeded');
     await completedExecution.locator('[data-action="run-details"]').click();
     await expect(page.locator('#modal dl dd').first()).toHaveText('succeeded');
-    await page.locator('#modal').getByRole('button',{name:'Close',exact:true}).click();
+    await page.locator('#modal .modal-footer').getByRole('button',{name:'Close',exact:true}).click();
     assert.equal(appRootLoads, roots, 'Run updates reloaded the Service iframe');
     assert.equal(submittedPrompt, 'Read shared workspace /note.txt and Notes Service API /api/data; summarize both and cite each source.');
     for (const width of [1440,390]) { await page.setViewportSize({width,height:900}); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); }
