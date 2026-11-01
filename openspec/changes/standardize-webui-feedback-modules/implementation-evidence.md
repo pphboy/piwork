@@ -341,3 +341,7 @@ action-hierarchy旧assembly直接Node复现60/62，两条分别缺少已新增�
 对未启动Chromium的六个剩余旧assembly文件实际直接执行，149项仅54pass/95fail，集中在缺失sharedIcon/确认目录选择/新feedback所有者/DOM closest等fixture协作者，不把这些直接称为95个产品bug。分别补实际共享、admission、work-chrome、file-results、read-feedback、settings-read-feedback模块import；app-local已存在装配边界仅用显式窄fixture协作者，未新增regex抽函数。导航保留原record/Operation身份及不同route/modal/identity晚响应约束并增加实际原receiptspy断言。不存在的/A.txt选择夹具改为确认listing确有该行，保留bulk-controls断言；Works状态夹具显式toolbar slot只验证原状态/控件委托，不冒称生产toolbar几何。废弃view.toast计时测试改直接NoticeStore控制clock验证3秒与替换旧计时器；file汇总测试改实际resultTone/actionNotice并保持unknown锁优先。官方编译与全部七个旧assembly文件合计211/211、0skip通过，旧VM表面仍明确保留，不称全部已去VM或浏览器已通过。
 
 独立Console browser run实际226pass/25fail。逐项初步定位24项为旧brand/notification owner/模态按钮范围/pending源/读回时序断言需适配，保留文案、请求次数、草稿、未知锁及语言约束，不用.first或force隐藏歧义；其中一项有真实产品缺陷：窄屏notice截获dialog右上Close指针。父任务用正式155资源、实际455×772视口及合成accepted-unknown Create user重现：heading29.86–114.25、footer677.07–741.96、Close中心y67.86，notice63.99–171.79，elementFromPoint实际为notice-unknown；正常点击不能关闭，密码已清空且submit仍锁定。此前known400功能通过不能豁免此几何缺陷，任务2.2重新打开，当前25/31，待窄/宽屏原Close、footer及notice自身恢复/Close可操作再重新判断。
+
+### 17:56 六场景诊断入口不替代全套
+
+为在旧完整Desktop job结束前取得代表性TAP失败栈，现有同PR只读workflow追加desktop-smoke独立20分钟job，仅从两个既有正式编译test文件选择原已失败六例：登录/退出、窄Create几何、D19一次原交付、Chat unknown原key、文件预览读恢复、FS52-A过时文件回调。逐个源码名称唯一、精确锚定，仍120秒单测预算；同官方build/Chromium/pinned actions/无secret配置。原全部71文件Desktop命令、其他jobs及并发组逐字比较未改，不取消旧run、无新增断言豁免。此子集的过滤/通过只用于诊断，绝不作为8.1全浏览器通过。YAML/bash/六个唯一源名称与原steps/安全配置相同检查通过，尚未执行该job。
