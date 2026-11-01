@@ -118,3 +118,10 @@ test('division after calls or grouped values does not become a control-statement
   const regexpDivisor = 'const x = `${value / /}}/.test(text)} ${import("./next.js")}`;';
   assert.deepEqual(importSpecifiers(regexpDivisor), ['./next.js']);
 });
+
+test('division after a regexp value cannot swallow following executable imports', () => {
+  assert.deepEqual(importSpecifiers('const n = /foo/ / 2; import("./app.js");'), ['./app.js']);
+  assert.deepEqual(importSpecifiers('const value = `${(() => { const n = /}}/ / 2; return import("./nested.js"); })()}`;'), ['./nested.js']);
+  assert.deepEqual(importSpecifiers('const n = amount / /foo/.test(text); import("./after-divisor.js");'), ['./after-divisor.js']);
+  assert.deepEqual(importSpecifiers('const n = /import("fake")/ / 2; require("./actual.js");'), ['./actual.js']);
+});

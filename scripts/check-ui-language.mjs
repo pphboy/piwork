@@ -444,7 +444,8 @@ export function scanSourceTokens(source) {
             || previous.value === 'await' && beforePrevious?.value === 'for'));
         regexAfterControl = token.kind === 'symbol' && char === ')' && parentheses.pop() === true;
         tokens.push({ ...token, start, end: index, line: tokenLine });
-        last = token.value;
+        // A completed regexp is a value; only an actual division token permits a regexp divisor.
+        last = token.kind === 'regexp' ? '<regexp-value>' : token.value;
         if (interpolation && token.kind === 'symbol') {
           if (char === '{') depth++;
           if (char === '}' && depth-- === 0) return;
