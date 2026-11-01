@@ -93,6 +93,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
     let reply = await handler(r);
     if (!reply) {
       if (r.path === 'session') reply = { json: session() };
+      else if (r.path === 'preferences' && r.method === 'GET') reply = { json: { coreUrl: null } };
       else if (r.path === 'login') { signedIn = true; generation++; reply = { json: session() }; }
       else if (r.path === 'connection') { core = JSON.parse(r.body).coreUrl; signedIn = false; generation++; reply = { json: session() }; }
       else if (r.path === 'logout') { signedIn = false; generation++; reply = { json: { view: session(), remoteRevocationConfirmed: true } }; }
