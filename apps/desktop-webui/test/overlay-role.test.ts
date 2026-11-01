@@ -1,3 +1,8 @@
+const { ReadFeedbackBindings } = await import(new URL('../browser/read-feedback.js', import.meta.url).href);
+const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
+const { signInActionFeedbackVisible } = await import(new URL('../browser/admission-feedback.js', import.meta.url).href);
+const { serviceToolbarModel } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
+const { describeError } = await import(new URL('../browser/adapter.js', import.meta.url).href);
 const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 import test from 'node:test';
@@ -38,7 +43,7 @@ test('narrow chat preserves the same Service header and its original iframe ance
 const {uploadReview}=await import(new URL('../browser/file-results.js',import.meta.url).href);
 function rendererFixture(){
  const work:any={id:'a',name:'A',services:[],sessions:[],resourceChecked:{services:'now',agent:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,actions:{records:new Map()},overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
+ const c:any={...localeSandbox,resourceReadOwnedActions:new ReadFeedbackBindings(),sharedIcon,signInActionFeedbackVisible,serviceToolbarModel,pendingDots,actions:{records:new Map()},overlayRole,uploadReview,innerWidth:500,view:{modal:'',data:{},path:'/',session:'',drafts:{},layout:'workspace',tab:'Services'},adapter:{getWork:()=>work,historyNotice:()=>'',directories:new Map(),models:new Map(),cancelAndSendCapabilities:new Map(),activeRuns:new Map(),imageCapabilities:new Map([['a',{}]]),activateChat:()=>{},modelReady:()=>true,project:()=>({usable:true}),chatSubmissions:new Map()},route:()=>['work','a'],current:()=>work,isRequestInspector:()=>false,fileModalResults:()=>'',fileAttempt:undefined,decodePaths:JSON.parse,modalTransfers:[],workspaceChatToggle:()=>'<button>Show chat</button>',focusControls:()=>'',activeService:()=>undefined,sessionDisplayName:()=>'',draftKey:()=>'',imageDrafts:{get:()=>[],move:()=>{}},imageDraftErrors:new Map(),textDraftRevisions:new Map(),webCommands:[],agentLayoutControls:()=>'',submissionMarkup:()=>'',imageDraftMarkup:()=>'',modelComposer:()=>'',commandPalette:()=>'',modelFeedback:()=>'',messageMarkup:()=>'<p>Preserved history</p>',unmatchedExecutions:()=>''};
  vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);for(const name of ['modalMarkup','serviceUnavailableReason','serviceCatalogConfirmed','serviceFacts','serviceNotice','serviceFailureTitle','serviceFailureReason','serviceStartupConfirmed','serviceStartupPlaceholder','serviceStatePlaceholder','serviceFallbackHeader','serviceViewport','services','conversationHistoryControls','agent'])vm.runInContext(extract(name),c);return{c,work};
 }
 test('upload review separates proven overwrites, failed checks and unknown writes without false destructive consent',()=>{
@@ -62,7 +67,12 @@ test('failed first conversation reads do not show starter welcome while model-on
  work.sessions=[{id:'s',messages:[{}],checkedAt:'2026-10-14T00:00:00Z',loading:true}];html=c.agent(work,false);assert.match(html,/Preserved history/);assert.doesNotMatch(html,/Loading conversation/);
 });
 test('navigation uses real Work URLs and modified clicks preserve native browser behavior',()=>{
- const c:any={...localeSandbox,};vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);const html=vm.runInContext("workLink('Open Work','a/b?c','primary')",c);assert.match(html,/href="#\/work\/a%2Fb%3Fc"/);assert.match(source,/if \(e.ctrlKey \|\| e.metaKey \|\| e.shiftKey \|\| e.altKey \|\| e.button !== 0\)/);
+ const c:any={...localeSandbox,sharedIcon};
+ vm.createContext(c);
+ vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
+ const html=vm.runInContext("workLink('Open Work','a/b?c','primary')",c);
+ assert.match(html,/href="#\/work\/a%2Fb%3Fc"/);
+ assert.match(source,/if \(e.ctrlKey \|\| e.metaKey \|\| e.shiftKey \|\| e.altKey \|\| e.button !== 0\)/);
 });
 test('drawer transitions explicitly focus their new Close only during open; menu failure feedback survives',()=>{
  assert.match(extract('openModal'),/overlayRole\(name\) === 'drawer'/);assert.match(extract('openModal'),/data-action=close-modal/);assert.match(source,/menuCommand && !menuFailed/);assert.match(extract('modalMarkup'),/view.modalError \? feedback/);
@@ -226,7 +236,9 @@ test('cold Work deep link stays pending through bootstrap, but real failures and
 
 
 test('bootstrap failure exits a cold Work skeleton only for its original identity and exact route',()=>{
- const messages:string[]=[],c:any={Error,routeLoad:0,location:{hash:'#/work/a'},route:()=>['work','a'],workReadErrors:new Map(),adapter:{identityEpoch:1,getWork:()=>undefined},toast:(text:string)=>messages.push(text)};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
+ const messages:string[]=[],c:any={Error,routeLoad:0,location:{hash:'#/work/a'},route:()=>['work','a'],workReadErrors:new Map(),adapter:{identityEpoch:1,getWork:()=>undefined,readFailureResource:()=>undefined},describeError,toast:(text:string)=>messages.push(text)};
+ vm.createContext(c);
+ vm.runInContext(extract('reportInitializationFailure'),c);
  c.reportInitializationFailure(new Error('Known operations unavailable'),1,'#/work/a');assert.equal(c.workReadErrors.get('a').message,'Known operations unavailable');assert.equal(c.workReadErrors.get('a').missing,false);assert.equal(messages.length,1);
  c.workReadErrors.clear();c.reportInitializationFailure(new Error('Old identity'),0,'#/work/a');c.reportInitializationFailure(new Error('Old route'),1,'#/work/b');assert.equal(c.workReadErrors.size,0);assert.equal(messages.length,1);
  c.routeLoad=1;c.reportInitializationFailure(new Error('Later failure'),1,'#/work/a');assert.equal(c.workReadErrors.size,0);
@@ -252,12 +264,24 @@ test('independent application preserves exact target, recovery and real read sta
  assert.match(extract('render'),/else\s+html = standaloneWorkUnavailable\(r\)/);
 });
 test('independent cold bootstrap errors are scoped to the original identity and route',()=>{
- const c:any={...localeSandbox,Error,routeLoad:0,location:{hash:'#/app/a/s/80'},route:()=>['app','a','s','80'],workReadErrors:new Map(),adapter:{identityEpoch:2,getWork:()=>undefined},toast:()=>{}};vm.createContext(c);vm.runInContext(extract('reportInitializationFailure'),c);
+ const c:any={...localeSandbox,Error,routeLoad:0,location:{hash:'#/app/a/s/80'},route:()=>['app','a','s','80'],workReadErrors:new Map(),adapter:{identityEpoch:2,getWork:()=>undefined,readFailureResource:()=>undefined},describeError,toast:()=>{}};
+ vm.createContext(c);
+ vm.runInContext(extract('reportInitializationFailure'),c);
  c.reportInitializationFailure(new Error('Metadata unavailable'),2,c.location.hash);assert.equal(c.workReadErrors.get('a').message,'Metadata unavailable');c.workReadErrors.clear();c.reportInitializationFailure(new Error('Stale'),1,c.location.hash);c.reportInitializationFailure(new Error('Stale'),2,'#/app/a/s/81');assert.equal(c.workReadErrors.size,0);
 });
 
 for(const width of [1440,360])test(`default Chat keeps its own area without a Service Alert at ${width}px`,()=>{
- const {c,work}=rendererFixture();c.innerWidth=width;c.view.tab='Chat';c.workspacePanels=new Map([['a',{collapsed:false}]]);c.workControls=new Map();c.workControl=()=>undefined;c.controlMarkup=()=>'';c.workHeader=()=>'';c.adapter.project=()=>({usable:true,retainWorkspace:true});vm.runInContext(extract('workPage'),c);
+ const {c,work}=rendererFixture();
+ c.innerWidth=width;
+ c.view.tab='Chat';
+ c.workspacePanels=new Map([['a',{collapsed:false}]]);
+ c.workControls=new Map();
+ c.workControl=()=>undefined;
+ c.controlMarkup=()=>'';
+ c.workHeader=()=>'';
+ c.workTabs=()=>'';
+ c.adapter.project=()=>({usable:true,retainWorkspace:true});
+ vm.runInContext(extract('workPage'),c);
  const html=c.workPage(work);assert.match(html,/chat-main/);
  // DWUI-011/DUL-002: the Chat main area no longer carries a Service Alert; the
  // real state and reason stay in the Services context, which is still reachable.

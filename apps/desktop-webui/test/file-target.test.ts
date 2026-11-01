@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
+const { confirmedDirectorySelection } = await import(new URL('../browser/file-results.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
 
 const source = readFileSync(new URL('../browser/app.js', import.meta.url), 'utf8');
@@ -17,7 +19,7 @@ function fixture() {
   const work: any = { id: 'work-a', name: 'A', services: [], files: [], resourceErrors: {} };
   const c: any = {
   ...localeSandbox,
-    pendingDots, filesRestoreNotice: '', fileActionsContext: '', fileSourceReturn: undefined,
+    sharedIcon, confirmedDirectorySelection, pendingDots, filesRestoreNotice: '', fileActionsContext: '', fileSourceReturn: undefined,
     view: { tab: 'Files', path: '/output', file: '', fileStatus: 'idle', fileError: '', selected: [],
       fileDraft: '', fileOriginal: '', fileBaseline: '', fileEditable: false, fileReread: null,
       fileWriteUncertain: false, fileUnprotected: false, modal: '', data: {} },

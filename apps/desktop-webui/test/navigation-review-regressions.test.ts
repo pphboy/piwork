@@ -7,6 +7,7 @@ import test from 'node:test';
 // App-function integration tests without a browser/socket. DOM geometry and real
 // history event ordering remain browser QA. PIWORK_APP_PATH enables red/green runs.
 const source = readFileSync(process.env.PIWORK_APP_PATH || new URL('../browser/app.js', import.meta.url), 'utf8');
+const { configurationReadAllowsApply } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
 const navigation = await import(new URL('../browser/work-navigation.js', import.meta.url).href);
 const { operationKind } = await import(new URL('../browser/operation-recovery.js', import.meta.url).href);
 const fileReference = await import(new URL('../browser/file-reference.js', import.meta.url).href);
@@ -25,14 +26,14 @@ function fixture() {
     location: { hash: '#/work/one' }, modalChoice: 0, fileChoice: 0, areaChoice: 0, serviceChoice: 0, sessionChoice: 0,
     selectionWorkId: 'one', routeLoad: 0, workspaceReturn: undefined, workSelections: new Map(), filesRestoreNotice: '',
     lastRoute: '#/work/one', serviceControls: new Map(), workControls: new Map(), importStarts: new Map(),
-    adapter: { coreGate: {blocked:false}, identityEpoch: 1, state: { signedIn: true, operations: [] }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined, defaultSession: async () => '', loadSession: async () => undefined },
+    adapter: { coreGate: {blocked:false}, identityEpoch: 1, state: { signedIn: true, operations: [] }, project: () => ({ usable: true, action: 'start' }), getWork: () => work, getOperation: () => undefined, defaultSession: async () => '', loadSession: async () => undefined, readFailureResource: () => undefined },
     actions: { records: new Map(), begin: () => undefined, current: () => true, review: (r: any) => { r.blocked = false; } },
     render: () => {}, toast: () => {}, openModal: () => {}, activeService: () => work.services[0], current: () => work, targetWork: () => work,
     ViewChanged: class extends Error {}, URLSearchParams,
     restoreSelection: navigation.restoreSelection, initialWorkArea: navigation.initialWorkArea, exitWorkspaceFocus: async () => true,
     parentDirectory: navigation.parentDirectory, operationKind, isFilesRoute: fileReference.isFilesRoute, filesRouteTarget: fileReference.filesRouteTarget,
     fileSourceReturn: undefined, clearFileTarget: () => { c.view.file = ''; c.view.fileStatus = 'idle'; }, openFile: async () => undefined,
-    workReadErrors: new Map(),
+    workReadErrors: new Map(), configurationReadAllowsApply,
   };
   c.route = () => c.location.hash.replace(/^#\/?/, '').split('/');
   c.viewKey = () => `${c.location.hash}:${c.modalChoice}:${c.view.tab}:${c.view.path}:${c.view.file}`;
@@ -139,12 +140,16 @@ for (const abandon of ['', 'close', 'new selection']) test(`C review: Import Sta
 
 for(const boundary of ['route','modal','identity'])test(`Apply receipt keeps exact operation before ${boundary} presentation invalidation`,async()=>{
  const {c,work}=fixture();let resolve!:(op:any)=>void;const pending=new Promise<any>(done=>{resolve=done;});let opened=0,confirmed=0;
+ const retained:any[]=[];
+ c.retainOperationFeedback=(owner:any,op:any)=>retained.push({owner,op});
  c.adapter.applyConfiguration=()=>pending;c.adapter.loadWork=async()=>work;c.actions.confirm=()=>confirmed++;c.actions.refresh=async()=>{};c.runAndShow=()=>opened++;
  vm.runInContext(extract(['handleAction']),c);const record:any={kind:'configuration',work:'one',action:'apply-config'};
  const request=c.handleAction('apply-config',{dataset:{}},record);
  if(boundary==='route')c.location.hash='#/work/two';else if(boundary==='modal')c.modalChoice++;else c.adapter.identityEpoch++;
  resolve({id:'accepted-exact',workId:'one',kind:'Apply configuration',state:'running'});
  await assert.rejects(request,c.ViewChanged);assert.equal(opened,0);assert.equal(record.businessId,boundary==='identity'?undefined:'accepted-exact');assert.equal(confirmed,boundary==='identity'?0:1);
+ assert.deepEqual(retained.map(item=>item.op.id),boundary==='identity'?[]:['accepted-exact']);
+ if(retained.length)assert.equal(retained[0].owner,record);
 });
 
 for(const entry of ['search toolbar','no matching Works'])test(`Clear search from ${entry} restores keyboard input to the search field`,async()=>{
@@ -170,7 +175,9 @@ test('leaving a real Focus layout still restores its saved layout and focus targ
 for(const scenario of ['tab-Files','settings','tab-Services','new focus','new tab','new Work','new identity','new record','read failure'])test(`navigation read unlock focus ownership: ${scenario}`,async()=>{
  const {c}=fixture(),pending=deferred();const action=scenario.startsWith('tab-')||scenario==='settings'?scenario:'tab-Files';let focusCount=0,currentRecord=true,selected=true;
  const body={},otherInput={},button:any={disabled:false,focus:()=>{focusCount++;c.document.activeElement=button;}};
- const el:any={dataset:{action},cloneNode:()=>({dataset:{action}})};c.document={activeElement:el,body};c.root={querySelector:()=>selected?button:null};
+ const el:any={dataset:{action},closest:()=>null,cloneNode:()=>({dataset:{action}})};
+ c.document={activeElement:el,body};
+ c.root={querySelector:()=>selected?button:null};
  const intent:any={kind:'read',work:'one',action,key:action};const record:any={...intent,pending:true};
  c.actions.conflict=()=>undefined;c.actions.begin=()=>{button.disabled=true;c.document.activeElement=body;return record;};c.actions.current=()=>currentRecord;c.actions.finish=()=>{record.pending=false;button.disabled=false;};c.actions.fail=c.actions.finish;
  vm.runInContext(extract(['reviewReadyImport','dispatchAction']),c);const request=c.dispatchAction(el,async()=>{await pending.promise;if(scenario==='read failure')throw new Error('Read failed');},intent);

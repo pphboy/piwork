@@ -1,3 +1,8 @@
+const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
+const { confirmedDirectorySelection } = await import(new URL('../browser/file-results.js', import.meta.url).href);
+const { configurationReadAllowsApply } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
+const { NoticeStore } = await import(new URL('../browser/notices.js', import.meta.url).href);
+const { actionNotice } = await import(new URL('../browser/feedback-notices.js', import.meta.url).href);
 const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
 const { localeSandbox } = await import(new URL('./locale-sandbox.js', import.meta.url).href);
 const { pendingDots } = await import(new URL('../browser/pending.js', import.meta.url).href);
@@ -10,7 +15,17 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 function extract(...names:string[]){return names.map(name=>{const value=source.match(new RegExp('^(?:async )?function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];}).join('\n');}
 function fixture(){
  const work:any={id:'work-a',name:'A',config:{pendingApply:false,skills:[],packages:[]},resourceChecked:{configuration:'now'},resourceErrors:{}};
- const c:any={...localeSandbox,pendingDots,operationKind,operationAction:(op:any)=>op.kind,orphanTasksEntry:()=>'',orphanTasks:()=>'',workControl:()=>undefined,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};c.fileActionsContext="";vm.createContext(c);vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsTaskRows','settingsPage'),c);return{c,work};
+ const c:any={...localeSandbox,pendingDots,sharedIcon,confirmedDirectorySelection,configurationReadAllowsApply,operationKind,operationAction:(op:any)=>op.kind,orphanTasksEntry:()=>'',orphanTasks:()=>'',workControl:()=>undefined,current:()=>work,structuredClone,location:{hash:'#/work/work-a'},Date,view:{file:'',path:'/',modal:'',data:{},settingsTab:'Skills',config:null,configDirty:false},actions:{records:new Map(),visible:()=>true},adapter:{operationRecords:{reading:false,error:'',receipt:{}},operationPaused:()=>false,connectionCheck:{checking:false,error:''},directories:new Map(),state:{operations:[]},project:()=>({usable:true})},skillsSettings:()=>'<p>Skills</p>'};
+ c.fileActionsContext="";
+ vm.createContext(c);
+ vm.runInContext(source.slice(source.indexOf('const esc ='),source.indexOf('let view =')),c);
+ vm.runInContext(extract('fileReadPending','fileRefreshButton','settingsTaskRows','settingsPage'),c);
+ const { esc, btn, icon } = vm.runInContext('({ esc, btn, icon })', c);
+ c.fixtureIcon = icon;
+ // Explicit app-local slot collaborator: state tests exercise Works delegation and
+ // its already-tested controls, not the complete production toolbar geometry.
+ c.worksToolbar=()=>`<div class="list-controls works-toolbar"><input id="search" value="${esc(c.view.search || '')}"><div class="actions">${c.orphanTasksEntry()}${c.worksRefreshButton?.() || ''}${btn(icon('upload'), 'import', 'icon-button quiet', `title="${c.t('works.import')}" aria-label="${c.t('works.import')}"`)}${btn(icon('plus'), 'new-work', 'icon-button primary', `title="${c.t('works.newWork')}" aria-label="${c.t('works.newWork')}"`)}</div></div>`;
+ return{c,work};
 }
 test('Files refresh keeps a fixed icon with scoped busy feedback and no success text',()=>{
  const {c,work}=fixture();let html=c.fileRefreshButton(work);assert.match(html,/icon-button quiet file-refresh/);assert.doesNotMatch(html,/>Refresh<|Updated|aria-busy|<span>/);
@@ -29,7 +44,17 @@ test('normal settings are compact; dirty, pending Apply, Applying and errors ret
  c.adapter.state.operations[0].state='unknown';html=c.settingsPage(work);assert.match(html,/Apply not confirmed/);assert.doesNotMatch(html,/data-action="apply-config"/);
 });
 test('Works icon actions retain labels; Files add menu and Admin role keep explicit context',()=>{
- const works=extract('works'),modal=extract('modalMarkup');assert.match(works,/worksRefreshButton\(\)/);assert.match(extract('worksRefreshButton'),/t\('works\.refresh'\)/);assert.equal(catalog.en['works.refresh'],'Refresh Works');assert.match(works,/title="\$\{esc\(t\('works\.import'\)\)\}" aria-label="\$\{esc\(t\('works\.import'\)\)\}"/);assert.match(works,/title="\$\{esc\(t\('works\.newWork'\)\)\}" aria-label="\$\{esc\(t\('works\.newWork'\)\)\}"/);assert.match(works,/t\('works\.emptyTitle'\)/);
+ const works=extract('works'),modal=extract('modalMarkup');
+ const {c}=fixture();
+ assert.match(works,/topbar\(worksToolbar\(\)\)/);
+ assert.match(extract('worksRefreshButton'),/t\('works\.refresh'\)/);
+ assert.equal(catalog.en['works.refresh'],'Refresh Works');
+ for(const [icon,key,label] of [['upload','works.import','Import Work'],['plus','works.newWork','New Work']]) {
+  assert.equal(catalog.en[key!],label);
+  assert.match(c.fixtureIcon(icon!),/<svg/);
+  assert.match(c.fixtureIcon(icon!),/aria-hidden="true"/);
+ }
+ assert.match(works,/t\('works\.emptyTitle'\)/);
  assert.doesNotMatch(modal,/case "file-add"/);assert.doesNotMatch(modal,/case "file-options"/);assert.match(modal,/t\('account\.roleLine'/);assert.match(modal,/t\('account\.administrator'\)/);assert.match(modal,/t\('account\.coreLine'/);assert.equal(catalog.en['account.roleLine'],'Role: {role}');assert.equal(catalog.en['account.coreLine'],'Core: {address}');
 });
 
@@ -74,7 +99,13 @@ test('Files toolbar retains 40px actions at the narrow breakpoint in either sele
  assert.match(css,/\.icon-button \{\s+width: 40px;\s+height: 40px;/);
  assert.doesNotMatch(css,/\.files-toolbar \.icon-button\s*\{/);
  const {c,work}=fixture();work.files=[];c.adapter.directories=new Map([['work-a:/',{checkedAt:'now',loading:false,error:''}]]);c.view.selected=[];c.view.path='/';c.filesRestoreNotice='';c.uploadProgressMarkup=()=>'';c.filesUploadState=()=>undefined;c.transferResults=()=>'';vm.runInContext(extract('files'),c);
- assert.match(c.files(work),/data-action="file-add"/);c.view.selected=['/A.txt'];const selected=c.files(work);for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));assert.doesNotMatch(selected,/data-action="file-add"/);
+ assert.match(c.files(work),/data-action="file-add"/);
+ c.size=(bytes:number)=>String(bytes); // Formatting is outside this toolbar-selection fixture.
+ work.files=[{path:'/A.txt',name:'A.txt',kind:'file',size:1,modified:'now'}];
+ c.view.selected=['/A.txt'];
+ const selected=c.files(work);
+ for(const action of ['file-copy','file-move','file-delete','clear-selection'])assert.match(selected,new RegExp('data-action="'+action+'"'));
+ assert.doesNotMatch(selected,/data-action="file-add"/);
 });
 
 for(const open of [false,true])test(`Files add is a nonmodal command menu: open=${open}`,()=>{
@@ -134,21 +165,47 @@ test('file results localize server failures and retain only safe diagnostic code
  } finally {i18n.setLocale('en');}
 });
 
-test('file success marker requires nonempty all-confirmed results and leaves original unknown lock intact',()=>{
- const {c}=fixture();const record:any={blocked:true};c.actions.current=(r:any)=>r===record;c.actions.confirm=()=>{};
+test('file success summary requires nonempty all-confirmed results and leaves original unknown lock intact',()=>{
+ const {c}=fixture();
+ const record:any={key:'original-file',kind:'files',work:'work-a',generation:1,token:1,pending:false,refresh:'',blocked:true};
+ c.actions.current=(r:any)=>r===record;
+ c.actions.confirm=(r:any,message:unknown)=>{r.result=message;};
  vm.runInContext(extract('confirmFileAttempt'),c);
- for(const results of [[],[{status:'failed'}],[{status:'succeeded'},{status:'unknown'}]]) {
-  c.confirmFileAttempt(record,results);assert.equal(record.successFeedback,undefined);assert.equal(record.blocked,true);
+ for(const [results,tone] of [[[],'error'],[[{status:'failed'}],'error'],[[{status:'succeeded'},{status:'unknown'}],'unknown']] as const) {
+  c.confirmFileAttempt(record,results);
+  assert.equal(record.resultTone,tone);
+  assert.equal(record.blocked,true);
+  assert.equal(actionNotice(record,'identity',()=>String(record.result)).tone,'unknown');
  }
- c.confirmFileAttempt(record,[{status:'succeeded'}]);assert.equal(record.successFeedback,'toast');assert.equal(record.blocked,true);
+ c.confirmFileAttempt(record,[{status:'succeeded'}]);
+ assert.equal(record.resultTone,'success');
+ assert.equal(record.blocked,true);
+ assert.equal(actionNotice(record,'identity',()=>String(record.result)).tone,'unknown');
+ record.blocked=false;
+ assert.equal(actionNotice(record,'identity',()=>String(record.result)).tone,'success');
 });
 
-test('success Toast really auto-dismisses after three seconds and replacement clears the previous timer',()=>{
- const {c}=fixture();let tick:()=>void=()=>{},delay=0,cleared=0,renders=0;
- c.render=()=>renders++;c.clearTimeout=()=>cleared++;c.setTimeout=(fn:()=>void,ms:number)=>{tick=fn;delay=ms;return 1;};
- vm.runInContext('let toastTimer;'+extract('toast'),c);
- c.toast('Folder created.');assert.equal(c.view.toast,'Folder created.');assert.equal(delay,3000);
- c.toast('Upload complete.');assert.equal(cleared,2);assert.equal(c.view.toast,'Upload complete.');tick();assert.equal(c.view.toast,'');assert.equal(renders,3);
+test('success Toast really auto-dismisses after three seconds and replacement clears the previous timer',t=>{
+ t.mock.timers.enable({apis:['Date','setTimeout'],now:1000});
+ let changes=0;
+ const store=new NoticeStore({onChange:()=>changes++});
+ t.after(()=>store.destroy());
+ store.setIdentity('original');
+ changes=0;
+ const event={identity:'original',object:'work-a',task:'folder',generation:1,key:'created',tone:'success',message:()=> 'Folder created.'};
+ store.publish(event);
+ assert.equal(store.items()[0].message(),'Folder created.');
+ t.mock.timers.tick(1000);
+ store.publish({...event,key:'uploaded',message:()=> 'Upload complete.'});
+ assert.equal(store.items().length,1);
+ assert.equal(store.items()[0].message(),'Upload complete.');
+ t.mock.timers.tick(2000);
+ assert.equal(store.items().length,1,'the old three-second deadline cannot remove its replacement');
+ t.mock.timers.tick(999);
+ assert.equal(store.items().length,1);
+ t.mock.timers.tick(1);
+ assert.equal(store.items().length,0);
+ assert.equal(changes,3);
 });
 
 test('Packages aligns identity/status separately from commands and groups catalog actions',()=>{
@@ -172,7 +229,15 @@ test('Packages aligns identity/status separately from commands and groups catalo
 });
 
 for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${hasRows?'rows':'empty list'} with only in-place busy`,()=>{
- const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workRowControl=()=>'';c.workControls=new Map();
+ const {c,work}=fixture();
+ c.view.search='';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
+ c.workStatus=()=>'';
+ c.quickAction=()=>'';
+ c.controlMarkup=()=>'';
+ c.workRowControl=()=>'';
+ c.workControls=new Map();
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'now',worksError:'',state:{scenario:'loading',works:hasRows?[work]:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
  let html=c.works();assert.doesNotMatch(html,/loading-list|Loading your Works/);assert.match(html,/data-read-busy="true"/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
@@ -181,7 +246,15 @@ for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${has
 });
 
 test('Works first load owns a static labelled skeleton, first failure is never an empty list, and cached search is retained',()=>{
- const {c,work}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workRowControl=()=>'';c.workControls=new Map();
+ const {c,work}=fixture();
+ c.view.search='';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
+ c.workStatus=()=>'';
+ c.quickAction=()=>'';
+ c.controlMarkup=()=>'';
+ c.workRowControl=()=>'';
+ c.workControls=new Map();
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'',worksError:'',state:{scenario:'loading',works:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
  assert.match(c.works(),/loading-list/);
@@ -196,7 +269,10 @@ test('aria-disabled read refresh rejects direct dispatch before action submissio
 });
 
 for(const viaRecord of [false,true]) test(`Works initial-error retry retains one cause and one local pending owner via ${viaRecord?'action':'adapter'}`,()=>{
- const {c}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';
+ const {c}=fixture();
+ c.view.search='';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
  Object.assign(c.adapter,{worksLoading:!viaRecord,worksChecked:'',worksError:'Read <script>failed</script>',state:{scenario:'list-error',works:[],core:{account:'user'}}});
  if(viaRecord)c.actions.records.set('retry',{action:'retry-works',pending:true,view:c.location.hash});
  vm.runInContext(extract('worksRefreshButton','works'),c);
@@ -216,7 +292,12 @@ test('Works initial static shapes are immediately visible, scoped and distinguis
 });
 
 for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`Works unconfirmed idle ${scenario} never claims empty or search-empty`,()=>{
- const {c}=fixture();c.view.search='missing';c.topbar=()=>'';c.connection=()=>'';c.coreRecovering=()=>false;c.coreStarting=()=>false;
+ const {c}=fixture();
+ c.view.search='missing';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
+ c.coreRecovering=()=>false;
+ c.coreStarting=()=>false;
  Object.assign(c.adapter,{worksLoading:false,worksChecked:'',worksError:'',state:{scenario,works:[],core:{account:'user'},lastChecked:'not confirmed'}});
  vm.runInContext(extract('worksRefreshButton','works'),c);const html=c.works();
  assert.match(html,/Works have not been read/);assert.match(html,/>Read Works<\/button>/);assert.match(html,/Works not yet read/);
@@ -225,7 +306,12 @@ for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`W
 
 test('Works rows project one compact state; original details and checks live in the Work menu',()=>{
  const {c,work}=fixture();Object.assign(work,{name:'A',description:'work-a',color:'blue',icon:'grid',status:'Ready',desired:'running'});
- c.topbar=()=>'';c.connection=()=>'';c.worksRefreshButton=()=>'';c.workStatus=()=>'<span>Ready</span>';c.quickAction=()=>'';c.view.search='';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
+ c.worksRefreshButton=()=>'';
+ c.workStatus=()=>'<span>Ready</span>';
+ c.quickAction=()=>'';
+ c.view.search='';
  c.controlMarkup=(control:any,compact?:boolean)=>control?`<span data-probe="${compact?'compact':'block'}"></span>`:'';
  c.workControl=()=>({workId:'work-a',action:'Create Work',phase:'accepted',operationId:'op-a'});
  c.adapter.getOperation=()=>undefined;c.adapter.workSynchronizationPending=()=>false;
@@ -238,7 +324,15 @@ test('Works rows project one compact state; original details and checks live in 
 });
 
 test('a task without a visible Work uses a fixed header entry, not a row above search',()=>{
- const {c}=fixture();c.view.search='';c.topbar=()=>'';c.connection=()=>'';c.worksRefreshButton=()=>'';c.workStatus=()=>'';c.quickAction=()=>'';c.controlMarkup=()=>'';c.workControl=()=>undefined;
+ const {c}=fixture();
+ c.view.search='';
+ c.topbar=(toolbar:string)=>toolbar;
+ c.connection=()=>'';
+ c.worksRefreshButton=()=>'';
+ c.workStatus=()=>'';
+ c.quickAction=()=>'';
+ c.controlMarkup=()=>'';
+ c.workControl=()=>undefined;
  Object.assign(c.adapter,{worksLoading:false,worksChecked:'now',worksError:'',state:{scenario:'normal',works:[],core:{account:'user'}}});
  c.operations=[{id:'op-import',workId:'work-hidden',kind:'Import Work',action:'import',state:'running'}];
  for(const name of ['orphanTasksEntry','orphanTaskList','worksRefreshButton'])vm.runInContext(extract(name),c);

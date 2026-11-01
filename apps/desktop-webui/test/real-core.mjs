@@ -269,7 +269,7 @@ try {
   serviceRecovery.on('request', countServiceControl);
   try {
     await serviceRecovery.goto(new URL(page.url()).origin + '/');
-    await serviceRecovery.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+    await serviceRecovery.locator('.works-page').waitFor();
     await serviceRecovery.locator('.work-name').filter({ has: serviceRecovery.getByText('Real Browser Work', { exact: true }) }).click();
     await expect.poll(() => serviceRecovery.evaluate(async id => !!(await import('/desktop/browser/adapter.js')).adapter.getOperation(id), serviceAccepted.operationId)).toBe(true);
     await serviceRecovery.evaluate(async id => { const { adapter } = await import('/desktop/browser/adapter.js'); await adapter.checkOperation(id); }, serviceAccepted.operationId);
