@@ -140,10 +140,19 @@ test('real message Test sends to the specified model and displays actual Respons
     for(const api of ['openai-responses','anthropic-messages']){
       const provider='Message Test '+api,model='Specified '+api;
       await page.goto(origin+'/admin/models');await page.getByLabel('Display name (optional)',{exact:true}).fill(provider);await page.getByLabel('API type',{exact:true}).selectOption(api);await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1/');await page.getByLabel('API Key',{exact:true}).fill('synthetic-'+api);await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');
-      await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await expect(page.getByRole('dialog')).toContainText('Reply with OK.');await page.getByRole('button',{name:'Close',exact:true}).click();
+      await page.getByRole('button',{name:'Test',exact:true}).click();
+      await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');
+      await expect(page.getByRole('dialog')).toContainText('Reply with OK.');
+      await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
       await page.getByRole('button',{name:'Add model',exact:true}).click();await page.getByRole('link',{name:provider,exact:true}).click();
-      await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await page.getByRole('button',{name:'Close',exact:true}).click();
-      const count=captured.length;await page.getByRole('button',{name:'View test result',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');await page.getByRole('button',{name:'Close',exact:true}).click();expect(captured.length).toBe(count);
+      await page.getByRole('button',{name:'Test',exact:true}).click();
+      await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');
+      await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
+      const count=captured.length;
+      await page.getByRole('button',{name:'View test result',exact:true}).click();
+      await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');
+      await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
+      expect(captured.length).toBe(count);
     }
     expect(captured.length).toBe(4);
     for(const request of captured){
@@ -151,9 +160,26 @@ test('real message Test sends to the specified model and displays actual Respons
       if(request.api==='openai-responses'){expect(request.path).toBe('/v1/responses');expect(request.body.input).toBe('Reply with OK.');expect(request.key).toBe('Bearer synthetic-openai-responses');}
       else{expect(request.path).toBe('/v1/messages');expect(request.body.messages).toEqual([{role:'user',content:'Reply with OK.'}]);expect(request.key).toBe('synthetic-anthropic-messages');}
     }
-    failureStatus=404;await page.goto(origin+'/admin/models');await page.getByLabel('Display name (optional)',{exact:true}).fill('Remote failure can save');await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-failed-test');await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('[data-model-test-stage]')).toHaveText('Model request failed.');await expect(page.getByRole('dialog')).toContainText('model or endpoint');await expect(page.getByRole('dialog')).not.toContainText('private upstream');await page.getByRole('button',{name:'Close',exact:true}).click();
+    failureStatus=404;
+      await page.goto(origin+'/admin/models');
+      await page.getByLabel('Display name (optional)',{exact:true}).fill('Remote failure can save');
+      await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');
+      await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1');
+      await page.getByLabel('API Key',{exact:true}).fill('synthetic-failed-test');
+      await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');
+      await page.getByRole('button',{name:'Test',exact:true}).click();
+      await expect(page.locator('[data-model-test-stage]')).toHaveText('Model request failed.');
+      await expect(page.getByRole('dialog')).toContainText('model or endpoint');
+      await expect(page.getByRole('dialog')).not.toContainText('private upstream');
+      await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
     await page.getByRole('button',{name:'Add model',exact:true}).click();await page.getByRole('link',{name:'Remote failure can save',exact:true}).click();await expect(page.getByLabel('Base URL',{exact:true})).toHaveValue(baseUrl);
-    failureStatus=401;await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('administrator login is still valid');await page.getByRole('button',{name:'Close',exact:true}).click();await expect(page.getByRole('heading',{name:'Remote failure can save',exact:true})).toBeVisible();expect(captured.length).toBe(6);
+    failureStatus=401;
+      await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');
+      await page.getByRole('button',{name:'Test',exact:true}).click();
+      await expect(page.getByRole('dialog')).toContainText('administrator login is still valid');
+      await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
+      await expect(page.getByRole('heading',{name:'Remote failure can save',exact:true})).toBeVisible();
+      expect(captured.length).toBe(6);
     expect(JSON.stringify(await page.context().cookies())).not.toContain('synthetic-');
   }finally{await new Promise(done=>gateway.close(done));}
 });

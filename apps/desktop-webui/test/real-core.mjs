@@ -155,7 +155,7 @@ try {
     recoveredPage.on('request', request => { if (request.method() === 'POST') posts.push(new URL(request.url()).pathname); });
     try {
       await recoveredPage.goto(new URL(page.url()).origin + '/');
-      await recoveredPage.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+      await recoveredPage.locator('.works-page').waitFor();
       await recoveredPage.locator('[data-action="account"]').click();
       await expect(recoveredPage.getByRole('menuitem', { name: 'Known operations', exact: true })).toHaveCount(0);
       await recoveredPage.keyboard.press('Escape');
