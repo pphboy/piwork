@@ -23,4 +23,10 @@ export function readFailureNotice(owner, code, message, recovery) {
         recovery,
     });
 }
+/** Current page reads may retire older observations of that page, never write outcomes. */
+export function pageReadNoticeOwners(current, notices) {
+    return notices.filter((owner) => typeof owner.generation === 'number'
+        && owner.identity === current.identity && owner.object === current.object
+        && owner.task === 'read' && owner.generation <= current.generation);
+}
 //# sourceMappingURL=feedback-policy.js.map

@@ -3359,12 +3359,33 @@ dd > .button {
 
 /* A short action list is anchored to its trigger, not a blocking dialog. */
 .file-add-anchor { position:relative;display:flex; }
-.file-actions-menu { position:absolute;right:0;top:calc(100% + 6px);z-index:45;min-width:180px;max-width:calc(100vw - 32px);padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px #17345020; }
+.file-actions-menu {
+  position:absolute;
+  right:0;
+  top:calc(100% + 6px);
+  z-index:var(--layer-transient-menu);
+  min-width:180px;
+  max-width:calc(100vw - 32px);
+  padding:6px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:8px;
+  box-shadow:0 6px 18px #17345020;
+}
 .file-actions-menu > .button { display:flex;width:100%;justify-content:flex-start;min-height:40px;border:0;box-shadow:none;white-space:nowrap; }
 .work-tools > [data-action="toggle-workspace-chat"] { flex:none; }
 
 /* Local choices and commands never block the workspace. No open/close animation. */
-.modal.anchored-overlay { position:fixed;inset:auto;margin:0;z-index:60;width:min(380px,calc(100vw - 16px));max-height:calc(100dvh - 16px);box-shadow:0 10px 32px #17345024;border-radius:10px; }
+.modal.anchored-overlay {
+  position:fixed;
+  inset:auto;
+  margin:0;
+  z-index:var(--layer-transient-menu);
+  width:min(380px,calc(100vw - 16px));
+  max-height:calc(100dvh - 16px);
+  box-shadow:0 10px 32px #17345024;
+  border-radius:10px;
+}
 .modal.command-dropdown { width:min(280px,calc(100vw - 16px)); }
 .command-dropdown .dropdown-title { padding:12px 14px 6px;font-size:12px;font-weight:600;color:var(--muted);overflow-wrap:anywhere; }
 .command-dropdown .modal-body { padding:4px 6px 6px; }

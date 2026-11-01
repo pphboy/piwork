@@ -16,6 +16,8 @@
   --warning-soft: #fff7e7;
   --danger: #b42332;
   --danger-soft: #fff0f0;
+  --layer-notice: 1000;
+  --layer-transient-menu: 1001;
   --chrome-height: 56px;
   --chrome-narrow-height: 96px;
   --service-toolbar-height: 39px;
@@ -306,7 +308,10 @@ dialog, dialog::backdrop { animation:none; transition:none; }
 .language-picker {
   position:fixed; inset:auto; margin:0; padding:4px;
   width:232px; max-width:calc(100vw - 16px); max-height:calc(100dvh - 16px);
-  overflow:auto; z-index:100; border:1px solid var(--border); border-radius:8px;
+  overflow: auto;
+  z-index: var(--layer-transient-menu);
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background:var(--surface); color:var(--ink); font:13px/1.4 var(--font); box-shadow:none;
 }
 .language-picker::backdrop { background:transparent; }
@@ -323,7 +328,7 @@ dialog, dialog::backdrop { animation:none; transition:none; }
 /* A single display-only host floats above content; it never adds a layout row. */
 .notice-host {
   position: fixed;
-  z-index: 1000;
+  z-index: var(--layer-notice);
   inset: auto 16px 16px auto;
   width: min(380px, calc(100vw - 32px));
   max-height: min(40vh, 320px);
@@ -399,6 +404,13 @@ dialog, dialog::backdrop { animation:none; transition:none; }
   inset: var(--notice-modal-top) auto auto var(--notice-modal-left);
   width: var(--notice-modal-width);
   max-height: var(--notice-modal-max-height);
+}
+
+/* Only an overlapping global notice moves between measured page header/footer controls. */
+.notice-host[data-page-region] {
+  top: var(--notice-page-top);
+  bottom: auto;
+  max-height: var(--notice-page-max-height);
 }
 
 body {
@@ -3400,4 +3412,10 @@ dialog::backdrop {
   .task-shell .nav a {
     padding: 10px 12px;
   }
+}
+
+/* Open navigation surfaces take pointer priority without hiding persistent notices. */
+.task-shell .nav.open,
+.admin-account-dropdown:not([hidden]) {
+  z-index: var(--layer-transient-menu);
 }

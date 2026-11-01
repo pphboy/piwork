@@ -2998,3 +2998,9 @@ dialog::backdrop {
     padding: 10px 12px;
   }
 }
+
+/* Open navigation surfaces take pointer priority without hiding persistent notices. */
+.task-shell .nav.open,
+.admin-account-dropdown:not([hidden]) {
+  z-index: var(--layer-transient-menu);
+}

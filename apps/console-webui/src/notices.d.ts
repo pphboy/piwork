@@ -22,6 +22,7 @@ export class NoticeStore {
 export function createNoticeHost(store: NoticeStore, options: { document: Document; closeLabel: () => string }): {
   readonly element: HTMLElement;
   render(): void;
+  setPageRegion(region: { readonly header: HTMLElement | null; readonly toolbars?: readonly HTMLElement[]; readonly footers?: readonly HTMLElement[] } | null): void;
   setModalRegion(region: { readonly container: HTMLElement; readonly header: HTMLElement | null; readonly footer: HTMLElement | null } | null): void;
   destroy(): void;
 };
@@ -34,4 +35,15 @@ export function noticeModalPlacement(input: {
   readonly container: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number };
   readonly headerBottom: number;
   readonly footerTop: number;
+  readonly noticeHeight?: number;
+  readonly pageHeaderBottom?: number;
 }): { readonly left: number; readonly top: number; readonly width: number; readonly maxHeight: number } | null;
+
+export function noticePagePlacement(input: {
+  readonly notice: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number };
+  readonly header?: { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number } | null;
+  readonly toolbars?: readonly { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number }[];
+  readonly footers?: readonly { readonly left: number; readonly right: number; readonly top: number; readonly bottom: number }[];
+  readonly viewportTop?: number;
+  readonly viewportHeight: number;
+}): { readonly top: number; readonly maxHeight: number } | null;

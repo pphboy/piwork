@@ -1,9 +1,10 @@
+import { PageReadState } from './page-read-state.js';
 import { createKnownDialogRecovery, safePackageRecoverySource } from './dialog-recovery.js';
 import { retireConfirmedLoginFailure, retireLoginReadbackInfo, retirePreviousLoginFailure, signOutFailure } from './login-feedback.js';
 import { createUserRecovery } from './user-recovery.js';
 import { captureViewGuard } from './view-scope.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
-import { resultNotice, readFailureNotice } from './feedback-policy.js';
+import { resultNotice, readFailureNotice, pageReadNoticeOwners } from './feedback-policy.js';
 import { createLanguagePicker } from './i18n.js';
 import { readWithDeadline } from './read-deadline.js';
 import { pendingDots } from './pending.js';
@@ -28,6 +29,8 @@ function syncNotices() {
         parent.append(noticeHost.element);
     noticeHost.setModalRegion(modal ? { container: modal,
         header: modal.querySelector('.dialog-heading'), footer: modal.querySelector('.dialog-footer') } : null);
+    const header = document.querySelector('.topbar');
+    noticeHost.setPageRegion(header ? { header } : null);
     noticeHost.render();
 }
 function publishNotice(notice) {
@@ -151,7 +154,8 @@ const actions = new ActionState(() => renderConsoleActions());
 const modelManagement = new ModelManagement(() => { if (path === '/models' || path.startsWith('/models/'))
     renderPage(); }, value => { dirty = value; }, (error, identity) => isCurrentSessionError(error, identity), openModelTestDialog, publishNotice, undefined, owner => notices.resolve(owner));
 let modelCatalogError = '';
-let shellView = '', pageConfirmedAt = '', preparation = null;
+const pageReadState = new PageReadState();
+let shellView = '', preparation = null;
 let pageRead = null;
 let pageRetryCycle = 0, pageRetryAttempt = 0, pageRetryTimer;
 let healthRead = null;
@@ -169,8 +173,15 @@ function consoleIntent(button) {
         return { key: 'save-defaults', kind: 'configuration', resource: 'defaults', label, target: t('term.defaultWork'), anchor: '[data-action="save-defaults"]', view: path };
     return { key: name === 'sign-out' ? `manual:${path}:${name}` : `read:${path}`, kind: name === 'sign-out' ? 'identity' : 'read', label, target: path.startsWith('/operations/') ? routeId() : name === 'sign-out' ? adapter.account : path === '/runtime' ? t('term.runtime') : path === '/default-work' ? t('term.defaultWork') : t('term.core'), anchor: `[data-action="${name}"]`, view: path };
 }
+function publishPageReadNotice(notice) {
+    for (const owner of pageReadNoticeOwners(notice, notices.items())) {
+        if (owner.generation < notice.generation)
+            notices.resolve(owner);
+    }
+    publishNotice(notice);
+}
 function reportReadFailure(error, identity, origin, view) {
-    publishNotice(readFailureNotice({ identity: String(identity), object: origin, generation: view }, error?.code || 'READ_FAILED', () => err(error), { label: () => t('common.retry'), run: () => {
+    publishPageReadNotice(readFailureNotice({ identity: String(identity), object: origin, generation: view }, error?.code || 'READ_FAILED', () => err(error), { label: () => t('common.retry'), run: () => {
             if (identity === adapter.identityEpoch && origin === path && view === loadId)
                 void loadPage(true);
         } }));
@@ -189,7 +200,7 @@ function renderConsoleActions() {
             continue;
         if (record.kind === 'read') {
             const identity = String(actionIdentity), origin = path, view = loadId;
-            publishNotice(readFailureNotice({ identity, object: origin, generation: view }, record.errorCode || 'READ_FAILED', () => `${record.target} · ${record.errorText?.() ?? record.error ?? ''}`, { label: () => t('common.retry'), run: () => {
+            publishPageReadNotice(readFailureNotice({ identity, object: origin, generation: view }, record.errorCode || 'READ_FAILED', () => `${moduleTitle(origin, record.targetText?.() ?? record.target)} · ${record.errorText?.() ?? record.error ?? ''}`, { label: () => t('common.retry'), run: () => {
                     if (identity === String(adapter.identityEpoch) && origin === path && view === loadId)
                         void loadPage(true);
                 } }));
@@ -883,9 +894,11 @@ async function readPage(preserve, ticket) {
             throw new ConsoleViewChanged();
         return value;
     };
-    const initial = !preserve || shellView !== `${identity}:${ticket}:${path}`;
-    if (initial)
-        shell(`<section class="console-read-skeleton" role="status" aria-busy="true" aria-label="${esc(t('read.loadingTitle'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>`);
+    const readScope = { identity, view: ticket, path: originalPath };
+    pageReadState.begin(readScope);
+    const initial = pageReadState.snapshot(readScope)?.status !== 'confirmed';
+    if (pageReadState.snapshot(readScope)?.status === 'loading')
+        renderLoadingPage();
     const existingRead = [...actions.records.values()].find(record => record.pending && record.kind === 'read' && record.view === path);
     const record = existingRead || actions.begin({ key: `read:${path}`, kind: 'read', label: t('intent.readingPage'), target: moduleTitle(path, t('term.core')), anchor: '#page-read-status', view: path });
     renderConsoleActions();
@@ -902,6 +915,7 @@ async function readPage(preserve, ticket) {
                 statusError = localizedStatusError(() => err(e));
                 reportReadFailure(e, identity, originalPath, ticket);
                 health = adapter.lastHealth;
+                pageReadState.fail(readScope, e);
             }
             if (!statusError) {
                 [runtime, defaults, users] = await read(Promise.all([
@@ -1036,11 +1050,16 @@ async function readPage(preserve, ticket) {
             operation = await read(adapter.operation(routeId(), undefined, true));
             rememberedOperation = structuredClone(operation);
         }
-        if (ticket !== loadId)
+        if (ticket !== loadId || originalPath !== path || identity !== adapter.identityEpoch)
             return;
+        if (path !== '/' || !statusError) {
+            pageReadState.confirm(readScope, new Date().toISOString());
+        }
         if (!['/', '/runtime'].includes(path) || !statusError) {
-            pageConfirmedAt = new Date().toISOString();
-            notices.resolve({ identity: String(identity), object: originalPath, task: 'read', generation: ticket });
+            const currentRead = { identity: String(identity), object: originalPath, generation: ticket };
+            for (const owner of pageReadNoticeOwners(currentRead, notices.items()))
+                notices.resolve(owner);
+            notices.resolve({ ...currentRead, task: 'read' });
         }
         if (preserve && !statusError && !readbackRequired && ![...actions.records.values()].some(record => record.view === path && record.blocked))
             feedback = '';
@@ -1055,18 +1074,18 @@ async function readPage(preserve, ticket) {
             return;
         if (ticket !== loadId || originalPath !== path || identity !== adapter.identityEpoch)
             return;
+        pageReadState.fail(readScope, e);
         if (record)
             actions.fail(record, e);
         schedulePageRetry(ticket, originalPath, identity);
         if (!initial) {
-            const confirmedAt = pageConfirmedAt, needsReadback = readbackRequired, readbackKey = path === '/runtime' ? 'recovery.readRuntime' : 'recovery.readDefaults';
+            const receipt = pageReadState.snapshot(readScope);
+            const confirmedAt = receipt?.status === 'confirmed' ? receipt.confirmedAt : '', needsReadback = readbackRequired, readbackKey = path === '/runtime' ? 'recovery.readRuntime' : 'recovery.readDefaults';
             feedback = localizedFeedback(() => OwnedFeedback(t('read.unconfirmed', { from: confirmedAt ? t('read.from', { time: date(confirmedAt) }) : '', error: err(e), note: needsReadback ? t('read.note') : '' }), 'warning', (needsReadback ? Button(t(readbackKey), 'readback', 'secondary') : '') + Button(t('refresh.retry'), 'refresh', 'secondary')));
             renderPage();
             return;
         }
-        shell(PageHeader(moduleTitle(path, t('title.details')), t('read.manageCore'), Button(`${icon("refresh", 15)} ${t('common.refresh')}`, "refresh")) +
-            OwnedFeedback(err(e), "error") +
-            Section(t('read.dataUnavailable'), "", Empty(t('read.couldNotLoad'), t('read.failedNotEmpty'), Button(t('read.tryAgain'), "refresh", "primary"))));
+        renderPage();
     }
     finally {
         if (record && !existingRead) {
@@ -1078,12 +1097,31 @@ async function readPage(preserve, ticket) {
             renderConsoleActions();
     }
 }
+function renderLoadingPage() {
+    shell(`<section class="console-read-skeleton" role="status" aria-busy="true" aria-label="${esc(t('read.loadingTitle'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>`);
+}
+function renderUnavailablePage(error) {
+    shell(PageHeader(moduleTitle(path, t('title.details')), t('read.manageCore'), Button(`${icon("refresh", 15)} ${t('common.refresh')}`, "refresh")) +
+        OwnedFeedback(err(error), "error") +
+        Section(t('read.dataUnavailable'), "", Empty(t('read.couldNotLoad'), t('read.failedNotEmpty'), Button(t('read.tryAgain'), "refresh", "primary"))));
+}
 function renderPage() {
     if (hosted && path === '/setup' && adapter.session) {
         renderQuickSetup();
         return;
     }
     disposeQuickSetup();
+    const receipt = pageReadState.snapshot({ identity: adapter.identityEpoch, view: loadId, path });
+    if (path !== '/login' && receipt?.status === 'loading') {
+        renderLoadingPage();
+        renderConsoleActions();
+        return;
+    }
+    if (path !== '/login' && receipt?.status === 'unavailable') {
+        renderUnavailablePage(receipt.error);
+        renderConsoleActions();
+        return;
+    }
     let body = "";
     if (path === "/login") {
         modelManagement.reset();
@@ -2136,7 +2174,7 @@ async function refreshHealth(showNotice = true) {
             if (isCurrentSessionError(e, identity) || !valid())
                 return;
             statusError = localizedStatusError(() => err(e));
-            publishNotice(readFailureNotice({ identity: String(identity), object: origin, generation: task.view }, e?.code || 'READ_FAILED', () => err(e), { label: () => t('common.retry'), run: () => { if (identity === adapter.identityEpoch && origin === path)
+            publishPageReadNotice(readFailureNotice({ identity: String(identity), object: origin, generation: task.view }, e?.code || 'READ_FAILED', () => err(e), { label: () => t('common.retry'), run: () => { if (identity === adapter.identityEpoch && origin === path)
                     void refreshHealth(false); } }));
             if (path === '/' || path === '/runtime')
                 renderPage();

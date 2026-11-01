@@ -1,3 +1,4 @@
+import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback, type BootstrapReadSource } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
@@ -641,8 +642,10 @@ async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord)
   // Publishing local feedback can reconcile this button before the action runs.
   // Bind the clicked action and its explicit object IDs before that render.
   const action=el.dataset.action || '',target=el.cloneNode(false) as HTMLElement;
+  const requestEntry = ['service-requests', 'pi-requests'].includes(action)
+    ? overlayRole(view.modal) === 'menu' && el.closest('#modal') ? overlayAnchor : focusKey(el) : undefined;
   const navigationFocus=['tab-Services','tab-Files','settings'].includes(action) && document.activeElement===el,focusEpoch=adapter.identityEpoch;
-  const execute=perform ?? ((record?:ActionRecord)=>handleAction(action,target,record));
+  const execute=perform ?? ((record?:ActionRecord)=>handleAction(action,target,record,requestEntry));
   if (!intent) { await execute(); return; }
   if (intent.action === 'create-work' && createSubmissionBlocked(actions.records.values(), view.createName)) {
     toast(new LocalizedMessage('action.createBlocked'), 'warning');
@@ -2924,7 +2927,7 @@ function downloadBlob(name: string, contents: string, type = "text/plain") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast(new LocalizedMessage('download.started'));
 }
-async function handleAction(action: string, el: HTMLElement, record?: ActionRecord) {
+async function handleAction(action: string, el: HTMLElement, record?: ActionRecord, requestEntry?: string) {
   if (adapter.coreGate.blocked && !coreSafeAction(action)) throw new Error(t('coreGate.actionBlocked'));
   const ownedView = () => record?.kind === 'identity' ? location.hash : record && ['lifecycle', 'transfer'].includes(record.kind) ? `${location.hash}:${modalChoice}` : viewKey();
   const stay = async <T>(pending: Promise<T>): Promise<T> => { const key = ownedView(), modal = view.modal; const value = await pending; if (key !== ownedView() || record?.kind === 'identity' && !!view.modal && view.modal !== modal) throw new ViewChanged(); return value; };
@@ -3455,7 +3458,10 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if(currentWork){
         const refreshing=view.modal==='pi-requests',source=refreshing?view.data.source || 'chat':action==='service-requests'?'service':'chat';
         const serviceName=refreshing?view.data.serviceName || '':source==='service'?s?.name || '':'';
-        if(!refreshing)requestNavigation={epoch:adapter.identityEpoch,workId:currentWork.id,source,serviceName,entry:focusKey(el),scroll:0,focus:''};
+        if (!refreshing) {
+          const entry = requestEntry ?? focusKey(el);
+          requestNavigation = { epoch: adapter.identityEpoch, workId: currentWork.id, source, serviceName, entry, scroll: 0, focus: '' };
+        }
         openModal('pi-requests', { serviceName, source });
         await readRequestPage(currentWork.id, serviceName, record);
       }
@@ -4523,11 +4529,14 @@ function render() {
   }
   const noticeParent = dialog?.matches(':modal') ? dialog : document.body;
   if (noticeHost.element.parentElement !== noticeParent) noticeParent.append(noticeHost.element);
-  noticeHost.setModalRegion(noticeParent === dialog ? {
-    container: dialog,
-    header: dialog.querySelector<HTMLElement>('.modal-head'),
-    footer: dialog.querySelector<HTMLElement>('.modal-footer'),
+  const noticeRegion = dialog?.open && dialog.getClientRects().length && getComputedStyle(dialog).visibility !== 'hidden'
+    && (noticeParent === dialog || view.modal === 'export' || dialog.classList.contains('inspector-drawer')) ? dialog : null;
+  noticeHost.setModalRegion(noticeRegion ? {
+    container: noticeRegion,
+    header: noticeRegion.querySelector<HTMLElement>('.modal-head'),
+    footer: noticeRegion.querySelector<HTMLElement>('.modal-footer'),
   } : null);
+  noticeHost.setPageRegion(desktopNoticePageRegion(root));
   if (activeKey) {
     const replacement = active?.isConnected ? active : root.querySelector<HTMLInputElement>(activeKey);
     if (replacement && replacement !== document.activeElement && (!dialog || nonmodalDialog() || dialog.contains(replacement))) {

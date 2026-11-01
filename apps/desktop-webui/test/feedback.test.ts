@@ -845,7 +845,17 @@ for (const action of ['read','path','refresh','save','folder','rename','move','c
   if(action==='upload'){await button(page,'file-add').click();await page.locator('.file-upload-details summary').click();await expect(page.locator('#app')).toContainText('File 1 of 1');await expect(page.locator('#app')).toContainText('Waiting for confirmation');}
   await expect.poll(()=>requests.filter(r=>r.method===method&&r.path.startsWith('/_desktop/files/')).length-before).toBe(1);
   if(action==='save'){await page.locator('#file-editor').fill('newer unsaved');operation.resolve();await expect(page.locator('#file-editor')).toHaveValue('newer unsaved');await expect(page.locator('#app')).toContainText('Unsaved');}
-  else {operation.resolve();if(['folder','rename','move','copy','delete','upload'].includes(action)){await expect(page.locator('.toast')).toContainText(action==='folder'?'Folder created.':action==='upload'?'Upload complete.':'File changes saved.');await expect.poll(()=>confirmed).toBe(true);await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true');}}
+  else {
+    operation.resolve();
+    if(['folder','rename','move','copy','delete','upload'].includes(action)) {
+      const target = action === 'folder' ? '/research' : action === 'upload' ? 'binary.dat' : '/note.txt';
+      const receipt = page.locator('.notice-host .notice-success').filter({ hasText: target });
+      await expect(receipt).toHaveCount(1);
+      await expect(receipt).toContainText('1 paths confirmed; 0 need review');
+      await expect.poll(()=>confirmed).toBe(true);
+      await expect(button(page,'refresh-files')).toHaveAttribute('aria-busy','true');
+    }
+  }
   if(action==='upload'){const put=requests.find(r=>r.method==='PUT')!;assert.deepEqual(uploadedBytes,Buffer.from([0,255,1,128]));assert.equal(put.headers['if-none-match'],'*');}
   refresh.resolve();
 });
@@ -938,7 +948,13 @@ for(const entry of ['login','logout','switch'] as const)test(`D01 ${entry} first
   if(entry==='login'){await page.locator('#auth-account').fill('owner');await page.locator('#auth-password').fill('test-password');}
   else {await button(page,'back-works').click();await button(page,'account').click();if(entry==='switch'){await button(page,'switch-core').click();await page.locator('#auth-core').fill('http://new-core.test');}}
   armed=true;const trigger=entry==='login'?'sign-in':entry==='logout'?'sign-out':'confirm-switch-core';await button(page,trigger).click();await expect(button(page,trigger).locator('[role="status"]')).toContainText(entry==='login'?'Signing in':entry==='logout'?'Signing out':'Switching Core');await expect(button(page,trigger)).toBeDisabled();
-  gate.resolve();if(entry==='logout')await expect(page.locator('#app')).toContainText('Remote revocation could not be confirmed');else await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);
+  gate.resolve();
+  if(entry==='logout') {
+    const warning = page.locator('.notice-host .notice-warning').filter({ hasText: 'Remote revocation could not be confirmed' });
+    await expect(warning).toHaveCount(1);
+    await expect(warning).toContainText('Local identity and saved credential cleared.');
+  } else await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
+  assert.equal(requests.filter(r=>r.path===endpoint&&r.method!=='GET').length,1);
 });
 
 for(const method of ['mouse','keyboard'] as const)test(`D07 Send ${method} confirms original Run, retains newer draft, duplicate submission is blocked`,async t=>{
@@ -986,7 +1002,12 @@ for(const action of ['cancel','resume'] as const)test(`D07 ${action} original Ru
     await expect.poll(()=>api(page,"return adapter.getWork('work-1').run.cancellationRequested")).toBe(true);
     await expect(button(page,'cancel-run')).toBeDisabled();await expect(button(page,'cancel-run')).toHaveAttribute('aria-busy','true');assert.equal(await api(page,"return adapter.getWork('work-1').run.status"),'running');
     await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
-  }else await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toBeVisible();
+  } else {
+    await expect.poll(()=>requests.some(r=>r.method==='GET'&&r.path==='works/work-1/runs/run-original/events'&&new URLSearchParams(r.search).get('after')==='3')).toBe(true);
+    await expect(owner.locator('[role="status"]')).toHaveCount(0);
+    await expect(page.locator('[data-action-status]').filter({hasText:'Reconnected'})).toHaveCount(0);
+    await expect(page.locator('.notice-host .notice-success')).toHaveCount(0);
+  }
   assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,0);
 });
 
@@ -1036,7 +1057,15 @@ for(const action of ['inspect','import','query','cleanup','export'] as const)tes
   else await expect(button(page,'retry-inspection-cleanup').locator('[role="status"]')).toHaveCount(1);
   gate.resolve();
   if(action==='export'||action==='import'){
-    if(action==='export') await expect(page.locator('#modal')).toContainText('op-export');
+    if(action==='export') {
+      // The accepted original ID is proved by its actual read, not diagnostic text in progress Details.
+      await expect.poll(()=>requests.some(r=>r.method==='GET'&&r.path==='operations/op-export')).toBe(true);
+      assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/exports').length,1);
+      await exportDetails(page);
+      await expect(page.locator('#modal.export-panel')).toContainText('Recovery Work');
+      await expect(page.locator('#modal.export-panel')).not.toContainText('op-export');
+      await expect(page.locator('#modal.export-panel')).not.toContainText('snapshot-original');
+    }
     else { await expect(page.locator('#modal .import-name-feedback')).toBeVisible(); assert.equal(await api(page,"return adapter.inspectionContext.operationId"),'op-import'); }
     assert.equal(requests.filter(r=>r.path==='work-imports'||r.path.endsWith('/exports')).length,1);read.resolve();
   }
@@ -3275,12 +3304,18 @@ test('Export progress permits Account opening and restores its actual expanded/f
     if (r.path === 'works') return { json: { works: [stopped] } };
     if (r.path === 'works/work-1') return { json: stopped };
     if (r.path === 'works/work-1/exports' && r.method === 'POST') return { json: { workId: 'work-1', operationId: 'export-original', snapshotId: 'snapshot-original' } };
-    if (r.path === 'operations/export-original') return { json: { operationId: 'export-original', workId: 'work-1', kind: 'export-work', state: 'running' } };
+    if (r.path === 'operations/export-original') return { json: { operationId: 'export-original', workId: 'work-1', kind: 'export-work', state: 'running', result: { snapshotId: 'snapshot-original' } } };
     if (r.path === 'work-snapshots/snapshot-original') return { json: { snapshotId: 'snapshot-original', workId: 'work-1', operationId: 'export-original', state: 'preparing' } };
   });
-  await button(page, 'work-menu').click();
+  await button(page, 'back-works').click();
+  await expect(page.locator('.works-page')).toBeVisible();
+  await page.locator('.work-row [data-action="work-menu"][data-id="work-1"]').click();
+  await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(0);
   await button(page, 'export').click();
-  await expect(page.locator('#modal')).toBeVisible();
+  await expect(page.locator('#modal.export-panel')).toBeVisible();
+  await expect.poll(() => requests.some(r => r.path === 'operations/export-original' && r.method === 'GET')).toBe(true);
+  await expect(page.locator('#modal.export-panel')).toContainText('Recovery Work');
+  await expect(page.locator('#modal.export-panel')).not.toContainText('export-original');
   assert.equal(await page.locator('#modal').evaluate(dialog => dialog.matches(':modal')), false);
   await expect(page.locator('.notice-success')).toHaveCount(0);
   const account = button(page, 'account');
@@ -3290,7 +3325,7 @@ test('Export progress permits Account opening and restores its actual expanded/f
   await expect(account).toHaveAttribute('aria-expanded', 'false');
   await expect(account).toBeFocused();
   assert.equal(requests.filter(r => r.path === 'works/work-1/exports' && r.method === 'POST').length, 1);
-  assert.equal(requests.filter(r => r.path.endsWith('/stop') || r.path.endsWith('/start')).length, 0);
+  assert.equal(requests.filter(r => r.method !== 'GET' && (r.path.endsWith('/stop') || r.path.endsWith('/start') || r.path.endsWith('/apply') || r.path.endsWith('/cancel'))).length, 0);
 });
 
 test('first configuration failure remains retry-only despite the Work default config placeholder', async t => {
@@ -3668,8 +3703,12 @@ test('FS52-selection current rows reconcile separately from original partial and
   for (const name of ['success.txt', 'blocked.txt', 'unknown.txt']) await page.locator(`[data-file-select="/${name}"]`).check();
   await button(page, 'file-delete').click();
   await button(page, 'confirm-file-delete').click();
-  await expect(page.locator('#modal .transfer-results')).toContainText('/unknown.txt');
-  await expect(page.locator('#modal .transfer-results')).toContainText('Unknown');
+  const originalUnknown = page.locator('#modal .transfer-results .transfer-row').filter({ has: page.locator('code', { hasText: /^\/unknown\.txt$/ }) });
+  await expect(originalUnknown).toHaveCount(1);
+  await expect(originalUnknown).toContainText('unknown · Result not confirmed (502).');
+  await expect(page.locator('#modal [data-retry-source="/unknown.txt"]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-retry-source="/blocked.txt"]')).toHaveCount(1);
+  await expect(page.locator('#modal [data-retry-source="/success.txt"]')).toHaveCount(0);
   await page.locator('#modal .modal-head [data-action=close-modal]').click();
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.selection-count')).toContainText('1');
@@ -3677,4 +3716,44 @@ test('FS52-selection current rows reconcile separately from original partial and
   await expect(page.locator('[data-file-select="/note.txt"]')).not.toBeChecked();
   await expect(page.locator('.main-panel .transfer-results')).toContainText('/unknown.txt');
   assert.equal(requests.filter(r => r.method === 'DELETE').length, 3);
+});
+
+test('sticky file read failure leaves narrow Work options and Settings pointer-accessible', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: listing('original', mtime1) };
+    if (r.method === 'GET') return { status: 503, json: { message: 'Original file unavailable' } };
+  });
+  await page.setViewportSize({ width: 455, height: 772 });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
+  await expect(page.locator('#modal')).toHaveClass(/anchored-overlay/);
+  await page.locator('#modal [data-action="settings"]').click();
+  await expect(page.locator('.settings-page')).toBeVisible();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
+});
+
+test('sticky directory read failure leaves narrow File More and New folder pointer-accessible', async t => {
+  let failed = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.startsWith('/_desktop/files/') && r.method === 'PROPFIND') return failed
+      ? { status: 503, json: { message: 'Original directory unavailable' } }
+      : { status: 207, body: listing('original', mtime1) };
+  });
+  await page.setViewportSize({ width: 455, height: 772 });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('.file-row')).toHaveCount(1);
+  failed = true;
+  await button(page, 'refresh-files').click();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await button(page, 'file-add').click();
+  await expect(page.locator('.file-actions-menu')).toBeVisible();
+  await page.locator('.file-actions-menu [data-action="new-folder"]').click();
+  await expect(page.locator('#modal #form-name')).toBeVisible();
+  await expect(page.locator('#modal [data-action="confirm-folder"]')).toBeDisabled();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });

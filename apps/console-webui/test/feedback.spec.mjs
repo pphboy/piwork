@@ -716,3 +716,79 @@ test('an identity change closes the administrator menu and replaces its account 
  let changed=false;await fixture(page,r=>r.path==='session'?{json:{authenticated:true,csrfToken:'test-csrf',user:{id:changed?'next-admin':'admin-1',account:changed?'next administrator':'admin',role:'admin'}}}:undefined,'/users');
  await page.getByRole('button',{name:'Administrator account',exact:true}).click();await expect(page.getByRole('menu')).toBeVisible();changed=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(page.getByRole('menu')).toHaveCount(0);await page.getByRole('button',{name:'Administrator account',exact:true}).click();await expect(page.getByRole('menu').locator('.dropdown-title')).toHaveText('next administrator');
 });
+
+test('first Users read failure stays unavailable through bounded retries and locale, then confirmed empty recovers', async ({ page }) => {
+  await page.clock.install();
+  let failing = true, reads = 0;
+  const requests = await fixture(page, request => {
+    if (request.path !== 'admin/users') return;
+    reads++;
+    return failing ? { status: 503, json: { code: 'CORE_UNAVAILABLE' } } : { json: { users: [] } };
+  }, '/users');
+  const unavailable = page.locator('main').getByRole('heading', { name: 'Data unavailable', exact: true });
+  await expect(unavailable).toBeVisible();
+  await page.clock.runFor(1100);
+  await expect.poll(() => reads).toBe(2);
+  await page.clock.runFor(3100);
+  await expect.poll(() => reads).toBe(3);
+  await expect(unavailable).toBeVisible();
+  await expect(page.locator('main table')).toHaveCount(0);
+  await page.locator('#account-trigger').click();
+  await page.locator('#account-dropdown [data-action="language"]').click();
+  await page.locator('.language-picker [data-locale="zh-CN"]').click();
+  await expect(page.locator('main').getByRole('heading', { name: '数据不可用', exact: true })).toBeVisible();
+  await expect(page.locator('main table')).toHaveCount(0);
+  await expect(page.locator('.notice-host')).toContainText('用户 ·');
+  await page.locator('#account-trigger').click();
+  await page.locator('#account-dropdown [data-action="language"]').click();
+  await page.locator('.language-picker [data-locale="en"]').click();
+  await expect(page.locator('.notice-host')).toContainText('Users ·');
+  await expect(page.locator('.notice-host')).not.toContainText('用户 ·');
+  failing = false;
+  await page.locator('main .page-header [data-action="refresh"]').click();
+  await expect.poll(() => reads).toBe(4);
+  await expect(page.locator('main').getByRole('heading', { name: 'Data unavailable', exact: true })).toHaveCount(0);
+  await expect(page.locator('main .access-task-summary')).toBeVisible();
+  failing = true;
+  await page.locator('main .page-header [data-action="refresh"]').click();
+  await expect.poll(() => reads).toBe(5);
+  await expect(page.locator('main .access-task-summary')).toBeVisible();
+  await expect(page.locator('.notice-host')).toContainText('Users ·');
+  await expect(page.locator('.notice-host')).not.toContainText('Core ·');
+  expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
+});
+
+test('narrow expanded navigation and account language remain clickable above an independent sticky read notice', async ({ page }) => {
+  await page.setViewportSize({ width: 455, height: 772 });
+  await fixture(page, request => request.path === 'admin/models'
+    ? { status: 503, json: { code: 'CORE_UNAVAILABLE' } } : undefined, '/models');
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await page.locator('[data-action="menu"]').click();
+  await page.locator('.nav.open a[href="/users"]').click();
+  await expect(page).toHaveURL(/\/users$/);
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await page.locator('#account-trigger').click();
+  await page.locator('#account-dropdown [data-action="language"]').click();
+  await page.locator('.language-picker [data-locale="zh-CN"]').click();
+  await expect(page.locator('main .access-task-summary')).toBeVisible();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+});
+
+test('confirmed Models re-entry clears only its older read notice while independent Users failure remains', async ({ page }) => {
+  let modelsFail = true;
+  await fixture(page, request => {
+    if (request.path === 'admin/users' || request.path === 'admin/models' && modelsFail) {
+      return { status: 503, json: { code: 'CORE_UNAVAILABLE' } };
+    }
+  }, '/models');
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await page.locator('.nav a[href="/users"]').click();
+  await expect(page.locator('main').getByRole('heading', { name: 'Data unavailable', exact: true })).toBeVisible();
+  await expect(page.locator('.notice-host .notice')).toHaveCount(2);
+  modelsFail = false;
+  await page.locator('.nav a[href="/models"]').click();
+  await expect(page.locator('main')).toContainText('Test model');
+  await expect(page.locator('.notice-host .notice')).toHaveCount(1);
+  await expect(page.locator('.notice-host')).toContainText('Users ·');
+  await expect(page.locator('.notice-host')).not.toContainText('Models ·');
+});

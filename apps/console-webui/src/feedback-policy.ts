@@ -61,3 +61,13 @@ export function readFailureNotice(
     recovery,
   })!;
 }
+
+/** Current page reads may retire older observations of that page, never write outcomes. */
+export function pageReadNoticeOwners(
+  current: Omit<FeedbackOwner, 'task'>,
+  notices: readonly (Omit<FeedbackOwner, 'generation'> & { readonly generation: string | number })[],
+): readonly FeedbackOwner[] {
+  return notices.filter((owner): owner is FeedbackOwner => typeof owner.generation === 'number'
+    && owner.identity === current.identity && owner.object === current.object
+    && owner.task === 'read' && owner.generation <= current.generation);
+}

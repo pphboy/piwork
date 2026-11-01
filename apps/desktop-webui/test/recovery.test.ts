@@ -433,7 +433,14 @@ test('Brain request details keep imported history readonly and closing does not 
   if(r.path.endsWith('/agent-requests'))return{json:{items:[request],nextCursor:null}};
   if(r.path.endsWith('/agent-requests/request-historical'))return{json:{request,evidence:{items:[{evidenceId:'proof-original',kind:'query',objectRef:'review',stateVersion:'2',verified:true}],nextCursor:null},runs:[]}};
  });
- await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await expect(page.locator('#modal')).toContainText('Historical · Read only');await button(page,'pi-request-detail').click();
+ await button(page,'tab-Chat').click();
+ await expect(page.locator('.work-header [data-action="pi-requests"], .agent-head [data-action="pi-requests"]')).toHaveCount(0);
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('');
+ await expect(page.locator('#modal')).toContainText('Historical · Read only');
+ await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('job-original');await expect(page.locator('#modal')).toContainText('Historical · Read only');await expect(page.locator('[data-action="retry-pi-request"]')).toHaveCount(0);await expect(page.locator('[data-action="cancel-pi-request"]')).toHaveCount(0);
  await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.method==='POST').length,0);
 });
@@ -2208,10 +2215,22 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  });
  await expect(page.locator('iframe')).toBeVisible();await page.clock.install();
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.confirmed")).toBe(true);
- await expect(button(page,'service-requests')).toHaveCount(0);present=true;await page.clock.runFor(5100);
- await expect(button(page,'service-requests')).toBeVisible();
- const actions=page.locator('.service-toolbar .actions');await expect(actions.locator('button').first()).toHaveAttribute('aria-label','Agent requests');await expect(actions.locator('button').first()).toHaveAttribute('title','Agent requests');
- fail=true;await page.clock.runFor(5100);await expect(button(page,'service-requests')).toBeVisible();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A').hasRecords"),false);
+ present=true;
+ await page.clock.runFor(5100);
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
+
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await button(page,'close-modal').click();
+ fail=true;
+ await page.clock.runFor(5100);
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
+ await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.error")).toContain('Request status unavailable');
+
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));});
  const reads=requests.filter(r=>r.path.endsWith('/agent-requests')).length;await page.clock.runFor(15000);assert.equal(requests.filter(r=>r.path.endsWith('/agent-requests')).length,reads);
  for(const r of requests.filter(r=>r.path.endsWith('/agent-requests'))){const q=new URLSearchParams(r.search);assert.equal(q.get('limit'),'1');assert.equal(q.get('serviceName'),'Tool A');}
@@ -2227,21 +2246,42 @@ test('Controls Service detail reads only associated replies, returns list focus 
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',4)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await expect(page.locator('iframe')).toBeVisible();await page.locator('#composer').fill('Keep this Main draft');
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await expect(page.locator('iframe')).toBeVisible();
+ await page.locator('#composer').fill('Keep this Main draft');
  await page.evaluate(()=>{(window as any).controlFrame=document.querySelector('iframe');(window as any).controlComposer=document.querySelector('#composer');});
  const loads=requests.filter(r=>r.path==='/_desktop/focus-app/').length;
- await button(page,'service-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('job-original');
  await expect(page.locator('#modal')).toContainText('Waiting for result');await expect(page.locator('#modal input, #modal textarea')).toHaveCount(0);await expect(button(page,'retry-pi-request')).toHaveCount(0);
  await page.evaluate(()=>{(window as any).requestCheckButton=document.querySelector('#modal .modal-footer [data-action=pi-request-detail]');});
  await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  assert.equal(await page.evaluate(()=>document.querySelector('#modal .modal-footer [data-action=pi-request-detail]')===(window as any).requestCheckButton),true);await button(page,'pi-request-detail').click();await expect(page.locator('#modal h2')).toHaveText('Agent request');
  await button(page,'back-pi-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('[data-action=pi-request-detail]')).toBeFocused();
- await button(page,'close-modal').click();await expect(button(page,'service-requests')).toBeFocused();await expect(page.locator('#composer')).toHaveValue('Keep this Main draft');
+ await button(page,'close-modal').click();
+ await expect(button(page,'service-menu')).toBeFocused();
+ await expect(page.locator('#composer')).toHaveValue('Keep this Main draft');
  assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).controlFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).controlComposer),true);assert.equal(requests.filter(r=>r.path==='/_desktop/focus-app/').length,loads);
  assert.equal(requests.filter(r=>r.path.includes('/sessions/session-auto')).length,0);assert.equal(chatWrites(requests).length,0);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
- await button(page,'service-focus').click();await button(page,'focus-toggle-chat').click();await page.setViewportSize({width:360,height:800});await expect(button(page,'service-requests')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await button(page,'service-focus').click();
+ await button(page,'focus-toggle-chat').click();
+ await page.setViewportSize({width:360,height:800});
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await expect(button(page,'exit-service-focus')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await button(page,'close-modal').click();
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
 });
 
 test('Controls cancelling request is observed to its actual terminal result; lost cancel receipt is checked without retry',async t=>{
@@ -2253,7 +2293,16 @@ test('Controls cancelling request is observed to its actual terminal result; los
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='running'?2:state==='cancelling'?3:6)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await button(page,'cancel-pi-request').click();
  await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);await expect(button(page,'cancel-pi-request')).toBeDisabled();
  await page.clock.install();state='completed';await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText(/[Cc]ompleted/);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
@@ -2326,8 +2375,29 @@ for(const state of ['pending','waiting_result'])test(`Controls ${state} cancella
   if(r.path.endsWith('/agent-requests/request-a/cancel')){current='cancelled';return{json:{requestId:'request-a'}};}
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'back-pi-requests').click();await button(page,'close-modal').click();assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
- await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await button(page,'back-pi-requests').click();
+ await button(page,'close-modal').click();
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await button(page,'cancel-pi-request').click();
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
+ assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
+ assert.equal(chatWrites(requests).length,0);
 });
 
 test('Controls active read failure stays unconfirmed; empty, unknown commands and IME cannot cancel',async t=>{
@@ -2360,7 +2430,16 @@ test('Controls request pagination, filter and exact list reading position surviv
   if(r.path.includes('/agent-requests/request-')){const id=r.path.split('/').at(-1);return{json:{request:{...controlRequest('completed'),requestId:id,runIds:[]},evidence:{items:[],nextCursor:null}}};}
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'next-pi-requests').click();
+ await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
  await page.locator('#modal [data-action=pi-request-detail]').first().focus();await page.locator('.modal-body').evaluate(node=>node.scrollTop=135);
  const before=await page.locator('.modal-body').evaluate(node=>node.scrollTop);
  await page.locator('#modal [data-action=pi-request-detail]').first().evaluate(node=>(node as HTMLButtonElement).click());await button(page,'back-pi-requests').click();
@@ -2376,7 +2455,16 @@ test('Controls recovery: failed reread retains a confirmed Agent reply',async t=
   if(r.path.endsWith('/runs/run-background'))return fail?{status:503,json:{message:'Run read temporarily unavailable'}}:{json:controlRun('run-background',4)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('Original associated reply');
  fail=true;await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('reply refresh failed');
  await expect(page.locator('#modal')).toContainText('Original associated reply');
 });
@@ -2398,7 +2486,17 @@ for (const timing of ['virtual', 'real'] as const) test(`Controls recovery: canc
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelling'?3:6)};
   return controlFixture(r);
  }, false, true, timing === 'virtual' ? page => page.clock.install() : undefined);
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await button(page,'cancel-pi-request').click();
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
  await expect.poll(()=>api(page,"return adapter.requestCancellation('work-1','request-a')?.phase;")).toBe('accepted');
  await expect(button(page,'cancel-pi-request')).not.toHaveAttribute('aria-busy','true');
  const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a') && r.method==='GET').length;
@@ -2434,7 +2532,13 @@ test('Controls recovery: lost Retry receipt resolves only through the original r
   if(r.path.endsWith('/agent-requests/request-retried'))return{json:{request:retried,evidence:{items:[],nextCursor:null}}};
   return controlFixture(r);
  });
- await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await button(page,'pi-request-detail').click();
+ await button(page,'tab-Chat').click();
+ await expect(page.locator('.work-header [data-action="pi-requests"], .agent-head [data-action="pi-requests"]')).toHaveCount(0);
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('');
+ await button(page,'pi-request-detail').click();
  await button(page,'retry-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');
  const key=await api(page,"return adapter.requestRetries.get('work-1:request-a').submissionKey");
  await api(page,"adapter.requestRetries.set('work-1:unrelated',{submissionKey:'unrelated-key',error:'unknown',unknown:true})");
@@ -2461,7 +2565,15 @@ test('Controls recovery: partial reply reads retain independent values and exclu
   if(r.path.endsWith('/runs/run-second'))return{json:{...controlRun('run-second',4),finalText:'Second reply '+version}};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('First reply 1');await expect(page.locator('#modal')).toContainText('Second reply 1');
  failed=true;version=2;await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('reply refresh failed');await expect(page.locator('#modal')).toContainText('First reply 1');await expect(page.locator('#modal')).toContainText('Second reply 2');await expect(page.locator('#modal')).toContainText('Last confirmed');
@@ -2495,7 +2607,15 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',state==='cancelled'?6:3)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+
  await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'back-pi-requests').click();
  await page.clock.install();
  await page.evaluate(()=>{Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));});
@@ -2503,7 +2623,15 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
  fail=true;await page.clock.runFor(5100);await expect(page.locator('#modal')).toContainText('Cancellation status not confirmed');await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);
  await button(page,'close-modal').click();const reads=()=>requests.filter(r=>r.path.endsWith('/agent-requests/request-a')).length,closed=reads();
  await page.clock.runFor(15000);assert.equal(reads(),closed);
- fail=false;state='cancelled';await button(page,'service-requests').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
+ fail=false;
+ state='cancelled';
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
  await expect(button(page,'cancel-pi-request')).toHaveCount(0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
 });
 
@@ -2520,7 +2648,14 @@ test('Controls recovery: late reply and Retry lookups cannot repopulate a new id
   if(r.path.endsWith('/retry-submission')){lookupStarted=true;await lookupGate;return{json:{workId:'work-1',requestId:'request-a',submissionKey:'original-key',status:'accepted',request:{...original,requestId:'retried',retryOf:'request-a'}}};}
   return controlFixture(r);
  });
- await button(page,'tab-Chat').click();await button(page,'pi-requests').click();await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');
+ await button(page,'tab-Chat').click();
+ await expect(page.locator('.work-header [data-action="pi-requests"], .agent-head [data-action="pi-requests"]')).toHaveCount(0);
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('');
+ await button(page,'pi-request-detail').click();
+ await expect(page.locator('#modal')).toContainText('Original associated reply');
  delayed=true;
  const pending=api(page,"void adapter.loadRequest('work-1','request-a');adapter.requestRetries.set('work-1:request-a',{submissionKey:'original-key',error:'unknown',unknown:true});try{await adapter.checkRequestRetry('work-1','request-a');}catch{}");
  await expect.poll(()=>lookupStarted).toBe(true);await api(page,"await adapter.signOut()");releaseReply();releaseLookup();await pending;
@@ -2536,7 +2671,15 @@ test('Controls recovery: first unconfirmed reply differs from a failed refresh a
   if(r.path.endsWith('/runs/run-background'))return fail?{status:503,json:{message:'Not yet readable'}}:{json:controlRun('run-background',4)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('reply has not been confirmed');await expect(page.locator('#modal')).not.toContainText('last confirmed content retained');await expect(page.locator('#modal')).not.toContainText('Last confirmed');
  fail=false;await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('Last confirmed');await expect(page.locator('#modal')).not.toContainText('reply refresh failed');
 });
@@ -2552,7 +2695,16 @@ test('Controls recovery: a changed association during an in-flight read loads on
   if(r.path.endsWith('/runs/run-current'))return{json:{...controlRun('run-current',4),finalText:'Current associated reply'}};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await expect.poll(()=>started).toBe(true);
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await expect.poll(()=>started).toBe(true);
  ids=['run-current'];await button(page,'pi-request-detail').click();release();
  await expect(page.locator('#modal')).toContainText('Current associated reply');await expect(page.locator('#modal')).not.toContainText('Removed reply');
 });
@@ -2577,10 +2729,19 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
   if(r.path.endsWith('/runs/run-background'))return{json:controlRun('run-background',4)};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await expect(page.locator('iframe')).toBeVisible();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await expect(page.locator('iframe')).toBeVisible();
  await page.locator('#composer').fill('Keep draft during evidence pagination');
  await page.evaluate(()=>{(window as any).paginationFrame=document.querySelector('iframe');(window as any).paginationFrameLoads=0;document.querySelector('iframe')!.addEventListener('load',()=>{(window as any).paginationFrameLoads++;});});
- await page.clock.install();await button(page,'service-requests').click();await button(page,'next-pi-requests').click();
+ await page.clock.install();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'next-pi-requests').click();
  await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
  await page.locator('#modal [data-action=pi-request-detail][data-id=request-a]').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText(/[Cc]ancelling/);await button(page,'back-pi-requests').click();
  const detail=page.locator('#modal [data-action=pi-request-detail][data-id=request-a]');
@@ -2606,7 +2767,9 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  await page.clock.runFor(6000);
  assert.equal(await api(page,"return adapter.requestPage('work-1','Tool A').items.find(r=>r.requestId==='request-a').state"),'cancelled');
  assert.equal(readbacks(),before);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
- await button(page,'close-modal').click();await expect(button(page,'service-requests')).toBeFocused();await expect(page.locator('#composer')).toHaveValue('Keep draft during evidence pagination');
+ await button(page,'close-modal').click();
+ await expect(button(page,'service-menu')).toBeFocused();
+ await expect(page.locator('#composer')).toHaveValue('Keep draft during evidence pagination');
  assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).paginationFrame && (window as any).paginationFrameLoads===0),true);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
 });
@@ -2625,7 +2788,16 @@ test('Controls pagination: late evidence retains current replies, status errors 
   if(r.path.endsWith('/runs/run-current'))return{json:{...controlRun('run-current',5),finalText:'Latest associated reply'}};
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal .request-evidence > summary').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await page.locator('#modal .request-evidence > summary').click();
  const more=button(page,'next-pi-evidence').click();await expect.poll(()=>started).toBe(true);
  latest=true;await api(page,"await adapter.loadRequest('work-1','request-a',false,false)");
  await expect(page.locator('#modal')).toContainText('Latest associated reply');
@@ -2653,7 +2825,16 @@ for(const scope of ['view','identity'])test(`Controls pagination: late evidence 
   }
   return controlFixture(r);
  });
- await expect(button(page,'service-requests')).toBeVisible();await button(page,'service-requests').click();await button(page,'pi-request-detail').click();await page.locator('#modal .request-evidence > summary').click();
+ await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
+ await expect(button(page,'service-menu')).toBeVisible();
+ await button(page,'service-menu').click();
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
+ await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
+ await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="service-requests"]').click();
+ await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+ await button(page,'pi-request-detail').click();
+ await page.locator('#modal .request-evidence > summary').click();
  const more=api(page,"try{await adapter.loadRequest('work-1','request-a',true);}catch{}");await expect.poll(()=>started).toBe(true);
  if(scope==='view'){await button(page,'back-pi-requests').click();await expect(page.locator('#modal h2')).toHaveText('Agent requests');}
  else await api(page,"await adapter.signOut()");
@@ -2913,7 +3094,7 @@ test('temporary cleanup remains visible when Service logs fail and refresh confi
   assert.equal(noServiceControls(requests),0);
 });
 
-test('temporary cleanup is associated with the original Run and hides stale data when its read fails', async t => {
+test('temporary cleanup retains the original Run confirmed cleanup facts when its reread fails', async t => {
   let failed = false;
   const run = { ...controlRun('run-cleanup', 6, 'session-1', { kind: 'chat' }) };
   const cleanup = { workId:'work-1',serviceId:'service-probe',runId:'run-cleanup',createOperationId:'operation-create',operationId:'operation-cleanup',trigger:'run-cancelled',state:'pending',stage:'remove',errorCode:'TEMPORARY_CREATE_UNCONFIRMED',updatedAt:'2026-10-12T00:01:00Z',truncated:false,events:[{at:'2026-10-12T00:01:00Z',stage:'remove',outcome:'unconfirmed'}] };
@@ -2926,8 +3107,11 @@ test('temporary cleanup is associated with the original Run and hides stale data
   await page.locator('.message-execution').filter({hasText:'cancelled'}).locator('[data-action="run-details"]').click();
   const modal=page.locator('#modal'); await expect(modal).toContainText('The original container creation has not been confirmed');
   failed=true; await button(page,'refresh-temporary-cleanups').click();
-  await expect(modal).toContainText('Cleanup status is not confirmed');
-  await expect(modal).not.toContainText('Waiting to retry');
+  await expect(modal).not.toContainText('Cleanup status is not confirmed');
+  await expect(modal).toContainText('Waiting to retry');
+  await expect(modal).toContainText('Cleanup read unavailable');
+  await expect(modal).toContainText('The original container creation has not been confirmed');
+  await expect(button(page, 'refresh-temporary-cleanups')).toBeEnabled();
 });
 
 test('late temporary cleanup response cannot repopulate a changed Core identity', async t => {
@@ -3221,10 +3405,7 @@ for (const fail of [false, true]) test(`B Service details appear while their iso
   const reading = page.locator('#modal [data-pending-action~="refresh-logs"]');
   await expect(reading).toHaveAttribute('title', /Reading Tool A log snapshot/); await expect(reading).toHaveAttribute('aria-busy', 'true');
   await expect(reading.locator('.pending-dots')).toHaveCount(1);
-  const slow = reading.locator('.action-slow-status');
-  await expect(slow).toBeVisible({timeout: 12000});
-  await expect(slow).toContainText('Reading Tool A log snapshot');
-  await expect(slow).toContainText('Still waiting');
+  await expect(reading.locator('.action-slow-status')).toHaveCount(0);
   release();
   await expect(page.locator('#modal')).toContainText(fail ? 'Only logs unavailable' : 'Confirmed log'); await expect(button(page, 'refresh-logs')).toBeEnabled();
   await expect(reading).toHaveCount(0); await expect(page.locator('#modal .service-controls')).toBeVisible();
@@ -4037,8 +4218,81 @@ for (const code of ['MODEL_AUTHENTICATION_FAILED', 'MODEL_PERMISSION_DENIED']) {
     await expect(page.locator('#modal')).toContainText('Account menu');
     await expect(page.locator('a[href="/admin"]')).toHaveCount(0);
     await button(page, 'close-modal').click();
+    await expect(page.locator('.work-header [data-action=account]')).toHaveCount(0);
+    await button(page, 'back-works').click();
+    await expect(page.locator('.topbar-works')).toBeVisible();
     await button(page, 'account').click();
     await expect(page.getByRole('menuitem', { name: 'Administration', exact: true })).toHaveAttribute('href', '/admin');
     assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
   });
 }
+
+
+test('Requests menu origin restores Service trigger and late list read does not take a newer dialog focus', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  t.after(async () => release());
+  let started = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/agent-requests')) {
+      started = true;
+      await gate;
+      return { json: { items: [controlRequest('completed')], nextCursor: null } };
+    }
+    return controlFixture(r);
+  });
+  await button(page, 'service-menu').click();
+  await page.locator('#modal [data-action="service-requests"]').click();
+  await expect.poll(() => started).toBe(true);
+  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+  await button(page, 'close-modal').click();
+  await expect(button(page, 'service-menu')).toBeFocused();
+  await openResponseSettings(page);
+  await page.locator('#model-select').focus();
+  const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/agent-requests'));
+  release();
+  await (await response).json();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+  await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
+  await expect(page.locator('#model-select')).toBeFocused();
+  assert.equal(requests.filter(r => r.path.endsWith('/agent-requests')).length, 1);
+  assert.equal(chatWrites(requests).length, 0);
+});
+
+
+test('Service log read reaches its ten-second deadline and only an explicit retry repeats the same GET', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => release = resolve);
+  t.after(async () => release());
+  let reads = 0;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/services/service-a/logs') {
+      if (++reads === 1) await gate;
+      return { json: { serviceId: 'service-a', status: 'available', text: 'Confirmed retry log', collectedAt: '2026-10-20T00:00:00Z', truncated: false } };
+    }
+    return focusFixture(r);
+  });
+  await page.clock.install();
+  await button(page, 'service-menu').click();
+  await button(page, 'manage-services').click();
+  await page.locator('[data-action="service-details"][data-id="service-a"]').click();
+  const modal = page.locator('#modal');
+  const pending = modal.locator('[data-pending-action~="refresh-logs"]');
+  await expect(pending).toHaveAttribute('aria-busy', 'true');
+  await expect(modal.locator('.service-controls')).toBeVisible();
+  await expect.poll(() => reads).toBe(1);
+  await page.clock.runFor(10001);
+  await expect(modal).toContainText(/timed out/i);
+  await expect(pending).toHaveCount(0);
+  await expect(button(page, 'refresh-logs')).toBeEnabled();
+  assert.equal(reads, 1);
+  await button(page, 'refresh-logs').click();
+  await expect(modal).toContainText('Confirmed retry log');
+  await expect(modal).not.toContainText(/timed out/i);
+  const logReads = requests.filter(r => r.path === 'works/work-1/services/service-a/logs');
+  assert.equal(logReads.length, 2);
+  assert.ok(logReads[0]);
+  assert.deepEqual(logReads.map(r => [r.method, r.search]), [['GET', logReads[0].search], ['GET', logReads[0].search]]);
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+  release();
+});
