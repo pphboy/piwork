@@ -298,9 +298,23 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
         now = 12000; renderActionStates(root, actions, '', () => undefined);
         (window as any).__resizeActions = actions;
       });
+      const status = page.locator('#resize-owner .action-slow-status');
+      const beforeResize = await status.boundingBox();
       await page.setViewportSize({width:360,height:600});
-      const status = page.locator('#resize-owner .action-slow-status'); await expect(status).toBeVisible();
-      const rect = await status.boundingBox(); assert.ok(rect && rect.x >= 0 && rect.x + rect.width <= 360);
+      await expect(status).toBeVisible();
+      // Visibility predates resize; wait for the real resize handler's bounded placement.
+      try {
+        await expect.poll(async () => {
+          const bounds = await status.boundingBox();
+          return !!bounds && bounds.x >= 0 && bounds.x + bounds.width <= 360;
+        }).toBe(true);
+      } catch (error) {
+        console.error('Slow-status resize bounds', { beforeResize, afterResize: await status.boundingBox(),
+          viewport: await page.evaluate(() => ({ width: innerWidth, height: innerHeight })) });
+        throw error;
+      }
+      const rect = await status.boundingBox();
+      assert.ok(rect && rect.x >= 0 && rect.x + rect.width <= 360);
       await page.evaluate(() => { document.querySelector('#resize-owner')!.remove(); window.dispatchEvent(new Event('scroll')); (window as any).__resizeActions.clear(); });
       await expect(page.locator('.action-slow-status')).toHaveCount(0);
       await page.setViewportSize({width:960,height:600});
