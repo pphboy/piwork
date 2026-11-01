@@ -6,6 +6,10 @@ export CGO_ENABLED := 0
 
 help:
 	@echo 'generate             Generate fixed Go/TS protocols and native HTTP DTOs'
+	@echo 'check-maintenance    Check native/UI boundaries, docs and UI language'
+	@echo 'check-generated      Re-run protocol generators and reject stale outputs'
+	@echo 'check-generated-ui   Rebuild WebUI and reject stale embedded outputs'
+	@echo 'check-style          Check touched Go/TS/JS/CSS formatting only'
 	@echo 'build                Build retained Pi harness, browser UI and Go programs'
 	@echo 'test                 Run retained Pi harness and Go unit tests'
 	@echo 'test-integration     Run Go Engine and real Go browser integration tests'
@@ -60,10 +64,10 @@ test-go:
 	# Generated bundles and local verification files in dist are not source packages.
 	go test -mod=readonly ./cmd/... ./internal/... ./scripts/...
 
-test: build test-go
-	node scripts/check-repository-docs.mjs
-	node scripts/check-ui-language.mjs
+test: build test-go check-maintenance
 	node --test scripts/*.test.mjs
+	node --test apps/ui-shared/*.test.mjs
+	npm run test:unit -w @piwork/console-webui
 	npm run test:unit -w @piwork/contracts -w @piwork/pi-package -w @piwork/work-store -w @piwork/pi-adapter -w @piwork/agentd
 	npm run typecheck -w @piwork/desktop-webui -w @piwork/console-webui
 
@@ -109,3 +113,22 @@ acceptance: test-integration test-native-host acceptance-index
 
 release:
 	node scripts/release-linux.mjs
+
+# Select these by the affected owner; a documentation-only change does not
+# require real Docker/model integration or rebuilding protocol generators.
+.PHONY: check-maintenance check-generated check-generated-ui check-style
+check-maintenance:
+	node scripts/check-native-boundary.mjs
+	node scripts/check-webui-boundaries.mjs
+	node scripts/check-repository-docs.mjs
+	node scripts/check-docker-quickstart.mjs
+	node scripts/check-ui-language.mjs
+
+check-generated:
+	node scripts/check-generated.mjs http
+
+check-generated-ui:
+	node scripts/check-generated.mjs ui
+
+check-style:
+	node scripts/check-source-style.mjs

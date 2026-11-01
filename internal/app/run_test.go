@@ -361,3 +361,44 @@ func TestThreeOptionsRejectOldCommandsAndMalformedValues(t *testing.T) {
 		t.Fatal(options, err)
 	}
 }
+
+// The maintenance contract treats parsing, deprecated environment inputs and
+// diagnostic privacy as one boundary. None of these checks opens an install.
+func TestStartupDefaultsAndExplicitValuesIgnoreDeprecatedEnvironment(t *testing.T) {
+	for _, key := range []string{
+		"PIWORK_LISTEN", "PIWORK_CORE_LISTEN", "PIWORK_UI_PORT", "PIWORK_CORE_PORT",
+		"PIWORK_DATA_DIR", "PIWORK_MODEL_PROVIDER", "PIWORK_MODEL", "PIWORK_API_KEY",
+		"PIWORK_AGENT_IMAGE", "PIWORK_PACKAGE_HELPER_IMAGE", "PIWORK_FILE_HELPER_IMAGE",
+		"PIWORK_SNAPSHOT_HELPER_IMAGE",
+	} {
+		t.Setenv(key, "synthetic-obsolete-secret")
+	}
+	defaults, err := parseStartup(nil)
+	if err != nil || defaults.uiPort != 17891 || defaults.corePort != 17871 || defaults.directory != "" {
+		t.Fatal("deprecated environment changed startup defaults")
+	}
+	explicit, err := parseStartup([]string{"--ui-port=17892", "--core-port=17872", "--data-dir=synthetic-install"})
+	if err != nil || explicit.uiPort != 17892 || explicit.corePort != 17872 || explicit.directory != "synthetic-install" {
+		t.Fatal("explicit three-option configuration was not preserved")
+	}
+}
+
+func TestDuplicateStartupOptionsNeverEchoSyntheticValues(t *testing.T) {
+	const secret = "synthetic-private-value-not-for-diagnostics"
+	for index, args := range [][]string{
+		{"--data-dir", secret, "--data-dir=other"},
+		{"--core-port", "17872", "--core-port=" + secret},
+		{"--ui-port", "17892", "--ui-port=" + secret},
+		{"--unknown=" + secret},
+		{"--ui-port=" + secret},
+		{"--core-port=" + secret},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(context.Background(), args, &stdout, &stderr); code != 2 {
+			t.Fatalf("case %d: invalid option accepted", index)
+		}
+		if stdout.Len() != 0 || strings.Contains(stderr.String(), secret) {
+			t.Fatalf("case %d: option value entered output", index)
+		}
+	}
+}

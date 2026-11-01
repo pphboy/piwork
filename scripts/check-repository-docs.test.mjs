@@ -58,3 +58,13 @@ test('the same manifest remains read-only and valid after its owner is archived'
   assert.equal(existsSync(join(base, 'openspec/changes/fixture')), false);
   assert.equal(existsSync(join(base, 'docs')), false);
 });
+
+test('installed maintenance skill references are current links, not frozen change evidence', t => {
+  const { base, write } = fixture(t);
+  write('.agents/skills/piwork-code-maintenance/SKILL.md', '[Read the selected owner](references/module-map.md)');
+  assert.throws(() => checkRepositoryDocs(base), /Missing current documentation target/);
+  write('.agents/skills/piwork-code-maintenance/references/module-map.md', '# Sources\n');
+  checkRepositoryDocs(base);
+  write('.agents/skills/piwork-code-maintenance/SKILL.md', '[Missing owner](references/module-map.md#removed-owner)');
+  assert.throws(() => checkRepositoryDocs(base), /Missing current documentation anchor/);
+});

@@ -356,6 +356,58 @@ export function scanLiterals(source) {
   return literals;
 }
 
+/** Shared lexical tokens for maintenance checks; this is not a TypeScript AST.
+ * Reuses the language audit's quote/template/comment/regexp handling. */
+export function scanSourceTokens(source) {
+  const tokens = [];
+  let index = 0;
+  let line = 1;
+  let last = '';
+  while (index < source.length) {
+    const start = index;
+    const char = source[index];
+    let token;
+    if (/\s/.test(char)) {
+      if (char === '\n') line++;
+      index++;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index);
+      index = end < 0 ? source.length : end;
+      continue;
+    }
+    if (char === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2);
+      index = end < 0 ? source.length : end + 2;
+    } else if (char === "'" || char === '\"') {
+      const value = skipQuoted(source, index);
+      index = value.end;
+      token = { kind: 'string', value: value.value };
+    } else if (char === '`') {
+      const value = skipTemplate(source, index);
+      index = value.end;
+      token = { kind: value.value.includes('${…}') ? 'template' : 'string', value: value.value };
+    } else if (char === '/' && (REGEX_ALLOWED_BEFORE.has(last) || REGEX_KEYWORDS.has(last))) {
+      index = skipRegex(source, index);
+      token = { kind: 'regexp', value: '/' };
+    } else if (/[A-Za-z_$]/.test(char)) {
+      index++;
+      while (index < source.length && /[A-Za-z0-9_$]/.test(source[index])) index++;
+      token = { kind: 'word', value: source.slice(start, index) };
+    } else {
+      index++;
+      token = { kind: 'symbol', value: char };
+    }
+    if (token) {
+      tokens.push({ ...token, start, end: index, line });
+      last = token.value;
+    }
+    line += (source.slice(start, index).match(/\n/g) ?? []).length;
+  }
+  return tokens;
+}
+
 const EXCLUDE_PATTERNS = [
   /^(?:https?|wss?|ftp|file|mailto|data|blob):/i,
   /:\/\//,

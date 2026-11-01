@@ -23,7 +23,7 @@ export function localLinks(source) {
 export function checkRepositoryDocs(base = root, { requireMigration = true } = {}) {
   try { lstatSync(join(base, 'docs')); throw new Error('Repository root docs entry is forbidden (including untracked files).'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  const current = ['README.md', 'README.zh-CN.md', 'AGENTS.md', ...['deploy', 'examples', 'openspec/specs'].flatMap(directory => files(base, directory))]
+  const current = ['README.md', 'README.zh-CN.md', 'AGENTS.md', ...['deploy', 'examples', 'openspec/specs', '.agents/skills/piwork-code-maintenance'].flatMap(directory => files(base, directory))]
     .filter(name => existsSync(join(base, name)) && extname(name) === '.md');
   for (const name of current) {
     for (const link of localLinks(readFileSync(join(base, name), 'utf8'))) {
