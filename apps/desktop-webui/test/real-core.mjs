@@ -737,6 +737,15 @@ try {
   assert.equal((await stoppedGateway.json()).code, 'SERVICE_UNAVAILABLE');
   await page.screenshot({ path: join(screenshotDir, '07-work-stopped.png'), fullPage: true });
   const startPath = `/_desktop/api/works/${workId}/start`;
+  const serviceReadReceipts = [], serviceReadStarted = Date.now();
+  const recordServiceRead = response => {
+    const request = response.request(), pathname = new URL(response.url()).pathname;
+    if (pathname === '/_desktop/api/service-entries' || pathname.startsWith('/_desktop/api/service-entries/') || pathname === `/_desktop/api/works/${workId}/services` ||
+      request.isNavigationRequest() && request.frame() !== page.mainFrame()) {
+      serviceReadReceipts.push({ method: request.method(), pathname, status: response.status(), elapsedMs: Date.now() - serviceReadStarted });
+    }
+  };
+  page.on('response', recordServiceRead);
   const startResponse = page.waitForResponse(response => new URL(response.url()).pathname === startPath && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Start Work', exact: true }).first().click();
   const startReceipt = await startResponse;
@@ -748,7 +757,21 @@ try {
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.work-header')).toContainText('Ready', { timeout: 180000 });
   await page.getByRole('button', { name: 'Services', exact: true }).click();
-  await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
+  try {
+    await page.frameLocator('iframe').getByRole('heading', { name: 'Real Service' }).waitFor({ timeout: 20000 });
+  } catch (error) {
+    const frames = await page.locator('iframe').evaluateAll(elements => elements.map(element => ({
+      serviceKey: element.getAttribute('data-service-key'),
+      pathname: new URL(element.getAttribute('src') || '', location.href).pathname,
+    })));
+    const documents = await Promise.all(page.frames().filter(frame => frame !== page.mainFrame()).map(async frame => ({
+      pathname: new URL(frame.url() || 'about:blank').pathname,
+      readyState: await frame.evaluate(() => document.readyState).catch(() => 'unavailable'),
+      expectedHeadingCount: await frame.getByRole('heading', { name: 'Real Service', exact: true }).count().catch(() => -1),
+    })));
+    console.error('Original Start Service document diagnostic', JSON.stringify({ iframeCount: frames.length, frames, documents, receipts: serviceReadReceipts }));
+    throw error;
+  } finally { page.off('response', recordServiceRead); }
   await waitState(workId, 'ready');
   // Start may finish before a pending frame is painted. Recover its exact receipt
   // through this Work's original-task entry rather than requiring a transient card.
