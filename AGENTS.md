@@ -17,6 +17,10 @@
 
 后续UI开发遵循[UI组件规范采用说明](openspec/specs/desktop-ui-language/ui-component-adoption.md)与[Piwork UI Component Specification v1.0原文](openspec/specs/desktop-ui-language/ui-component-spec-v1.0.md)。它是组件选型与基本行为依据，不要求过度设计、全量重写或把无障碍合规作为独立扩项；具体修改与未测事实仍归所属OpenSpec change。
 
+## 每次变更的维护入口
+
+已授权的代码、配置、协议/生成物、文档或界面变更均使用 [.agents/skills/piwork-code-maintenance/SKILL.md](.agents/skills/piwork-code-maintenance/SKILL.md)，按影响渐进定位 owner、来源、消费者与检查；不默认读取全仓或扩大授权范围。
+
 ## Git 提交组织
 
 - 默认按功能边界和依赖顺序拆分 commit，使每个提交有明确目的、便于独立审阅和回退；不把多个功能、使用文档、发布材料及 OpenSpec 归档全部塞进一个提交。拆分数量随实际改动确定，不固定为某个数量。
