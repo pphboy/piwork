@@ -23,7 +23,7 @@ jobs:
           - {suite: integration-go, minutes: 150}
     name: ${{ matrix.suite }}
     concurrency:
-      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}
+      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.minutes }}
