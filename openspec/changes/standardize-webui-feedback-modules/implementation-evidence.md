@@ -309,3 +309,11 @@ Protocol检查按当前固定两proto、七个实际输出声明精确inventory�
 依赖scanner现在只递归扫描template插值的执行表达式，忽略模板data，并保留原offset/行号。测试覆盖literal import/require、反向entry边、循环、嵌套template、字符串/注释/regexp以及静态无插值template target；真正非literal specifier仍是明确未解析限制。额外独立审查构造`if(ok) /}}/`发现第一候选仍会错把regexp括号当插值闭合，真实RED后用有界控制括号上下文区分regexp语句和除法，补正反例再GREEN；不是声称写了完整JavaScript parser。
 
 最终scripts/shared174/174、0skip/fail；实际全PR显式base检查123个源码文件通过，maintenance/文档/strict/diff通过。新scanner直接消费者另比较118个TS/JS/MJS/CSS相对真实base，无新增误报；该只读检查不替代完整CLI/Go检查。此前三项P2假绿都有具体负例与修复，旧“全绿”不被回写为当时已覆盖。GitHub实际验证run41326705682已在先前CI提交头运行，不能把本地新guard结果冒称那个旧head已执行新逻辑；每个远程run继续按自身commit、日志与skip记录。
+
+### 16:52 第二轮独立检查与真实CI首个绿色job
+
+独立复核确认先前三项治理负例18/18已关闭，但追加合法表达式`const n = /foo/ / 2; import("./app.js");`仍能使scanner漏掉后续import：实际RED返回空数组。最小修复将已完成regexp标作值，而不是与除法符号混同；新增普通/插值表达式、regexp作除数与假import数据四个断言。相关language/boundary/style直接测试36/36、0skip/fail，实际依赖CLI与全PR显式base style127源码文件通过；仍不将有限lexer称作完整JS parser。
+
+GitHub实际run41327583037（head feecb469）的unit/static job已通过：Go目标、678项Node测试（158 scripts +16 shared +148 Console +49/8/78/22/199保留workspace测试）、typecheck、正式build、generated检查及123文件PR-base style均由该job执行。此678不是Desktop全部浏览器或本地691直接套件的替代计数；同run浏览器/真实Core job当时尚未完成，旧run另有失败待日志诊断，不宣称整体CI绿色。
+
+旧run暴露`TestLogExportDownloadConcurrencyLimit`时序假设：2MiB响应可已全部进入socket缓冲，客户端只读1KiB不能证明服务端仍持下载slot。本机原测试20次实际6次错误200；新测试只改测试文件，用真实HTTP与实际route在首个body Write设置确定性barrier，并保留ResponseController Unwrap。第一handler明确活跃时第二请求必须409；释放并等handler返回（不是sleep）后第三请求200且全长度，第一请求也完整200。修复20/20、race10/10、整个四项download family通过；不增加生产hook、不削弱并发准入、不将失败归咎于产品而无证据。

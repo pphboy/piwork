@@ -109,3 +109,19 @@ Quick setup 既有 API Protocol selector（OpenAI Responses / Anthropic Messages
 仅新增测试，无生产代码/构建资源变化：`adapter-feedback-contract.test.mjs` 的 Overview 四例直接导入正式 dist 的 ConsoleAdapter，验证 process healthy 与 status ready 各自保留、checks true/false/unknown，任一 GET 失败保留完整 lastHealth 且不合成 Ready，以及旧身份延迟 body 不覆盖新身份快照。正式默认入口全套 **128/128、0失败、0跳过**；命令 `env -u PIWORK_CONSOLE_MODULE_DIR npm run test:unit -w @piwork/console-webui`，日志 `/tmp/piwork-console-official-units-final.log`。增量 style 和 diff 检查通过。
 
 据 S01–S12 映射逐族检查，6.1 的源码接入/各实际 owner 直接契约/确认修改与回读失败区分/晚回调与新 Key、草稿隔离/导航和覆盖表条款已有对应证据；Overview/About 的写入确认条款不适用，因为其所有者只读。可建议集成方按该任务字面完成 6.1；完整浏览器 DOM 状态矩阵仍明确归 8.1，不能由这 128 项或部分 CUA 代替。6.2 身份入口整链与 6.3/6.4 额外服务端约束继续分列，不因本建议被自动完成。
+
+## 16:52 已知失败原dialog恢复与普通receipt去重
+
+父任务在正式Console148资源、合成HTTP实际复现三种原Details缺口：Users非自己账号Disable400、Skill Disable400、npm Package Install400，关闭原dialog后notice Details都只聚焦Refresh，不能复核原错误。每种只有一次原POST，Details没有重放。Default Work另实际复现Review changed fields→Keep my draft后相同普通说明同时占main与toast；草稿保留、Save可用、零PATCH。
+
+最小实现沿现有dialog factory：新增无运行依赖`dialog-recovery.ts`只接原identity/view与当前/已知failed/其他dialog事实、恢复/聚焦两个具名动作，不持request、File、FormData、uploadId或新intent。app仍拥有ActionRecord与业务恢复；只有原current且非pending、有error无result、非unknown/blocked记录可恢复。其他新dialog已打开时不替换它，旧Details只聚焦Close。User action恢复原不可变account/target但密码为空；catalog Remove确认重新输入；Package已知拒绝恢复继续locked并提供既有Edit as new intent，Details不创建key或发送POST。只保留canonical纯npm名称加数字semver；URL、userinfo/query/token、范围/tag、本地路径一律不作为新增恢复草稿保留，原unknown Resume权威不变。标题与错误继续按当前语言求值。
+
+普通success/info现在只由单一notice host承接；Keep my draft从warning归回info。逐个现有resultFeedback调用检查后，保留的warning/error是确认写后读失败、会话准入、原Operation观察中断/Resume、Runtime不ready/读值不同、Defaults未保存草稿冲突、文件校验及剪贴板/连接失败恢复等独有事实，不能当普通receipt删除。已知远端失败独立factory包括既有Create user和本次User action/catalog action/uploadChooser；ModelTest保留其自己只读结果dialog，本地危险/冲突确认不是新远端任务。
+
+正式Console typecheck/build/embed与152/152直接测试通过（包括过时record/identity/view、其他dialog隔离、pending/success不能恢复失败、npm安全保留反例）；Go webapp实际通过12.67秒，consoleassets无测试，不计测试数。新helper只由authenticated app导入，未扩张setup公开资源allowlist。对应A/B/C/D修复后实际CUA尚待父任务核验，不能以这些直接测试提前声明所有浏览器路径通过。
+
+任务6.4另在既有Package真实phase浏览器用例追加明确断言：queued/source/prepare/validate/publish及未知future-phase都没有虚构Cancel、确定进度值或百分数；保留原真实phase/raw detail断言。仅语法/style检查通过，尚未在browser执行，不把它算入152或声称CI已有此断言。
+
+16:53正式152资源实际CUA修复后通过（app SHA256 `850c99772b1fa5aa9468b3d1f4a7af1ba7ee5735e2af01b5231ff9312a434801`）：A Disable Details恢复原target/error；另开Create user并输入new-unsaved-draft后旧Details不替换新form/草稿。Reset credential已知400后两密码清空，关闭→Details恢复原account/error而两个DOM value长度仍0。B Skill Disable恢复原target/error。C npm fixture-package@1.0.0原拒绝恢复locked表单与Edit as new intent，点击后只开放新意图编辑而没有POST。D未解决的真实冲突仍可见；Keep draft后只有浮动普通receipt、main无重复，原草稿保持。该identity ledger精确四次POST400（disable/reset/Skill/npm），Details和new-intent动作无重放、零配置PATCH；没有创建实际账号或安装实际包。
+
+结合此前两端真实360px、长中英文、键盘关闭/焦点返回、模态单宿主共存、通知关闭不改业务锁及此次有限factory/callsite复核，任务2.2完成，累计26/31。这个判断不把警告一概删掉，也不声称未运行的全量浏览器、真实Core或所有File输入路径通过；8.1/8.2等剩余集成条件仍独立保持。
