@@ -22,6 +22,7 @@ jobs:
           - {suite: console-browser, minutes: 45}
           - {suite: real-core, minutes: 130}
           - {suite: integration-go, minutes: 150}
+          - {suite: package-protocol, minutes: 35}
     name: ${{ matrix.suite }}
     concurrency:
       group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}
@@ -91,7 +92,7 @@ jobs:
         run: npm run test:browser -w @piwork/console-webui
       - name: Isolated runtime fixtures and reconstructed schema-4 source
         id: fixtures
-        if: matrix.suite == 'real-core' || matrix.suite == 'integration-go'
+        if: matrix.suite == 'real-core' || matrix.suite == 'integration-go' || matrix.suite == 'package-protocol'
         timeout-minutes: 50
         run: |
           docker version
@@ -113,6 +114,17 @@ jobs:
           docker image inspect --format '{{.Id}} {{json .RepoDigests}}' piwork-memory-history4:acceptance "$PIWORK_TEST_NATIVE_HISTORY4_IMAGE"
           echo "Reconstructed schema-4 fixture from $old; current-tree bridge changes deterministic driver and Service MCP only. No historical image digest claim."
           df -h /
+      - name: Exact Package acceptance and actor-scope protocols
+        if: matrix.suite == 'package-protocol' && !cancelled() && steps.fixtures.outcome == 'success'
+        env:
+          PIWORK_TEST_NATIVE_AGENT_IMAGE: piwork-agentd:go-migration-acceptance
+          PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE: piwork-file-helper:go-migration-acceptance
+          PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE: piwork-snapshot-helper:go-migration-acceptance
+        run: |
+          set -o pipefail
+          go test -mod=readonly -tags=integration -v -count=1 -timeout=15m -run '^(TestCorePackageHTTPPublishesAndReplaysFrozenContent|TestNativeAdministratorPackageScopeAndAcceptedJobSurviveRevocation)$' ./internal/coreapp | tee "$RUNNER_TEMP/piwork-package-protocol.log"
+          grep -E '^--- PASS: TestCorePackageHTTPPublishesAndReplaysFrozenContent \([0-9.]+s\)$' "$RUNNER_TEMP/piwork-package-protocol.log"
+          grep -E '^--- PASS: TestNativeAdministratorPackageScopeAndAcceptedJobSurviveRevocation \([0-9.]+s\)$' "$RUNNER_TEMP/piwork-package-protocol.log"
       - name: Desktop real Core
         if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 30

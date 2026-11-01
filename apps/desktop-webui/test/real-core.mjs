@@ -131,6 +131,13 @@ try {
     'Go Desktop bootstrap URL', 10_000);
   browser = await chromium.launch({ headless: true, executablePath: browserBinary });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  context.on('response', response => {
+    const pathname = new URL(response.url()).pathname;
+    if (response.status() >= 400 && pathname.startsWith('/_desktop/')) {
+      // Synthetic runtime diagnostics: never log query strings, bodies or credentials.
+      console.error('Desktop HTTP failure:', JSON.stringify({ method: response.request().method(), pathname, status: response.status() }));
+    }
+  });
   page = await context.newPage();
   page.on('pageerror', error => { console.error('Page error:', error.message); });
   await page.goto(launchUrl);
