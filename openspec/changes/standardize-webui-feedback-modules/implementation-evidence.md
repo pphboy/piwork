@@ -222,3 +222,25 @@ PR为可审阅Draft，源码、直接测试和正式嵌入同步，不等于整�
 ### 最终入库差异检查的冻结输入例外（12:42）
 
 四组提交后对完整baseline→HEAD（包含此前未跟踪的授权规划）检查，`git diff --check`指出冻结V13 HTML原有两处尾随空白：374、783行。此前“diff检查通过”针对当时已跟踪实现差异，不包含未暂存的新冻结附件；不可扩写为完整PR无空白警告。该文件SHA256仍为`679968a781adba928cbc867e5466d590ebfb7db685d674d56fd43468cc653b76`，与冻结scope-manifest完全一致，故不为消除lint改写已批准输入。精确排除此一个冻结HTML后的完整baseline→HEAD检查通过，生产源码、测试和其他新增文档没有同类警告。PR保留此例外及完整任务未完成声明。
+
+## PR #4后的6.2有限独立入口验收（14:30）
+
+继续完成既定未完成项，不把Draft PR发布当作Change完成。单独的忽略目录`dist/console-native-acceptance`服务真实非hosted Console /login，88个资源与正式dist逐字节一致；不改变原combined fixture。九项实际loopback HTTP自检通过：明确区分accepted-unknown（先存合成会话再503）与unaccepted-unknown（不受理），GET恢复、不同账号、旧响应快照、注销、known401与rate-limit。ledger只保存method/bodyKeys/合成account及effect，不保存密码；这不是实际Core认证证据。
+
+父任务官方产物/合成HTTP CUA已通过：session首次503原Retry恢复登录表单；availability503原Retry清原错误和notice；known401清密码。accepted-unknown关闭notice仍Sign in禁用，原GET确认匹配账号进入Overview且仅一次POST；不同账号GET保持原unknown锁，再匹配账号GET恢复。新发现明确缺陷：unaccepted-unknown一次POST后，GET确认signed-out已恢复人工Sign in/空密码并说明无已登录会话，但旧ActionRecord内联Not confirmed与旧unknown notice没有退休。正在仅修原登录展示回执；不同账号/读取失败不能当作恢复，也不清其他未知所有者。6.2仍未勾选，尚不宣称本批所有路径完成。
+
+14:30第五项注销/草稿CUA通过：合成账号正常登录→Default Work编辑instructions为未保存草稿→Sign out出现明确Discard确认→Discard后/login；旧草稿文本/编辑器消失、密码长度0。ledger仅一次logout POST200（accepted-session-revoked）及session GET signed-out，无配置PATCH/PUT。该项为真实前端、合成HTTP的显式丢弃与身份清理，不证明实际账号/远程注销。
+
+### 6.2 原登录回执与真实 session DTO（14:46，后续修复验收中）
+
+实际定位范围为 Console `adapter.initialize` 的 session receipt 接纳、`checkConsoleLogin`/原 login submit/退出 catch，以及原 ActionState、NoticeStore。新增 feature-local `login-feedback` 只接收只读原 record、account、notice owner 与具名退休回调，不取得完整 adapter/view；身份、未知锁及 HTTP 仍归原 owner。原未知登录在显式 signed-out 或同账号已登录的真实 GET 后只退休原展示，不同账号及读失败不退休。Logout 的 RESULT_UNKNOWN/INVALID_RESPONSE 保留原本地化不确定错误，已知拒绝才沿用 SIGNOUT_FAILED，未改变注销协议或重放。
+
+正式 Console typecheck/build/embed 后第一批135/135通过；父任务14:39–42官方资源/合成HTTP复核：未受理登录原GET确认signed-out后旧unknown行和notice均消失，密码空、人工Sign in恢复；未受理logout仍保留原会话，用户显式第二次已受理未知logout后GET确认撤销进入/login，旧logout notice清除，无自动第二POST。两次logout是两次独立用户动作，不是自动恢复写入。
+
+随后真实adapter六个非法session响应（空对象、数组、非boolean authenticated、true但无user、无account、空id）在修复前均产生缺少预期INVALID_RESPONSE的RED；校验置于任何CSRF/session/identity/store修改前后全部GREEN，合法明确signed-out与无可选coreUrl的authenticated receipt仍接受。当前143/143直接测试包含原session各字段不变及原signed-out info的精确owner退休；不以schema负例声称真实Core集成。父任务又发现429后人工同账号登录成功仍留原429 notice，正在沿同一原登录owner补退休与直接回归，尚未将143结果扩写为最终通过。
+
+14:43官方资源/合成HTTP的429时序已通过：两秒倒数禁用Sign in、密码清空，到期仅开放人工提交，无自动POST；手动再次提交进入Overview。其旧429 notice残留为本批待复核缺陷。另原“No signed-in session”说明在新成功会话存续108秒仍可见，也按精确原info owner修复，不允许通用notice reset。仍保持6.2未勾，等待最终两条有限UI复核与完整来源对照。
+
+14:48最终有限复核通过：正式Console144/144（0fail/skip），typecheck/build/embed通过；`check-generated ui`再次正式重建两端并核对字节一致，Go `internal/webapp`/`consoleassets`通过，maintenance、五个修改源/测试的style、OpenSpec strict及当前diff检查通过。父任务CUA使用最终正式资源：unacceptedunknown→原GET signed-out清旧unknown；随后同账号人工成功进入Overview，notice为0、无旧signed-out info。429显示两秒禁用/清密码，到期仅人工再次提交成功后notice为0、无旧RATE_LIMITED。HTTP ledger精确四次login POST对应两组各两次明确用户提交（503→200、429→200），其余恢复均GET，没有自动重发。
+
+本批只关闭真实发现的原登录/注销反馈缺陷，6.2仍未勾：独立onboarding创建管理员已知拒绝/未知受理与原GET恢复、onboarding人工登录未知及初始壳重试耗尽等实际入口证据仍未建立；已有控制平面/boot浏览器测试的编写不等于执行。Docker/Core/Unix socket/完整浏览器环境阻点保持原声明；未把合成身份视为真实账号或真实Core认证。下一批限于现有onboarding协议的正式资源夹具与实际UI验证，不开始5.2或新功能。
