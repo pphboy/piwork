@@ -291,3 +291,13 @@ E真实旧构建证明：选中的fixture Skill与@fixture/tools保持，Save一
 5.2依其任务原文的D07–D12功能、局部/部分/未知写、旧草稿/新选择、确认结果后读回失败测试矩阵完成：以上实际入口加既有actual adapter原生File204/unknown准入、共享writeFile已知403/409/412与408/5xx未知分类、原路径/覆写同意/晚回调/未知锁直接契约共同支撑。**C真实浏览器native XHR成功/403/502与上传进度未通过，受待确认的浏览器文件上传批准阻挡，零PUT不能算其通过；不重试或假造XHR。**该明确浏览器集成缺口继续列入8.1，不把整个浏览器矩阵隐含追加为5.2门槛，也不宣称真实Core或所有上传浏览器场景已测。2.2尚有普通info重复与未恢复的已知失败独立dialog owner待有限验收；4.3/5.4/6.4/8.1/8.2原环境/集成缺口保留。
 
 15:56提交前最终集成检查：全workspace typecheck通过；两端官方生成重建与内嵌字节一致；Go webapp/consoleassets通过（12.17秒）并重新build正式宿主入口；maintenance、17个修改源/测试的增量style/gofmt、文档归属、OpenSpec strict及当前diff均通过。Console当前官方dist148/148再次通过；Desktop精确51套件691/691日志保留。未执行或环境失败的完整Go/Unix socket/Chromium/Core/C native上传证据不被这些选择性绿灯覆盖。
+
+## 16:23 夜间独立复核与合法CI准备（仍25/31）
+
+用户要求本次修改完成后反复检查，不能把“无问题”承诺代替执行证据。独立只读复核固定11f9777快照发现三个已复现P2防腐检查假绿：clean committed PR的source-style默认只比较HEAD工作树、显式路径又以HEAD自身为基线；覆盖式protocol generator保留旧输出导致before/after相同；依赖scanner跳过template `${...}`执行代码中的literal import。旧选择性绿色结果不能证明这些漏检已覆盖。
+
+先修第一项：source-style增加显式`--base <commit-ref>`，一次验证并解析为commit SHA，用同一base选择改动与逐文件旧内容；保留默认dirty工作流。真实临时Git两次提交负例证明cleanHEAD旧模式0文件、新模式捕获已提交新增/修改违规，旧未改违规不误报，显式路径、非法base及修复后通过均验证；6/6通过。对当前整个PR与7c2325基线实际运行，发现新FS52候选测试三处多语句行并仅修该处后，122个改动源码文件通过。后两项仍有已验证候选补丁，尚未应用/完整复核，继续记为已知待修。
+
+五个新增FS52实际浏览器回归使用既有正式app/CSS、真实UI动作及受控HTTP route/ledger，覆盖过时文件读、中文Save、确认Save的GET恢复、Apply读错准入、部分结果与当前选择。没有regex/VM提取或隐藏app状态写入；中文用例等待真实PUT204完成和已保存/not-busy，不能把pending禁用当成功。官方测试tsc通过，尚未运行浏览器，不计入691直接套件或虚称新用例通过。
+
+新增仅PR4/同仓公开分支运行的GitHub Actions验证配置，contents只读、checkout不持久化凭据、无秘密/上传制品/部署/镜像发布/合并；固定官方action提交，三个独立Linux runner分离unit/static、完整两端browser及真实Docker/Core链。使用显式PR base style检查，不再把clean checkout零文件当PR style证明。历史schema4测试镜像拟从20fb8334精确源码重建，SQL hash与冻结v4一致，再用既有bridge；仅称重建夹具，不冒认原历史digest。该合法隔离运行环境不是重试绕过本地socket/Chromium限制。workflow尚未触发；网络、磁盘、时长、可选旧Core/其他history/SELinux/真实模型等实际执行与skip须以runner日志逐项记录，不能预先宣布环境已解决或所有CI通过。
