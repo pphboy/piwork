@@ -3496,3 +3496,157 @@ test('zero-Work original-record failure remains recoverable after its notice is 
   await expect(page.locator('#modal')).not.toContainText('Original record collection unavailable');
   assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
 });
+
+function fs52Listing(names: string[]) {
+  return `<d:multistatus xmlns:d="DAV:">${names.map(name => `<d:response><d:href>/_desktop/files/works/work-1/files/${name}</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>8</d:getcontentlength><d:getlastmodified>${mtime1}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
+}
+async function fs52Settings(page: Page) {
+  await button(page, 'work-menu').click();
+  await button(page, 'settings').click();
+}
+
+test('FS52-A obsolete file refresh cannot publish an error into a newer selection', async t => {
+  const gate = deferred();
+  t.after(async () => gate.resolve());
+  let holdNextListing = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') {
+      if (holdNextListing) {
+        holdNextListing = false;
+        await gate.promise;
+      }
+      return { status: 207, body: fs52Listing(['note.txt', 'other.txt']) };
+    }
+    if (r.method === 'GET') return { body: r.path.endsWith('/note.txt') ? 'note body' : 'other body', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/other.txt"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('other body');
+  const reads = requests.filter(r => r.method === 'PROPFIND').length;
+  holdNextListing = true;
+  const originalRequest = page.waitForRequest(request => request.method() === 'PROPFIND');
+  await button(page, 'refresh-files').click();
+  const heldRequest = await originalRequest;
+  await expect.poll(() => requests.filter(r => r.method === 'PROPFIND').length).toBe(reads + 1);
+  await button(page, 'close-file').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('note body');
+  gate.resolve();
+  const response = await heldRequest.response();
+  await response?.finished();
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await expect(button(page, 'refresh-files')).not.toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
+  await expect(page.locator('#file-editor')).toHaveValue('note body');
+  assert.equal(requests.filter(r => ['PUT', 'DELETE', 'COPY', 'MOVE'].includes(r.method)).length, 0);
+});
+
+test('FS52-ZH acknowledged versioned Save does not become a translated readback error', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: listing('original', mtime1) };
+    if (r.method === 'GET') return { body: 'original', headers: { 'Last-Modified': mtime1 } };
+    if (r.method === 'PUT') return { status: 204, headers: { 'Last-Modified': mtime2 } };
+  });
+  await button(page, 'work-menu').click();
+  await button(page, 'language').click();
+  await page.getByRole('option', { name: '简体中文', exact: true }).click();
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
+  await page.locator('#file-editor').fill('新的已提交正文');
+  await expect(page.locator('.editor-toolbar')).toContainText('未保存');
+  const acknowledged = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/note.txt') && response.status() === 204);
+  await button(page, 'save-file').click();
+  await (await acknowledged).finished();
+  await expect(page.locator('.editor-toolbar')).toContainText('已保存');
+  await expect(button(page, 'save-file')).not.toHaveAttribute('aria-busy', 'true');
+  await expect(button(page, 'save-file').locator('.pending-dots')).toHaveCount(0);
+  await expect(button(page, 'save-file')).toBeDisabled();
+  await expect(page.locator('#file-editor')).toHaveValue('新的已提交正文');
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
+  await expect(page.locator('[data-action-status]').filter({ hasText: '刷新未确认' })).toHaveCount(0);
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 1);
+});
+
+test('FS52-E-save fresh configuration GET retires only the confirmed Save readback error', async t => {
+  let failRead = false;
+  let desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'original', mcp: { servers: [] } };
+  const active = structuredClone(desired);
+  const { page, requests } = await fixture(t, r => {
+    if (r.path !== 'works/work-1/configuration') return;
+    if (r.method === 'PUT') {
+      desired = JSON.parse(r.body).configuration;
+      failRead = true;
+      return { json: {} };
+    }
+    return failRead ? { status: 503, json: { message: 'FS52 original configuration read unavailable' } }
+      : { json: { desired, active, pendingApply: desired.agentsMd !== active.agentsMd, runtime: { state: 'ready' } } };
+  });
+  await fs52Settings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('saved new instructions');
+  await button(page, 'save-config').click();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
+  await expect(page.locator('.notice-host .notice-error')).toContainText('FS52 original configuration read unavailable');
+  await expect(page.locator('#agents-editor')).toHaveValue('saved new instructions');
+  failRead = false;
+  await button(page, 'refresh-config').click();
+  await expect(button(page, 'apply-config')).toBeEnabled();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
+  await expect(page.locator('[data-action-status]').filter({ hasText: 'FS52 original configuration read unavailable' })).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path === 'works/work-1/configuration' && r.method === 'PUT').length, 1);
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply')).length, 0);
+});
+
+test('FS52-E-apply failed configuration read cannot authorize Apply from stale pendingApply', async t => {
+  let failRead = false, applied = false;
+  const desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved', mcp: { servers: [] } };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration/apply') {
+      applied = true;
+      failRead = true;
+      return { status: 202, json: { workId: 'work-1', operationId: 'fs52-apply' } };
+    }
+    if (r.path === 'operations/fs52-apply') return { json: { operationId: 'fs52-apply', workId: 'work-1', kind: 'apply-configuration', state: 'succeeded' } };
+    if (r.path === 'works/work-1/configuration') return failRead ? { status: 503, json: { message: 'FS52 Apply read unavailable' } }
+      : { json: { desired, active: applied ? desired : { ...desired, agentsMd: 'old' }, pendingApply: !applied, runtime: { state: 'ready' } } };
+  });
+  await fs52Settings(page);
+  await button(page, 'apply-config').click();
+  await expect(page.locator('.notice-host .notice-error')).toContainText('FS52 Apply read unavailable');
+  await expect(button(page, 'apply-config')).toBeDisabled();
+  await expect(page.locator('.configuration-state')).toContainText('Not confirmed');
+  failRead = false;
+  await button(page, 'refresh-config').click();
+  await expect(page.locator('.configuration-compact')).toContainText('Configuration in use');
+  await expect(button(page, 'apply-config')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply') && r.method === 'POST').length, 1);
+});
+
+test('FS52-selection current rows reconcile separately from original partial and unknown results', async t => {
+  let names = ['note.txt', 'success.txt', 'blocked.txt', 'unknown.txt'];
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: fs52Listing(names) };
+    if (r.method === 'DELETE') {
+      const name = r.path.split('/').pop()!;
+      if (name === 'blocked.txt') return { status: 403, json: { message: 'Original explicit rejection' } };
+      names = names.filter(item => item !== name);
+      return name === 'unknown.txt' ? { status: 502, json: { message: 'Original write receipt unavailable' } } : { status: 204 };
+    }
+  });
+  await button(page, 'tab-Files').click();
+  for (const name of ['success.txt', 'blocked.txt', 'unknown.txt']) await page.locator(`[data-file-select="/${name}"]`).check();
+  await button(page, 'file-delete').click();
+  await button(page, 'confirm-file-delete').click();
+  await expect(page.locator('#modal .transfer-results')).toContainText('/unknown.txt');
+  await expect(page.locator('#modal .transfer-results')).toContainText('Unknown');
+  await page.locator('#modal .modal-head [data-action=close-modal]').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.selection-count')).toContainText('1');
+  await expect(page.locator('[data-file-select="/blocked.txt"]')).toBeChecked();
+  await expect(page.locator('[data-file-select="/note.txt"]')).not.toBeChecked();
+  await expect(page.locator('.main-panel .transfer-results')).toContainText('/unknown.txt');
+  assert.equal(requests.filter(r => r.method === 'DELETE').length, 3);
+});
