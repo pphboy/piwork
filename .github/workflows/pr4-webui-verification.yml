@@ -81,7 +81,11 @@ jobs:
         run: |
           npx --no-install tsc -p apps/desktop-webui/tsconfig.test.json
           pattern='^(browser signs in and out without exposing Core bearer to page storage|Create Work geometry stays stable during delayed feedback on a narrow viewport|D19 close preserves one automatic original download and a manual same-transfer fallback|Chat redesign: unknown submission checks the original key and never retries a missing mapping|file preview failure has one original read notice and successful retry retires it silently|FS52-A obsolete file refresh cannot publish an error into a newer selection)$'
-          node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 --test-name-pattern="$pattern" apps/desktop-webui/dist/test/browser.test.js apps/desktop-webui/dist/test/feedback.test.js
+          set -o pipefail
+          node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 --test-name-pattern="$pattern" apps/desktop-webui/dist/test/browser.test.js apps/desktop-webui/dist/test/feedback.test.js | tee "$RUNNER_TEMP/piwork-desktop-smoke.tap"
+          grep -Fx '# tests 6' "$RUNNER_TEMP/piwork-desktop-smoke.tap"
+          grep -Fx '# pass 6' "$RUNNER_TEMP/piwork-desktop-smoke.tap"
+          echo 'Exactly six diagnostic cases passed; unmatched cases were not executed. Full Desktop browser verification remains separate.'
       - name: Console browser
         if: matrix.suite == 'console-browser' && !cancelled() && steps.build.outcome == 'success'
         run: npm run test:browser -w @piwork/console-webui
