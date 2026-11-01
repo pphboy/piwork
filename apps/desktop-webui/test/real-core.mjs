@@ -386,8 +386,22 @@ try {
 
   await page.getByRole('button', { name: /^note.txt/ }).click();
   await page.getByLabel('Edit note.txt').fill('saved by real browser Files');
+  const savedFilePath = `/_desktop/files/works/${workId}/files/note.txt`;
+  let savedFilePuts = 0;
+  const countSavedFilePut = request => {
+    if (request.method() === 'PUT' && new URL(request.url()).pathname === savedFilePath) savedFilePuts++;
+  };
+  page.on('request', countSavedFilePut);
+  const savedFileResponse = page.waitForResponse(response => response.request().method() === 'PUT'
+    && new URL(response.url()).pathname === savedFilePath);
   await page.getByRole('button', { name: 'Save file', exact: true }).click();
-  await page.getByText('File saved.', { exact: true }).waitFor();
+  assert([201, 204].includes((await savedFileResponse).status()));
+  await expect(page.locator('.editor-toolbar').getByText('Saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save file', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save file', exact: true })).not.toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByLabel('Edit note.txt')).toHaveValue('saved by real browser Files');
+  assert.equal(savedFilePuts, 1, 'Save must issue exactly one original note.txt PUT');
+  page.off('request', countSavedFilePut);
   const readFileThroughCore = async () => { const response = await fetch(`${coreUrl}/api/v1/works/${workId}/files/note.txt`, { headers: { Authorization: `Bearer ${token}` } }); assert.equal(response.status, 200); return response.text(); };
   assert.equal(await readFileThroughCore(), 'saved by real browser Files');
   let uncertainWrites = 0;
@@ -418,7 +432,8 @@ try {
   await page.getByRole('button', { name: 'Create folder', exact: true }).click();
   await page.getByRole('button', { name: /^folder/ }).waitFor();
   await page.screenshot({ path: join(screenshotDir, '03-files.png'), fullPage: true });
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.locator('.work-header').getByRole('button', { name: 'Work options', exact: true }).click();
+  await page.locator('#modal').getByRole('menuitem', { name: 'Settings', exact: true }).click();
   await page.locator('.configuration-compact').getByText('Configuration in use', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'AGENTS.md', exact: true }).click();
   await page.locator('#agents-editor').fill('# Real browser Work\nUse the shared workspace.\n');
