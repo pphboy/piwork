@@ -36,7 +36,8 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	start := func() (string, func()) {
+	start := func(scenario string) (string, func(), func()) {
+		unavailableConfirmed := false
 		cmd := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 		cmd.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + dockerHost, "DOCKER_CONFIG=" + dockerConfig}
 		stdout, err := cmd.StdoutPipe()
@@ -103,8 +104,8 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 					t.Fatal("native Core emitted an invalid diagnostic")
 				}
 				phase, _ := entry["phase"].(string)
-				if entry["event"] != "performance" || !allowedPhases[phase] || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
-					t.Fatalf("native Core emitted a failure or an unexpected diagnostic: event=%q phase=%q outcome=%q", safeDiagnosticToken(entry["event"]), safeDiagnosticToken(entry["phase"]), safeDiagnosticToken(entry["outcome"]))
+				if entry["event"] != "performance" || !allowedPhases[phase] || !processPerformanceOutcomeAllowed(scenario, unavailableConfirmed, phase, entry["outcome"]) {
+					t.Fatalf("native Core emitted a failure or an unexpected diagnostic: scenario=%q event=%q phase=%q outcome=%q", scenario, safeDiagnosticToken(entry["event"]), safeDiagnosticToken(entry["phase"]), safeDiagnosticToken(entry["outcome"]))
 				}
 				for key := range entry {
 					if key != "event" && key != "phase" && key != "outcome" && key != "timestamp" && key != "correlationId" && key != "durationMs" && key != "cacheState" && key != "preparationCorrelationId" {
@@ -123,9 +124,9 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 				t.Fatal("invalid preparation diagnostic stream", err)
 			}
 		}
-		return listening.URL, stop
+		return listening.URL, stop, func() { unavailableConfirmed = true }
 	}
-	base, stop := start()
+	base, stop, confirmUnavailable := start("healthy")
 	// A second actual process must fail on the directory lock before binding.
 	second := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 	second.Env = []string{"PATH=" + filepath.Join(t.TempDir(), "no-host-tools")}
@@ -194,7 +195,7 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 		t.Fatal(status, body)
 	}
 	stop()
-	base, stop = start()
+	base, stop, confirmUnavailable = start("restart")
 	if status, body := httpCall(t, base, "/api/v1/me", "GET", "Bearer "+token, nil); status != 200 || body["account"] != "admin" {
 		t.Fatal("token did not persist through real process restart", status)
 	}
@@ -203,7 +204,7 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	}
 	stop()
 	dockerHost = "unix://" + filepath.Join(t.TempDir(), "absent-engine.sock")
-	base, stop = start()
+	base, stop, confirmUnavailable = start("unavailable-engine")
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 		status, body := httpCall(t, base, "/readyz", "GET", "", nil)
 		if status != 503 || body["ready"] != false {
@@ -219,6 +220,7 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	if status, body := httpCall(t, base, "/healthz", "GET", "", nil); status != 200 || body["status"] != "healthy" {
 		t.Fatal("dependency failure stopped Core health")
 	}
+	confirmUnavailable()
 	stop()
 	t.Log("native Core and operator HTTP initialized online, checked native image, reopened same session and exited; no host interpreter or Docker command available")
 }
@@ -245,5 +247,37 @@ func TestProcessDiagnosticTokenDoesNotExposePrivateValues(t *testing.T) {
 	}
 	if got := safeDiagnosticToken("startup-docker"); got != "startup-docker" {
 		t.Fatal("safe protocol phase lost")
+	}
+}
+
+// Only the explicit missing-Engine fixture, after both public readiness and
+// health assertions, may emit the corresponding preparation failure.
+func processPerformanceOutcomeAllowed(scenario string, unavailableConfirmed bool, phase string, outcome any) bool {
+	if outcome == "started" || outcome == "succeeded" || outcome == "cancelled" {
+		return true
+	}
+	return scenario == "unavailable-engine" && unavailableConfirmed && phase == "startup-docker" && outcome == "failed"
+}
+
+func TestProcessPerformanceFailureRequiresConfirmedUnavailableScenario(t *testing.T) {
+	for _, tc := range []struct {
+		name, scenario, phase string
+		confirmed             bool
+		outcome               any
+		allowed               bool
+	}{
+		{"confirmed failure", "unavailable-engine", "startup-docker", true, "failed", true},
+		{"healthy failure", "healthy", "startup-docker", true, "failed", false},
+		{"restart failure", "restart", "startup-docker", true, "failed", false},
+		{"unconfirmed failure", "unavailable-engine", "startup-docker", false, "failed", false},
+		{"other phase", "unavailable-engine", "startup-agent", true, "failed", false},
+		{"other outcome", "unavailable-engine", "startup-docker", true, "unsafe-secret", false},
+		{"healthy success", "healthy", "startup-docker", false, "succeeded", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := processPerformanceOutcomeAllowed(tc.scenario, tc.confirmed, tc.phase, tc.outcome); got != tc.allowed {
+				t.Fatal("scenario outcome admission changed")
+			}
+		})
 	}
 }
