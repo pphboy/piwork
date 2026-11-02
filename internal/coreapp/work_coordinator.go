@@ -267,6 +267,7 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 		return true, err
 	}
 	var observed string
+	startBoundary := "not-started"
 	ctx = a.traceOperation(ctx, *current)
 	if work.DesiredState == "running" {
 		// Keep explicit starts and their terminal Operation publication in the
@@ -289,18 +290,22 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 			err = a.settleWorkFiles(ctx, workID, true)
 		}
 		if err == nil {
+			startBoundary = "initial-context"
 			err = a.ensureInitialWorkContext(ctx, workID)
 		}
 		if err == nil {
 			var generation int64
 			var instanceID string
+			startBoundary = "captured-start-read"
 			captured, captureErr := a.readCapturedStart(ctx, startCaptureKey(current.ID))
 			if captureErr != nil {
 				err = captureErr
 			} else {
+				startBoundary = "generation-selection"
 				generation, instanceID, err = a.selectCapturedAgentGenerationLocked(ctx, work, captured)
 			}
 			if err == nil {
+				startBoundary = "retry-admission"
 				if existing, lookupErr := a.Store.RuntimeGeneration(ctx, workID, generation); lookupErr == nil {
 					if current.Kind == "retry-work" {
 						if existing.State != "ready" {
@@ -329,6 +334,7 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 					if captureErr != nil {
 						err = captureErr
 					} else {
+						startBoundary = "captured-runtime-start"
 						_, err = a.startCapturedWorkLocked(ctx, workID, generation, instanceID, captured)
 					}
 				} else {
@@ -385,6 +391,9 @@ func (a *Application) processOneWorkOperation(ctx context.Context, workID string
 			if hookErr := a.workResumeFaultForTest("operation-failure"); hookErr != nil {
 				return true, hookErr
 			}
+		}
+		if work.DesiredState == "running" {
+			a.logStartFailureBoundary(workID, current.ID, startBoundary, err)
 		}
 		diagnostic := diagnosticCause(err, "WORK_OPERATION_FAILED", "runtime-start")
 		errorJSON, _ := json.Marshal(diagnostic)

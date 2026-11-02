@@ -104,7 +104,7 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 				}
 				phase, _ := entry["phase"].(string)
 				if entry["event"] != "performance" || !allowedPhases[phase] || (entry["outcome"] != "started" && entry["outcome"] != "succeeded" && entry["outcome"] != "cancelled") {
-					t.Fatal("native Core emitted a failure or an unexpected diagnostic")
+					t.Fatalf("native Core emitted a failure or an unexpected diagnostic: event=%q phase=%q outcome=%q", safeDiagnosticToken(entry["event"]), safeDiagnosticToken(entry["phase"]), safeDiagnosticToken(entry["outcome"]))
 				}
 				for key := range entry {
 					if key != "event" && key != "phase" && key != "outcome" && key != "timestamp" && key != "correlationId" && key != "durationMs" && key != "cacheState" && key != "preparationCorrelationId" {
@@ -221,4 +221,29 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	}
 	stop()
 	t.Log("native Core and operator HTTP initialized online, checked native image, reopened same session and exited; no host interpreter or Docker command available")
+}
+
+// Diagnostic values are untrusted: report protocol tokens, never raw stderr.
+func safeDiagnosticToken(value any) string {
+	token, ok := value.(string)
+	if !ok || len(token) == 0 || len(token) > 64 {
+		return "invalid"
+	}
+	for _, char := range token {
+		if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '-' || char == '_') {
+			return "invalid"
+		}
+	}
+	return token
+}
+
+func TestProcessDiagnosticTokenDoesNotExposePrivateValues(t *testing.T) {
+	for _, value := range []any{"/private/path", "token=secret", "secret\nline", strings.Repeat("x", 65), nil, 42} {
+		if got := safeDiagnosticToken(value); got != "invalid" {
+			t.Fatalf("unsafe diagnostic projection: %q", got)
+		}
+	}
+	if got := safeDiagnosticToken("startup-docker"); got != "startup-docker" {
+		t.Fatal("safe protocol phase lost")
+	}
 }
