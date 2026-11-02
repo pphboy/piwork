@@ -177,9 +177,7 @@ func TestNativeCoreWebDAVUploadStopApplyRevocationAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	base = listen.URL()
-	if !a.Status().Ready {
-		t.Fatal("cleaned jobs blocked Core recovery", a.Status())
-	}
+	waitRecoveredWorkReady(t, ctx, a, id, "")
 	checkOriginal()
 	awaitClean()
 }

@@ -170,9 +170,7 @@ func TestNativeSDKDeploysServiceThroughGoMCPAndCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	base = address.URL()
-	if !a.Status().Ready {
-		t.Fatal("Python service prevented Core recovery", a.Status())
-	}
+	waitRecoveredWorkReady(t, ctx, a, workID, service["serviceId"].(string))
 	count(6)
 	t.Log("real SDK read deployment Skill, wrote/read Python source, Go MCP deployed via Core mTLS, observed operation and invoked Work-local service")
 }

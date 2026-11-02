@@ -192,9 +192,7 @@ func TestNativeServiceRevisionsCounterAndRemoval(t *testing.T) {
 	if _, err := a.Listen(ListenAddress{Host: "127.0.0.1", Port: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if status := a.Status(); !status.Ready {
-		t.Fatal("reopened Core did not recover", status)
-	}
+	waitRecoveredWorkReady(t, ctx, a, workID, created.ServiceID)
 	count(7)
 	// An externally removed, previously confirmed instance can be recreated.
 	// A missing instance whose create was never confirmed must remain unknown.
