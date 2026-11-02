@@ -63,7 +63,7 @@ jobs:
           printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" >> "$GITHUB_ENV"
           npm ci
       - name: Install Chromium
-        if: matrix.suite != 'unit-static' && matrix.suite != 'agent-unit' && !startsWith(matrix.suite, 'backend-')
+        if: matrix.suite != 'unit-static' && matrix.suite != 'agent-unit' && matrix.suite != 'backend-engine' && matrix.suite != 'backend-drain'
         run: |
           npx --no-install playwright install --with-deps chromium
           node --input-type=module -e "import {chromium} from '@playwright/test'; console.log('PIWORK_TEST_BROWSER_BIN='+chromium.executablePath())" >> "$GITHUB_ENV"
