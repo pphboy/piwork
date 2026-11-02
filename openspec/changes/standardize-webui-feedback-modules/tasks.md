@@ -57,3 +57,12 @@
 
 - [x] 8.1 按 AGENTS 运行相关 typecheck、单测、WebUI 构建、资源复制/Go 嵌入一致性与现有浏览器集成；检验 Desktop/Serve 实际服务入口、CSP/图标、双语晚响应、360px/宽屏及 reduced-motion，分别报告真实执行与未执行范围。
 - [ ] 8.2 逐项核对全来源覆盖表及高风险真实 Core 链证据，复查无重复写入、未知解锁、跨身份泄漏或原型覆盖免责；运行 OpenSpec strict 验证并提交变更内验收记录供审阅，主 spec 同步/归档/commit/push/release 按其授权另行处理。
+
+
+## 9. 最新批准 V14 的增量实施与视觉验收
+
+历史已勾任务记录当时完成范围，不代表以下 V14 覆盖已通过；V13 冻结附件保留，最新参考及 hash 见 design。
+
+- [ ] 9.1 按冻结 V14 同步共享 52px/88px Header、39px 次级栏及 Desktop/Administration 密度；实现四个 Admin 短 SVG 导航与 Services/Files/Chat SVG，验证双语、Account/Work scope、Quick setup/Skills/Find operation/原 Operation 可达和真实状态不变。
+- [ ] 9.2 对齐 Chat 83px/42px/28px 输入区与独立 Model/Thinking 入口，保留成对自动保存、展开、IME/草稿/焦点、真实图片限制及未知锁；用直接模块及浏览器回归证明无自动重放或假值。
+- [ ] 9.3 正式构建并同步生成/嵌入资源，运行受影响契约及浏览器测试；提供 Desktop 首页、Work 和 Administration 的 1440px/360px 六张实际截图并对照 V14，验证长错误、等待/陈旧/未知、双语与主要动作可达，分别记录视觉验收及未执行范围，不以原型或历史通过记录代替。

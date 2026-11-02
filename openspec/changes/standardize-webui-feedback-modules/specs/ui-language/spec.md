@@ -179,9 +179,15 @@ Desktop 与 Serve SHALL 使用单一浮动通知宿主呈现适合通知的短�
 
 **Identifier:** UIL-V13-CHROME-001
 
-Desktop/Serve SHALL 沿用已确认的 V12 紧凑头部层级与原 PW 资源，不因等待、通知或增加评审入口而增高头部或新增无用途空白。宽屏 Desktop 首页与 Admin Header SHALL 等高为 V12 的 56px，并共享水平对齐基线；Work 身份 Header 同为 56px，Service Toolbar 保持 39px 的次级密度。首页 Header 的既有 B 控件保持 icon-only，Work 列表的 Open 仍为图标加文字。窄屏按 V12 必要布局折行为 96px 双行而不隐藏主要操作，不将旧约64–72px身份栏基线强加给新的紧凑 Work Header。
+Desktop/Serve SHALL 沿用已确认的 V12 紧凑头部层级与原 PW 资源，不因等待、通知或增加评审入口而增高头部或新增无用途空白。宽屏 Desktop 首页与 Admin Header SHALL 等高为最新批准 V14 的 52px，并共享水平对齐基线；Work 身份 Header 同为 52px，Service Toolbar 保持 39px 的次级密度。首页 Header 的既有 B 控件保持 icon-only，Work 列表的 Open 仍为图标加文字。窄屏按 V14 必要布局折行为 88px 双行而不隐藏主要操作，不将旧约64–72px身份栏基线强加给新的紧凑 Work Header。
 
 Work 的 Open SHALL 使用表示进入工作区的箭头形，不使用播放或外链箭头；Start 仍表示生命周期启动，Service 新标签打开仍使用外链语义。Refresh SHALL 共用单圆箭头路径，常规可见 Refresh 图形为18×18 CSS px，不回退双向/双箭头或因 `.small` 覆盖缩成16px；图形尺寸不缩小原可操作热区。两端所有同语义 Refresh 使用同一来源，状态切换保持固定槽、可访问名称与 tooltip。
+
+V14 最新批准的视觉参考 SHALL 以所属 change 冻结附件为准；Service、Files 与 Agent 次级工具栏保持 39px。Administration 的 Overview、Users、Setup、Models 四个短主导航与 Services/Files/Chat 导航 SHALL 使用对应批准的 18px SVG，保留双语可访问名称、真实权限及原导航目标；Setup 下 Defaults/Skills/Packages 次级导航 SHALL 保持 39px。Quick setup、Skills、Find operation 与已知未结束操作 SHALL 继续在所属管理入口可达，不移动到 Work 行菜单。正常密度 SHALL NOT 裁掉长错误、未知状态或必要恢复控制。
+
+#### Scenario: V14 覆盖历史视觉数值而不覆盖业务
+- **WHEN** 实施者将冻结 V14 的 52px/88px 头部及 SVG 导航应用到产品
+- **THEN** 使用真实会话、健康及模型来源，保留首次读取、陈旧与未知状态；宽屏和 360px 对照验收分别记录，不能以历史 V13 测试或原型模拟宣称 V14 通过
 
 #### Scenario: Open 与 Start 分开
 - **WHEN** Ready Work 显示 Open 而 Stopped Work 显示 Start

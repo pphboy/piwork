@@ -97,3 +97,22 @@ Go沿既有package与gofmt；TS/JS/CSS在本批确定一种既有兼容格式规
 ## Migration Plan
 
 先完成规划审阅并取得新apply授权。先接入项目级影响分类、配置/生成/文档检查与合成负例，再逐功能做共享展示、导出、Header/menu、Desktop其余族、Serve与登录/首设依赖回归；每批同时交付测试和所属导航更新，未通过不进入下一批集成。保留生成/嵌入资源一致性，按AGENTS构建与验证。回退以责任批次为单位，保留用户数据和已接受操作；不回滚数据格式，因为本变更不改它。主Spec同步、归档、commit/push/release须按相应授权另行处理。
+
+## 2026-11-02 实际截图后的视觉纠偏
+
+用户查看正式构建的实际截图后，明确要求重新对齐冻结 V13 的 Chat 输入区、Desktop 首页/WorkList、Administration 首页，并新增 Services、Files、Chat 的 SVG 图标。冻结 V13 文件保持不变：其最终 tab 规则实际隐藏 SVG，因此新增三个 tab 图标属于这次明确的用户覆盖要求，不能伪称原型已有。图标由同一共享源维护，统一 24 viewBox、18px 显示和 currentColor 线性样式。
+
+- **Chat 输入区**：按 V13 最终有效样式收为白色紧凑框、正常 42px 多行输入、左侧附件及相邻的模型、Thinking 两个独立触发入口（各自 chevron）、右侧蓝色发送与同框展开。两个入口复用原响应设置与成对自动保存所有者，Thinking 直接展开对应选择，toolbar 入口不冒充斜杠命令来源。保留现有只支持图片的真实上传限制、模型/思考成对自动保存、输入选项、斜杠命令、Stop/Send、未知受理锁、草稿及焦点所有权；展开只属于当前草稿的本地展示，不新建提交或第二个输入框。
+- **Desktop 首页与 WorkList**：共享同一个 Works 所有者，按最终原型的内容宽度、列表密度、图标尺寸和顶栏控制顺序对齐；56px/96px 身份栏规则不变。行高是正常内容最小值，不裁掉真实失败、未知任务及恢复控制；账户名和连接事实来自真实会话，菜单 scope 不改变。
+- **Administration 首页**：采用紧凑页头、真实 Core/Runtime/Model 事实区和两列主要入口；不复制原型的固定模型或模拟状态。Quick setup、Skills、Find operation 和已有未结束操作仍在 Administration 自身导航或明确的次级区可达，不移入 Work 行或全局 Account。首读失败、陈旧数据、原任务恢复及权限判断继续由既有所有者负责。
+- **验收**：正式构建与生成资源同步，直接回归验证展示边界；复用现有真实浏览器用例生成 Desktop 首页、Work 页面、Administration 首页各 1440/360 两种宽度的六张截图。代码测试通过不替代原型对照和用户视觉审阅，截图标注真实资源与合成业务数据的边界。本轮完成前不再宣称视觉验收已完成。
+
+
+## 2026-11-02 V14 最新批准视觉基线
+
+用户在 05:13 UTC 明确恢复 V14 项目实现及 PR。最新视觉参考为 [冻结 V14 单文件](prototype/Piwork_UI_Review_V14.html)，SHA-256：`8526e2670e0275337f594d482d6376932ac88ead325435fedcba5d34edda4868`。V13 附件字节保持不变；以上 V12/V13 的 56px/96px 与此前截图纠偏记录是历史基线，以下明确覆盖其相冲突视觉数值，不撤销业务、安全及状态契约。
+
+- Desktop 首页、Work 身份栏、Administration 宽屏统一 52px；必要窄屏双行 88px，Service/Files/Agent 次级工具栏 39px。52/88 使用共享 token，正常行高不是裁剪真实长错误、未知任务或恢复入口的许可。
+- Administration 保留四个短主导航与对应 18px SVG（Overview、Users、Setup、Models；当前语言对应短名），及原 Overview 主要入口结构；Setup 下 Defaults/Skills/Packages 次级导航保持 39px。Quick setup、Skills、Find operation 和已知 Operation 仍通过所属明确入口可达。不可用原型固定模型、健康值或假任务替代实际来源；Account 与 Work 菜单 scope 保持。
+- Chat 白色输入框正常最小高度 83px，文本区 42px，附件与发送槽 28px；模型与 Thinking 为相邻但独立的具名触发入口，各自 chevron，仍使用同一成对自动保存所有者。Services/Files/Chat 使用 V14 批准的 18px SVG。保留展开、真实图片限制、IME、草稿、焦点、Stop/Send、未知受理锁与原恢复，不复制原型模拟控制器。
+- 冻结 HTML 仅用于视觉对照，不编译进产品，不视为真实模型、Engine/Core 或状态覆盖证据。验收使用正式构建、资源同步及真实浏览器，分别记录 1440px/360px、双语、长错误、等待/陈旧/未知与交互；当前仅记录批准参考，不宣称 V14 产品视觉验收已通过。历史任务勾选不代表新增 V14 验收，见任务组 9。
