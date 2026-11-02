@@ -148,8 +148,11 @@ jobs:
           grep -E '^--- PASS: TestCorePackageHTTPPublishesAndReplaysFrozenContent \([0-9.]+s\)$' "$RUNNER_TEMP/piwork-package-protocol.log"
           grep -E '^--- PASS: TestNativeAdministratorPackageScopeAndAcceptedJobSurviveRevocation \([0-9.]+s\)$' "$RUNNER_TEMP/piwork-package-protocol.log"
       - name: Desktop real Core
+        id: desktop_real_core
         if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 30
+        env:
+          PIWORK_TEST_SCREENSHOT_DIR: ${{ runner.temp }}/piwork-reviewed-screenshots
         run: npm run test:real-core -w @piwork/desktop-webui
       - name: Console real Core
         if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
@@ -211,3 +214,16 @@ jobs:
       - name: Existing Go Engine integration
         if: matrix.suite == 'integration-go' && !cancelled() && steps.fixtures.outcome == 'success'
         run: make test-integration-go
+      - name: Requested synthetic Desktop screenshots
+        if: matrix.suite == 'real-core' && !cancelled() && steps.desktop_real_core.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # official v4
+        with:
+          name: desktop-screenshots-${{ github.event.pull_request.head.sha }}
+          retention-days: 3
+          if-no-files-found: error
+          include-hidden-files: false
+          path: |
+            ${{ runner.temp }}/piwork-reviewed-screenshots/02-service-and-chat.png
+            ${{ runner.temp }}/piwork-reviewed-screenshots/03-files.png
+            ${{ runner.temp }}/piwork-reviewed-screenshots/04-restored-work.png
+            ${{ runner.temp }}/piwork-reviewed-screenshots/05-responsive-390.png
