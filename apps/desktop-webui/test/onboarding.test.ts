@@ -172,7 +172,8 @@ test('IP browser directly creates an administrator, model/runtime save, workbenc
     await expect(page.locator('h1')).toContainText('Runtime');
     await expect(page.getByRole('button',{name:'Edit runtime',exact:true})).toBeVisible();
     assert.equal(new URL(page.url()).pathname,'/admin/runtime');
-    await page.getByRole('link',{name:'User access',exact:true}).focus();await page.keyboard.press('Enter');
+    await page.getByRole('link',{name:'Users',exact:true}).focus();
+  await page.keyboard.press('Enter');
     await expect.poll(()=>new URL(page.url()).pathname).toBe('/admin/users');
     await page.reload();
     await expect(page.locator('h1')).toHaveText('Give people access');
@@ -612,7 +613,11 @@ test('ordinary users see pending setup; unavailable release metadata preserves s
   await page.route('**/_web/api/onboarding',async route=>{const response=await route.fetch(),value=await response.json();delete value.defaultAgentImage;value.releaseError='RELEASE_DEFAULTS_UNAVAILABLE';await route.fulfill({response,json:value});});
   await page.reload();await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();await expect(page.locator('#release-note')).toContainText('release is incomplete');await fillModel(page);
   await page.getByRole('link',{name:'Overview',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('Unsaved model configuration');await page.getByRole('button',{name:'Keep editing',exact:true}).click();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-model-key');
-  await page.getByRole('link',{name:'Overview',exact:true}).click();await page.getByRole('button',{name:'Discard draft',exact:true}).click();await expect(page.locator('main')).toContainText('What’s next');await page.goto(server.origin+'/setup');await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
+  await page.getByRole('link',{name:'Overview',exact:true}).click();
+  await page.getByRole('button',{name:'Discard draft',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Overview',level:1,exact:true})).toBeVisible();
+  await page.goto(server.origin+'/setup');
+  await expect(page.getByRole('heading',{name:'Set up your Core runtime'})).toBeVisible();
   await page.unroute('**/_web/api/onboarding');
   const created=await page.evaluate(async()=>{const session=await(await fetch('/_web/api/session')).json();const r=await fetch('/console/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json','X-Csrf-Token':session.csrfToken},body:JSON.stringify({account:'ordinary',password:'synthetic-user-password',role:'user'})});return r.status;});assert.equal(created,201);
   await page.getByRole('button',{name:'Administrator account',exact:true}).click();await page.getByRole('menuitem',{name:'Sign out',exact:true}).click();await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await page.getByLabel('Account',{exact:true}).fill('ordinary');await page.getByLabel('Password',{exact:true}).fill('synthetic-user-password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page.locator('.core-startup-page')).toBeVisible();
@@ -634,7 +639,18 @@ test('real Engine prepares fixed release dependencies and permits one explicit W
   await expect.poll(async()=>page.evaluate(async()=>{const value=await(await fetch('/_web/api/onboarding')).json();return value.status?.ready&&value.preparation?.ready;}),{timeout:240000,intervals:[1000,2000,5000]}).toBe(true);
   await expect(page.locator('.works-page')).toBeVisible({timeout:12000});
   await captureFollowup(page,'engine-ready');assert.equal(works,0);assert.equal(tests,0);
-  await page.locator('[data-action=account]').click();await page.getByRole('menuitem',{name:'Administration',exact:true}).click();await expect(page.locator('main h1')).toContainText('What’s next');await openQuickSetup(page);await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();await captureFollowup(page,'engine-current-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');assert.deepEqual({modelWrites,runtimeWrites},{modelWrites:1,runtimeWrites:1});await page.getByRole('link',{name:'Workbench',exact:true}).click();await expect(page.locator('.works-page')).toBeVisible();await captureFollowup(page,'engine-workbench');
+  await page.locator('[data-action=account]').click();
+  await page.getByRole('menuitem',{name:'Administration',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Overview',level:1,exact:true})).toBeVisible();
+  await openQuickSetup(page);
+  await expect(page.getByLabel('Saved model',{exact:true})).toBeVisible();
+  await captureFollowup(page,'engine-current-model');
+  await page.getByRole('button',{name:'Save and continue',exact:true}).click();
+  await expect(page.locator('#preparation-answer')).toContainText('All required components are ready');
+  assert.deepEqual({modelWrites,runtimeWrites},{modelWrites:1,runtimeWrites:1});
+  await page.getByRole('link',{name:'Workbench',exact:true}).click();
+  await expect(page.locator('.works-page')).toBeVisible();
+  await captureFollowup(page,'engine-workbench');
   await page.getByRole('button',{name:'New Work',exact:true}).first().click();await page.locator('#create-name').fill('Setup acceptance Work');await page.getByRole('button',{name:'Create Work',exact:true}).click();
   const openWork=page.locator('#modal .modal-footer').getByRole('link',{name:'Open Work',exact:true});await expect(openWork).toBeVisible({timeout:120000});await openWork.click();
   await expect(page.getByRole('heading',{name:'Setup acceptance Work',exact:true})).toBeVisible({timeout:60000});
@@ -806,7 +822,12 @@ test('Admin Quick setup is canonical, explicit and can observe an unchanged Runt
   await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();assert.equal(puts,1);
   await page.goto(server.origin+'/setup');await expect(page.getByLabel('Saved model',{exact:true})).toHaveValue(currentRef);assert.equal(new URL(page.url()).pathname,'/admin/setup');
   await page.getByRole('button',{name:'Add model',exact:true}).click();await fillModel(page,'replacement-model');await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();assert.deepEqual({posts,puts,tests,works},{posts:2,puts:2,tests:0,works:0});
-  await page.getByRole('link',{name:'AI models',exact:true}).click();await expect(page.locator('main h1')).toHaveText('AI models');await page.goBack();await expect(page.locator('#preparation-answer')).toBeVisible();await page.goForward();await expect(page.locator('main h1')).toHaveText('AI models');
+  await page.getByRole('link',{name:'Models',exact:true}).click();
+  await expect(page.locator('main h1')).toHaveText('AI models');
+  await page.goBack();
+  await expect(page.locator('#preparation-answer')).toBeVisible();
+  await page.goForward();
+  await expect(page.locator('main h1')).toHaveText('AI models');
  }finally{await browser.close();await server.stop();}
 });
 
@@ -890,7 +911,12 @@ for(const destination of ['users','new-quick-draft'])test(`a delayed save-and-le
   const held=new Promise<void>(resolve=>{captured=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
   page.on('request',r=>{const path=new URL(r.url()).pathname;if(r.method()==='POST'&&path.endsWith('/admin/models'))posts++;if(r.method()==='PUT'&&path.endsWith('/admin/runtime'))puts++;if(path.endsWith('/model-tests'))tests++;if(r.method()==='POST'&&path.endsWith('/works'))works++;});
   await page.route('**/_web/api/onboarding',async route=>{reads++;if(reads>1){await route.continue();return;}const response=await route.fetch();captured();await gate;await route.fulfill({response});});
-  await page.getByRole('link',{name:'Workbench',exact:true}).click();await page.getByRole('dialog').getByRole('button',{name:'Save and continue',exact:true}).click();await held;await expect(page.locator('#preparation-answer')).toBeVisible();await page.getByRole('link',{name:'User access',exact:true}).click();await expect(page.locator('main h1')).toHaveText('Give people access');
+  await page.getByRole('link',{name:'Workbench',exact:true}).click();
+  await page.getByRole('dialog').getByRole('button',{name:'Save and continue',exact:true}).click();
+  await held;
+  await expect(page.locator('#preparation-answer')).toBeVisible();
+  await page.getByRole('link',{name:'Users',exact:true}).click();
+  await expect(page.locator('main h1')).toHaveText('Give people access');
   let expected='/admin/users';
   if(destination==='new-quick-draft'){
    await page.getByRole('link',{name:'Overview',exact:true}).click();await openQuickSetup(page);await page.getByRole('button',{name:'Add model',exact:true}).click();await fillModel(page,'new-draft-after-leave');await page.getByLabel('Model ID',{exact:true}).focus();expected='/admin/setup';

@@ -4017,7 +4017,8 @@ test('V14 Works home keeps compact rows and ordered controls at desktop and mobi
   await expect(page.locator('.work-row')).toHaveCount(1);
   await button(page, 'clear-search').click();
   await expect(page.locator('.work-row')).toHaveCount(2);
-  await openWorkForRecovery(page);
+  await page.locator('.work-name[data-action="open-work"][data-id="work-1"]').click();
+  await expect(page.locator('.work-header')).toBeVisible();
   for (const width of [1440, 360]) {
     await page.setViewportSize({ width, height: 900 });
     const header = await page.locator('.work-header').boundingBox();
@@ -4125,7 +4126,9 @@ test('independent Model and Thinking entries retain paired autosave and unknown 
   await expect(page.locator('#thinking-settings-trigger')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-expanded', 'false');
   await page.locator('[data-kind="thinking"][data-option-value="high"]').click();
-  await expect(page.locator('#response-settings-status')).toContainText(/not confirmed|unknown/i);
+  await expect(page.locator('#response-settings-status')).toContainText('Unconfirmed.');
+  await expect(page.locator('#response-settings-status')).toContainText('Check original settings before sending.');
+  await expect(page.locator('#response-settings-status')).toContainText('No change will be resent.');
   await page.keyboard.press('Escape');
   await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
   await expect(page.locator('#composer')).toHaveValue('Keep /thinking as draft text');
