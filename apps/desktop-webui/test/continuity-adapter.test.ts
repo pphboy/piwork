@@ -323,3 +323,40 @@ test('continuity: old-generation probe cannot revoke the new entry after observe
   assert.equal(f.adapter.serviceEmbed('one', 'notes', 3000), 'allowed');
   assert.equal(f.requests.filter(r => r.method === 'POST' && r.path === 'service-entries').length, 2);
 });
+
+for (const embed of ['allowed', 'blocked']) test(`continuity: unknown probe retains bootstrap until the same entry confirms ${embed} application response`, async t => {
+  const f = await fixture(t);
+  const bootstrap = 'http://entry.test/.well-known/piwork-local/enter#ticket=synthetic-fixture';
+  let applicationResponded = false;
+  f.respond(r => r.method === 'POST'
+    ? { json: { ...entry(), entryUrl: bootstrap, embed: 'unknown' } }
+    : { json: { workId: 'one', serviceId: 'notes', port: 3000, embed: applicationResponded ? embed : 'unknown' } });
+  const unknownObserved = deferred<void>();
+  const unsubscribe = f.adapter.subscribe(() => {
+    if (f.adapter.servicePreviewReadEvidence('one', 'notes', 3000)) unknownObserved.resolve();
+  });
+  await f.adapter.ensureServiceEntry('one', 'notes', 3000);
+  await unknownObserved.promise;
+  unsubscribe();
+  const probing = f.adapter.serviceFrameLoaded('one', 'notes', 3000);
+  const beforeApplicationResponse = f.adapter.serviceEntryUrl('one', 'notes', 3000);
+  // Complete the original bounded probe even on RED, so the assertion does not
+  // leave a pending synthetic timer or hide a cleanup failure.
+  applicationResponded = true;
+  t.mock.timers.tick(250);
+  await probing;
+  assert.equal(beforeApplicationResponse === bootstrap, true, 'a probe is not a bootstrap-redemption receipt');
+  assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), 'http://entry.test/');
+  assert.equal(f.adapter.serviceEmbed('one', 'notes', 3000), embed === 'blocked' ? 'denied' : 'allowed');
+  await f.adapter.ensureServiceEntry('one', 'notes', 3000);
+  assert.equal(f.requests.filter(r => r.method === 'POST' && r.path === 'service-entries').length, 1, 'ordinary remount reuses the confirmed document URL, never another ticket');
+});
+
+for (const embed of [undefined, 'invalid']) test(`continuity: ${String(embed)} embed receipt cannot discard an unredeemed bootstrap`, async t => {
+  const f = await fixture(t);
+  const bootstrap = 'http://entry.test/.well-known/piwork-local/enter#ticket=synthetic-fixture';
+  f.respond(r => r.method === 'POST' ? { json: { ...entry(), entryUrl: bootstrap, embed: 'unknown' } } : { json: { embed } });
+  await f.adapter.ensureServiceEntry('one', 'notes', 3000);
+  await f.adapter.serviceFrameLoaded('one', 'notes', 3000);
+  assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000) === bootstrap, true);
+});

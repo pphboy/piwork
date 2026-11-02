@@ -2845,7 +2845,10 @@ export class DesktopAdapter {
                 if (value.workId !== undefined && value.workId !== workId || value.serviceId !== undefined && value.serviceId !== serviceId || value.port !== undefined && value.port !== port)
                     throw failure('SERVICE_IDENTITY_CHANGED', 'd.error.entryIdentityChanged', undefined, 403);
                 entry.embed = value.embed === 'blocked' ? 'denied' : value.embed;
-                entry.entryUrl = entry.origin + (entry.basePath ?? '/');
+                // Only a real application response confirms the bootstrap completed.
+                // A live-entry probe can succeed before any iframe redeems its ticket.
+                if (value.embed === 'allowed' || value.embed === 'blocked')
+                    entry.entryUrl = entry.origin + (entry.basePath ?? '/');
                 entry.checkError = '';
                 entry.previewReceipt = value;
                 this.emit();
