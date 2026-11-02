@@ -3,7 +3,6 @@
 package coreapp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -157,38 +156,7 @@ func (f *brainAcceptance) apply(key string) {
 }
 func (f *brainAcceptance) agentEval(program string) string {
 	f.t.Helper()
-	host := os.Getenv("PIWORK_TEST_DOCKER_HOST")
-	if direct := os.Getenv("PIWORK_TEST_DOCKER_EXEC_HOST"); direct != "" {
-		host = direct
-	}
-	if host == "" {
-		host = "unix:///var/run/docker.sock"
-	}
-	raw, err := client.NewClientWithOpts(client.WithHost(host), client.WithAPIVersionNegotiation())
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	defer raw.Close()
-	var id string
-	if err := f.a.Store.Read(f.ctx, func(tx *sql.Tx) error {
-		return tx.QueryRow("SELECT runtime_id FROM resource_bindings WHERE work_id=? AND resource_kind='agent' AND logical_id=?", f.work, f.work+"/agentd").Scan(&id)
-	}); err != nil {
-		f.t.Fatal(err)
-	}
-	job, err := raw.ExecCreate(f.ctx, id, client.ExecCreateOptions{Cmd: []string{"node", "--no-warnings", "--input-type=module", "-e", program}, AttachStdout: true, AttachStderr: true, User: "10001:10001"})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	attached, err := raw.ExecAttach(f.ctx, job.ID, client.ExecAttachOptions{})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	defer attached.Close()
-	var out bytes.Buffer
-	if err := dockerengine.Demultiplex(f.ctx, attached.Reader, &out, &out); err != nil {
-		f.t.Fatal(err)
-	}
-	return out.String()
+	return nativeAgentEval(f.t, f.ctx, f.a, f.work, program)
 }
 func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *testing.T) {
 	node, err := exec.LookPath("node")
@@ -271,12 +239,29 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 	if after["autoRunCount"] != beforeCount || after["expiresAt"] != req["expiresAt"] || after["waitRef"].(map[string]any)["id"] != beforeWait["id"] || after["waitRef"].(map[string]any)["deadlineAt"] != beforeWait["deadlineAt"] {
 		t.Fatal("candidate recovery replayed work or reset its original deadline", beforeWait, after)
 	}
+	manualSession := manualCandidate["sessionId"].(string)
+	priorRuns := nativeSessionRunFacts(t, ctx, a, work, manualSession)
 	f.apply("adopt-candidate")
-	status, refused := packageHTTPCall(t, base, f.path+"/runs", "POST", auth, map[string]string{"sessionId": manualCandidate["sessionId"].(string), "submissionKey": "old-context-must-not-run", "prompt": "identify current model"})
-	if status != 503 || refused["code"] != "WORK_UNAVAILABLE" {
-		t.Fatal("old captured Session must fail explicitly without a Run or fallback", status, refused)
-	}
 	verified := f.request("go-native-candidate", "completed")
+	// Manual Sessions survive Apply; only each new Run captures the new active
+	// environment. Automatic candidate requests keep their own original identity.
+	f.session = manualSession
+	continued := f.chat("identify current model", "manual-current-context")
+	assertNativeSessionContinued(t, ctx, a, work, manualSession, continued["runId"].(string), priorRuns)
+	beforeReplay := nativeSessionRunFacts(t, ctx, a, work, manualSession)
+	replayed := f.chat("prepare workstation brain candidate go-native-candidate", "candidate-intent")
+	if replayed["runId"] != manualCandidate["runId"] {
+		t.Fatal("old submission replay changed Run identity")
+	}
+	afterReplay := nativeSessionRunFacts(t, ctx, a, work, manualSession)
+	if len(afterReplay) != len(beforeReplay) {
+		t.Fatal("replay accepted an extra Run")
+	}
+	for id, row := range beforeReplay {
+		if string(afterReplay[id]) != string(row) {
+			t.Fatal("replay changed retained Run", id)
+		}
+	}
 	hasSDK := false
 	for _, e := range verified["evidence"].(map[string]any)["items"].([]any) {
 		v := e.(map[string]any)

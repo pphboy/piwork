@@ -15,3 +15,7 @@ for native_variant in production acceptance; do
     --build-arg "PIWORK_MODIFIED=$native_modified" \
     -t "piwork-agentd:go-migration-$native_variant" .
 done
+
+# Deliberately incompatible synthetic fixture; never masquerades as an old release.
+docker build -f internal/dockerengine/testdata/Dockerfile.incompatible-agent \
+  -t piwork-agentd:synthetic-incompatible-helper .

@@ -1,0 +1,9 @@
+# Explicit synthetic negative fixture, NOT a historical Agent build. It retains
+# the current harness but advertises the rejected legacy helper contract.
+FROM piwork-agentd:go-migration-acceptance
+LABEL io.piwork.test.fixture="incompatible-helper-contract" \
+      io.piwork.package-helper.contract="1"
+USER 0:0
+RUN printf '#!/usr/bin/env node\nthrow new Error("synthetic incompatible helper must never execute");\n' > /usr/local/bin/piwork-package-helper \
+ && chmod 0755 /usr/local/bin/piwork-package-helper
+USER 10001:10001

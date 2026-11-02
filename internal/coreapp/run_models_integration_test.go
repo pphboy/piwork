@@ -103,7 +103,7 @@ func TestNativeChatModelSelectionRunsThroughGoAndRealSDK(t *testing.T) {
 		t.Fatal("preference changed an active Run", status, current)
 	}
 	status, rejected := packageHTTPCall(t, base, path+"/runs", "POST", auth, map[string]any{"sessionId": sessionID, "submissionKey": "must-not-queue", "prompt": "identify current model"})
-	if status != 429 {
+	if status != 409 || rejected["code"] != "WORK_BUSY" || rejected["retryable"] != true {
 		t.Fatal("busy input was queued", status, rejected)
 	}
 	status, _ = packageHTTPCall(t, base, path+"/runs/"+busyID+"/cancel", "POST", auth, map[string]string{"idempotencyKey": "cancel-busy"})
@@ -111,6 +111,11 @@ func TestNativeChatModelSelectionRunsThroughGoAndRealSDK(t *testing.T) {
 		t.Fatal(status)
 	}
 	wait(busyID, 6)
+	rows := nativeSessionRunFacts(t, ctx, a, id, sessionID)
+	if len(rows) != 2 || rows[firstID] == nil || rows[busyID] == nil {
+		t.Fatal("busy rejection left an extra queued Run", len(rows))
+	}
+
 	selected := submit("model-selected", "identify current model")
 	selectedID := selected["run"].(map[string]any)["runId"].(string)
 	run = wait(selectedID, 4)

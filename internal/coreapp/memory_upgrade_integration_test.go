@@ -4,6 +4,7 @@ package coreapp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -103,7 +104,7 @@ func checkNativeHistoryUpgrade(t *testing.T, oldImage string, originalSchema int
 	t.Helper()
 	nextImage := os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE")
 	if nextImage == "" || oldImage == "" {
-		t.Skip("source and schema-6 acceptance images required")
+		t.Skip("source and current acceptance images required")
 	}
 	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", oldImage)
 	a, base, auth, work, _ := nativeApplyFixture(t)
@@ -178,8 +179,13 @@ d.prepare("INSERT INTO brain_experience_heads VALUES(?,2,?) ON CONFLICT(work_id)
 	if status != 200 {
 		t.Fatal(status, value)
 	}
-	f.apply("schema6-success")
-	if got := readSchema(); !strings.Contains(got, `"schema":6`) || !strings.Contains(got, `"runs":1`) {
+	targetSchema := nativeImageHistorySchema(t, ctx, a, nextImage)
+	f.apply("current-schema-success")
+	var migrated struct {
+		Schema int `json:"schema"`
+		Runs   int `json:"runs"`
+	}
+	if got := readSchema(); json.Unmarshal([]byte(got), &migrated) != nil || migrated.Schema != targetSchema || migrated.Runs != 1 {
 		t.Fatal("upgrade lost history", got)
 	}
 	if seedExperience {

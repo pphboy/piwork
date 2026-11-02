@@ -147,12 +147,15 @@ func TestRealNativeAgentImageStaticCapabilitiesAndBuildEvidence(t *testing.T) {
 			}
 		}
 	}
-	old, err := engine.InspectImage(ctx, "piwork-agentd:acceptance")
+	old, err := engine.InspectImage(ctx, "piwork-agentd:synthetic-incompatible-helper")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if old.Labels["io.piwork.test.fixture"] != "incompatible-helper-contract" || old.Labels["io.piwork.package-helper.contract"] != "1" {
+		t.Fatal("negative image fixture identity is not explicit", old.ID)
+	}
 	if _, err := inspector.InspectNativeAgent(ctx, old.ID); !errors.Is(err, ErrImageIncompatible) {
-		t.Fatal("old TS helper image accepted", err)
+		t.Fatal("synthetic legacy helper contract accepted", err)
 	}
 	containers, err := engine.api.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filtersFor(labels)})
 	if err != nil || len(containers.Items) != 0 {

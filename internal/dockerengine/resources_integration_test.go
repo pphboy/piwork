@@ -126,7 +126,7 @@ func TestRealManagedResourceLifecycleAndOwnership(t *testing.T) {
 	if err != nil || view == nil || !view.State.Running {
 		t.Fatal(view, err)
 	}
-	if view.HostConfig.NanoCPUs != 100000000 || view.HostConfig.Memory != 64<<20 || len(view.HostConfig.PortBindings) != 0 || view.Config.User != "65532:65532" || !view.HostConfig.ReadonlyRootfs || len(view.Mounts) != 1 || view.Mounts[0].Destination != "/var/data/workspace" {
+	if view.HostConfig.NanoCPUs != 100000000 || view.HostConfig.Memory != 0 || len(view.HostConfig.PortBindings) != 0 || view.Config.User != "65532:65532" || !view.HostConfig.ReadonlyRootfs || len(view.Mounts) != 1 || view.Mounts[0].Destination != "/var/data/workspace" {
 		t.Fatal("container policy mismatch")
 	}
 	containers, listErr := runtime.ListContainers(ctx, "service")

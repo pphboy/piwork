@@ -643,7 +643,7 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 	if err != nil || response.StatusCode != 200 || string(tokenBytes) != "workspace-user-token" {
 		t.Fatal("user token file changed", err)
 	}
-	snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "target-package-tool", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
+	preApplyRunID := snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "target-package-tool", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
 	snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "target-mcp-service", "inspect restored web service", "snapshot-service-observed:"+targetServices["web"])
 	_, firstHistory := packageHTTPCall(t, targetBase, targetPath+"/sessions/"+sessionID, "GET", targetAuth, nil)
 	firstMessages, _ := json.Marshal(firstHistory["messages"])
@@ -696,35 +696,39 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 	if status, view := packageHTTPCall(t, targetBase, targetPath+"/configuration/agents", "PUT", targetAuth, map[string]string{"agentsMd": "# Target-only edit"}); status != 200 || view["pendingApply"] != true {
 		t.Fatal(status, view)
 	}
+	priorRuns := nativeSessionRunFacts(t, ctx, target, targetWork, sessionID)
 	accepted(target, targetBase, targetAuth, targetPath+"/configuration/apply", "offline-target-edit-apply")
-	status, oldRun := packageHTTPCall(t, targetBase, targetPath+"/runs", "POST", targetAuth, map[string]string{"sessionId": sessionID, "submissionKey": "old-context-must-not-rebind", "prompt": "hello"})
-	if status == 202 {
-		// The retained harness accepts durably before opening the SDK Session;
-		// the context mismatch must then fail without rebinding or model calls.
-		oldRunID := oldRun["run"].(map[string]any)["runId"].(string)
-		for {
-			status, result := packageHTTPCall(t, targetBase, targetPath+"/runs/"+oldRunID, "GET", targetAuth, nil)
-			if status != 200 {
-				t.Fatal(status, result)
-			}
-			if result["state"] == float64(5) {
-				break
-			}
-			if result["state"] == float64(4) || ctx.Err() != nil {
-				t.Fatal("Apply silently rebound imported old Session", result)
-			}
-			time.Sleep(50 * time.Millisecond)
-		}
-	} else if status < 400 {
-		t.Fatal("unexpected old Session continuation response", status, oldRun)
-	}
+	continuedID := snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "imported-session-current-context", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
+	assertNativeSessionContinued(t, ctx, target, targetWork, sessionID, continuedID, priorRuns)
 	status, oldHistory := packageHTTPCall(t, targetBase, targetPath+"/sessions/"+sessionID, "GET", targetAuth, nil)
-	oldMessages, _ := json.Marshal(oldHistory["messages"])
-	if status != 200 || !bytes.Equal(oldMessages, firstMessages) {
-		t.Fatal("historical Session changed after context Apply", status, oldHistory)
+	var originalMessages []any
+	if err := json.Unmarshal(firstMessages, &originalMessages); err != nil {
+		t.Fatal(err)
 	}
-	// Sessions retain their accepted context identity. A newly applied context
-	// uses a new Session; the imported Session was continued above before Apply.
+	continuedMessages, ok := oldHistory["messages"].([]any)
+	if status != 200 || !ok || len(continuedMessages) <= len(originalMessages) {
+		t.Fatal("same Session did not append history", status)
+	}
+	prefix, _ := json.Marshal(continuedMessages[:len(originalMessages)])
+	if !bytes.Equal(prefix, firstMessages) {
+		t.Fatal("continuation rewrote imported history")
+	}
+	beforeReplay := nativeSessionRunFacts(t, ctx, target, targetWork, sessionID)
+	replayedID := snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "imported-session-current-context", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
+	oldReplayID := snapshotNativeRun(t, ctx, targetBase, targetAuth, targetWork, sessionID, "target-package-tool", "invoke package tool fixture_hello", "package-tool-result:fixture_hello:v1:")
+	if oldReplayID != preApplyRunID {
+		t.Fatal("pre-Apply submission replay changed Run identity")
+	}
+	afterReplay := nativeSessionRunFacts(t, ctx, target, targetWork, sessionID)
+	if replayedID != continuedID || len(afterReplay) != len(beforeReplay) {
+		t.Fatal("same submission replay created another Run")
+	}
+	for id, row := range beforeReplay {
+		if string(afterReplay[id]) != string(row) {
+			t.Fatal("replay changed retained Run", id)
+		}
+	}
+	// A separate new Session remains independently usable as well.
 	status, nextSession := packageHTTPCall(t, targetBase, targetPath+"/sessions", "POST", targetAuth, map[string]any{"idempotencyKey": "target-after-edit-session"})
 	if status != 201 {
 		t.Fatal(status, nextSession)
@@ -784,7 +788,7 @@ func TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallatio
 	t.Log("offline migration and re-import:", source.Store.InstallationID(), target.Store.InstallationID(), digest, size, sourceWork, targetWork, reimportedWork, targetServices)
 }
 
-func snapshotNativeRun(t *testing.T, ctx context.Context, base, auth, work, session, key, prompt, want string) {
+func snapshotNativeRun(t *testing.T, ctx context.Context, base, auth, work, session, key, prompt, want string) string {
 	t.Helper()
 	path := "/api/v1/works/" + work
 	status, submission := packageHTTPCall(t, base, path+"/runs", "POST", auth, map[string]any{"sessionId": session, "submissionKey": key, "prompt": prompt})
@@ -803,7 +807,7 @@ func snapshotNativeRun(t *testing.T, ctx context.Context, base, auth, work, sess
 			if state != 4 || !bytes.Contains(encoded, []byte(want)) {
 				t.Fatal("actual TS SDK Run", string(encoded))
 			}
-			return
+			return runID
 		}
 		select {
 		case <-ctx.Done():

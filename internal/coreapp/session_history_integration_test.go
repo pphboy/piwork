@@ -357,7 +357,8 @@ func TestNativeCancelledCheckpointHistoryAfterEventCompaction(t *testing.T) {
 		Run    string
 		Schema int
 	}
-	if raw := f.agentEval(program); json.Unmarshal([]byte(raw), &seeded) != nil || seeded.Run == "" || seeded.Schema != 6 {
+	targetSchema := nativeImageHistorySchema(t, ctx, a, os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE"))
+	if raw := f.agentEval(program); json.Unmarshal([]byte(raw), &seeded) != nil || seeded.Run == "" || seeded.Schema != targetSchema {
 		t.Fatal("checkpoint fixture", raw)
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path+"/runs/"+seeded.Run+"/events?after=0&responseProfile=history-v1", nil)
