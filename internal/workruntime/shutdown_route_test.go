@@ -61,7 +61,7 @@ func TestDetachedShutdownRouteDrainsRealClientAfterAdmissionCancellation(t *test
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	scope := internaltls.Scope{InstallationID: store.InstallationID(), WorkID: "work-shutdown", Generation: 7, InstanceID: "instance-shutdown"}
+	scope := internaltls.Scope{InstallationID: store.InstallationID(), WorkID: "work-shutdown", Generation: 7, InstanceID: "agent-shutdown"}
 	identity, err := manager.EnsureGeneration(ctx, scope)
 	if err != nil {
 		t.Fatal(err)
