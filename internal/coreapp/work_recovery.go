@@ -14,6 +14,7 @@ import (
 	"piwork/internal/diagnostics"
 	"piwork/internal/dockerengine"
 	"piwork/internal/safefs"
+	"piwork/internal/workruntime"
 )
 
 type nonblockingRecoveryKey struct{}
@@ -500,7 +501,7 @@ func (a *Application) resetStableGenerations(ctx context.Context) error {
 
 // shutdownCapturedWorks stops each known Work independently. A failure in one
 // Work does not prevent attempts on the others; Close reports nonzero status.
-func (a *Application) shutdownCapturedWorks(ctx context.Context) error {
+func (a *Application) shutdownCapturedWorks(ctx context.Context, retained map[string]workruntime.DrainRoute) error {
 	var ids []string
 	err := a.Store.Read(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT g.work_id FROM runtime_generations g JOIN works w ON w.id=g.work_id WHERE w.deleted_at IS NULL ORDER BY g.work_id`)
@@ -529,7 +530,12 @@ func (a *Application) shutdownCapturedWorks(ctx context.Context) error {
 		group.Add(1)
 		go func(id string) {
 			defer group.Done()
-			if err := a.stopCapturedWork(ctx, id, a.options.WorkDrainTimeout, a.options.WorkStopTimeout); err != nil {
+			route, hasRoute := retained[id]
+			var drainRoute *workruntime.DrainRoute
+			if hasRoute {
+				drainRoute = &route
+			}
+			if err := a.stopCapturedWorkWithDrain(ctx, id, a.options.WorkDrainTimeout, a.options.WorkStopTimeout, drainRoute); err != nil {
 				failures <- err
 			}
 		}(id)

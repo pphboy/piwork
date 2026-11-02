@@ -504,6 +504,10 @@ func (a *Application) startCapturedWorkLocked(ctx context.Context, workID string
 // Work's desired state, captured context, and both volumes for later resume.
 // The caller is responsible for fencing new Work operations and Services.
 func (a *Application) stopCapturedWork(ctx context.Context, workID string, drainTimeout, stopTimeout time.Duration) error {
+	return a.stopCapturedWorkWithDrain(ctx, workID, drainTimeout, stopTimeout, nil)
+}
+
+func (a *Application) stopCapturedWorkWithDrain(ctx context.Context, workID string, drainTimeout, stopTimeout time.Duration, retained *workruntime.DrainRoute) error {
 	if a.workRuntime == nil || !safefs.ValidFileName(workID) || drainTimeout <= 0 || drainTimeout > 10*time.Minute || stopTimeout < 0 || stopTimeout > 10*time.Minute {
 		return errCapturedWork
 	}
@@ -513,10 +517,14 @@ func (a *Application) stopCapturedWork(ctx context.Context, workID string, drain
 		return err
 	}
 	defer lock.Unlock()
-	return a.stopCapturedWorkLocked(ctx, workID, drainTimeout, stopTimeout)
+	return a.stopCapturedWorkLockedWithDrain(ctx, workID, drainTimeout, stopTimeout, retained)
 }
 
 func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string, drainTimeout, stopTimeout time.Duration) (returned error) {
+	return a.stopCapturedWorkLockedWithDrain(ctx, workID, drainTimeout, stopTimeout, nil)
+}
+
+func (a *Application) stopCapturedWorkLockedWithDrain(ctx context.Context, workID string, drainTimeout, stopTimeout time.Duration, retained *workruntime.DrainRoute) (returned error) {
 	fileErr := a.settleWorkFiles(ctx, workID, false)
 	serviceErr := a.stopWorkServicesLocked(ctx, workID, false)
 	defer func() { returned = errors.Join(returned, serviceErr, fileErr) }()
@@ -561,9 +569,13 @@ func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string,
 		contextID = view.Config.Labels["piwork.context_identity"]
 	}
 	scope := internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: workID, Generation: generation, InstanceID: instanceID}
-	client := a.agentRoutes.Revoke(workID)
-	if client != nil {
-		defer client.Close()
+	var drainRoute *workruntime.DrainRoute = retained
+	if drainRoute == nil {
+		client := a.agentRoutes.Revoke(workID)
+		if client != nil {
+			defer client.Close()
+			drainRoute = &workruntime.DrainRoute{Scope: scope, ContextID: contextID, Client: client}
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
@@ -576,13 +588,10 @@ func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string,
 		return err
 	}
 	var drainErr error
-	if client != nil {
-		drainCtx, cancel := context.WithTimeout(ctx, drainTimeout+3*time.Second)
-		drained, err := client.Drain(drainCtx, drainTimeout)
-		cancel()
-		if err != nil || !drained {
-			drainErr = errors.New("Work Agent drain was not confirmed")
-		}
+	// A Docker-confirmed stopped instance without a retained route needs no RPC.
+	// A live/unknown instance or captured transport still needs a real receipt.
+	if drainRoute != nil || view.State == nil || view.State.Running {
+		drainErr = drainCapturedRoute(ctx, drainRoute, scope, contextID, drainTimeout)
 	}
 	stopCtx, cancel := context.WithTimeout(ctx, stopTimeout+5*time.Second)
 	stopErr := a.workRuntime.StopAgent(stopCtx, scope, contextID, stopTimeout)
@@ -591,7 +600,7 @@ func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string,
 		return errors.Join(drainErr, stopErr)
 	}
 	if err := a.reconcileHistoryUpgradeLocked(ctx, workID); err != nil {
-		return err
+		return errors.Join(drainErr, err)
 	}
 	now = time.Now().UTC().Format(time.RFC3339Nano)
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {
@@ -602,4 +611,19 @@ func (a *Application) stopCapturedWorkLocked(ctx context.Context, workID string,
 		return err
 	})
 	return errors.Join(drainErr, err)
+}
+
+// A missing or mismatched transport is not a successful drain receipt. The
+// caller still attempts StopAgent and aggregates this error with stop failures.
+func drainCapturedRoute(ctx context.Context, route *workruntime.DrainRoute, scope internaltls.Scope, contextID string, timeout time.Duration) error {
+	if route == nil || route.Client == nil || route.Scope != scope || route.ContextID != contextID {
+		return errors.New("Work Agent drain was not confirmed")
+	}
+	drainCtx, cancel := context.WithTimeout(ctx, timeout+3*time.Second)
+	defer cancel()
+	drained, err := route.Client.Drain(drainCtx, timeout)
+	if err != nil || !drained {
+		return errors.New("Work Agent drain was not confirmed")
+	}
+	return nil
 }

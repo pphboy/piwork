@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"piwork/internal/agentclient"
 	"piwork/internal/internaltls"
@@ -75,6 +76,33 @@ func (r *Routes) Revoke(workID string) *agentclient.Client {
 	delete(r.works, workID)
 	entry.cancel()
 	return entry.client
+}
+
+// DrainClient is the transport authority retained after admission is revoked.
+type DrainClient interface {
+	Drain(context.Context, time.Duration) (bool, error)
+	Close() error
+}
+
+// DrainRoute belongs to one verified runtime, not whichever Work is current later.
+type DrainRoute struct {
+	Scope     internaltls.Scope
+	ContextID string
+	Client    DrainClient
+}
+
+// DetachForShutdown cancels admission atomically but transfers transport ownership
+// to the shutdown coordinator. Engine-loss revocation still closes immediately.
+func (r *Routes) DetachForShutdown() map[string]DrainRoute {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	retained := make(map[string]DrainRoute, len(r.works))
+	for id, entry := range r.works {
+		delete(r.works, id)
+		entry.cancel()
+		retained[id] = DrainRoute{Scope: entry.scope, ContextID: entry.contextID, Client: entry.client}
+	}
+	return retained
 }
 
 // RevokeAll invalidates every admission belonging to a lost Engine epoch.

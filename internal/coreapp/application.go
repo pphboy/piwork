@@ -574,11 +574,17 @@ func (a *Application) Close(ctx context.Context) error {
 	}
 	a.closed = true
 	a.state = "SHUTTING_DOWN"
-	revoked := a.revokeEngineWorkRoutes()
+	retained := a.detachShutdownWorkRoutes()
 	server := a.server
 	serviceServer := a.serviceServer
 	a.mu.Unlock()
-	closeAgentClients(revoked)
+	defer func() {
+		for _, route := range retained {
+			if route.Client != nil {
+				_ = route.Client.Close()
+			}
+		}
+	}()
 	a.workQueueMu.Lock()
 	a.cancel()
 	a.workQueueMu.Unlock()
@@ -592,7 +598,7 @@ func (a *Application) Close(ctx context.Context) error {
 		if a.options.Shutdown != nil {
 			workloadsDone <- a.options.Shutdown(ctx, a)
 		} else {
-			workloadsDone <- a.shutdownCapturedWorks(ctx)
+			workloadsDone <- a.shutdownCapturedWorks(ctx, retained)
 		}
 	}()
 	var result error

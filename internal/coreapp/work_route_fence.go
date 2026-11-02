@@ -77,3 +77,16 @@ func closeAgentClients(clients []*agentclient.Client) {
 		_ = client.Close()
 	}
 }
+
+// Shutdown revokes the same admission fence as Engine loss, but must retain the
+// original transports until their bounded drain/stop consumers have finished.
+func (a *Application) detachShutdownWorkRoutes() map[string]workruntime.DrainRoute {
+	a.routeFence.mu.Lock()
+	defer a.routeFence.mu.Unlock()
+	if a.routeFence.online {
+		a.routeFence.epoch++
+	}
+	a.routeFence.online = false
+	a.routeFence.scope, a.routeFence.generation = "", 0
+	return a.agentRoutes.DetachForShutdown()
+}
