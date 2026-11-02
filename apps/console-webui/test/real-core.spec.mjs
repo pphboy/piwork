@@ -90,7 +90,7 @@ for (const locale of ['en', 'zh-CN']) test(`real Core availability works before 
       // Wait for the actual application to accept the read before asserting
       // absence of a banner; a response alone can precede its UI callback.
       await expect.poll(acceptedAvailability).toBe(true);
-      await expect(page.getByRole('heading', { name: messages['status.heading'], exact: true })).toBeVisible();
+      await expect(page.locator('.overview-heading').getByRole('heading', { name: messages['shell.navOverview'], exact: true })).toBeVisible();
       await expect(page.locator('#console-availability-notice')).toHaveCount(0);
       await expect(page.locator('html')).toHaveAttribute('lang', locale);
     }
@@ -110,7 +110,7 @@ test('real Core login and administration retain identity across both languages',
     await page.waitForURL(url => url.pathname !== '/login');
     await page.goto(`${origin}/admin`);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
-    await expect(page.getByRole('heading', { name: zh['status.heading'], exact: true })).toBeVisible();
+    await expect(page.locator('.overview-heading').getByRole('heading', { name: zh['shell.navOverview'], exact: true })).toBeVisible();
     await page.goto(`${origin}/admin/users`);
     await expect(page.getByRole('heading', { name: zh['users.pageTitle'], exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'admin', exact: true })).toBeVisible();
