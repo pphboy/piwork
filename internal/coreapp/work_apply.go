@@ -480,7 +480,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 	}
 	candidate.InitializationOnly = plan.DesiredState == "stopped"
 	if plan.Stage == "captured" && plan.PriorContextID != nil {
-		prior, _, err := a.capturedContextSpec(ctx, plan.WorkID, 1, "inspection", *plan.PriorContextID, true)
+		prior, _, err := a.capturedPriorApplyContext(ctx, plan.WorkID, *plan.PriorContextID)
 		if err != nil {
 			return a.finishApplyPriorContextFailure(ctx, operation, err)
 		}

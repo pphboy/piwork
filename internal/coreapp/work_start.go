@@ -205,6 +205,12 @@ func (a *Application) capturedContextSpec(ctx context.Context, workID string, ge
 // resolving a new startup secret. A pending launch instead uses its pinned
 // secret reference while continuing to check the model's current admission.
 func (a *Application) capturedContextSpecForLaunch(ctx context.Context, workID string, generation int64, instanceID, contextID string, allowStopped bool, binding *corestore.RuntimeLaunchBinding, adopting bool) (workruntime.StartSpec, capturedWork, error) {
+	return a.readCapturedContextSpec(ctx, workID, generation, instanceID, contextID, allowStopped, binding, adopting, false)
+}
+
+// Only Apply prior-context preflight distinguishes unavailable reads from
+// confirmed invalid facts; existing launch callers retain their error contract.
+func (a *Application) readCapturedContextSpec(ctx context.Context, workID string, generation int64, instanceID, contextID string, allowStopped bool, binding *corestore.RuntimeLaunchBinding, adopting, preserveReadErrors bool) (workruntime.StartSpec, capturedWork, error) {
 	var spec workruntime.StartSpec
 	var record capturedWork
 	if !safefs.ValidFileName(workID) || !safefs.ValidFileName(instanceID) || generation < 1 || generation > contracts.MaxSafeInteger {
@@ -218,6 +224,9 @@ func (a *Application) capturedContextSpecForLaunch(ctx context.Context, workID s
 			WHERE w.id=? AND w.deleted_at IS NULL AND c.configuration_json=r.config_json`, contextID, contextID, workID).
 			Scan(&state, &record.control, &record.contextID, &record.configuration, &record.imageID, &record.revision, &record.profileJSON)
 	})
+	if preserveReadErrors && err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return spec, capturedWork{}, err
+	}
 	if err != nil || state != "running" && !(allowStopped && state == "stopped") || record.contextID == "" || !safefs.ValidFileName(record.contextID) || record.revision < 1 || !capturedImageID.MatchString(record.imageID) {
 		return spec, capturedWork{}, errCapturedWork
 	}
@@ -252,6 +261,14 @@ func (a *Application) capturedContextSpecForLaunch(ctx context.Context, workID s
 			record.credentialVersion = binding.CredentialVersion
 		}
 		secret, err = a.files.ReadSecret(record.credentialRef)
+		if preserveReadErrors {
+			if err != nil {
+				return spec, capturedWork{}, err
+			}
+			if len(secret) < 2 || secret[len(secret)-1] != '\n' {
+				return spec, capturedWork{}, corestore.ErrStorage
+			}
+		}
 		if err != nil || len(secret) < 2 || secret[len(secret)-1] != '\n' {
 			return spec, capturedWork{}, errCapturedWork
 		}
@@ -260,11 +277,17 @@ func (a *Application) capturedContextSpecForLaunch(ctx context.Context, workID s
 	contextDirectory := filepath.Join(a.options.DataDirectory, "works", workID, "contexts", record.contextID)
 	root, err := safefs.OpenExistingRoot(contextDirectory)
 	if err != nil {
+		if preserveReadErrors {
+			return spec, capturedWork{}, err
+		}
 		return spec, capturedWork{}, errCapturedWork
 	}
 	content, err := root.ReadPublishedFile("config.json", 2<<20)
 	root.Close()
 	if err != nil {
+		if preserveReadErrors {
+			return spec, capturedWork{}, err
+		}
 		return spec, capturedWork{}, errCapturedWork
 	}
 	fileValue, fileErr := contracts.ParseJSON(bytes.NewReader(content), 2<<20)
