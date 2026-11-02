@@ -354,6 +354,7 @@ func (a *Application) runtimeRecoveryLoop() {
 		case <-a.ctx.Done():
 			return
 		case <-probe.C:
+			a.observeUnavailableTemporaryCleanups(a.ctx)
 			if engineCtx != nil && engineCtx.Err() == nil {
 				a.scheduleFileRecovery(engineCtx)
 				a.reconcileReadyAgents(engineCtx)

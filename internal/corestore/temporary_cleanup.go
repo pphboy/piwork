@@ -1,6 +1,7 @@
 package corestore
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
@@ -181,4 +182,63 @@ func AppendTemporaryCleanupEventTx(tx *sql.Tx, workID, serviceID, state string, 
 	}
 	cleanup.State, cleanup.Stage, cleanup.ErrorCode, cleanup.UpdatedAt = state, event.Stage, event.Code, event.At
 	return writeTemporaryJSON(tx, temporaryCleanupKey(workID, serviceID), event.At, cleanup)
+}
+
+// ObserveTemporaryCleanupUnavailable records only an original pending request's
+// dependency observation. The existing writer-before-publication-fence ordering
+// keeps an Engine epoch change from publishing a stale observation.
+func (s *Store) ObserveTemporaryCleanupUnavailable(ctx context.Context, original TemporaryServiceRecord, operationID, at string, fence func(func() error) error) error {
+	return s.writeFenced(ctx, fence, func(tx *sql.Tx) error {
+		current, found, err := ReadTemporaryServiceTx(tx, original.Owner.WorkID, original.ServiceID)
+		if err != nil {
+			return err
+		}
+		if !found || current.Version != original.Version || current.Owner != original.Owner || current.CreateOperationID != original.CreateOperationID {
+			return nil
+		}
+		cleanup, found, err := ReadTemporaryCleanupTx(tx, original.Owner.WorkID, original.ServiceID)
+		if err != nil {
+			return err
+		}
+		if !found || cleanup.State != "requested" || cleanup.OperationID != operationID || operationID == "" || cleanup.CreateOperationID != original.CreateOperationID || cleanup.RunID != original.Owner.RunID {
+			return nil
+		}
+		return AppendTemporaryCleanupEventTx(tx, original.Owner.WorkID, original.ServiceID, "pending", TemporaryCleanupEvent{At: at, Stage: "inspect", Outcome: "unconfirmed", Code: "DOCKER_UNAVAILABLE"})
+	})
+}
+
+// TemporaryCleanupCandidates enumerates durable service records without exposing
+// the store's private metadata namespace to lifecycle owners.
+func (s *Store) TemporaryCleanupCandidates(ctx context.Context) ([]TemporaryServiceRecord, error) {
+	var records []TemporaryServiceRecord
+	err := s.Read(ctx, func(tx *sql.Tx) error {
+		prefix := temporaryServiceNamespace + "service:"
+		rows, err := tx.Query(`SELECT id FROM works WHERE EXISTS(SELECT 1 FROM control_metadata m WHERE substr(m.key,1,length(? || works.id || ':'))=? || works.id || ':')`, prefix, prefix)
+		if err != nil {
+			return err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			items, err := ListTemporaryServicesTx(tx, id, "")
+			if err != nil {
+				return err
+			}
+			records = append(records, items...)
+		}
+		return nil
+	})
+	return records, err
 }
