@@ -17,15 +17,19 @@ jobs:
       matrix:
         include:
           - {suite: unit-static, minutes: 35}
+          - {suite: agent-unit, minutes: 25}
           - {suite: desktop-browser, minutes: 60}
           - {suite: desktop-smoke, minutes: 20}
           - {suite: console-browser, minutes: 45}
           - {suite: real-core, minutes: 130}
           - {suite: integration-go, minutes: 150}
           - {suite: package-protocol, minutes: 35}
+          - {suite: backend-engine, minutes: 60}
+          - {suite: backend-drain, minutes: 75}
+          - {suite: backend-history, minutes: 75}
     name: ${{ matrix.suite }}
     concurrency:
-      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}
+      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}${{ matrix.suite == 'integration-go' && '-core-repair-v1' || '' }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.minutes }}
@@ -58,7 +62,7 @@ jobs:
           printf 'PI_CODING_AGENT_DIR=%s\n' "$PI_CODING_AGENT_DIR" >> "$GITHUB_ENV"
           npm ci
       - name: Install Chromium
-        if: matrix.suite != 'unit-static'
+        if: matrix.suite != 'unit-static' && matrix.suite != 'agent-unit' && !startsWith(matrix.suite, 'backend-')
         run: |
           npx --no-install playwright install --with-deps chromium
           node --input-type=module -e "import {chromium} from '@playwright/test'; console.log('PIWORK_TEST_BROWSER_BIN='+chromium.executablePath())" >> "$GITHUB_ENV"
@@ -68,6 +72,9 @@ jobs:
       - name: Unit, contracts and boundaries
         if: matrix.suite == 'unit-static' && !cancelled() && steps.build.outcome == 'success'
         run: make test
+      - name: Complete Agent unit suite
+        if: matrix.suite == 'agent-unit' && !cancelled() && steps.build.outcome == 'success'
+        run: npm run test:unit -w @piwork/agentd
       - name: Generated sources and whitespace
         if: matrix.suite == 'unit-static' && !cancelled() && steps.build.outcome == 'success'
         run: |
@@ -92,7 +99,7 @@ jobs:
         run: npm run test:browser -w @piwork/console-webui
       - name: Isolated runtime fixtures and reconstructed schema-4 source
         id: fixtures
-        if: matrix.suite == 'real-core' || matrix.suite == 'integration-go' || matrix.suite == 'package-protocol'
+        if: matrix.suite == 'real-core' || matrix.suite == 'integration-go' || matrix.suite == 'package-protocol' || startsWith(matrix.suite, 'backend-')
         timeout-minutes: 50
         run: |
           docker version
@@ -100,6 +107,9 @@ jobs:
           df -h /
           docker pull python:3.13-slim
           make native-compatibility-images native-helper-images workstation-fixture
+          if [[ '${{ matrix.suite }}' == backend-engine || '${{ matrix.suite }}' == backend-drain ]]; then
+            exit 0
+          fi
           old=20fb8334f1dce93bfa79cb6b5c86acf1cc460963
           legacy="$RUNNER_TEMP/piwork-history4-source"
           mkdir "$legacy"
@@ -137,6 +147,55 @@ jobs:
         if: matrix.suite == 'real-core' && !cancelled() && steps.fixtures.outcome == 'success'
         timeout-minutes: 20
         run: node apps/desktop-webui/test/log-export-real-core.mjs
+      - name: Exact backend regression group (not full acceptance)
+        if: startsWith(matrix.suite, 'backend-') && !cancelled() && steps.fixtures.outcome == 'success'
+        env:
+          PIWORK_TEST_NATIVE_AGENT_IMAGE: piwork-agentd:go-migration-acceptance
+          PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE: piwork-file-helper:go-migration-acceptance
+          PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE: piwork-snapshot-helper:go-migration-acceptance
+          PIWORK_TEST_NATIVE_OLD_SDK_IMAGE: piwork-agentd:go-migration-sdk-0860
+          PIWORK_TEST_NATIVE_UNAVAILABLE_REGISTRY_IMAGE: piwork-agentd:go-migration-registry-unavailable
+        run: |
+          set -o pipefail
+          case '${{ matrix.suite }}' in
+            backend-engine)
+              package=./internal/dockerengine
+              names=(
+                TestRealNativeAgentImageStaticCapabilitiesAndBuildEvidence
+                TestRealManagedResourceLifecycleAndOwnership
+              ) ;;
+            backend-drain)
+              package=./internal/coreapp
+              names=(
+                TestNativeCoreWebDAVUploadStopApplyRevocationAndRestart
+                TestNativeMemoryMigrationProcessRecoveryAndStopSupersession
+                TestNativeCoreProcessHealthIdentityRestartWithoutHostTools
+                TestNativeSDKDeploysServiceThroughGoMCPAndCore
+                TestNativeServiceRevisionsCounterAndRemoval
+                TestNativeShutdownConfirmsOtherWorksAfterFailedAgentDrain
+                TestNativeTemporaryCleanupRetriesAfterEngineReturns
+                TestNativeSkillFailuresRemainSpecificAfterRollbackAndCoreRestart
+              ) ;;
+            backend-history)
+              package=./internal/coreapp
+              names=(
+                TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior
+                TestNativeSchema4ConversationUpgradeRollbackAndDowngradeFence
+                TestNativeSchema4ExperienceUpgradeRollbackAndDowngradeFence
+                TestNativeChatModelSelectionRunsThroughGoAndRealSDK
+                TestNativeCancelledCheckpointHistoryAfterEventCompaction
+                TestNativeSnapshotMovesServicesContextsAndPackagesBetweenOfflineInstallations
+              ) ;;
+            *) exit 2 ;;
+          esac
+          pattern="^($(IFS='|'; echo "${names[*]}"))$"
+          test_timeout=20m
+          [[ '${{ matrix.suite }}' != backend-engine ]] || test_timeout=10m
+          go test -mod=readonly -tags=integration -v -count=1 -timeout="$test_timeout" -run "$pattern" "$package" | tee "$RUNNER_TEMP/backend-group.log"
+          for name in "${names[@]}"; do
+            grep -E "^--- PASS: ${name} \([0-9.]+s\)$" "$RUNNER_TEMP/backend-group.log"
+          done
+          echo 'Exact targeted regression group passed; full Go integration remains mandatory and separate.'
       - name: Existing Go Engine integration
         if: matrix.suite == 'integration-go' && !cancelled() && steps.fixtures.outcome == 'success'
         run: make test-integration-go
