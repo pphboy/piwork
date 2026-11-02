@@ -296,3 +296,30 @@ test('continuity: Service diagnostics keep typed public fields, a zero exit code
   assert.equal(byId('partial').error, 'Partially invalid diagnostic'); assert.equal(byId('partial').observed, 'Failed');
   assert.equal(services.length, 7);
 });
+
+test('continuity: old-generation probe cannot revoke the new entry after observed Stop and Start', async t => {
+  const f = await fixture(t);
+  await f.adapter.ensureServiceEntry('one', 'notes', 3000);
+  await f.adapter.serviceFrameLoaded('one', 'notes', 3000);
+  const late = deferred<Reply>();
+  f.respond(() => late.promise);
+  const oldProbe = f.adapter.serviceFrameLoaded('one', 'notes', 3000);
+  const oldRejected = assert.rejects(oldProbe, /retired generation/);
+  f.respond(() => ({ json: work('one', 'stopped', 'stopped', 2) }));
+  await f.adapter.refreshWorkStatus('one');
+  assert.equal(f.adapter.serviceEntryUrl('one', 'notes', 3000), null);
+  f.respond(r => ({ json: r.path === 'works/one' ? work('one', 'ready', 'running', 3)
+    : r.path.endsWith('/services') ? { services: [service()] }
+    : r.method === 'POST' ? { ...entry(), entryId: 'new-generation-entry' } : { embed: 'allowed' } }));
+  await f.adapter.refreshWorkStatus('one');
+  await f.adapter.loadServices('one');
+  await f.adapter.ensureServiceEntry('one', 'notes', 3000);
+  await f.adapter.serviceFrameLoaded('one', 'notes', 3000);
+  const current = f.adapter.serviceEntryReadEvidence('one', 'notes', 3000);
+  late.resolve({ status: 410, json: { message: 'retired generation' } });
+  await oldRejected;
+  assert.equal(f.adapter.serviceEntryReadEvidence('one', 'notes', 3000), current);
+  assert.equal(f.adapter.serviceEntryError('one', 'notes', 3000), '');
+  assert.equal(f.adapter.serviceEmbed('one', 'notes', 3000), 'allowed');
+  assert.equal(f.requests.filter(r => r.method === 'POST' && r.path === 'service-entries').length, 2);
+});

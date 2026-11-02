@@ -918,3 +918,194 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+function serviceBarrier() {
+  let release!: () => void;
+  let observed!: () => void;
+  const waiting = new Promise<void>(done => { release = done; });
+  const seen = new Promise<void>(done => { observed = done; });
+  return { release, observed, waiting, seen };
+}
+
+async function observeServiceBarrier(gate: ReturnType<typeof serviceBarrier>, name: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([gate.seen, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`Service barrier not observed: ${name}`)), 20000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+// Actual native Desktop owns bootstrap tickets/cookies; only Core lifecycle and
+// upstream Service content are synthetic. No test manufactures a browser grant.
+for (const ordering of ['document-after-probe', 'unmounted-before-entry', 'old-probe-after-restart'] as const) {
+  test(`browser Service Stop Start barrier: ${ordering}`, async () => {
+    const workId = 'work-92345678-1234-1234-1234-123456789012';
+    const hostname = 'barrier.w-a1b2c3d4.work';
+    const work = { id: workId, name: 'Barrier Work', desiredState: 'running', observedState: 'ready', controlVersion: 1 };
+    const service = { workId, serviceId: 'barrier', name: 'Barrier', enabled: true, observedState: 'ready', desiredRevision: 1, appliedRevision: 1,
+      access: { hostname, status: 'available', defaultPortName: 'web', defaultUrl: `http://${hostname}/`, ports: [{name:'web', port:80, url:`http://${hostname}/`}] } };
+    let generation = 1;
+    const lifecycle: string[] = [];
+    const operations = new Map<string, Record<string, unknown>>();
+    let roots = 0;
+    const core = createServer(async (request, response) => {
+      const path = new URL(request.url || '/', 'http://fixture').pathname;
+      const json = (value: unknown, status = 200) => { response.writeHead(status, {'content-type':'application/json'});
+        response.end(JSON.stringify(value)); };
+      if (path === '/healthz') return json({status:'healthy'});
+      if (path === '/readyz') return json({status:'ready', state:'READY', ready:true});
+      if (path === '/api/v1/me') return json({id:'owner', account:'owner', role:'user'});
+      if (path === '/api/v1/works') return json({works:[work]});
+      if (path === `/api/v1/works/${workId}`) return json(work);
+      if (path === `/api/v1/works/${workId}/services`) return json({services:[service]});
+      if (path === `/api/v1/works/${workId}/services/barrier`) return json(service);
+      if (request.method === 'POST' && ['stop','start'].some(action => path === `/api/v1/works/${workId}/${action}`)) {
+        const action = path.split('/').at(-1)!;
+        lifecycle.push(action);
+        work.controlVersion++;
+        work.desiredState = action === 'start' ? 'running' : 'stopped';
+        work.observedState = service.observedState = action === 'start' ? 'ready' : 'stopped';
+        if (action === 'start') generation++;
+        const operationId = `barrier-operation-${work.controlVersion}`, now = new Date().toISOString();
+        operations.set(operationId, {operationId,workId,kind:`${action}-work`,state:'succeeded',createdAt:now,updatedAt:now,correlationId:operationId,
+          result:{observedState:work.observedState},error:null,diagnostics:{stages:[],truncated:false,rollback:{state:'not-required'},diagnosticCollection:{state:'not-attempted'}}});
+        return json({workId,operationId,correlationId:operationId,reused:false},202);
+      }
+      if (path.startsWith('/api/v1/operations/barrier-operation-')) return json(operations.get(path.split('/').at(-1)!));
+      if (path === '/api/v1/service-access/resolve') {
+        if (work.observedState !== 'ready') return json({code:'SERVICE_UNAVAILABLE',message:'Service stopped'},409);
+        return json({hostname,port:80,workId,serviceId:'barrier',generation:String(generation)});
+      }
+      if (path === `/api/v1/service-gateway/${hostname}/80/`) {
+        roots++;
+        response.writeHead(200, {'content-type':'text/html'});
+        return response.end('<!doctype html><h1>Barrier Service</h1><input aria-label="Service draft">');
+      }
+      if (path.endsWith('/sessions')) return json({sessions:[]});
+      if (path.endsWith('/packages')) return json({packages:[]});
+      if (path.endsWith('/agent-requests')) return json({items:[],nextCursor:null,checkedAt:new Date().toISOString(),availability:'available'});
+      if (path.endsWith('/chat-capabilities')) return json({contractVersion:1});
+      if (path.endsWith('/chat-models')) return json({contractVersion:1,models:[],defaultModel:{modelRef:null,label:'Fixture model',provider:'fixture',model:'one',thinkingLevels:['off'],defaultThinkingLevel:'off'},availability:'available',checkedAt:new Date().toISOString()});
+      if (path.endsWith('/commands')) return json({contractVersion:1,commands:[],checkedAt:new Date().toISOString()});
+      if (path.endsWith('/chat-image-capabilities')) return json({profile:'chat-images-v1',mimeTypes:['image/png','image/jpeg','image/webp'],maxImages:4,imageBytes:5242880,totalBytes:10485760,maxDimension:8192,maxPixels:40000000,defaultModel:{modelRef:null,availability:'unsupported'},models:[]});
+      if (path.endsWith('/configuration')) return json({desired:{skills:[],packages:[],agentsMd:'',tools:{allowed:[],denied:[]}},pendingApply:false});
+      return json({code:'NOT_FOUND',message:'Synthetic route unavailable'},404);
+    });
+    await new Promise<void>(done => core.listen(0,'127.0.0.1',done));
+    const address = core.address();
+    assert(address && typeof address !== 'string');
+    const coreUrl = `http://127.0.0.1:${address.port}`;
+    const directory = await mkdtemp(join(tmpdir(),'piwork-service-barrier-'));
+    const config = join(directory,'credentials','client.json');
+    await saveTestCredential(config,{version:1,coreUrl,token:'synthetic-barrier-token',expiresAt:'2099-01-01T00:00:00Z',user:{id:'owner',account:'owner',role:'user'}});
+    const listener = createServer();
+    await new Promise<void>(done => listener.listen(0,'127.0.0.1',done));
+    const local = listener.address();
+    assert(local && typeof local !== 'string');
+    await new Promise<void>(done => listener.close(() => done()));
+    const child = spawnClient(['--core',coreUrl,'desktop','--port',String(local.port),'--no-open'],{...process.env,PIWORK_CONFIG_PATH:config});
+    const entryGate = serviceBarrier(), documentGate = serviceBarrier(), oldProbeGate = serviceBarrier(), oldProbeDelivered = serviceBarrier(), newProbe = serviceBarrier();
+    let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+    try {
+      const launchUrl = await new Promise<string>((done, fail) => {
+        child.stdout.on('data',(chunk: Buffer) => { const match = chunk.toString().match(/http:\/\/desktop\.localhost:\d+\//);
+          if (match) done(match[0]); });
+        child.once('exit',code => fail(new Error(`Desktop exited ${code}`)));
+        setTimeout(() => fail(new Error('Desktop did not start')),4000).unref();
+      });
+      browser = await chromium.launch(browserLaunchOptions);
+      const page = await browser.newPage();
+      let entries = 0, redeems = 0, oldProbeCaptured = false, documentCaptured = false;
+      const receipts: {path:string;status:number;generation:number}[] = [];
+      await page.route('**/*',async route => {
+        const request = route.request(), url = new URL(request.url());
+        const path = url.pathname;
+        if (path === '/_desktop/api/service-entries' && request.method() === 'POST') {
+          entries++;
+          const reply = await route.fetch();
+          if (generation === 2 && ordering === 'unmounted-before-entry') { entryGate.observed();
+            await entryGate.waiting; }
+          return route.fulfill({response:reply});
+        }
+        if (path.startsWith('/_desktop/api/service-entries/') && request.method() === 'GET') {
+          const capturedGeneration = generation, reply = await route.fetch();
+          receipts.push({path:'/service-entry-probe',status:reply.status(),generation:capturedGeneration});
+          if (capturedGeneration === 1 && ordering === 'old-probe-after-restart' && !oldProbeCaptured) {
+            oldProbeCaptured = true;
+            oldProbeGate.observed();
+            await oldProbeGate.waiting;
+          }
+          await route.fulfill({response:reply});
+          if (capturedGeneration === 2) newProbe.observed();
+          else if (oldProbeCaptured) oldProbeDelivered.observed();
+          return;
+        }
+        if (path === '/.well-known/piwork-local/redeem' && request.method() === 'POST') redeems++;
+        if (generation === 2 && ordering === 'document-after-probe' && !documentCaptured && request.isNavigationRequest() && request.frame() !== page.mainFrame() && path === '/') {
+          documentCaptured = true;
+          documentGate.observed();
+          await documentGate.waiting;
+        }
+        return route.continue();
+      });
+      await page.goto(launchUrl);
+      await page.locator('.work-name').filter({hasText:'Barrier Work'}).click();
+      await page.frameLocator('iframe').getByRole('heading',{name:'Barrier Service'}).waitFor({timeout:20000});
+      const initialRedeems = redeems;
+      assert.equal(initialRedeems,1,'initial iframe must use its native one-use ticket');
+      if (ordering === 'old-probe-after-restart') await observeServiceBarrier(oldProbeGate, 'oldProbeGate');
+      await page.getByRole('button',{name:'Work options'}).click();
+      await page.getByRole('menuitem',{name:'Stop Work',exact:true}).click();
+      await page.getByRole('button',{name:'Stop Work',exact:true}).last().click();
+      if (await page.getByRole('button',{name:'Close dialog'}).count()) await page.getByRole('button',{name:'Close dialog'}).click();
+      await expect(page.getByRole('heading',{name:'This Work is stopped',exact:true})).toBeVisible();
+      await expect(page.locator('iframe')).toHaveCount(0);
+      await page.getByRole('button',{name:'Start Work',exact:true}).first().click();
+      if (ordering === 'unmounted-before-entry') {
+        await observeServiceBarrier(entryGate, 'entryGate');
+        await page.getByRole('button',{name:'Chat',exact:true}).click();
+        await expect(page.locator('iframe')).toHaveCount(0);
+        entryGate.release();
+        await observeServiceBarrier(newProbe, 'newProbe');
+        assert.equal(redeems,initialRedeems,'no iframe mounted, so new ticket is still unredeemed');
+        await page.getByRole('button',{name:'Services',exact:true}).click();
+      } else if (ordering === 'document-after-probe') {
+        await observeServiceBarrier(documentGate, 'documentGate');
+        await observeServiceBarrier(newProbe, 'newProbe');
+        assert.equal(redeems,initialRedeems+1,'document is held only after actual ticket redemption');
+        await page.getByRole('button',{name:'Work options'}).click();
+        await page.keyboard.press('Escape');
+        await page.locator('[data-action=toggle-workspace-chat]').click();
+        await page.locator('[data-action=toggle-workspace-chat]').click();
+        documentGate.release();
+      }
+      await page.frameLocator('iframe').getByRole('heading',{name:'Barrier Service'}).waitFor({timeout:20000});
+      if (ordering === 'old-probe-after-restart') {
+        oldProbeGate.release();
+        await observeServiceBarrier(oldProbeDelivered, 'old probe delivery');
+        await expect(page.locator('iframe')).toHaveCount(1);
+      }
+      await page.frameLocator('iframe').getByLabel('Service draft').fill('retained after restart');
+      const loadedRoots = roots;
+      await page.getByRole('button',{name:'Work options'}).click();
+      await page.keyboard.press('Escape');
+      await expect(page.frameLocator('iframe').getByLabel('Service draft')).toHaveValue('retained after restart');
+      assert.equal(roots,loadedRoots,'ordinary renders must not reload the recovered document');
+      assert.deepEqual(lifecycle,['stop','start']);
+      assert.equal(entries,2,'one original entry per confirmed runtime generation');
+      assert.equal(redeems,initialRedeems+1,'new runtime ticket is redeemed exactly once');
+      console.log(JSON.stringify({ordering,lifecycle,entries,redeems,receipts}));
+    } finally {
+      entryGate.release();
+      documentGate.release();
+      oldProbeGate.release();
+      await browser?.close();
+      if (child.exitCode === null) { const exited = new Promise<void>(done => child.once('exit',() => done()));
+        child.kill('SIGINT');
+        await exited; }
+      await new Promise<void>(done => core.close(() => done()));
+      await rm(directory,{recursive:true,force:true});
+    }
+  });
+}

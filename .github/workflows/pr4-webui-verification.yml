@@ -20,6 +20,7 @@ jobs:
           - {suite: agent-unit, minutes: 25}
           - {suite: desktop-browser, minutes: 60}
           - {suite: desktop-smoke, minutes: 20}
+          - {suite: service-iframe, minutes: 20}
           - {suite: console-browser, minutes: 45}
           - {suite: real-core, minutes: 130}
           - {suite: integration-go, minutes: 150}
@@ -94,6 +95,17 @@ jobs:
           grep -Fx '# tests 6' "$RUNNER_TEMP/piwork-desktop-smoke.tap"
           grep -Fx '# pass 6' "$RUNNER_TEMP/piwork-desktop-smoke.tap"
           echo 'Exactly six diagnostic cases passed; unmatched cases were not executed. Full Desktop browser verification remains separate.'
+      - name: Three native Service iframe ordering cases (not full acceptance)
+        if: matrix.suite == 'service-iframe' && !cancelled() && steps.build.outcome == 'success'
+        run: |
+          npx --no-install tsc -p apps/desktop-webui/tsconfig.test.json
+          pattern='^browser Service Stop Start barrier: (document-after-probe|unmounted-before-entry|old-probe-after-restart)$'
+          set -o pipefail
+          node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 --test-name-pattern="$pattern" apps/desktop-webui/dist/test/browser.test.js | tee "$RUNNER_TEMP/piwork-service-iframe.tap"
+          grep -Fx '# tests 3' "$RUNNER_TEMP/piwork-service-iframe.tap"
+          grep -Fx '# pass 3' "$RUNNER_TEMP/piwork-service-iframe.tap"
+          grep -Fx '# skipped 0' "$RUNNER_TEMP/piwork-service-iframe.tap"
+          echo 'Exactly three native Service ordering cases passed; full Desktop verification remains separate.'
       - name: Console browser
         if: matrix.suite == 'console-browser' && !cancelled() && steps.build.outcome == 'success'
         run: npm run test:browser -w @piwork/console-webui
