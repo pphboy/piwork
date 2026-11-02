@@ -2196,7 +2196,14 @@ test('Session chooser keyboard switching retains drafts and creating remains sin
   await page.keyboard.press('Enter'); await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-2$/);
   await expect(page.locator('#composer')).toHaveValue('');
-  await button(page, 'sessions').click(); await page.keyboard.press('Home'); await page.keyboard.press('Enter');
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal [data-id=session-2]')).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(page.locator('#modal [data-id=session-1]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-1$/);
+  await expect(page.locator('#composer')).toHaveAttribute('data-draft-key', 'work-1:session-1');
   await expect(page.locator('#composer')).toHaveValue('Keep my session one draft');
   await button(page, 'sessions').click(); await button(page, 'new-session').click();
   await expect(button(page, 'new-session')).toBeDisabled();
