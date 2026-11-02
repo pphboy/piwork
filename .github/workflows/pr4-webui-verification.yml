@@ -16,6 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - {suite: visual-review, minutes: 15}
           - {suite: unit-static, minutes: 35}
           - {suite: agent-unit, minutes: 25}
           - {suite: desktop-browser, minutes: 60}
@@ -227,3 +228,32 @@ jobs:
             ${{ runner.temp }}/piwork-reviewed-screenshots/03-files.png
             ${{ runner.temp }}/piwork-reviewed-screenshots/04-restored-work.png
             ${{ runner.temp }}/piwork-reviewed-screenshots/05-responsive-390.png
+      - name: Three existing visual review cases (not full acceptance)
+        if: matrix.suite == 'visual-review' && !cancelled() && steps.build.outcome == 'success'
+        run: |
+          set -o pipefail
+          npx --no-install tsc -p apps/desktop-webui/tsconfig.test.json
+          pattern='^(browser signs in and out without exposing Core bearer to page storage|browser opens a running Work Service in an iframe and a separate local tab)$'
+          node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 --test-name-pattern="$pattern" apps/desktop-webui/dist/test/browser.test.js | tee "$RUNNER_TEMP/visual-desktop.tap"
+          grep -Fx '# tests 2' "$RUNNER_TEMP/visual-desktop.tap"
+          grep -Fx '# pass 2' "$RUNNER_TEMP/visual-desktop.tap"
+          (cd apps/console-webui && npx --no-install playwright test -c playwright.config.mjs console.spec.mjs --grep '^delivered workspaces retain every management deep link, mobile layout, and secret isolation$' --reporter=line) | tee "$RUNNER_TEMP/visual-console.log"
+          grep -E '1 passed \(' "$RUNNER_TEMP/visual-console.log"
+          for view in desktop-works desktop-work console-overview; do
+            for width in 1440 360; do test -s "dist/logo-title-style/$view-$width.png"; done
+          done
+      - name: Requested six current UI views
+        if: matrix.suite == 'visual-review' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: visual-review-${{ github.event.pull_request.head.sha }}
+          retention-days: 3
+          if-no-files-found: error
+          include-hidden-files: false
+          path: |
+            dist/logo-title-style/desktop-works-1440.png
+            dist/logo-title-style/desktop-works-360.png
+            dist/logo-title-style/desktop-work-1440.png
+            dist/logo-title-style/desktop-work-360.png
+            dist/logo-title-style/console-overview-1440.png
+            dist/logo-title-style/console-overview-360.png
