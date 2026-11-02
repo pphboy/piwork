@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { status } from "@grpc/grpc-js";
 import { AgentApplication, assertAgentPeerIdentity, mcpTools, selectPackageTools, skillVisibility } from "./application.js";
+import { AgentDaemonControl } from "./daemon.js";
 import type { McpBridge } from "@piwork/pi-adapter";
 
 const expected = "core.g3.work-11111111-1111-4111-8111-111111111111.piwork";
@@ -109,4 +110,30 @@ test("Retry lookup RPC authenticates the original scope and never wakes or submi
   const stale={...auth,sslPeerCertificate:{...auth.sslPeerCertificate,subjectaltname:peerUri.replace("generation/3","generation/2")}};
   await assert.rejects(invoke(query,stale),(error:any)=>error.code===status.UNAUTHENTICATED);
   assert.equal(reads,1);
+});
+
+
+test("drain RPC preserves the actual settlement receipt and rejects stale identity before draining", async () => {
+  const app = Object.create(AgentApplication.prototype) as any;
+  app.installationId = peerScope.installationId;
+  app.config = { ...peerScope, tls: { expectedClientCommonName: expected } };
+  const budgets: number[] = [];
+  let settled = false;
+  app.daemon = new AgentDaemonControl(peerScope);
+  app.runs = { async drain(timeout: number) {
+    budgets.push(timeout);
+    return settled;
+  } };
+  const auth = { transportSecurityType: "ssl", sslPeerCertificate: { subject: { CN: expected }, subjectaltname: peerUri } };
+  const handler = app.handlers().drain;
+  const invoke = (request: unknown, identity = auth) => new Promise<any>((resolve, reject) => handler({ request, getAuthContext: () => identity }, (error: unknown, value: unknown) => error ? reject(error) : resolve(value)));
+  const request = { workId: peerScope.workId, generation: peerScope.generation, instanceId: peerScope.instanceId, timeoutMs: 30_000 };
+  assert.deepEqual(await invoke(request), { drained: false });
+  settled = true;
+  assert.deepEqual(await invoke({ ...request, timeoutMs: 90_000 }), { drained: true });
+  await assert.rejects(invoke({ ...request, workId: "work-other" }));
+  await assert.rejects(invoke({ ...request, generation: 2 }));
+  const stale = { ...auth, sslPeerCertificate: { ...auth.sslPeerCertificate, subjectaltname: peerUri.replace("generation/3", "generation/2") } };
+  await assert.rejects(invoke(request, stale), (error: any) => error.code === status.UNAUTHENTICATED);
+  assert.deepEqual(budgets, [30_000, 60_000]);
 });

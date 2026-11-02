@@ -190,7 +190,7 @@ test("bounded drain rejects new Runs, aborts at the deadline, and waits for the 
       () => manager.submit({ workId: "work-b", sessionId: "session-b", submissionKey: "drain-rejected", prompt: "no" }),
       /not ready to accept Runs/,
     );
-    await draining;
+    assert.equal(await draining, true);
 
     assert.equal(executor.running.size, 0);
     assert.equal(executor.abortedRunIds.has(active.run.runId), true);
@@ -198,7 +198,7 @@ test("bounded drain rejects new Runs, aborts at the deadline, and waits for the 
   });
 });
 
-test("drain returns for container shutdown when a background child ignores parent abort", async () => {
+test("drain returns for container shutdown when a background child ignores parent abort", { timeout: 5_000 }, async () => {
   await withStore(async (store) => {
     let signal: AbortSignal | undefined;
     let running!: () => void;
@@ -210,8 +210,57 @@ test("drain returns for container shutdown when a background child ignores paren
     } });
     manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "detached-child", prompt: "wait" });
     await started;
-    await Promise.race([manager.drain(1), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("drain hung")), 5_000))]);
+    assert.equal(await manager.drain(1), false);
     assert.equal(signal?.aborted, true);
+  });
+});
+
+test("idle drain confirms settlement and permanently closes admission", async () => {
+  await withStore(async (store) => {
+    const manager = readyManager(store, new ControlledExecutor());
+    assert.equal(await manager.drain(1), true);
+    assert.equal(await manager.drain(1), true);
+    assert.throws(() => manager.submit({ workId: "work-a", sessionId: "session-a", submissionKey: "after-idle-drain", prompt: "no" }), /not ready to accept Runs/);
+  });
+});
+
+test("concurrent drain confirms natural settlement without reopening admission", async () => {
+  await withStore(async (store) => {
+    const executor = new ControlledExecutor();
+    const manager = readyManager(store, executor);
+    const input = { workId: "work-a", sessionId: "session-a", submissionKey: "natural-drain", prompt: "wait" };
+    const run = manager.submit(input).run;
+    await executor.waitUntilRunning(run.runId);
+    const first = manager.drain(1_000);
+    const second = manager.drain(1_000);
+    executor.resolve(run.runId, "completed naturally");
+    assert.deepEqual(await Promise.all([first, second]), [true, true]);
+    assert.equal(manager.get(run.runId)?.state, "succeeded");
+    assert.throws(() => manager.submit({ ...input, submissionKey: "after-natural-drain" }), /not ready to accept Runs/);
+  });
+});
+
+test("unconfirmed drain retains original Run until late settlement and does not block another Work", async () => {
+  await withStore(async (store, peerStore) => {
+    const executor = new ControlledExecutor();
+    const manager = readyManager(store, executor);
+    const peer = readyManager(peerStore, executor);
+    const input = { workId: "work-a", sessionId: "session-a", submissionKey: "late-drain", prompt: "wait" };
+    const run = manager.submit(input).run;
+    await executor.waitUntilRunning(run.runId);
+    assert.equal(await manager.drain(1), false);
+    assert.equal(manager.get(run.runId)?.state, "running");
+    assert.throws(() => manager.submit({ ...input, submissionKey: "blocked-after-timeout" }), /not ready to accept Runs/);
+    const other = peer.submit({ workId: "work-b", sessionId: "session-b", submissionKey: "peer-after-drain", prompt: "continue" }).run;
+    await executor.waitUntilRunning(other.runId);
+    executor.resolve(other.runId, "peer complete");
+    assert.equal((await peer.wait(other.runId)).state, "succeeded");
+    executor.resolve(run.runId, "late result");
+    assert.equal((await manager.wait(run.runId)).state, "cancelled");
+    assert.equal(await manager.drain(1), true);
+    assert.throws(() => manager.submit({ ...input, submissionKey: "blocked-after-late-result" }), /not ready to accept Runs/);
+    assert.equal(peerStore.getRun(run.runId), undefined);
+    assert.equal(store.getRun(other.runId), undefined);
   });
 });
 

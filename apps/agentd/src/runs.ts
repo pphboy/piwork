@@ -283,7 +283,7 @@ export class RunManager {
     return run;
   }
 
-  async drain(timeoutMs: number): Promise<void> {
+  async drain(timeoutMs: number): Promise<boolean> {
     const settled = this.daemon.drain();
     let timer: NodeJS.Timeout | undefined;
     const expired = new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), timeoutMs); });
@@ -293,14 +293,16 @@ export class RunManager {
         // A headless extension can wait for an independently running child after
         // the parent aborts. Keep gRPC drain bounded so Core can stop the Work
         // container, which is the final boundary for all child processes.
+        // Expiring this wait is not a successful drain receipt.
         let abortTimer: NodeJS.Timeout | undefined;
         try {
-          await Promise.race([
-            Promise.allSettled([...this.active.values()].map((execution) => execution.settled)),
-            new Promise<void>((resolve) => { abortTimer = setTimeout(resolve, 2_000); }),
+          return await Promise.race([
+            Promise.allSettled([...this.active.values()].map((execution) => execution.settled)).then(() => true),
+            new Promise<boolean>((resolve) => { abortTimer = setTimeout(() => resolve(false), 2_000); }),
           ]);
         } finally { if (abortTimer !== undefined) clearTimeout(abortTimer); }
       }
+      return true;
     } finally { if (timer !== undefined) clearTimeout(timer); }
   }
 

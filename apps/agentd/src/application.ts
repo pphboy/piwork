@@ -494,8 +494,8 @@ export class AgentApplication {
       }),
       drain: unary(async (request: DrainRequest): Promise<DrainResponse> => {
         this.verify(request);
-        await this.runs.drain(Math.min(request.timeoutMs, 60_000));
-        return { drained: true };
+        const drained = await this.runs.drain(Math.min(request.timeoutMs, 60_000));
+        return { drained };
       }),
       createSession: unary(async (request: CreateSessionRequest): Promise<Session> => {
         this.verifyWork(request.workId);
