@@ -119,7 +119,7 @@ jobs:
           df -h /
           docker pull python:3.13-slim
           make native-compatibility-images native-helper-images workstation-fixture
-          if [[ '${{ matrix.suite }}' == backend-engine || '${{ matrix.suite }}' == backend-drain ]]; then
+          if [[ '${{ matrix.suite }}' == backend-engine ]]; then
             exit 0
           fi
           old=20fb8334f1dce93bfa79cb6b5c86acf1cc460963
