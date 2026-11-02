@@ -170,7 +170,7 @@ test('S08 initial unavailable Overview never projects unconfirmed model absence 
     await expect(page.locator('main')).not.toContainText(locale === 'en' ? 'Not configured' : '未配置');
   }
   failing = false;
-  await page.locator('main [data-action="refresh"]').click();
+  await page.locator('main').getByRole('button', {name:'Try again', exact:true}).click();
   await expect(page.locator('.overview-facts')).toBeVisible();
   await expect(page.locator('.overview-facts dl > div').nth(2)).toContainText('Not configured');
   await expect(page.locator('[data-testid="overview-next-task"] .btn.primary')).toContainText('Quick setup');
