@@ -104,6 +104,10 @@ for (const width of [1440, 360]) test(`S08 reviewed Overview composition preserv
   await expect(facts).toContainText('synthetic-model');
   await expect(facts.locator('dl > div')).toHaveCount(3);
   await expect(page.locator('.context-strip')).toHaveCount(0);
+  await expect(page.locator('#page-read-status')).toBeEmpty();
+  expect(await page.locator('#page-read-status').evaluate(node => node.getBoundingClientRect().height)).toBe(0);
+  expect(await page.locator('.overview-heading').evaluate(node => node.getBoundingClientRect().top - document.querySelector('main').getBoundingClientRect().top)).toBe(width === 1440 ? 23 : 12);
+  expect(await page.locator('.task-lead').evaluate(node => node.getBoundingClientRect().top - document.querySelector('.overview-heading').getBoundingClientRect().bottom)).toBe(12);
   await expect(page.locator('.footer')).toBeHidden();
   const columns = await choices.evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length);
   expect(columns).toBe(width === 1440 ? 2 : 1);

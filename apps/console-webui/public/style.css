@@ -2947,6 +2947,10 @@ dialog::backdrop {
   margin: 0 auto;
 }
 .overview-main ~ .footer { display: none; }
+.overview-main > #page-read-status:empty {
+  min-height: 0;
+  margin: 0;
+}
 .overview-main .overview-heading {
   min-height: 48px;
   align-items: center;
