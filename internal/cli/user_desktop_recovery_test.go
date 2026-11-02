@@ -174,6 +174,15 @@ func TestDesktopControlProtocolBoundsAndPeers(t *testing.T) {
 	if !desktopPeerUID(one, uint32(os.Geteuid())) || desktopPeerUID(one, uint32(os.Geteuid()+1)) {
 		t.Fatal("peer UID accepted wrong user")
 	}
+	// A reply reaches EOF before the server worker releases its admission slot.
+	// Do not let an earlier request count toward the held-connection fixture.
+	deadline := time.Now().Add(time.Second)
+	for len(c.slots) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if occupied := len(c.slots); occupied != 0 {
+		t.Fatalf("prior control workers retained %d admission slots", occupied)
+	}
 	held := []*net.UnixConn{}
 	for i := 0; i < 16; i++ {
 		conn, e := net.DialUnix("unix", nil, &net.UnixAddr{Name: desktopControlPath(c.dir, desktopControlName(d.port, ".sock")), Net: "unix"})
@@ -187,9 +196,12 @@ func TestDesktopControlProtocolBoundsAndPeers(t *testing.T) {
 			_ = conn.Close()
 		}
 	}()
-	deadline := time.Now().Add(time.Second)
+	deadline = time.Now().Add(time.Second)
 	for len(c.slots) != 16 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
+	}
+	if occupied := len(c.slots); occupied != cap(c.slots) {
+		t.Fatalf("held-connection fixture filled %d of %d admission slots", occupied, cap(c.slots))
 	}
 	response := controlRaw(t, c, good+"\n")
 	if !bytes.Contains(response, []byte("LOCAL_CONTROL_BUSY")) {
