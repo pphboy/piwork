@@ -3,6 +3,7 @@ package clientfs
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,8 +72,18 @@ func TestAvailableSpaceIsNativeBoundedAndUnknownFails(t *testing.T) {
 	if err != nil || available > uint64(^uint64(0)>>1) {
 		t.Fatal("cannot verify native capacity bound", err)
 	}
-	if enough, err := d.HasSpace(int64(available), 1); err != nil || enough {
+	// Request beyond the test volume capacity checked above, not one byte
+	// beyond a free-space sample that other processes may increase.
+	if enough, err := d.HasSpace(math.MaxInt64, 1); err != nil || enough {
 		t.Fatal("insufficient native capacity accepted", enough, err)
+	}
+	if enough, err := d.HasSpace(0, 0); err != nil || !enough {
+		t.Fatal("native capacity observation failed", enough, err)
+	}
+	for _, values := range [][2]int64{{-1, 0}, {0, -1}} {
+		if enough, err := d.HasSpace(values[0], values[1]); !errors.Is(err, ErrUnsafe) || enough {
+			t.Fatal("negative capacity request accepted", values, enough, err)
+		}
 	}
 	if available, err := d.FreeBytes(); err != nil || available == 0 {
 		t.Fatal("native capacity unavailable", available, err)
@@ -82,6 +93,9 @@ func TestAvailableSpaceIsNativeBoundedAndUnknownFails(t *testing.T) {
 	}
 	if _, err := d.FreeBytes(); err == nil {
 		t.Fatal("unknown volume treated as usable capacity")
+	}
+	if enough, err := d.HasSpace(0, 0); err == nil || enough {
+		t.Fatal("unknown volume passed capacity admission", enough, err)
 	}
 	for _, values := range [][3]uint64{{1, 0, 512}, {1, 1, 0}, {^uint64(0), 2, 512}, {1, ^uint64(0), 2}} {
 		if _, err := availableBytes(values[0], values[1], values[2]); err == nil {
