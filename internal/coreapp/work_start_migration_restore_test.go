@@ -121,7 +121,15 @@ func checkRestoredStartWithEngine(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.dockerRuntime = runtime
+	// Match real Application initialization: selection resolves the captured
+	// credential against durable TLS material even before any runtime launch.
+	manager, err := internaltls.Open(filepath.Join(a.options.DataDirectory, "runtime", "agent-tls"), a.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.dockerRuntime, a.agentTLS = runtime, manager
+	a.mu.Unlock()
 	work, err = a.Store.Work(ctx, id, false)
 	if err != nil {
 		t.Fatal(err)
@@ -256,5 +264,27 @@ func TestRestoredActiveSelectionPreservesOriginalAdmission(t *testing.T) {
 				t.Fatal("original candidate binding changed")
 			}
 		})
+	}
+}
+
+func TestRestoredStartTLSPrerequisiteIsUnpublishedWithoutRuntimeEffects(t *testing.T) {
+	a, _, id, _ := runModelFixture(t)
+	manager, err := internaltls.Open(filepath.Join(a.options.DataDirectory, "runtime", "agent-tls"), a.Store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	profile, _, err := a.Settings.LoadRuntime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := a.files.ReadSecret(profile.Model.CredentialRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := internaltls.Scope{InstallationID: a.Store.InstallationID(), WorkID: id, Generation: 3, InstanceID: "agent-restored-fixture"}
+	state, err := manager.CheckModelCredential(context.Background(), scope, secret)
+	if err != nil || state != internaltls.ModelCredentialUnpublished {
+		t.Fatal("fresh generation TLS prerequisite not valid", state, err)
 	}
 }
