@@ -237,7 +237,7 @@ jobs:
           node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 --test-name-pattern="$pattern" apps/desktop-webui/dist/test/browser.test.js | tee "$RUNNER_TEMP/visual-desktop.tap"
           grep -Fx '# tests 2' "$RUNNER_TEMP/visual-desktop.tap"
           grep -Fx '# pass 2' "$RUNNER_TEMP/visual-desktop.tap"
-          (cd apps/console-webui && npx --no-install playwright test -c playwright.config.mjs console.spec.mjs --grep '^delivered workspaces retain every management deep link, mobile layout, and secret isolation$' --reporter=line) | tee "$RUNNER_TEMP/visual-console.log"
+          (cd apps/console-webui && npx --no-install playwright test -c playwright.config.mjs console.spec.mjs --grep 'delivered workspaces retain every management deep link, mobile layout, and secret isolation$' --reporter=line) | tee "$RUNNER_TEMP/visual-console.log"
           grep -E '1 passed \(' "$RUNNER_TEMP/visual-console.log"
           for view in desktop-works desktop-work console-overview; do
             for width in 1440 360; do test -s "dist/logo-title-style/$view-$width.png"; done
