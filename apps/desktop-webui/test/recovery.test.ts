@@ -974,13 +974,55 @@ test('UX revision slash Thinking opens the actual SDK choices and consumes only 
   await page.keyboard.press('Enter');
   await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('.composer-wrap > .options-status')).toContainText('Saving');
+  await expect(page.locator('#composer')).toBeFocused();
   await expect(page.locator('#composer')).toHaveValue('/thinking');release();await expect(page.locator('#composer')).toHaveValue('');
+  await expect(page.locator('#composer')).toBeFocused();
   await expect(page.locator('.response-thinking')).toHaveText('Max');
   assert.equal(await api(page,"return JSON.stringify(adapter.getWork('work-1').run);"),actual);
   assert.equal(requests.filter(r=>r.path.endsWith('/runs') && r.method==='POST').length,0);
   await closeResponseSettings(page);
   await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();await page.keyboard.press('Escape');
   await expect(page.locator('#composer')).toHaveValue('/model');assert.equal(requests.filter(r=>r.method==='PATCH').length,1);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+});
+
+test('Compact slash Thinking confirmation preserves a newer draft edited while the original pair is saving', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => release = done);
+  t.after(async () => release());
+  let saved = 'off';
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
+    if (r.path.endsWith('/chat-models')) return { json: chatModels() };
+    if (r.path.endsWith('/commands')) return { json: { contractVersion: 1, commands: [], checkedAt: new Date().toISOString() } };
+    if (r.path.endsWith('/chat-options')) {
+      if (r.method === 'PATCH') {
+        await gate;
+        saved = JSON.parse(r.body).thinkingLevel;
+      }
+      return { json: chatOptions(saved) };
+    }
+  });
+  await button(page, 'tab-Chat').click();
+  await expectThinkingEditable(page);
+  await page.locator('#composer').fill('/thinking');
+  await page.locator('#composer').press('Escape');
+  await button(page, 'send-message').click();
+  await page.locator('#modal [data-option-value=high]').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.composer-wrap > .options-status')).toContainText('Saving');
+  await expect(page.locator('#composer')).toBeFocused();
+  await expect(page.locator('#composer')).toHaveValue('/thinking');
+  await page.locator('#composer').fill('New ordinary draft typed while the original settings save is pending');
+  release();
+  await expect(page.locator('.composer-wrap > .options-status')).toBeEmpty();
+  await expect(button(page, 'send-message')).toBeEnabled();
+  await expect(page.locator('.response-thinking')).toHaveText('High');
+  await expect(page.locator('#composer')).toHaveValue('New ordinary draft typed while the original settings save is pending');
+  await expect(page.locator('#composer')).toBeFocused();
+  const writes = requests.filter(r => r.method === 'PATCH');
+  assert.equal(writes.length, 1);
+  assert.equal(JSON.parse(writes[0]!.body).thinkingLevel, 'high');
+  assert.equal(requests.filter(r => r.method === 'POST' && /\/(runs|sessions)$/.test(r.path)).length, 0);
 });
 
 test('UX revision truly nonreasoning and unavailable capabilities show distinct reasons without fabricated levels', async t => {
@@ -1599,6 +1641,8 @@ test('Compact settings independent pickers keep list navigation, IME, Tab, focus
   await expect(page.locator('#modal [role=option]').last()).toBeFocused();
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => !!document.activeElement?.closest('#modal')), false, 'Popover must not trap Tab after its last option');
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.locator('#modal [role=option]').last()).toBeFocused();
   await closeResponseSettings(page);
   await openResponseSettings(page, 'thinking');
   await page.keyboard.press('Escape');

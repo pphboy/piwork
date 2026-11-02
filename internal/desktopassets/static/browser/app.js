@@ -2,7 +2,7 @@ import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
-import { composerEditorGeometry } from './composer-layout.js';
+import { composerEditorGeometry, composerMatchesConsumedDraft } from './composer-layout.js';
 import { sharedIcon } from './feedback-primitives.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
 import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-notices.js';
@@ -6995,11 +6995,22 @@ setInterval(() => {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && adapter.state.signedIn && route()[0] === 'works')
     void adapter.listWorks().catch(() => undefined); exportFlows.setVisible(document.visibilityState === 'visible'); observeCurrentPage(); });
 window.addEventListener('pagehide', () => { exportFlows.revoke(t('export.pageEnded')); adapter.observePage('', false); });
-function consumeWebSelection(kind) { if (pendingWebCommand?.kind === kind) {
-    if (view.drafts[pendingWebCommand.key] === pendingWebCommand.text)
-        view.drafts[pendingWebCommand.key] = '';
+function consumeWebSelection(kind) {
+    const command = pendingWebCommand;
+    if (command?.kind !== kind)
+        return;
+    if (view.drafts[command.key] === command.text) {
+        view.drafts[command.key] = '';
+        // A compact picker restores composer focus before confirmation arrives.
+        // Keep general focused-input reconciliation untouched; synchronize only
+        // this confirmed command's unchanged, still-owned editor projection.
+        const editor = root.querySelector('#composer');
+        const snapshot = editor ? { draftKey: editor.dataset.draftKey || '', value: editor.value } : null;
+        if (editor && composerMatchesConsumedDraft(snapshot, command.key, command.text))
+            editor.value = '';
+    }
     pendingWebCommand = undefined;
-} }
+}
 root.addEventListener('toggle', event => { const target = event.target; if (target instanceof HTMLDetailsElement && target.dataset.activityKey)
     expandedActivity.set(target.dataset.activityKey, target.open); }, true);
 document.addEventListener('fullscreenchange', () => render());
