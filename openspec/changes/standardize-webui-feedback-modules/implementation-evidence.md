@@ -440,3 +440,45 @@ Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复
 20:21正式`b5b81369`实际Settings有限复核：合成resourceDelay5000/configAfterSave=read-error，编辑AGENTS后一次Save，立即显示浮动“设置已保存·正在刷新”，`[data-action-status]`为空，没有重复普通成功段落；读回等待期间编辑新草稿，503之后保留已确认修改+刷新未确认的所属恢复事实和一个错误通知，新草稿不变。HTTP账本恰好一次原配置PUT、随后GET、零Apply POST。455px静态Header可访问observed状态正确中文；不称作尚未执行的360px/Start pending bbox通过。
 
 20:22父任务实际保持Response settings打开，从455×772通过原生窗口调整到CSS455×323：panel仍打开，x29.89/y8/w380/h295.27、底303.27低于视口323；header Close位于18.9–58.9，footer Close位于252.36–292.36，均可见，内容自身滚动。正常点击footer Close关闭并返回`#response-settings-trigger`。这是455px低高度真实UI证明，不冒称360px矩阵；没有为此修改生产行为或放宽panel存在/滚动断言。
+
+### 20:34 真实混合 XHR 暴露的新选择身份问题
+
+`cfa82cd`完整Desktop1514 tests：1492 pass、21 fail、0 cancelled、1可选跳过；新Save未知回执用例通过。新增混合XHR走到再次选择unknown文件时，被旧上传批次固定Action key提前拦截，提示错误沿用首文件success.bin，而未进入原精确路径未知锁检查；不是修改预期字符串即可解决。其余20项对应前一已发布修复批次，后继实际结果待CI。
+
+仅一行让upload与其他file picker一样使用已有selection编号作为intent key。原进行中files互斥、UnknownFileLocks原key/token/generation、原Work/目录/identity准入和failed-only retry均不变；新选择先到既有精确路径检查，再可能HEAD/PUT，没有清锁或自动重发。两个直接ActionState+UnknownFileLocks契约测试证明新选择不复用旧blocked记录、原未知路径仍阻止、无关路径不清原锁、pending互斥以及晚回调/旧identity review不能影响新记录。相关真实模块53/53通过；这些单位测试不是HTTP证据。原真实File→HEAD→XHR PUT混合201/403/502、失败子集重试与未知路径零新增HEAD/PUT浏览器断言完全未改，待CI给出绿色结果，本地不重试未批准上传。
+
+正式typecheck/build/embed、测试编译、generated UI逐字一致、maintenance、style、OpenSpec strict、Go webapp12.912秒和两宿主build均通过。保持27/31，未把单行修复和直接测试冒称完整XHR/Core链通过。
+
+
+## 2026-11-02 最终按模块验收与真实剩余风险
+
+以下为最终结果，取代前面逐时记录中的“待CI”状态；历史记录保留，不将旧阶段失败或未执行结果改写成当时已通过。
+
+## 验收范围与版本
+
+本次验收对应 standardize-webui-feedback-modules；最终生产验收基准为 `99228aca2aa01ead78eb6a251e3929dc20368d80`，Draft PR #4。仅覆盖本次修改，不代表整个产品不存在问题。未合并、部署、发布或归档。
+
+## 模块与行为覆盖
+
+- **共享展示**：统一 PW PNG、语义图标、18px Refresh、固定三点等待槽、双语通知与窄屏布局；通知不解除未知写入锁，模态、非模态与原控件焦点保持各自语义。
+- **Desktop**：明确全局账号／Work 行／已打开 Work／Service 菜单范围；首读失败不伪装空态，刷新保留已确认内容；Files、Settings、Chat、Requests、原任务恢复、About、偏好和身份入口保留原对象、草稿及晚响应保护。
+- **Administration**：首次读取与最后确认数据分离；原失败表单安全恢复，不恢复密码或重放修改；Model Test 与保存独立；Package 保留同 actor/source/key 协议，Quick setup 使用真实就绪事实。
+- **Export／Import**：保留 ExportFlows 原协调器、停止准入、原 snapshot／Operation／transfer、长度和 hash 校验、一次交付、Pause／Check／Resume、过期和身份撤销；Details 非模态且仅呈现进度；Import 完成仍为 Stopped，启动必须显式执行。
+- **维护边界**：共享展示不导入业务入口，特性状态由所属模块维护；直接模块测试、依赖方向／循环负例、显式基线风格检查、生成物清单与陈旧输出检查、双语／文档检查接入既有维护入口。自动检查不能替代所有权人工审查。
+
+## 实际验证
+
+- 当前提交 CI 已有六项通过：静态／单元／类型／构建与生成一致性、完整 Desktop 浏览器、完整 Console 浏览器、定向 Package 协议、真实 Core 链、六场景诊断 smoke。完整 Go integration 已失败；当前七项 CI 全部终态，六项通过、一项失败，没有待完成任务。
+- 当前 Desktop：1580项，1579通过、0失败、1项显式可选 Engine onboarding 跳过。真实 File→HEAD→XHR 混合结果、未知 Save、Import 读取恢复、原 ID 与晚响应保护均实际通过。
+- 同一生产代码两次通过真实 Docker/Core/Agent/helper 完整链：停止、导出、浏览器下载、Inspect、Import Stopped、显式 Start、原 Session／文件内容恢复，以及源 Core 离线后在接收 Core 恢复历史文件链接；原身份、hash／长度和单次请求检查通过。两次导出分别为605670706和605670703字节，各自仅1次 Export、1次准备、1次下载；本次安装清理检查通过。Console 真实 Core 与诊断日志导出链同时通过。
+- 最后生产补修的52组直接测试731/731通过；相关入口集成、宿主构建、嵌入资源一致性及独立代码审查通过。当前提交 OpenSpec strict 与 diff 检查通过。
+
+## 已知限制与未关闭项
+
+- 一次中间真实 Core 复测在 Start 后等待 Service iframe 标题20秒超时；随后带诊断复测通过，失败现场未再次出现，根因仍未确认，不能称为已修复或保证不复发。
+- 当前提交的完整 Go integration 已于2026-11-02 01:06 UTC结束：452项顶层通过、16失败、6项条件跳过；Core app 与 Docker engine 两个包失败，另三个包通过。只读分类为1项缺失夹具、7项源码／有效规格与旧断言不符、3项异步启动后过早要求 Ready、1项既有关闭流程可能跳过 Agent Drain 的源码缺陷、4项证据不足的运行问题（Memory Stop 分支、进程诊断字段、Skill Apply 等待、临时清理）。临时清理曾在前次通过，本次再次失败；没有新增失败名称。部分失败后的清理错误仍缺细分诊断。未执行主分支基线对照，不能宣称全部为既有运行失败，也不能把完整 Go 集成称为通过。
+- 任务4.3、5.4、8.1已有上述实际证据；8.2以本记录的最终覆盖核对、strict验证及可审阅提交为依据，不代表完整Go集成全绿。2026-11-02用户明确授权公开提交验收记录，并另开独立Change排查16项Go失败及排空流程；这些后续工作不混入本UI变更，也不抹去本次失败或未确认风险。
+
+## 范围复核
+
+依赖锁文件、Go依赖、当前主规格与归档未改；冻结V13 hash一致。新增内容的有限凭据模式检查未发现真实凭据，但不构成全面安全认证。保留所有未执行、条件跳过及未解释失败，不将 Draft PR 宣称为无问题或可直接合并。

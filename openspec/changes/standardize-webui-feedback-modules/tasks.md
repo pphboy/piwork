@@ -30,14 +30,14 @@
 
 - [x] 4.1 保留 ExportFlows/ExportPort 等现有协调边界，抽取纯导出面板模型与具名控制端口；替换读 app 源码/正则/VM 的面板单测为直接 import，验证布局修改不需 Files/Chat/Serve 全局依赖。
 - [x] 4.2 保持 Export Details 非模态；所有既定仅进度 drawer 只展示同任务进度和必要控制，其他容器保留既有模态/非模态语义；把技术 ID、旧快照和诊断放到所属独立恢复上下文，保留隐私提醒；以隐藏/重开同任务、背景交互、键盘与长文本测试验证并更新模块导航。
-- [ ] 4.3 回归停止确认、desired/observed 停止准入、原 snapshot/hash/长度、一次交付、Pause 与 Close、Check 与 Resume、过期和身份撤销；以直接协调器测试与现有真实 Docker/Core 导入导出链验证，未运行真实链不得勾选完成。
+- [x] 4.3 回归停止确认、desired/observed 停止准入、原 snapshot/hash/长度、一次交付、Pause 与 Close、Check 与 Resume、过期和身份撤销；以直接协调器测试与现有真实 Docker/Core 导入导出链验证，未运行真实链不得勾选完成。
 
 ## 5. Desktop 全部来源状态
 
 - [x] 5.1 按 D01–D06 的实际来源逐功能接入会话/Core 准入、Works、创建/生命周期、Service 目录/入口/日志反馈；验证关键初读十秒有界收敛、空态与失败分开、未知不重放与原对象恢复，并将对应测试链接写回覆盖表。
 - [x] 5.2 按 D07–D12 的实际来源逐功能接入文件浏览/预览/编辑/上传、Save/Apply、Skills/Packages 等反馈；以局部失败、部分/未知写入、旧草稿、新选择与确认结果后读回失败测试验证，不造通用 Operation 或假进度。
 - [x] 5.3 按 D13–D17 的实际来源逐功能接入 Chat/history/Run/tools、模型/Thinking、图像与 Requests；验证旧历史与草稿保留、unknown 不再次提交 prompt、Model+Thinking 一组摘要/自动保存、Requests 与消息结果独立，并维护对应直接/浏览器测试与索引。
-- [ ] 5.4 按 D18–D23 的实际来源核对 Import/Export/log export、原 ID 恢复及 About/偏好等余项；逐项依据附件真实名称校正归组，验证 Import 完成仍 Stopped 且只显式 Start、无可见 Work 固定恢复入口与安全诊断不丢失。
+- [x] 5.4 按 D18–D23 的实际来源核对 Import/Export/log export、原 ID 恢复及 About/偏好等余项；逐项依据附件真实名称校正归组，验证 Import 完成仍 Stopped 且只显式 Start、无可见 Work 固定恢复入口与安全诊断不丢失。
 
 ## 6. Serve 与登录/首设依赖
 
@@ -55,5 +55,5 @@
 
 ## 8. 跨端集成与交付核验
 
-- [ ] 8.1 按 AGENTS 运行相关 typecheck、单测、WebUI 构建、资源复制/Go 嵌入一致性与现有浏览器集成；检验 Desktop/Serve 实际服务入口、CSP/图标、双语晚响应、360px/宽屏及 reduced-motion，分别报告真实执行与未执行范围。
+- [x] 8.1 按 AGENTS 运行相关 typecheck、单测、WebUI 构建、资源复制/Go 嵌入一致性与现有浏览器集成；检验 Desktop/Serve 实际服务入口、CSP/图标、双语晚响应、360px/宽屏及 reduced-motion，分别报告真实执行与未执行范围。
 - [ ] 8.2 逐项核对全来源覆盖表及高风险真实 Core 链证据，复查无重复写入、未知解锁、跨身份泄漏或原型覆盖免责；运行 OpenSpec strict 验证并提交变更内验收记录供审阅，主 spec 同步/归档/commit/push/release 按其授权另行处理。
