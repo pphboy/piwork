@@ -275,6 +275,14 @@ func (a *Application) applyGeneration(ctx context.Context, id string, plan *work
 // removeApplyAgent requires the exact generation/context registered in this
 // installation. Volumes, Work network, and immutable contexts are preserved.
 func (a *Application) removeApplyAgent(ctx context.Context, workID string) error {
+	return a.removeApplyAgentWithStoppedRequirement(ctx, workID, false)
+}
+
+func (a *Application) removeStoppedApplyAgent(ctx context.Context, workID string) error {
+	return a.removeApplyAgentWithStoppedRequirement(ctx, workID, true)
+}
+
+func (a *Application) removeApplyAgentWithStoppedRequirement(ctx context.Context, workID string, requireStopped bool) error {
 	identity := dockerengine.ContainerIdentity{WorkID: workID, Kind: "agent", LogicalID: "agentd"}
 	view, err := a.dockerRuntime.InspectContainer(ctx, identity)
 	if err != nil {
@@ -306,6 +314,9 @@ func (a *Application) removeApplyAgent(ctx context.Context, workID string) error
 	}
 
 	if view.Config == nil || view.State == nil {
+		return dockerengine.ErrStateUnknown
+	}
+	if requireStopped && view.State.Running {
 		return dockerengine.ErrStateUnknown
 	}
 	generation, err := strconv.ParseInt(view.Config.Labels["piwork.generation"], 10, 64)
