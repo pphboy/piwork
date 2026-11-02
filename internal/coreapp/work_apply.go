@@ -482,7 +482,7 @@ func (a *Application) processWorkApply(ctx context.Context, operation corestore.
 	if plan.Stage == "captured" && plan.PriorContextID != nil {
 		prior, _, err := a.capturedContextSpec(ctx, plan.WorkID, 1, "inspection", *plan.PriorContextID, true)
 		if err != nil {
-			return err
+			return a.finishApplyPriorContextFailure(ctx, operation, err)
 		}
 		old, err := a.inspector.InspectNativeAgent(ctx, prior.ImageID)
 		if err != nil {
@@ -684,6 +684,12 @@ func (a *Application) rollbackWorkApply(ctx context.Context, operation corestore
 	}
 	if err := a.applyCurrent(ctx, plan); err != nil {
 		return err
+	}
+	a.mu.Lock()
+	beforeRollback := a.beforeWorkApplyRollbackForTest
+	a.mu.Unlock()
+	if beforeRollback != nil {
+		beforeRollback(operation.ID)
 	}
 	if err := a.removeApplyAgent(ctx, plan.WorkID); err != nil {
 		return a.finishWorkApply(ctx, operation, plan, plan.ErrorCode, plan.ErrorStage, "failed", true)

@@ -158,6 +158,9 @@ type Application struct {
 	serviceServer           *grpc.Server
 	serviceListener         net.Listener
 	serviceGateway          *serviceGateway
+
+	// Test-only stage observation; nil in production and never changes a decision.
+	beforeWorkApplyRollbackForTest func(string)
 }
 
 func New(ctx context.Context, options Options) (_ *Application, returned error) {

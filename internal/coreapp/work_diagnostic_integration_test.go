@@ -4,16 +4,19 @@ package coreapp
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"piwork/internal/contracts"
+	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 	"piwork/internal/identity"
 	"piwork/internal/skillartifact"
@@ -90,6 +93,10 @@ func TestNativeSkillFailuresRemainSpecificAfterRollbackAndCoreRestart(t *testing
 		if err := os.Chmod(skillRoot, 0755); err != nil {
 			t.Fatal(err)
 		}
+		var rollbackFault <-chan struct {
+			operationID string
+			err         error
+		}
 		expected := "SKILL_VALIDATION_FAILED"
 		if fault == "missing-manifest" {
 			if err := os.Remove(manifest); err != nil {
@@ -129,20 +136,49 @@ func TestNativeSkillFailuresRemainSpecificAfterRollbackAndCoreRestart(t *testing
 			if err := os.Chmod(filepath.Join(desiredRoot, "metadata.json"), 0444); err != nil {
 				t.Fatal(err)
 			}
-			// Damage only this installation's prior context, independently of the SDK failure.
-			if err := os.Chmod(filepath.Join(activeRoot, "config.json"), 0600); err != nil {
-				t.Fatal(err)
+			// Damage the prior context only after the candidate SDK failure has
+			// reached rollback, never during captured-context preflight.
+			faults := make(chan struct {
+				operationID string
+				err         error
+			}, 1)
+			rollbackFault = faults
+			var once sync.Once
+			a.mu.Lock()
+			a.beforeWorkApplyRollbackForTest = func(operationID string) {
+				once.Do(func() {
+					path := filepath.Join(activeRoot, "config.json")
+					err := os.Chmod(path, 0600)
+					if err == nil {
+						err = os.WriteFile(path, []byte("{}"), 0600)
+					}
+					faults <- struct {
+						operationID string
+						err         error
+					}{operationID, err}
+				})
 			}
-			if err := os.WriteFile(filepath.Join(activeRoot, "config.json"), []byte("{}"), 0600); err != nil {
-				t.Fatal(err)
-			}
+			a.mu.Unlock()
 		}
 		status, accepted := packageHTTPCall(t, base, path+"/configuration/apply", "POST", auth, map[string]string{"idempotencyKey": fault})
 		if status != 202 {
 			t.Fatal(status, accepted)
 		}
 		retainedID = accepted["operationId"].(string)
-		failed := waitApplyFailure(t, ctx, a, retainedID)
+		failed := waitSkillApplyFailure(t, ctx, a, retainedID)
+		if rollbackFault != nil {
+			select {
+			case fault := <-rollbackFault:
+				if fault.operationID != retainedID || fault.err != nil {
+					t.Fatal("original rollback fault was not installed")
+				}
+			default:
+				t.Fatal("original SDK failure never reached rollback")
+			}
+			a.mu.Lock()
+			a.beforeWorkApplyRollbackForTest = nil
+			a.mu.Unlock()
+		}
 		view := operationEnvelopeView(failed).(map[string]any)
 		encoded, _ := json.Marshal(view)
 		if _, err := contracts.Decode[contracts.PublicOperation](bytes.NewReader(encoded), "PublicOperationSchema", 64<<10); err != nil {
@@ -319,4 +355,28 @@ func TestNativeRunningAgentReportsReadinessTimeoutWithoutExit(t *testing.T) {
 		t.Fatal("readiness deadline not 30 seconds", began, ended)
 	}
 	t.Log("live non-ready Agent deadline", ended.Sub(began), "operation", failed.ID)
+}
+
+// Keep the last safe phase when the caller's existing budget expires. A generic
+// storage wrapper on a cancelled read must not erase the original Apply state.
+func waitSkillApplyFailure(t *testing.T, ctx context.Context, a *Application, id string) corestore.OperationRecord {
+	t.Helper()
+	lastState, lastStage := "not-observed", "not-observed"
+	for {
+		operation, err := a.Store.Operation(ctx, id)
+		if err != nil {
+			t.Fatalf("Skill Apply read failed: operation=%s lastState=%s lastStage=%s contextDone=%t deadlineExceeded=%t", id, lastState, lastStage, ctx.Err() != nil, ctx.Err() == context.DeadlineExceeded)
+		}
+		lastState = operation.State
+		if plan, planErr := a.readApplyPlan(ctx, operation); planErr == nil {
+			lastStage = plan.Stage
+		}
+		if operation.State == "failed" {
+			return operation
+		}
+		if operation.State == "succeeded" || operation.State == "superseded" || ctx.Err() != nil {
+			t.Fatalf("Skill Apply did not fail: operation=%s state=%s stage=%s contextDone=%t", id, lastState, lastStage, ctx.Err() != nil)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
