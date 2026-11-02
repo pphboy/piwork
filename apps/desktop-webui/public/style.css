@@ -3985,6 +3985,47 @@ a.button.primary { color:var(--on-accent,#fff); }
 .agent-panel .composer-options > [data-action="add-chat-images"] {
   width: 28px;
 }
+.modal.compact-response-picker {
+  width: 225px;
+  min-width: 0;
+  max-width: calc(100vw - 16px);
+  padding: 5px;
+  border-radius: 9px;
+}
+.modal.compact-response-picker.thinking-options { width: 180px; }
+.compact-response-picker .dropdown-title {
+  padding: 6px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+.compact-response-picker .modal-body {
+  padding: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.compact-response-picker .chat-picker-menu {
+  margin: 0;
+  padding: 0;
+}
+.compact-response-picker .chat-picker-menu > .button {
+  padding: 8px;
+  min-height: 32px;
+  font-size: 12px;
+  gap: 6px;
+}
+.compact-response-picker .chat-picker-menu > .button > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.compact-response-picker .chat-picker-menu small { font-size: 10px; }
+.compact-response-picker .options-status:not(:empty) {
+  margin: 5px 0 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 .agent-panel .send-button {
   width: 28px;
   height: 28px;

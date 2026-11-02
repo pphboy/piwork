@@ -3493,7 +3493,7 @@ test('narrow response settings retain native body scroll and allow the second mo
   let selected: string | null = null;
   const { page, requests } = await fixture(t, r => {
     if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 4 } };
-    if (r.path.endsWith('/chat-models')) return { json: { defaultModel: model(null), models: [model('second-model')], availability: 'available' } };
+    if (r.path.endsWith('/chat-models')) return { json: { defaultModel: model(null), models: [...Array.from({ length: 10 }, (_, index) => model(`other-${index}`)), model('second-model')], availability: 'available' } };
     if (r.path.endsWith('/chat-options')) {
       if (r.method === 'PATCH') selected = JSON.parse(r.body).modelRef;
       return { json: { sessionId: 'session-1', modelRef: selected, model: model(selected), thinkingLevel: 'off', thinkingProfile: null, availability: 'available' } };
@@ -3501,20 +3501,22 @@ test('narrow response settings retain native body scroll and allow the second mo
   });
   await page.setViewportSize({ width: 360, height: 480 });
   await button(page, 'open-chat-settings').click();
-  await page.locator('#model-select').click();
+  await expect(page.locator('#response-model-options')).toBeVisible();
+  assert.equal((await page.locator('#modal').boundingBox())?.width, 225);
   const body = page.locator('#modal .modal-body');
   await expect.poll(() => body.evaluate(node => node.scrollHeight > node.clientHeight)).toBe(true);
   const box = await body.boundingBox();
   assert.ok(box);
   await page.mouse.move(box.x + 3, box.y + box.height / 2);
-  await page.mouse.wheel(0, 240);
+  await page.mouse.wheel(0, 1000);
   await expect.poll(() => body.evaluate(node => node.scrollTop)).toBeGreaterThan(0);
   const offset = await body.evaluate(node => node.scrollTop);
   await page.waitForTimeout(250);
   assert.ok(await body.evaluate(node => node.scrollTop) >= offset);
   await page.locator('[data-action="choose-chat-setting"][data-option-value="second-model"]').click();
   await expect.poll(() => requests.filter(r => r.path.endsWith('/chat-options') && r.method === 'PATCH').length).toBe(1);
-  await expect(page.locator('#model-select')).toContainText('Second supported model');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#response-settings-trigger')).toContainText('Second supported model');
 });
 
 test('startup status failure has one original actionable notice and retained connection recovery', async t => {
@@ -4121,18 +4123,21 @@ test('independent Model and Thinking entries retain paired autosave and unknown 
   });
   await page.locator('#composer').fill('Keep /thinking as draft text');
   await button(page, 'open-chat-settings').click();
-  await expect(page.locator('#model-select')).toBeFocused();
-  await page.locator('#model-select').click();
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
+  await expect(page.locator('#modal .modal-head, #modal .modal-footer, #modal .response-setting-group')).toHaveCount(0);
   await page.locator('[data-option-value="second-model"]').click();
   await expect.poll(() => requests.filter(r => r.method === 'PATCH').length).toBe(1);
-  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('#response-settings-trigger')).toBeFocused();
   await button(page, 'open-thinking-settings').click();
-  await expect(page.locator('#thinking-select')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#response-thinking-options')).toBeVisible();
+  assert.equal((await page.locator('#modal').boundingBox())?.width, 180);
   await expect(page.locator('#thinking-settings-trigger')).toHaveAttribute('aria-expanded', 'true');
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-expanded', 'false');
   await page.locator('[data-kind="thinking"][data-option-value="high"]').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(button(page, 'send-message')).toBeDisabled();
+  await button(page, 'open-thinking-settings').click();
   await expect(page.locator('#response-settings-status')).toContainText('Unconfirmed.');
   await expect(page.locator('#response-settings-status')).toContainText('Check original settings before sending.');
   await expect(page.locator('#response-settings-status')).toContainText('No change will be resent.');
@@ -4141,8 +4146,8 @@ test('independent Model and Thinking entries retain paired autosave and unknown 
   await expect(page.locator('#composer')).toHaveValue('Keep /thinking as draft text');
   await expect(button(page, 'send-message')).toBeDisabled();
   await button(page, 'open-thinking-settings').click();
-  await expect(page.locator('#thinking-select')).toBeDisabled();
-  await expect(page.locator('#model-select')).toBeDisabled();
+  await expect(page.locator('#modal [role=option]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-action=check-session-model]')).toBeFocused();
   const writes = requests.filter(r => r.method === 'PATCH').map(r => JSON.parse(r.body));
   assert.deepEqual(writes, [
     { modelRef: 'second-model', thinkingLevel: 'off', thinkingProfile: null },

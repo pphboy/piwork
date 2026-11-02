@@ -16,6 +16,18 @@ test('independent Model and Thinking toolbar entries share the existing response
   assert.equal(overlayForAction('open-thinking-settings'), 'chat-response-settings');
   assert.equal(overlayForAction('send-message'), 'send-message');
 });
+
+test('compact response picker placement retains positive bounds at narrow and short viewport edges', () => {
+  for (const width of [225, 180]) for (const viewport of [{ width: 360, height: 180 }, { width: 1440, height: 900 }]) {
+    const anchor = { left: viewport.width - 34, right: viewport.width - 6, top: viewport.height - 40, bottom: viewport.height - 12 };
+    const placed = overlayPlacement(anchor, { width, height: 360 }, viewport);
+    assert.ok(placed.left >= 8);
+    assert.ok(placed.left + width <= viewport.width - 8);
+    assert.ok(placed.top >= 8);
+    assert.ok(placed.maxHeight > 0);
+    assert.ok(placed.top + Math.min(360, placed.maxHeight) <= viewport.height - 8);
+  }
+});
 const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 const extract=(name:string)=>{const value=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];};
 test('commands, value choices and sustained Service tools have explicit bounded roles',()=>{

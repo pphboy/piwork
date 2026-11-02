@@ -1820,20 +1820,19 @@ function chatSettingsContextCurrent() {
   const r=route();
   return view.modal==='chat-response-settings' && view.data.epoch===String(adapter.identityEpoch) && r[0]==='work' && r[1]===view.data.workId && view.session===view.data.sessionId && view.tab===view.data.tab && view.layout!=='service-only';
 }
-function focusChatSettings(kind?:string) {
+function focusChatSettings() {
   const dialog=root.querySelector<HTMLDialogElement>('#modal'); if(!dialog) return;
-  const row=dialog.querySelector<HTMLButtonElement>(kind==='thinking'?'#thinking-select':'#model-select');
   const option=view.data.expanded?(dialog.querySelector<HTMLElement>('[role=option][aria-selected=true]:not([disabled])') || dialog.querySelector<HTMLElement>('[role=option]:not([disabled])')):null;
-  const recovery=dialog.querySelector<HTMLElement>('.options-status .button:not([disabled]),.modal-footer .button');
-  (option || (row && !row.disabled?row:recovery))?.focus({preventScroll:true});
+  const recovery=dialog.querySelector<HTMLElement>('.options-status .button:not([disabled])');
+  (option || recovery || dialog).focus({preventScroll:true});
 }
 function openChatPicker(kind?:'model'|'thinking', entry?: string) {
   const work=current(); if(!work) return;
   const composer=root.querySelector<HTMLTextAreaElement>('#composer');
   view.commandDismissed=view.drafts[draftKey(work)] || '';
   focusReturn=entry || (kind?'#composer':'#response-settings-trigger');
-  openModal('chat-response-settings',{workId:work.id,sessionId:view.session,epoch:String(adapter.identityEpoch),tab:view.tab,source:kind && !entry?'command':'summary',entry:entry || '#response-settings-trigger',expanded:kind || '',caretStart:String(composer?.selectionStart ?? 0),caretEnd:String(composer?.selectionEnd ?? 0)});
-  focusChatSettings(kind);
+  openModal('chat-response-settings',{workId:work.id,sessionId:view.session,epoch:String(adapter.identityEpoch),tab:view.tab,source:kind && !entry?'command':'summary',entry:entry || '#response-settings-trigger',expanded:kind || 'model',caretStart:String(composer?.selectionStart ?? 0),caretEnd:String(composer?.selectionEnd ?? 0)});
+  focusChatSettings();
 }
 function confirmPendingChatCommand() {
   const command=pendingWebCommand;
@@ -2337,14 +2336,13 @@ function modalMarkup() {
     }
     case 'chat-response-settings': {
       if(!target) break;
-      const {catalog,state,model,name,thinking,editable,thinkingEditable}=chatSettings(target,view.data.sessionId || '');
+      const {catalog,state,model,editable,thinkingEditable}=chatSettings(target,view.data.sessionId || '');
       const expanded=view.data.expanded,levels=expanded==='thinking';
-      title=t('response.title');
+      title=t(levels?'response.thinking':'response.model');
       const options=!editable || levels && !thinkingEditable?[]:levels?(model?.thinkingAvailability==='unknown'?[{value:'normal',name:t('thinking.normal'),note:t('response.normalNote'),selected:state.thinking===null},...((adapter.chatCapabilities.get(target.id) ?? 0)>=4?(model.compatibleThinkingProfiles ?? []).flatMap(p=>p.levels.map(level=>({value:`${p.profile}:${level}`,name:`${t('thinking.compatible')} · ${thinkingName(level)}`,note:`${t(p.profile==='messages-budget-v1'?'thinking.budget':p.profile==='messages-adaptive-v1'?'thinking.adaptive':'thinking.effort')}${p.budgets?.[level]?` · ${p.budgets[level]} tokens`:''} · ${t('thinking.compatibleNote')}`,selected:state.profile===p.profile && state.thinking===level}))):[]) ]:(model?.thinkingLevels || []).map(level=>({value:level,name:thinkingName(level),note:'',selected:!state.profile && level===state.thinking}))) :
         [...(catalog?.defaultModel?[catalog.defaultModel]:[]),...(catalog?.models || []).filter(m=>m.modelRef!==null)].map(m=>({value:m.modelRef || '',name:m.modelRef===null?capturedDefaultName(m):modelDisplayName(m),note:m.modelRef===null?t('response.useWorkDefault'):m.model+' · '+m.provider+' · '+m.modelRef.slice(-8),selected:m.modelRef===state.ref}));
-      const row=(kind:string,label:string,value:string,enabled:boolean,note='')=>btn(`<span class="response-setting-label">${label}</span><span class="response-setting-value">${esc(value)}${note?`<small>${note}</small>`:''}</span>${icon('down',14)}`,'toggle-chat-setting','quiet response-setting-row',`id="${kind}-select" data-kind="${kind}" value="${esc(kind==='model'?state.ref || '':state.thinking ?? 'normal')}" aria-label="${label}: ${esc(value)}" aria-expanded="${expanded===kind}" aria-haspopup="listbox" aria-controls="response-${kind}-options" aria-describedby="response-settings-status" ${enabled?'':'disabled'}`);
-      body=`<p class="muted response-settings-subtitle">${t('response.forNextMessage')}${view.data.sessionId?'': ` · ${t('response.forNewSession')}`}</p><div class="response-setting-group">${row('model',t('response.model'),name,editable,state.ref===null?t('chat.workDefault'):'')}${row('thinking',t('response.thinking'),thinking,thinkingEditable)}</div>${modelFeedback(target,view.data.sessionId || '',true)}${expanded && options.length?`<div class="response-setting-options"><p class="muted">${levels?t('response.thinking'):t('response.model')}</p><div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels?t('response.thinkingLevels'):t('response.models')}">${options.map(option=>btn(`<span>${esc(option.name)}${option.note?`<small>${esc(option.note)}</small>`:''}</span>${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div></div>`:''}`;
-      footer=close();
+      body=`<div id="response-${expanded}-options" class="menu-list chat-picker-menu" role="listbox" aria-label="${levels?t('response.thinkingLevels'):t('response.models')}" aria-describedby="response-settings-status">${options.map(option=>btn(`<span>${esc(option.name)}${option.note?`<small>${esc(option.note)}</small>`:''}</span>${option.selected?icon('check',16):''}`,'choose-chat-setting','',`role="option" aria-selected="${option.selected}" data-option-value="${esc(option.value)}" data-kind="${expanded}"`)).join('')}</div>${modelFeedback(target,view.data.sessionId || '',true)}`;
+      footer='';
       break;
     }
     case 'chat-input-options':
@@ -2741,6 +2739,9 @@ function modalMarkup() {
     body=body.replaceAll('<div class="menu-list', '<div role="group" class="menu-list').replace(/<button (?![^>]*\brole=)/g, '<button role="menuitem" tabindex="-1" ');
     return `<dialog id="modal" role="menu" aria-label="${title}" class="modal anchored-overlay command-dropdown"><div class="dropdown-title">${title}</div><div class="modal-body">${view.modalError?feedback(esc(view.modalError),'warning'):''}${body}</div></dialog>`;
   }
+  if (view.modal === 'chat-response-settings') {
+    return `<dialog id="modal" tabindex="-1" aria-modal="false" aria-labelledby="modal-title" class="modal anchored-overlay chat-response-settings compact-response-picker ${view.data.expanded === 'thinking' ? 'thinking-options' : 'model-options'}"><div id="modal-title" class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
+  }
   const submissionError=view.modal==='chat-submission'?target?.sessions.find(s=>s.id===view.data.sessionId)?.messages.find(m=>m.submission?.key===view.data.submissionKey)?.submission?.error:undefined;
   return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${view.modal==='sessions'?'session-picker':''} ${['chat-submission','chat-history-status'].includes(view.modal)?'chat-submission-popover':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError!==submissionError && view.modal!=="new-work" && !(view.modal==='sessions' && view.modalError===target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
@@ -3024,16 +3025,12 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'save-default-core': await adapter.savePreferences(view.coreAddress || adapter.state.core.address); break;
     case 'clear-default-core': await adapter.savePreferences(null); break;
     case 'read-default-core': await adapter.loadPreferences(); break;
-    case 'open-chat-settings':openChatPicker();break;
+    case 'open-chat-settings':
+      openChatPicker('model', '#response-settings-trigger');
+      break;
     case 'open-thinking-settings':
       openChatPicker('thinking', '#thinking-settings-trigger');
       break;
-    case 'toggle-chat-setting': {
-      if(!chatSettingsContextCurrent()) break;
-      const kind=el.dataset.kind!;
-      view.data.expanded=view.data.expanded===kind?'':kind;
-      render();focusChatSettings(kind);break;
-    }
     case 'chat-input-options':openModal('chat-input-options');break;
     case 'chat-submission':if(currentWork)openModal('chat-submission',{workId:currentWork.id,sessionId:el.dataset.session || '',submissionKey:el.dataset.submissionKey || ''});break;
     case 'chat-history-status':if(currentWork)openModal('chat-history-status',{workId:currentWork.id,sessionId:el.dataset.session || '',messageId:el.dataset.id || '',runId:el.dataset.runId || ''});break;
@@ -3072,14 +3069,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       const kind=el.dataset.kind;
       const {state,catalog,editable,thinkingEditable}=chatSettings(currentWork,view.session);
       if(!editable || kind==='thinking' && !thinkingEditable) break;
-      view.data.expanded='';
       if(kind==='model') {
         const ref=el.dataset.optionValue || null,model=ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===ref);
         if(!model) break;
         if(ref!==state.ref) adapter.selectModel(currentWork.id,view.session,ref);
       } else {const selected=el.dataset.optionValue || 'normal',split=selected.indexOf(':'),profile=split>=0?selected.slice(0,split):undefined,level=split>=0?selected.slice(split+1):selected==='normal'?null:selected;if(level!==state.thinking || profile!==state.profile || state.needsThinkingConfirmation) adapter.selectThinking(currentWork.id,view.session,level,profile);}
       if(pendingWebCommand && pendingWebCommand.kind===kind){const state=adapter.modelSelection(currentWork.id,view.session);Object.assign(pendingWebCommand,{workId:currentWork.id,sessionId:view.session,pair:{ref:state.ref,thinking:state.thinking,profile:state.profile}});}
-      confirmPendingChatCommand();render();focusChatSettings(kind);break;
+      confirmPendingChatCommand();
+      closeModal();
+      break;
     }
     case 'service-picker': openModal('service-picker'); root.querySelector<HTMLElement>('#modal [aria-selected=true]')?.focus(); break;
     case 'select-service': {
@@ -3576,8 +3574,15 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       }break;
     case "save-model":
       if(currentWork && view.session) await stay(adapter.saveModel(currentWork.id,view.session));break;
-    case "check-session-model":
-      if(currentWork && view.session) await stay(adapter.checkSessionModel(currentWork.id,view.session));break;
+    case "check-session-model": {
+      if (!currentWork || !view.session) break;
+      const epoch = adapter.identityEpoch, choice = modalChoice, sessionId = view.session, error = view.modalError;
+      await stay(adapter.checkSessionModel(currentWork.id, sessionId));
+      if (epoch === adapter.identityEpoch && choice === modalChoice && sessionId === view.session &&
+          chatSettingsContextCurrent() && view.modalError === error &&
+          adapter.modelSelection(currentWork.id, sessionId).phase === 'clean') view.modalError = '';
+      break;
+    }
     case "about-piwork":openModal('about-piwork');adapter.loadAbout();break;
     case "refresh-about":adapter.loadAbout();break;
     case "check-image-support":if(currentWork)await stay(adapter.refreshImageCapabilities(currentWork.id));break;
@@ -4640,7 +4645,7 @@ function render() {
   const settingsFocusLost = settingsFocusChoice === modalChoice && chatSettingsContextCurrent() && !!active &&
     (!active.isConnected || active.matches(':disabled') || !active.getClientRects().length) &&
     (document.activeElement === document.body || document.activeElement === root || document.activeElement === active);
-  if(dialog && view.modal==='chat-response-settings' && (overlayOpening || settingsFocusLost)) focusChatSettings(view.data.expanded || active?.dataset.kind);
+  if(dialog && view.modal==='chat-response-settings' && (overlayOpening || settingsFocusLost)) focusChatSettings();
   if (dialog && view.modal === 'import') focusImportNameOnce();
   const next = root.querySelector<HTMLElement>("#messages");
   if (next) {

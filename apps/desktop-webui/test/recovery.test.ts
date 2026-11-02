@@ -93,31 +93,40 @@ async function openFullscreenOptions(page: Page) {
   if(await serviceMenu.isVisible())await serviceMenu.click();else await button(page,'agent-menu').click();
   await expect(button(page,'service-fullscreen')).toBeVisible();
 }
-async function openResponseSettings(page: Page, kind?: 'model' | 'thinking') {
-  if (!await page.locator('#modal').count()) await page.locator('#response-settings-trigger').click();
+async function openResponseSettings(page: Page, kind: 'model' | 'thinking' = 'model') {
+  const trigger = page.locator(kind === 'thinking' ? '#thinking-settings-trigger' : '#response-settings-trigger');
+  if (await page.locator('#modal').count()) {
+    await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
+    if (await page.locator(`#modal #response-${kind}-options`).count()) return;
+    await closeResponseSettings(page);
+  }
+  await trigger.click();
   await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
-  if (kind && await page.locator(`#${kind}-select`).getAttribute('aria-expanded') !== 'true') await page.locator(`#${kind}-select`).click();
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
 }
 async function closeResponseSettings(page: Page) {
-  await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  if (await page.locator('#modal').count()) {
+    await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
+    await page.keyboard.press('Escape');
+  }
   await expect(page.locator('#modal')).toHaveCount(0);
 }
 async function expectThinkingEditable(page: Page) {
-  await openResponseSettings(page);
-  await expect(page.locator('#thinking-select')).toBeEnabled();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])').first()).toBeEnabled();
   await closeResponseSettings(page);
 }
 async function chooseThinking(page: Page, level: string, keepOpen = false) {
   await openResponseSettings(page, 'thinking');
   await page.locator(`#modal [data-action=choose-chat-setting][data-kind=thinking][data-option-value="${level}"]`).click();
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
-  if (!keepOpen) await closeResponseSettings(page);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  if (keepOpen) await openResponseSettings(page, 'thinking');
 }
 async function chooseModel(page: Page, ref: string, keepOpen = false) {
   await openResponseSettings(page, 'model');
   await page.locator(`#modal [data-action=choose-chat-setting][data-kind=model][data-option-value="${ref}"]`).click();
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
-  if (!keepOpen) await closeResponseSettings(page);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  if (keepOpen) await openResponseSettings(page, 'model');
 }
 async function uiuxEvidence(page: Page, name: string) {
   const directory = process.env.PIWORK_UIUX_EVIDENCE_DIR;
@@ -520,7 +529,9 @@ test('multi-provider Chat keeps other models and Thinking selectable when the Wo
   });
   await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft survives default revocation');await expect(button(page,'send-message')).toBeDisabled();
   await openResponseSettings(page,'model');await expect(page.locator('#modal')).toContainText('Work default is disabled');await page.locator(`[data-option-value="${alternative.modelRef}"]`).click();
-  await expect.poll(()=>ref).toBe(alternative.modelRef);await expect(page.locator('#thinking-select')).toContainText('High');await closeResponseSettings(page);
+  await expect.poll(()=>ref).toBe(alternative.modelRef);
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('High');
+  await closeResponseSettings(page);
   await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft survives default revocation');
   assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);assert.equal(thinking,'high');
 });
@@ -538,7 +549,12 @@ test('multi-provider empty catalog preserves draft and saved Thinking through di
   await expect(page.locator('#response-settings-status')).toContainText('No enabled models');await expect(page.locator('#response-settings-status')).not.toContainText('Models are unconfirmed');await expect(button(page,'send-message')).toBeDisabled();
   const selection=await api(page,"return adapter.modelSelection('work-1','session-1');");assert.equal(selection.ref,alternative.modelRef);assert.equal(selection.thinking,'high');
   await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('preserved across all models disabled');await expect(page.locator('#messages')).toContainText('original prompt');
-  enabled=true;await api(page,"await adapter.loadModels('work-1');");await expect(button(page,'send-message')).toBeEnabled();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toContainText('High');await closeResponseSettings(page);
+  enabled=true;
+  await api(page,"await adapter.loadModels('work-1');");
+  await expect(button(page,'send-message')).toBeEnabled();
+  await openResponseSettings(page);
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('High');
+  await closeResponseSettings(page);
   readFailure=true;await api(page,"await adapter.loadModels('work-1').catch(()=>{});");await openResponseSettings(page);await expect(page.locator('#response-settings-status')).toContainText('Models are unconfirmed');await closeResponseSettings(page);
   assert.equal(chatWrites(requests).length,0);await expect(page.locator('#composer')).toHaveValue('preserved across all models disabled');
 });
@@ -555,7 +571,8 @@ test('multi-provider Chat explains capability and SDK recovery without offering 
   });
   await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft with compatibility hints');await openResponseSettings(page,'model');
   await expect(page.locator('#response-settings-status')).toContainText('Provider / Custom: Capabilities unconfirmed');await expect(page.locator('#response-settings-status')).toContainText('AI models');await expect(page.locator('#response-settings-status')).toContainText('Agent image, then Apply');
-  await expect(page.locator('[data-option-value="model-custom-00000001"]')).toHaveCount(0);await expect(page.locator('#thinking-select')).toContainText('High');
+  await expect(page.locator('[data-option-value="model-custom-00000001"]')).toHaveCount(0);
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('High');
   await closeResponseSettings(page);await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft with compatibility hints');assert.equal(chatWrites(requests).length,0);
 });
 
@@ -592,7 +609,8 @@ test('UX composer serializes complete pairs, retains latest revision, and defaul
  });
  await button(page,'tab-Chat').click();await expectThinkingEditable(page);await page.locator('#composer').fill('draft survives');await expect(button(page,'send-message')).toBeEnabled();
  await page.locator('#composer').fill('draft survives');await chooseThinking(page,'low',true);await chooseThinking(page,'high',true);
- await expect(page.locator('#modal #thinking-select')).toContainText('High');await expect(page.locator('#modal .options-status')).toContainText('Saving');
+ await expect(page.locator('#thinking-settings-trigger')).toContainText('High');
+ await expect(page.locator('#modal .options-status')).toContainText('Saving');
  await closeResponseSettings(page);await expect(button(page,'send-message')).toBeDisabled();assert.equal(pairs.length,1);release();await expect(button(page,'send-message')).toBeEnabled();
  assert.deepEqual(pairs,[{modelRef:null,thinkingLevel:'low'},{modelRef:null,thinkingLevel:'high'}]);assert.equal(max,1);await expect(page.locator('#composer')).toHaveValue('draft survives');assert.equal(await button(page,'save-model').count(),0);
 });
@@ -626,7 +644,16 @@ test('UX web commands open controls without a Run, reject arguments and allow li
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};if(r.path.endsWith('/commands'))return{json:{contractVersion:1,commands:[],checkedAt:new Date().toISOString()}};
   if(r.path.endsWith('/runs') && r.method==='POST')return{json:{run:{runId:'run-literal',sessionId:'session-1',state:1}}};if(r.path.endsWith('/events'))return{abort:true};
  });
- await button(page,'tab-Chat').click();await page.locator('#composer').fill('/model');await expect(button(page,'send-message')).toBeEnabled();await page.locator('#composer').press('Escape');await button(page,'send-message').click();await expect(page.getByRole('heading',{name:'Response settings',exact:true})).toBeVisible();assert.equal(requests.filter(r=>r.method==='POST').length,0);await expect(page.locator('#composer')).toHaveValue('/model');await page.keyboard.press('Escape');await expect(page.locator('#composer')).toBeFocused();
+ await button(page,'tab-Chat').click();
+ await page.locator('#composer').fill('/model');
+ await expect(button(page,'send-message')).toBeEnabled();
+ await page.locator('#composer').press('Escape');
+ await button(page,'send-message').click();
+ await expect(page.locator('#modal')).toHaveAccessibleName('Model');
+ assert.equal(requests.filter(r=>r.method==='POST').length,0);
+ await expect(page.locator('#composer')).toHaveValue('/model');
+ await page.keyboard.press('Escape');
+ await expect(page.locator('#composer')).toBeFocused();
  await page.locator('#composer').fill('/new extra');await button(page,'send-message').click();await expect(page.locator('#composer')).toHaveValue('/new extra');assert.equal(requests.filter(r=>r.method==='POST').length,0);
  await page.locator('#composer').fill('/arbitrary extension');await button(page,'toggle-slash-mode').click();await button(page,'send-message').click();const body=JSON.parse(requests.find(r=>r.path.endsWith('/runs') && r.method==='POST')!.body);assert.equal(body.inputMode,'text');assert.equal(body.prompt,'/arbitrary extension');
 });
@@ -817,7 +844,8 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
   }
   await expect(page.locator('.agent-header [data-action=service-fullscreen]')).toHaveCount(0);
   await openResponseSettings(page,'thinking');await page.keyboard.press('Escape');
-  await expect(page.locator('#response-settings-trigger')).toBeFocused();await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
   assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
   await page.locator('#composer').fill('/mo');await expect(page.locator('.command-palette')).toBeVisible();await page.locator('#composer').press('Escape');
   await expect(page.locator('.command-palette')).toHaveCount(0);await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
@@ -913,7 +941,7 @@ test('UX revision composer geometry aligns all controls and long model names rem
   await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',label+' (one) · Work default · Thinking Off');
   await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');
   await expect(page.locator('#modal [role=option]')).toHaveText(label+' (one)Use Work default');
-  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label+' (one)Work default');
+  await expect(page.locator('#response-settings-trigger')).toContainText(label+' (one)');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   assert.ok(await page.locator('#modal [role=option]').evaluate(node=>node.scrollWidth<=node.clientWidth));
   await page.keyboard.press('Escape');await expect(button(page,'send-message')).toBeVisible();
@@ -943,7 +971,9 @@ test('UX revision slash Thinking opens the actual SDK choices and consumes only 
   await page.keyboard.press('End');await expect(page.locator('#modal [data-option-value=max]')).toBeFocused();
   await page.locator('#modal [data-option-value=max]').evaluate(node=>{node.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true}));});
   assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
-  await page.keyboard.press('Enter');await expect(page.locator('#modal .options-status')).toContainText('Saving');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('.composer-wrap > .options-status')).toContainText('Saving');
   await expect(page.locator('#composer')).toHaveValue('/thinking');release();await expect(page.locator('#composer')).toHaveValue('');
   await expect(page.locator('.response-thinking')).toHaveText('Max');
   assert.equal(await api(page,"return JSON.stringify(adapter.getWork('work-1').run);"),actual);
@@ -959,10 +989,19 @@ test('UX revision truly nonreasoning and unavailable capabilities show distinct 
     if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};
     if(r.path.endsWith('/chat-models'))return mode==='plain'?{json:{...chatModels(),defaultModel:{...chatModel,thinkingLevels:['off']}}}:{status:503,json:{code:'MODEL_NOT_SUPPORTED',message:'Thinking capabilities could not be confirmed'}};
   });
-  await button(page,'tab-Chat').click();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await expect(page.locator('#thinking-select')).toContainText('Off');await closeResponseSettings(page);
+  await button(page,'tab-Chat').click();
+  await openResponseSettings(page);
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('Off');
+  await closeResponseSettings(page);
   await expect(page.locator('.options-status')).toContainText('Thinking is not supported by this model');await page.locator('#composer').fill('A valid ordinary draft');await expect(button(page,'send-message')).toBeEnabled();
   mode='unknown';await api(page,"await adapter.loadModels('work-1').catch(()=>undefined);");await expect(page.locator('.options-status')).toContainText('could not be confirmed');
-  await expect(button(page,'send-message')).toBeDisabled();await openResponseSettings(page);await expect(page.locator('#thinking-select')).toBeDisabled();await closeResponseSettings(page);
+  await expect(button(page,'send-message')).toBeDisabled();
+  await openResponseSettings(page);
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
+  await closeResponseSettings(page);
   assert.equal(await page.locator('#modal [role=option]').count(),0);assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
 });
 
@@ -976,7 +1015,11 @@ test('UX revision lost slash settings preserve edited drafts and recover with on
   });
   await button(page,'tab-Chat').click();await expectThinkingEditable(page);
   await page.locator('#composer').fill('/thinking');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
-  await page.locator('#modal [data-option-value=high]').click();await expect(page.locator('#modal [data-action=check-session-model]')).toBeVisible();await closeResponseSettings(page);
+  await page.locator('#modal [data-option-value=high]').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#modal [data-action=check-session-model]')).toBeVisible();
+  await closeResponseSettings(page);
   await expect(page.locator('#composer')).toHaveValue('/thinking');await page.locator('#composer').fill('a revised draft made during recovery');
   const reads=requests.filter(r=>r.path.endsWith('/chat-options') && r.method==='GET').length;
   await button(page,'check-session-model').click();await expect(button(page,'send-message')).toBeEnabled();
@@ -1080,21 +1123,18 @@ test('Compact settings summary shares the confirmed pair across containers; insp
     await expect(page.locator('.composer small,.composer #model-select,.composer #thinking-select')).toHaveCount(0);
     await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Model: Default chat model (one)');
     await expect(page.locator('.composer-wrap > .options-status')).toBeEmpty();
-    await openResponseSettings(page);
-    await expect(page.locator('#model-select')).toBeFocused();
-    await expect(page.locator('.response-setting-group .response-setting-label')).toHaveText(['Model', 'Thinking']);
-    await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
-    await expect(page.locator('#modal .modal-footer')).toHaveText('Close');
-    await page.locator('#model-select').click();
+    await openResponseSettings(page, 'model');
+    await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
     await expect(page.locator('#modal [role=listbox]')).toHaveCount(1);
-    await page.locator('#thinking-select').click();
-    await expect(page.locator('#model-select')).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('#thinking-select')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#modal [role=listbox]')).toHaveAccessibleName('Thinking levels');
-    await page.locator('#thinking-select').click();
-    await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
-    await page.keyboard.press('Escape');
+    await expect(page.locator('#response-thinking-options')).toHaveCount(0);
+    await expect(page.locator('#modal .response-setting-group,#modal .modal-footer')).toHaveCount(0);
+    await closeResponseSettings(page);
     await expect(page.locator('#response-settings-trigger')).toBeFocused();
+    await openResponseSettings(page, 'thinking');
+    await expect(page.locator('#modal [role=listbox]')).toHaveAccessibleName('Thinking levels');
+    await expect(page.locator('#response-model-options')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
     assert.equal(chatWrites(requests).length, writes);
     await expect(page.locator('#composer')).toHaveValue('a draft kept while inspecting response settings');
     assert.deepEqual(await page.locator('#composer').evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd]), [2, 8]);
@@ -1118,15 +1158,15 @@ test('Compact settings confirmed repeats consume matching web commands without P
   await button(page, 'tab-Chat').click();
   await expect(page.locator('.response-thinking')).toHaveText('High');
   await chooseThinking(page, 'high', true);
-  await expect(page.locator('#thinking-select')).toBeFocused();
+  await expect(page.locator('#response-thinking-options [aria-selected=true]')).toBeFocused();
   await chooseModel(page, '', true);
-  await expect(page.locator('#model-select')).toBeFocused();
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   await closeResponseSettings(page);
   for (const kind of ['model', 'thinking']) {
     await page.locator('#composer').fill(`/${kind}`);
     await page.locator('#composer').press('Escape');
     await button(page, 'send-message').click();
-    await expect(page.locator(`#${kind}-select`)).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(`#response-${kind}-options`)).toBeVisible();
     await expect(page.locator('#modal [aria-selected=true]')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#composer')).toHaveValue('');
@@ -1155,7 +1195,7 @@ test('Compact settings saving survives close, reopen and same pending selection 
   await button(page, 'tab-Chat').click();
   await page.locator('#composer').fill('first draft');
   await chooseThinking(page, 'low', true);
-  await expect(page.locator('#thinking-select')).toBeFocused();
+  await expect(page.locator('#response-thinking-options [aria-selected=true]')).toBeFocused();
   await expect(page.locator('#modal .options-status')).toContainText('Saving');
   await expect(page.locator('.options-status[role=status]')).toHaveCount(1);
   await closeResponseSettings(page);
@@ -1237,23 +1277,26 @@ test('Compact settings unknown recovery reads only the original Session, includi
   await uiuxEvidence(page, '15-unconfirmed-closed');
   const reads = requests.filter(r => r.method === 'GET' && r.path.endsWith('/chat-options')).length;
   await openResponseSettings(page);
-  for (const kind of ['model', 'thinking']) await expect(page.locator(`#${kind}-select`)).toBeDisabled();
+  for (const kind of ['model', 'thinking'] as const) {
+    await openResponseSettings(page, kind);
+    await expect(page.locator('#modal [role=option]')).toHaveCount(0);
+  }
   await expect(page.locator('#modal [data-action=check-session-model]')).toBeFocused();
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
+  await expect(page.locator('#modal [role=option]')).toHaveCount(0);
   await expect(page.locator('.options-status[role=status]')).toHaveCount(1);
   assert.equal(requests.filter(r => r.method === 'GET' && r.path.endsWith('/chat-options')).length, reads);
   failCheck = true;
   await page.locator('#modal [data-action=check-session-model]').click();
   await expect(page.locator('#modal .options-status')).toContainText('Unconfirmed');
-  await expect(page.locator('#model-select')).toBeDisabled();
-  await closeResponseSettings(page);
+  await expect(page.locator('#modal [role=option]:not([disabled])')).toHaveCount(0);
+  await expect(page.locator('#modal')).toContainText('Original settings cannot be read yet.');
   await expect(page.locator('#composer')).toHaveValue('keep this draft on unknown outcome');
-  await openResponseSettings(page);
   failCheck = false;
   await page.locator('#modal [data-action=check-session-model]').click();
-  await expect(page.locator('#thinking-select')).toContainText('Low');
-  await expect(page.locator('#model-select')).toBeEnabled();
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('Low');
+  await expect(page.locator('#response-thinking-options [role=option]').first()).toBeEnabled();
   await expect(page.locator('#modal .options-status')).toBeEmpty();
+  await expect(page.locator('#modal')).not.toContainText('Original settings cannot be read yet.');
   await closeResponseSettings(page);
   await expect(button(page, 'send-message')).toBeEnabled();
   await expect(page.locator('.response-thinking')).toHaveText('Low');
@@ -1287,10 +1330,11 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await openResponseSettings(page);
   await expect(page.locator('#response-settings-trigger .pending-dots')).toHaveCount(0);
   await expect(page.locator('#modal .options-status [aria-busy="true"] .pending-dots')).toHaveCount(1);
-  await expect(page.locator('#model-select')).toBeDisabled();
-  await expect(page.locator('#thinking-select')).toBeDisabled();
+  await expect(page.locator('#modal [role=option]:not([disabled])')).toHaveCount(0);
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
   await expect(page.locator('#modal [role=option]')).toHaveCount(0);
-  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+  await expect(page.locator('#modal')).toBeFocused();
   await closeResponseSettings(page);
   await page.locator('#composer').fill('typing continues while models are read');
   release();
@@ -1304,7 +1348,8 @@ test('Compact settings first catalogue loading and failure remain inspectable wi
   await expect(page.locator('#modal [role=option]')).toHaveCount(0);
   available = true;
   await page.locator('#modal [data-action=load-models]').click();
-  await expect(page.locator('#thinking-select')).toBeEnabled();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]').first()).toBeEnabled();
   await expect(page.locator('#modal .options-status')).toBeEmpty();
   await closeResponseSettings(page);
   await expect(page.locator('#composer')).toHaveValue('typing continues while models are read');
@@ -1331,12 +1376,13 @@ test('Compact settings unsupported Thinking commands distinguish Off, missing co
       await page.locator('#composer').fill('/thinking');
       await page.locator('#composer').press('Escape');
       await button(page, 'send-message').click();
-      await expect(page.getByRole('heading', { name: 'Response settings' })).toBeVisible();
-      await expect(page.locator('#thinking-select')).toBeDisabled();
-      await expect(page.locator('#thinking-select')).toContainText(value);
+      await expect(page.locator('#modal')).toHaveAccessibleName('Thinking');
+      await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
+      await expect(page.locator('#thinking-settings-trigger')).toContainText(value);
       await expect(page.locator('#modal .options-status')).toContainText(reason);
       await expect(page.locator('#modal [role=option]')).toHaveCount(0);
-      await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+      await expect(page.locator('#modal')).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(page.locator('#composer')).toBeFocused();
       await expect(page.locator('#composer')).toHaveValue('/thinking');
@@ -1371,9 +1417,10 @@ test('Compact settings model transition shows the real fallback Thinking and sav
   await api(page, "adapter.getWork('work-1').run={id:'already-accepted',sessionId:'session-1',status:'running',actualModel:{label:'Run model',model:'one'},thinkingLevel:'high'};await adapter.loadModels('work-1');");
   const run = await api(page, "return JSON.stringify(adapter.getWork('work-1').run);");
   await chooseModel(page, plain.modelRef, true);
-  await expect(page.locator('#model-select')).toContainText('Plain model');
-  await expect(page.locator('#thinking-select')).toContainText('Off');
-  await expect(page.locator('#thinking-select')).toBeDisabled();
+  await expect(page.locator('#response-settings-trigger')).toContainText('Plain model');
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('Off');
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
   await expect(page.locator('#modal .options-status')).toContainText('Saving');
   await expect(page.locator('#modal .options-status')).toContainText('Thinking adjusted');
   assert.deepEqual(JSON.parse(requests.find(r => r.method === 'PATCH')!.body), { modelRef: 'model-plain', thinkingLevel: 'off' });
@@ -1497,7 +1544,7 @@ test('Compact settings Core and account changes discard an open panel and ignore
   }
 });
 
-test('Compact settings keyboard keeps list navigation, IME, Tab, focus return and response updates in the same dialog', async t => {
+test('Compact settings independent pickers keep list navigation, IME, Tab, focus return and response updates', async t => {
   let saved = 'off', levels = ['off', 'low', 'high'];
   const { page, requests } = await fixture(t, r => {
     if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
@@ -1510,18 +1557,17 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.locator('#composer').evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(3, 9));
   await page.locator('#response-settings-trigger').focus();
   await page.keyboard.press('Enter');
-  await expect(page.locator('#model-select')).toBeFocused();
-  await expect(page.locator('#model-select')).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   await page.keyboard.press('ArrowDown');
-  await expect(page.locator('#model-select')).toBeFocused();
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   await page.keyboard.press('Space');
-  await expect(page.locator('#modal [aria-selected=true]')).toBeFocused();
-  await page.keyboard.press('Space');
-  await expect(page.locator('#model-select')).toBeFocused();
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#response-settings-trigger')).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.locator('#thinking-select')).toBeFocused();
-  const outline = await page.locator('#thinking-select').evaluate(node => { const css = getComputedStyle(node); return { style: css.outlineStyle, width: css.outlineWidth }; });
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  const outline = await page.locator('#thinking-settings-trigger').evaluate(node => { const css = getComputedStyle(node);
+  return { style: css.outlineStyle, width: css.outlineWidth };
+  });
   assert.equal(outline.style, 'solid'); assert.equal(outline.width, '2px');
   await uiuxEvidence(page, '17-keyboard-focus');
   await page.keyboard.press('Enter');
@@ -1542,19 +1588,21 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await page.keyboard.press('ArrowUp');
   await expect(page.locator('#modal [data-option-value=low]')).toBeFocused();
   await page.keyboard.press('Space');
-  await expect(page.locator('#thinking-select')).toBeFocused();
-  await expect(page.locator('#thinking-select')).toContainText('Low');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('Low');
   await expect.poll(() => api(page, "return adapter.modelSelection('work-1','session-1').phase;")).toBe('clean');
-  await expect(page.locator('#thinking-select')).toBeFocused();
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#modal')).toHaveAttribute('aria-modal', 'false');
+  await page.keyboard.press('End');
+  await expect(page.locator('#modal [role=option]').last()).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(page.locator('#modal')).toHaveAttribute('aria-modal','false');
-  assert.equal(await page.locator('#modal').evaluate(node=>node.contains(document.activeElement)),false,'Popover must not trap Tab at its footer');
-  await page.keyboard.press('Shift+Tab');
-  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+  assert.equal(await page.evaluate(() => !!document.activeElement?.closest('#modal')), false, 'Popover must not trap Tab after its last option');
+  await closeResponseSettings(page);
+  await openResponseSettings(page, 'thinking');
   await page.keyboard.press('Escape');
-  await expect(page.locator('#response-settings-trigger')).toBeFocused();
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
   await expect(page.locator('#app')).toHaveAttribute('data-layout', 'chat-only');
   assert.deepEqual(await page.locator('#composer').evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd]), [3, 9]);
   await page.locator('#composer').fill('/thinking');
@@ -1566,16 +1614,17 @@ test('Compact settings keyboard keeps list navigation, IME, Tab, focus return an
   await expect(page.locator('#composer')).toHaveValue('/thinking');
   assert.deepEqual(await page.locator('#composer').evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd]), [9, 9]);
   await page.locator('#composer').fill('draft remains after capability change');
-  await openResponseSettings(page);
-  await page.locator('#thinking-select').focus();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [aria-selected=true]')).toBeFocused();
   await api(page, "await adapter.loadModels('work-1');");
-  await expect(page.locator('#thinking-select')).toBeFocused();
+  await expect(page.locator('#response-thinking-options [aria-selected=true]')).toBeFocused();
   levels = ['off']; saved = 'off';
   await api(page, "await adapter.loadModels('work-1');");
-  await expect(page.locator('#thinking-select')).toBeDisabled();
-  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [role=option]:not([disabled])')).toHaveCount(0);
+  await expect(page.locator('#modal')).toBeFocused();
   await api(page, "await adapter.loadModels('work-1');");
-  await expect(page.locator('#modal .modal-footer .button')).toBeFocused();
+  await expect(page.locator('#modal')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('#composer')).toHaveValue('draft remains after capability change');
   assert.equal(requests.filter(r => r.method === 'PATCH').length, 1);
@@ -1600,7 +1649,8 @@ for (const destination of ['composer', 'close', 'replace', 'session', 'work', 'i
   });
   await button(page, 'focus-chat').click();
   await page.locator('#composer').fill('draft kept across a capability read');
-  await openResponseSettings(page); await page.locator('#thinking-select').focus();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-thinking-options [aria-selected=true]')).toBeFocused();
   delayed = true;
   const request = page.waitForRequest(r => new URL(r.url()).pathname.endsWith('/works/work-1/chat-models'));
   const pending = api(page, "try { await adapter.loadModels('work-1'); return ''; } catch (error) { return error.code; }");
@@ -1664,10 +1714,12 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   await button(page, 'focus-chat').click();
   await uiuxEvidence(page, '03-focus-chat');
   await openResponseSettings(page);
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
+  await expect(page.locator('#response-model-options')).toBeVisible();
+  assert.equal((await page.locator('#modal').boundingBox())?.width, 225);
   await uiuxEvidence(page, '04-response-settings');
-  await page.locator('#thinking-select').click();
+  await openResponseSettings(page, 'thinking');
   await expect(page.locator('#modal [role=listbox]')).toHaveAccessibleName('Thinking levels');
+  assert.equal((await page.locator('#modal').boundingBox())?.width, 180);
   await uiuxEvidence(page, '05-thinking-options');
   await closeResponseSettings(page);
   await page.setViewportSize({ width: 360, height: 800 });
@@ -1685,10 +1737,10 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await uiuxEvidence(page, '08-long-model-360');
   await openResponseSettings(page, 'model');
-  await expect(page.locator('#modal .response-setting-value').first()).toHaveText(label + ' (one)Work default');
+  await expect(page.locator('#response-settings-trigger')).toContainText(label + ' (one)');
   await expect(page.locator('#modal [role=option]').first()).toHaveText(label + ' (one)Use Work default');
   assert.ok(await page.locator('#modal [role=option]').first().evaluate(node => node.scrollHeight <= node.clientHeight));
-  assert.ok(await page.locator('#modal [role=listbox]').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 240));
+  assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight < innerHeight));
   await uiuxEvidence(page, '09-long-model-panel-360');
   // Failure-only geometry evidence: no model labels, draft text, URLs or credentials.
   const lowHeightState = () => page.evaluate(() => {
@@ -1701,7 +1753,7 @@ test('Compact settings UIUX evidence covers content width, container roles, long
       anchor: element(document.querySelector('#response-settings-trigger')),
       active: element(document.activeElement),
       modal: element(document.querySelector('#modal')),
-      close: element(document.querySelector('#modal .modal-head [data-action=close-modal]')),
+      lastOption: element(document.querySelector('#modal [role=option]:last-child')),
     };
   });
   const beforeLowHeight = await lowHeightState();
@@ -1709,8 +1761,8 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   const afterLowHeight = await lowHeightState();
   try {
     await expect(page.locator('#modal.chat-response-settings')).toBeVisible();
-    await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toHaveAccessibleName('Close dialog');
-    await expect(page.locator('#modal .modal-head [data-action=close-modal]')).toBeInViewport();
+    await expect(page.locator('#modal')).toHaveAccessibleName('Model');
+    await expect(page.locator('#modal [role=option]').first()).toBeInViewport();
     const bounds = await page.locator('#modal').boundingBox();
     assert(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 300);
     assert.ok(await page.locator('#modal .modal-body').evaluate(node => node.scrollHeight > node.clientHeight));
@@ -1728,7 +1780,7 @@ test('Compact settings UIUX evidence covers content width, container roles, long
   }
 });
 
-test('Compact settings both fields adjust in one panel and serialize the latest complete pair using model supplied levels', async t => {
+test('Compact settings independent pickers serialize the latest complete pair using model supplied levels', async t => {
   let release!: () => void;
   const gate = new Promise<void>(done => release = done);
   t.after(async () => release());
@@ -1751,14 +1803,15 @@ test('Compact settings both fields adjust in one panel and serialize the latest 
   await expect(page.locator('.response-thinking')).toHaveText('High');
   await page.locator('#composer').fill('draft while editing both response settings');
   await chooseModel(page, other.modelRef, true);
-  await expect(page.locator('#model-select')).toBeFocused();
-  await expect(page.locator('#thinking-select')).toContainText('Balanced');
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
+  await expect(page.locator('#thinking-settings-trigger')).toContainText('Balanced');
   await openResponseSettings(page, 'thinking');
   await expect(page.locator('#modal [role=option]')).toHaveText(['Off', 'Balanced', 'Deep']);
   await page.locator('#modal [data-option-value=deep]').click();
-  await expect(page.locator('#thinking-select')).toBeFocused();
-  await expect(page.locator('#modal [role=listbox]')).toHaveCount(0);
-  await expect(page.locator('.response-setting-group .response-setting-label')).toHaveText(['Model', 'Thinking']);
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  await openResponseSettings(page, 'thinking');
+  await expect(page.locator('#response-model-options')).toHaveCount(0);
   await expect(page.locator('#modal .options-status')).toContainText('Saving');
   assert.deepEqual(pairs, [{ modelRef: other.modelRef, thinkingLevel: 'balanced' }]);
   await closeResponseSettings(page);
@@ -1830,7 +1883,13 @@ test('unknown model stays selectable and requires explicit Normal before replaci
  });
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('draft kept through explicit ordinary confirmation');
  await chooseModel(page,unknown.modelRef,true);assert.equal(chatWrites(requests).length,0);assert.equal(thinking,'high');await expect(page.locator('#response-settings-status')).toContainText('Choose Normal');await expect(button(page,'send-message')).toBeDisabled();
- await page.locator('#thinking-select').click();await page.locator('[data-option-value="normal"]').click();await expect.poll(()=>ref).toBe(unknown.modelRef);assert.equal(thinking,null);await closeResponseSettings(page);await expect(button(page,'send-message')).toBeEnabled();await expect(page.locator('#composer')).toHaveValue('draft kept through explicit ordinary confirmation');
+ await openResponseSettings(page, 'thinking');
+ await page.locator('[data-option-value="normal"]').click();
+ await expect.poll(()=>ref).toBe(unknown.modelRef);
+ assert.equal(thinking,null);
+ await closeResponseSettings(page);
+ await expect(button(page,'send-message')).toBeEnabled();
+ await expect(page.locator('#composer')).toHaveValue('draft kept through explicit ordinary confirmation');
  const writes=requests.filter(r=>r.method==='PATCH');assert.equal(writes.length,1);assert.deepEqual(JSON.parse(writes[0]!.body),{modelRef:unknown.modelRef,thinkingLevel:null});
  await api(page,"await adapter.loadModels('work-1');");assert.equal((await api(page,"return adapter.modelSelection('work-1','session-1');")).thinking,null);
 });
@@ -1874,7 +1933,12 @@ test('late known default capabilities initialize only the untouched new-session 
   if(r.path.endsWith('/chat-models')){await gate;return{json:{contractVersion:1,models:[],defaultModel:model,checkedAt:new Date().toISOString(),availability:'available'}};}
  }, false, false);
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('new session draft');await api(page,"adapter.modelSelection('work-1','');");release();
- await expect.poll(async()=>api(page,"return adapter.modelSelection('work-1','').thinking;")).toBe('minimal');await openResponseSettings(page);await expect(page.locator('#thinking-select')).toContainText('Minimal');await closeResponseSettings(page);await expect(page.locator('#composer')).toHaveValue('new session draft');assert.equal(chatWrites(requests).length,0);
+ await expect.poll(async()=>api(page,"return adapter.modelSelection('work-1','').thinking;")).toBe('minimal');
+ await openResponseSettings(page);
+ await expect(page.locator('#thinking-settings-trigger')).toContainText('Minimal');
+ await closeResponseSettings(page);
+ await expect(page.locator('#composer')).toHaveValue('new session draft');
+ assert.equal(chatWrites(requests).length,0);
 });
 
 test('explicit creation confirms an untouched SDK suggestion and lost acceptance retains it without replay',async t=>{
@@ -1909,7 +1973,13 @@ test('Work default shows the captured ID after directory rename without changing
  await button(page,'tab-Chat').click();await expect(page.locator('#response-settings-trigger')).toContainText(oldId);
  const before=await api(page,"return {ref:adapter.modelSelection('work-1','session-1').ref,thinking:adapter.modelSelection('work-1','session-1').thinking,messages:adapter.getWork('work-1').sessions[0].messages};");
  renamed=true;await api(page,"await adapter.loadModels('work-1');");await expect(page.locator('#response-settings-trigger')).toContainText('Friendly new ('+oldId+')');await expect(page.locator('#response-settings-trigger')).toHaveAttribute('title',new RegExp(oldId));
- await page.setViewportSize({width:360,height:800});await openResponseSettings(page,'model');await expect(page.locator('#model-select')).toContainText(oldId);await expect(page.locator('#modal [data-option-value=""]')).toContainText(oldId);await expect(page.locator('#modal [data-option-value="model-new-head-000001"]')).toContainText(newId);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await closeResponseSettings(page);
+ await page.setViewportSize({width:360,height:800});
+ await openResponseSettings(page,'model');
+ await expect(page.locator('#response-settings-trigger')).toContainText(oldId);
+ await expect(page.locator('#modal [data-option-value=""]')).toContainText(oldId);
+ await expect(page.locator('#modal [data-option-value="model-new-head-000001"]')).toContainText(newId);
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+ await closeResponseSettings(page);
  const after=await api(page,"return {ref:adapter.modelSelection('work-1','session-1').ref,thinking:adapter.modelSelection('work-1','session-1').thinking,messages:adapter.getWork('work-1').sessions[0].messages};");assert.deepEqual(after,before);assert.equal(chatWrites(requests).length,0);
 });
 
@@ -4189,7 +4259,8 @@ for (const level of ['high','off'] as const) test(`saved compatible ${level} sur
  const state=await api(page,"return adapter.modelSelection('work-1','session-1');");
  assert.equal(state.profile,'messages-adaptive-v1');assert.equal(state.thinking,level);assert.equal(state.phase,'clean');
  assert.equal(requests.filter(r=>r.method==='PATCH').length,1);
- await expect(page.locator('#thinking-select')).toBeEnabled();
+ await openResponseSettings(page, 'thinking');
+ await expect(page.locator('#response-thinking-options [role=option]').first()).toBeEnabled();
  await chooseThinking(page,'off',true);
  await expect.poll(()=>requests.filter(r=>r.method==='PATCH').length).toBe(2);
  const changed=JSON.parse(requests.filter(r=>r.method==='PATCH').at(-1)!.body);
@@ -4355,13 +4426,13 @@ test('Requests menu origin restores Service trigger and late list read does not 
   await button(page, 'close-modal').click();
   await expect(button(page, 'service-menu')).toBeFocused();
   await openResponseSettings(page);
-  await page.locator('#model-select').focus();
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/agent-requests'));
   release();
   await (await response).json();
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await expect(page.locator('#modal')).toHaveClass(/chat-response-settings/);
-  await expect(page.locator('#model-select')).toBeFocused();
+  await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   const reads = requests.filter(r => r.path.endsWith('/agent-requests'));
   assert.equal(reads.length, 2);
   for (const limit of ['1', '25']) {
