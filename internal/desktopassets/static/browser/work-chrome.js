@@ -39,4 +39,18 @@ export function workHeaderModel(input) {
 export function serviceToolbarModel(input) {
     return { ...input, status: input.enabled ? input.observed : 'Disabled', menuScope: 'service' };
 }
+/** Header display only. Original controls, recovery entries and locks remain owned elsewhere. */
+export function workHeaderStatusPresentation(input) {
+    const { control, operation } = input;
+    if (control) {
+        const confirmedReceipt = control.phase === 'accepted' && !control.error
+            && operation?.id === control.operationId && operation?.workId === input.workId
+            && operation?.checkedWorkId === input.workId
+            && ['succeeded', 'superseded'].includes(operation.state)
+            && !operation.observationError && !operation.error && operation.localRecordSaved !== false;
+        if (!confirmedReceipt)
+            return 'control';
+    }
+    return input.synchronizationPending ? 'reading' : 'observed';
+}
 //# sourceMappingURL=work-chrome.js.map

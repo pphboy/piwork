@@ -292,9 +292,14 @@ test('message Test closed or navigated away cannot replace a discard dialog or a
     const state=await modelsFixture(page,async r=>{if(r.path==='admin/model-tests'){const current=++count,body=JSON.parse(r.body);await(current===1?old.promise:fresh.promise);return{json:{success:true,api:'openai-responses',model:body.model,testMessage:'Reply with OK.',replyText:body.model+' actual reply',replyTruncated:false,category:'success',checkedAt:new Date().toISOString(),durationMs:1}};}});
     const fill=async model=>{await page.getByLabel('Display name (optional)',{exact:true}).fill(model+' provider');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-key');await page.getByLabel('Model ID',{exact:true}).fill(model);};
     await fill('old-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>count).toBe(1);await closeModelTest(page);
-    await page.getByRole('link',{name:'User access',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes?');
+    await page.getByRole('link',{name:'Users',exact:true}).click();
+    await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes?');
     // The pending request remains alive while a different modal owns focus.
-    await page.getByRole('button',{name:'Discard changes',exact:true}).click();await page.getByRole('link',{name:'AI models',exact:true}).click();await fill('fresh-model');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>count).toBe(2);
+    await page.getByRole('button',{name:'Discard changes',exact:true}).click();
+    await page.getByRole('link',{name:'Models',exact:true}).click();
+    await fill('fresh-model');
+    await page.getByRole('button',{name:'Test',exact:true}).click();
+    await expect.poll(()=>count).toBe(2);
     old.resolve();await page.waitForTimeout(50);await expect(page.getByRole('dialog')).toContainText('fresh-model');await expect(page.getByRole('dialog')).toContainText('Sending the test message');await expect(page.getByRole('dialog')).not.toContainText('old-model actual reply');
     fresh.resolve();await expect(page.locator('[data-model-test-reply]')).toHaveText('fresh-model actual reply');expect(state.writes).toHaveLength(0);
   }finally{old.resolve();fresh.resolve();}
@@ -305,7 +310,11 @@ test('message Test completion leaves an unrelated discard dialog intact',async({
   try{
     await modelsFixture(page,async r=>{if(r.path==='admin/model-tests'){count++;await gate.promise;return{json:{success:true,api:'openai-responses',model:'one',testMessage:'Reply with OK.',replyText:'Actual reply',replyTruncated:false,category:'success',checkedAt:new Date().toISOString(),durationMs:1}};}});
     await page.getByLabel('Display name (optional)',{exact:true}).fill('Draft provider');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid');await page.getByLabel('API Key',{exact:true}).fill('synthetic');await page.getByLabel('Model ID',{exact:true}).fill('one');await page.getByRole('button',{name:'Test',exact:true}).click();await expect.poll(()=>count).toBe(1);await closeModelTest(page);
-    await page.getByRole('link',{name:'User access',exact:true}).click();gate.resolve();await expect(page.locator('#model-test-result')).toContainText('HTTP Test passed');await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes?');await expect(page.locator('[data-model-test-dialog]')).toHaveCount(0);
+    await page.getByRole('link',{name:'Users',exact:true}).click();
+    gate.resolve();
+    await expect(page.locator('#model-test-result')).toContainText('HTTP Test passed');
+    await expect(page.getByRole('dialog')).toContainText('Discard unsaved changes?');
+    await expect(page.locator('[data-model-test-dialog]')).toHaveCount(0);
     await page.getByRole('button',{name:'Cancel',exact:true}).click();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue('Draft provider');await expect(page.locator('dialog')).toHaveCount(0);
   }finally{gate.resolve();}
 });
@@ -334,8 +343,16 @@ test('AI provider late save cannot erase a re-entered Key or release the new vie
   try{
     await modelsFixture(page,async r=>{if(r.path==='admin/models'&&r.method==='POST'){writes++;if(writes===1)await old.promise;else await fresh.promise;}});
     await page.getByLabel('Display name (optional)',{exact:true}).fill('Old model');await page.getByLabel('Model ID',{exact:true}).fill('old-id');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-old-view');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect.poll(()=>writes).toBe(1);
-    await page.getByRole('link',{name:'User access',exact:true}).click();await page.getByRole('button',{name:'Discard changes',exact:true}).click();await expect(page).toHaveURL(base+'/users');
-    await page.getByRole('link',{name:'AI models',exact:true}).click();await page.getByLabel('Display name (optional)',{exact:true}).fill('Fresh provider');await page.getByLabel('Model ID',{exact:true}).fill('fresh-id');await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-fresh-view');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect.poll(()=>writes).toBe(2);
+    await page.getByRole('link',{name:'Users',exact:true}).click();
+    await page.getByRole('button',{name:'Discard changes',exact:true}).click();
+    await expect(page).toHaveURL(base+'/users');
+    await page.getByRole('link',{name:'Models',exact:true}).click();
+    await page.getByLabel('Display name (optional)',{exact:true}).fill('Fresh provider');
+    await page.getByLabel('Model ID',{exact:true}).fill('fresh-id');
+    await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid/v1');
+    await page.getByLabel('API Key',{exact:true}).fill('synthetic-fresh-view');
+    await page.getByRole('button',{name:'Add model',exact:true}).click();
+    await expect.poll(()=>writes).toBe(2);
     old.resolve();await page.waitForTimeout(100);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-fresh-view');await expect(page.getByRole('button',{name:'Add model',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Add model',exact:true}).locator('.pending-dots')).toHaveCount(1);expect(writes).toBe(2);
     fresh.resolve();await expect(page.getByRole('link',{name:'Fresh provider',exact:true})).toBeVisible();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
   }finally{old.resolve();fresh.resolve();}
@@ -568,7 +585,7 @@ for(const source of ['Skill directory','Package directory','Package ZIP','AGENTS
     }else{
       await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Checking selected files');
       if(source!=='AGENTS.md'){await expect(page.locator('#dialog-submit')).toBeDisabled();await page.locator('[data-action="close-dialog"]').first().click();}
-      else {await page.locator('[data-action="menu"]').click();await page.locator('a[data-nav][href="/users"]').click();}
+      else {await page.locator('a[data-nav][href="/users"]').click();}
       await page.evaluate(()=>window.releaseSelected());
       await expect(page.locator('dialog')).toHaveCount(0);await expect(page.locator('body')).not.toContainText('old selected draft');
     }
@@ -758,13 +775,12 @@ test('first Users read failure stays unavailable through bounded retries and loc
   expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
 });
 
-test('narrow expanded navigation and account language remain clickable above an independent sticky read notice', async ({ page }) => {
+test('narrow direct navigation and account language remain clickable above an independent sticky read notice', async ({ page }) => {
   await page.setViewportSize({ width: 455, height: 772 });
   await fixture(page, request => request.path === 'admin/models'
     ? { status: 503, json: { code: 'CORE_UNAVAILABLE' } } : undefined, '/models');
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
-  await page.locator('[data-action="menu"]').click();
-  await page.locator('.nav.open a[href="/users"]').click();
+  await page.locator('.nav a[href="/users"]').click();
   await expect(page).toHaveURL(/\/users$/);
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
   await page.locator('#account-trigger').click();
@@ -783,13 +799,11 @@ test('confirmed Models re-entry clears only its older read notice while independ
     }
   }, '/models');
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
-  await page.locator('[data-action="menu"]').click();
-  await page.locator('.nav.open a[href="/users"]').click();
+  await page.locator('.nav a[href="/users"]').click();
   await expect(page.locator('main').getByRole('heading', { name: 'Data unavailable', exact: true })).toBeVisible();
   await expect(page.locator('.notice-host .notice')).toHaveCount(2);
   modelsFail = false;
-  await page.locator('[data-action="menu"]').click();
-  await page.locator('.nav.open a[href="/models"]').click();
+  await page.locator('.nav a[href="/models"]').click();
   await expect(page.locator('main')).toContainText('Test model');
   await expect(page.locator('.notice-host .notice')).toHaveCount(1);
   await expect(page.locator('.notice-host')).toContainText('Users ·');

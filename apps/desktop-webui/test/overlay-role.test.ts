@@ -9,7 +9,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-const {overlayRole,anchoredOverlay,overlayAnchorBounds,overlayPlacement,menuDestination}=await import(new URL('../browser/overlay-role.js',import.meta.url).href);
+const {overlayRole,anchoredOverlay,overlayAnchorBounds,overlayPlacement,menuDestination,overlayForAction}=await import(new URL('../browser/overlay-role.js',import.meta.url).href);
+
+test('independent Model and Thinking toolbar entries share the existing response overlay role', () => {
+  assert.equal(overlayForAction('open-chat-settings'), 'chat-response-settings');
+  assert.equal(overlayForAction('open-thinking-settings'), 'chat-response-settings');
+  assert.equal(overlayForAction('send-message'), 'send-message');
+});
 const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 const extract=(name:string)=>{const value=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];};
 test('commands, value choices and sustained Service tools have explicit bounded roles',()=>{
@@ -198,9 +204,13 @@ test('first reads render one labelled skeleton shape, never dots plus text plus 
  c.chatSettings=()=>({name:'Loading models…',thinking:'Loading…',state:{ref:null},initialLoading:true,status:'Loading models…'});
  // The trigger keeps one glyph-sized box while the catalog is read; the name is
  // in the accessible label instead of a text node that would change its width.
- assert.match(c.modelComposer(work,''),/aria-label="Loading response settings" aria-busy="true"/);
+ assert.match(c.modelComposer(work,''),/aria-label="Model: Loading response settings" aria-busy="true"/);
+ assert.match(c.modelComposer(work,''),/aria-label="Thinking: Loading response settings" aria-busy="true"/);
  assert.equal(c.modelComposer(work,'').replace(/<[^>]*>/g,''),'');assert.ok(c.modelComposer(work,'').includes(pendingDots()));assert.match(c.modelComposer(work,''),/pending-icon-slot/);assert.doesNotMatch(c.modelComposer(work,''),/read-placeholder-field/);assert.equal(c.modelFeedback(work,''),'');
- c.view.modal='chat-response-settings';assert.doesNotMatch(c.modelComposer(work,''),/pending-dots/);assert.match(c.modelComposer(work,''),/aria-label="Loading response settings"/);c.view.modal='';
+ c.view.modal='chat-response-settings';
+ assert.doesNotMatch(c.modelComposer(work,''),/pending-dots/);
+ assert.match(c.modelComposer(work,''),/aria-label="Model: Loading response settings"/);
+ c.view.modal='';
  c.chatSettings=()=>({name:'Saved model',thinking:'Off',state:{ref:null},status:'Models unavailable',recovery:{label:'Retry models',action:'load-models'}});
  assert.match(c.modelComposer(work,''),/Saved model/);assert.match(c.modelFeedback(work,''),/Models unavailable/);assert.match(c.modelFeedback(work,''),/Retry models/);
 });

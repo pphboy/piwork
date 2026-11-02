@@ -45,5 +45,5 @@ export function menuDestination(key, index, count) {
         return (index - 1 + count) % count;
     return -1;
 }
-export function overlayForAction(action) { return action === 'open-chat-settings' ? 'chat-response-settings' : action; }
+export function overlayForAction(action) { return ['open-chat-settings', 'open-thinking-settings'].includes(action) ? 'chat-response-settings' : action; }
 //# sourceMappingURL=overlay-role.js.map

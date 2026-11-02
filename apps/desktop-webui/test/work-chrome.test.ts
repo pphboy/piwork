@@ -37,3 +37,40 @@ test('header and toolbar models do not modify input or share selection state', (
   assert.equal(serviceToolbarModel(toolbar).status, 'Disabled');
   assert.equal(toolbar.observed, 'Ready');
 });
+
+const { workHeaderStatusPresentation } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
+const receipt = {
+  workId: 'work-a', control: { phase: 'accepted', operationId: 'original-operation' },
+  operation: { id: 'original-operation', workId: 'work-a', checkedWorkId: 'work-a', state: 'succeeded' },
+  synchronizationPending: false,
+};
+
+test('header hides only the confirmed ordinary receipt without mutating the original control', () => {
+  const input = structuredClone(receipt);
+  assert.equal(workHeaderStatusPresentation(input), 'observed');
+  assert.deepEqual(input, receipt);
+  assert.equal(workHeaderStatusPresentation({ ...receipt, synchronizationPending: true }), 'reading');
+  assert.equal(workHeaderStatusPresentation({ ...receipt, control: undefined }), 'observed');
+  assert.equal(workHeaderStatusPresentation({ ...receipt, control: undefined, synchronizationPending: true }), 'reading');
+  assert.equal(workHeaderStatusPresentation({ ...receipt, operation: { ...receipt.operation, state: 'superseded' } }), 'observed');
+});
+
+for (const [name, changes] of [
+  ['unknown submission', { control: { ...receipt.control, phase: 'unknown' } }],
+  ['pending submission', { control: { ...receipt.control, phase: 'pending' } }],
+  ['control error', { control: { ...receipt.control, error: 'original write error' } }],
+  ['operation read error', { operation: { ...receipt.operation, observationError: 'read failed' } }],
+  ['operation execution error', { operation: { ...receipt.operation, error: 'execution failed' } }],
+  ['unsaved record', { operation: { ...receipt.operation, localRecordSaved: false } }],
+  ['running operation', { operation: { ...receipt.operation, state: 'running' } }],
+  ['failed operation', { operation: { ...receipt.operation, state: 'failed' } }],
+  ['unknown operation', { operation: { ...receipt.operation, state: 'unknown' } }],
+  ['unverified original Work', { operation: { ...receipt.operation, checkedWorkId: undefined } }],
+  ['wrong Work', { operation: { ...receipt.operation, workId: 'another-work' } }],
+  ['newer operation after supersession', { operation: { ...receipt.operation, id: 'newer-operation', state: 'superseded' } }],
+] as const) {
+  test(`header retains original control for ${name}`, () => {
+    assert.equal(workHeaderStatusPresentation({ ...receipt, ...changes }), 'control');
+    assert.equal(workHeaderStatusPresentation({ ...receipt, ...changes, synchronizationPending: true }), 'control');
+  });
+}

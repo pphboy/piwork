@@ -35,4 +35,4 @@ export function menuDestination(key: string, index: number, count: number) {
   return -1;
 }
 
-export function overlayForAction(action: string) { return action==='open-chat-settings' ? 'chat-response-settings' : action; }
+export function overlayForAction(action: string) { return ['open-chat-settings', 'open-thinking-settings'].includes(action) ? 'chat-response-settings' : action; }

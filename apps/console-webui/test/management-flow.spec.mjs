@@ -78,15 +78,98 @@ for (const scenario of ['missing','preparing','failed','unknown','ready']) test(
     if(scenario==='missing')await expect(progress).not.toContainText('Runtime saved');
   }
   const setup=page.locator('main a[href^="/admin/setup"]');await expect(setup).toHaveCount(1);
-  const compact=await page.locator('.mobile-menu').isVisible();if(compact)await page.locator('.mobile-menu').click();
-  await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('User access');
-  await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('Work setup');
-  if(compact)await page.locator('.mobile-menu').click();
+  await expect(page.locator('.mobile-menu')).toBeHidden();
+  await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('Users');
+  await expect(page.getByRole('navigation',{name:'Main navigation'})).toContainText('Setup');
   await expect(page.locator('.workbench-link')).toBeVisible();
   if(['missing','ready','preparing'].includes(scenario)){
     await evidence(page,'overview-'+scenario+'-'+page.viewportSize().width+'-synthetic');
     if(process.env.PIWORK_UI_EVIDENCE==='1'){await page.setViewportSize({width:1440,height:900});await evidence(page,'overview-'+scenario+'-1440-synthetic');}
   }
+});
+
+for (const width of [1440, 360]) test(`S08 reviewed Overview composition preserves real facts and bilingual task navigation at ${width}`, async ({page}) => {
+  await page.setViewportSize({width, height:900});
+  const {requests} = await fixture(page, '/admin');
+  const choices = page.locator('.overview-choices');
+  const cards = choices.locator('.task-action');
+  await expect(cards).toHaveCount(4);
+  await expect(page.locator('.nav a > svg')).toHaveCount(4);
+  expect(await page.locator('.topbar').evaluate(node => node.getBoundingClientRect().height)).toBe(width === 1440 ? 52 : 88);
+  expect(await page.locator('.nav a > svg').evaluateAll(nodes => nodes.every(node => node.getAttribute('width') === '18'))).toBe(true);
+  expect(await cards.evaluateAll(nodes => nodes.map(node => node.getAttribute('href')))).toEqual(['/admin/users', '/admin/default-work', '/admin/models', '/admin/runtime']);
+  await expect(cards.locator('strong')).toHaveText(['Users', 'Setup', 'Models', 'Runtime']);
+  const facts = page.locator('.overview-facts');
+  await expect(facts).toBeVisible();
+  await expect(facts).toContainText('synthetic-model');
+  await expect(facts.locator('dl > div')).toHaveCount(3);
+  await expect(page.locator('.context-strip')).toHaveCount(0);
+  await expect(page.locator('.footer')).toBeHidden();
+  const columns = await choices.evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length);
+  expect(columns).toBe(width === 1440 ? 2 : 1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  for (const [locale, labels] of [
+    ['zh-CN', ['用户', '设置', '模型', 'Runtime']],
+    ['en', ['Users', 'Setup', 'Models', 'Runtime']],
+  ]) {
+    await page.locator('#account-trigger').click();
+    await page.locator('#account-dropdown [data-action="language"]').click();
+    await page.locator(`.language-picker [data-locale="${locale}"]`).click();
+    await expect(cards.locator('strong')).toHaveText(labels);
+    await expect(facts).toContainText('synthetic-model');
+    await expect(page.locator('[data-testid="overview-next-task"] .btn.primary')).toHaveCount(1);
+  }
+  await choices.locator('a[href="/admin/default-work"]').click();
+  const setupTabs = page.getByRole('navigation', {name:'Work setup navigation'});
+  await expect(setupTabs.locator('a')).toHaveText(['Defaults', 'Skills', 'Packages']);
+  expect(await setupTabs.evaluate(node => node.getBoundingClientRect().height)).toBe(39);
+  expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
+});
+
+test('S08 narrow Overview wraps real long failure and model values without presenting readiness', async ({page}) => {
+  await page.setViewportSize({width:360, height:900});
+  const reason = 'SYNTHETIC_RUNTIME_FAILURE_' + 'x'.repeat(240);
+  const modelId = 'synthetic-model-' + 'm'.repeat(180);
+  await fixture(page, '/admin', () => undefined, {
+    'admin/status': {ready:false, state:reason, checks:{runtimeConfigured:true}},
+    'admin/runtime': {configured:true, agentImage:'agent:fixture', modelRef:model.modelRef, model:{provider:model.api, id:modelId, credentialAvailable:true}, updatedAt:model.updatedAt},
+    preparation: {ready:false, components:{agent:{state:'failed'}}},
+  });
+  const lead = page.locator('[data-testid="overview-next-task"]');
+  await expect(lead.locator('.task-lead-description')).toContainText(reason);
+  await expect(lead.locator('.overview-facts')).toContainText(modelId);
+  await expect(lead.locator('.overview-facts')).toContainText('Not ready');
+  await expect(lead.locator('.btn.primary')).toHaveText('Review runtime');
+  await expect(lead).not.toContainText('Readiness confirmed');
+  for (const selector of ['.task-lead-content', '.task-lead-description', '.overview-facts']) {
+    expect(await lead.locator(selector).evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('S08 initial unavailable Overview never projects unconfirmed model absence across locale changes', async ({page}) => {
+  let failing = true;
+  await fixture(page, '/admin', request => failing && request.path === 'admin/status'
+    ? {status:503, json:{error:{code:'CORE_UNAVAILABLE', message:'synthetic first-read outage'}}}
+    : undefined, {
+    'admin/status': {ready:false, state:'RUNTIME_NOT_CONFIGURED', checks:{runtimeConfigured:false}},
+    'admin/runtime': {configured:false},
+    preparation: {ready:false, components:{agent:{state:'unconfigured'}}},
+  });
+  await expect(page.locator('.overview-facts')).toHaveCount(0);
+  await expect(page.locator('main')).not.toContainText('Not configured');
+  for (const locale of ['zh-CN', 'en']) {
+    await page.locator('#account-trigger').click();
+    await page.locator('#account-dropdown [data-action="language"]').click();
+    await page.locator(`.language-picker [data-locale="${locale}"]`).click();
+    await expect(page.locator('.overview-facts')).toHaveCount(0);
+    await expect(page.locator('main')).not.toContainText(locale === 'en' ? 'Not configured' : '未配置');
+  }
+  failing = false;
+  await page.locator('main [data-action="refresh"]').click();
+  await expect(page.locator('.overview-facts')).toBeVisible();
+  await expect(page.locator('.overview-facts dl > div').nth(2)).toContainText('Not configured');
+  await expect(page.locator('[data-testid="overview-next-task"] .btn.primary')).toContainText('Quick setup');
 });
 
 test('S08 Overview polling retains the wide account menu, focus and expanded semantics; navigation closes it',async({page})=>{
@@ -119,39 +202,44 @@ test('S08 Overview polling retains the wide account menu, focus and expanded sem
   await expect(page).toHaveURL(base+'/admin');await expect(menu).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');
 });
 
-test('S08 Overview polling retains narrow navigation, focus and expanded semantics; navigation closes it',async({page})=>{
+test('S08 Overview polling retains direct narrow navigation and focus; navigation replaces its owner',async({page})=>{
   await page.setViewportSize({width:360,height:900});await page.clock.install();
   const {values}=await fixture(page,'/admin');
   const trigger=page.locator('.mobile-menu'), navigation=page.getByRole('navigation',{name:'Main navigation',includeHidden:true});
-  await expect(navigation).toBeHidden();await trigger.click();await expect(navigation).toBeVisible();
-  const userAccess=navigation.getByRole('link',{name:'User access',exact:true});
+  await expect(navigation).toBeVisible();
+  await expect(trigger).toBeHidden();
+  const userAccess=navigation.getByRole('link',{name:'Users',exact:true});
   await userAccess.focus();
   await page.evaluate(()=>{window.retainedShell={trigger:document.querySelector('.mobile-menu'),navigation:document.querySelector('.nav'),focused:document.activeElement};});
   values['admin/status']={ready:false,state:'RUNTIME_UNAVAILABLE',checks:{runtimeConfigured:true}};
   values.preparation={ready:false,components:{agent:{state:'preparing'}}};
   await page.clock.fastForward(15001);
   await expect(page.locator('[data-testid="overview-next-task"]')).toContainText('Piwork is preparing');
-  await expect(navigation).toBeVisible();await expect(navigation).toHaveClass(/\bopen\b/);await expect(trigger).toHaveAttribute('aria-expanded','true');await expect(userAccess).toBeFocused();
+  await expect(navigation).toBeVisible();
+  await expect(userAccess).toBeFocused();
   expect(await page.evaluate(()=>window.retainedShell.trigger===document.querySelector('.mobile-menu')&&window.retainedShell.navigation===document.querySelector('.nav')&&window.retainedShell.focused===document.activeElement)).toBe(true);
   await evidence(page,'overview-navigation-poll-360-synthetic',false);
   await userAccess.click();await expect(page).toHaveURL(base+'/admin/users');await expect(page.getByRole('heading',{name:'Give people access',exact:true})).toBeVisible();
-  await expect(navigation).toBeHidden();await expect(navigation).not.toHaveClass(/\bopen\b/);await expect(trigger).toHaveAttribute('aria-expanded','false');
+  await expect(navigation).toBeVisible();
+  await expect(trigger).toBeHidden();
   expect(await page.evaluate(()=>!window.retainedShell.trigger.isConnected&&!window.retainedShell.navigation.isConnected)).toBe(true);
-  await trigger.click();await navigation.getByRole('link',{name:'Overview',exact:true}).click();
-  await expect(page).toHaveURL(base+'/admin');await expect(navigation).toBeHidden();await expect(trigger).toHaveAttribute('aria-expanded','false');
+  await navigation.getByRole('link',{name:'Overview',exact:true}).click();
+  await expect(page).toHaveURL(base+'/admin');
+  await expect(navigation).toBeVisible();
 });
 
-test('S08 an identity change closes account and narrow navigation surfaces on the same path',async({page})=>{
+test('S08 an identity change closes account and replaces direct navigation on the same path',async({page})=>{
   await page.setViewportSize({width:360,height:900});await page.clock.install();
   const {values}=await fixture(page,'/admin');
-  await page.locator('.mobile-menu').click();await page.locator('#account-trigger').click();
+  await page.locator('#account-trigger').click();
   await expect(page.locator('.nav')).toBeVisible();await expect(page.locator('#account-dropdown')).toBeVisible();
   await page.evaluate(()=>{window.retainedShell={menu:document.querySelector('#account-dropdown'),navigation:document.querySelector('.nav')};});
   values.session={authenticated:true,csrfToken:'synthetic-new-csrf',user:{id:'new-admin',account:'new-admin',role:'admin',enabled:true}};
   await page.clock.fastForward(15001);
   await expect(page.locator('#account-dropdown .dropdown-title')).toHaveText('new-admin');await expect(page).toHaveURL(base+'/admin');
   await expect(page.locator('#account-dropdown')).toBeHidden();await expect(page.locator('#account-trigger')).toHaveAttribute('aria-expanded','false');
-  await expect(page.locator('.nav')).toBeHidden();await expect(page.locator('.mobile-menu')).toHaveAttribute('aria-expanded','false');
+  await expect(page.locator('.nav')).toBeVisible();
+  await expect(page.locator('.mobile-menu')).toBeHidden();
   expect(await page.evaluate(()=>!window.retainedShell.menu.isConnected&&!window.retainedShell.navigation.isConnected)).toBe(true);
 });
 
@@ -303,7 +391,8 @@ test('S10 a late 401 from an older model read cannot sign out a newly authentica
     delayed=true;await page.locator('[data-model-action="read"]').click();await expect(page.locator('[data-model-action="read"] .pending-dots')).toHaveCount(1);
     values.session={authenticated:true,csrfToken:'synthetic-new-csrf',user:{id:'new-admin',account:'new-admin',role:'admin',enabled:true}};
     await page.evaluate(async()=>{const {adapter}=await import('/browser/adapter.js');await adapter.initialize();});
-    await page.getByRole('link',{name:'User access',exact:true}).click();await expect(page).toHaveURL(base+'/users');
+    await page.getByRole('link',{name:'Users',exact:true}).click();
+    await expect(page).toHaveURL(base+'/users');
     gate.resolve();await page.waitForTimeout(100);await expect(page).toHaveURL(base+'/users');
     expect(await page.evaluate(async()=>{const {adapter}=await import('/browser/adapter.js');return {session:adapter.session,id:adapter.currentUserId};})).toEqual({session:true,id:'new-admin'});
   }finally{gate.resolve();}

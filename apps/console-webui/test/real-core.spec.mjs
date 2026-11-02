@@ -56,7 +56,7 @@ async function login(page) {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL(url=>url.pathname!=='/login');
   await page.goto(origin+'/admin');
-  await expect(page.getByRole('heading', { name: 'What’s next for your Core?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview', level: 1, exact: true })).toBeVisible();
 }
 
 for (const locale of ['en', 'zh-CN']) test(`real Core availability works before Runtime configuration in ${locale}`, async ({ browser }) => {
@@ -185,7 +185,7 @@ test('real message Test sends to the specified model and displays actual Respons
 });
 test('delivered Core UI uses real administrator users, revocation, and browser Skill upload', async ({page}) => {
   await login(page);
-  await page.getByRole('link', { name: 'User access', exact: true }).click();
+  await page.getByRole('link', { name: 'Users', exact: true }).click();
   await page.getByRole('button', { name: 'Create user', exact: true }).click();
   await page.getByLabel('Account', { exact: true }).fill('new-user');
   await page.getByLabel('Password', { exact: true }).fill('new-user-password');
@@ -205,7 +205,7 @@ test('delivered Core UI uses real administrator users, revocation, and browser S
   await page.locator('#dialog-submit').click();
   await expect(user).toBeVisible();
   const skillDirectory = join(root,'real-skill'); await mkdir(skillDirectory); await writeFile(join(skillDirectory,'SKILL.md'),'# Real Skill\n');
-  await page.getByRole('link',{name:'Work setup',exact:true}).click();
+  await page.getByRole('link',{name:'Setup',exact:true}).click();
   await page.getByRole('link',{name:'Skills',exact:true}).click();
   await page.getByRole('button',{name:'Add Skill',exact:true}).click();
   await page.getByLabel('Choose Skill directory').setInputFiles(skillDirectory);
@@ -237,7 +237,7 @@ async function saveFixtureRuntime(page) {
 }
 test('real Core runtime and starting point distinguish saved changes from existing Work', async ({page}) => {
   test.setTimeout(120000); await login(page); await saveFixtureRuntime(page);
-  await page.getByRole('link',{name:'Work setup',exact:true}).click();
+  await page.getByRole('link',{name:'Setup',exact:true}).click();
   await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
   await page.locator('#agentsMd').fill('# Console native default\n');
   await page.locator('[data-action="save-defaults"]').click();

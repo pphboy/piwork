@@ -895,10 +895,10 @@ test('360px Administration account menu reflects the selected locale after retai
   try {
     await mockConsole(page, { authenticated: true });
     await page.goto(`${base}/admin`);
-    await expect(page.locator('.topbar')).toHaveCSS('height', '96px');
-    await page.locator('[data-action=menu]').click();
-    await expect(page.locator('.nav.open')).toBeVisible();
-    await expect(page.locator('.topbar')).toHaveCSS('height', '96px');
+    await expect(page.locator('.topbar')).toHaveCSS('height', '88px');
+    await expect(page.locator('.nav')).toBeVisible();
+    await expect(page.locator('.nav a')).toHaveCount(4);
+    await expect(page.locator('.topbar')).toHaveCSS('height', '88px');
     await selectLanguage(page, 'zh-CN');
     await page.locator('#account-trigger').click();
     const menu = page.locator('#account-dropdown');
@@ -913,7 +913,7 @@ test('360px Administration account menu reflects the selected locale after retai
     await page.keyboard.press('Escape');
     await expect(page.locator('#account-trigger')).toBeFocused();
     await page.setViewportSize({ width: 1440, height: 900 });
-    await expect(page.locator('.topbar')).toHaveCSS('height', '56px');
+    await expect(page.locator('.topbar')).toHaveCSS('height', '52px');
   } finally {
     await context.close();
   }

@@ -2,6 +2,7 @@ import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
+import { composerEditorGeometry } from './composer-layout.js';
 import { sharedIcon } from './feedback-primitives.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
 import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-notices.js';
@@ -15,7 +16,7 @@ import { ReadFeedbackBindings } from './read-feedback.js';
 import { importReadbackRecovered, operationFeedback, operationFeedbackSource, OperationFeedbackRegistry } from './operation-feedback.js';
 import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedbackVisible } from './admission-feedback.js';
 import { ChatRunFeedback } from './chat-run-feedback.js';
-import { menuCommands, workHeaderModel, serviceToolbarModel } from './work-chrome.js';
+import { menuCommands, workHeaderModel, workHeaderStatusPresentation, serviceToolbarModel } from './work-chrome.js';
 import { renderChatMarkdown } from './chat-markdown.js';
 import { overlayRole, anchoredOverlay, overlayAnchorBounds, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
@@ -128,6 +129,7 @@ const operationBusy = (op) => !!op && ['accepted', 'pending', 'preparing', 'runn
  */
 const readPlaceholder = (label, shape = "rows") => `<div class="read-placeholder read-placeholder-${esc(shape)}" role="status" aria-busy="true" aria-label="${esc(label)}"><div class="read-placeholder-line skeleton-fill" aria-hidden="true"></div><div class="read-placeholder-line skeleton-fill" aria-hidden="true"></div><div class="read-placeholder-line skeleton-fill" aria-hidden="true"></div></div>`;
 const readFailure = (label, error, action, busy = false) => `<div class="feedback warning read-failure"><div><span>${esc(label)}</span><details><summary>${t('common.details')}</summary><p>${esc(error)}</p></details></div>${btn(busy ? pendingDots() : icon('refresh', 16), action, `icon-button quiet ${busy ? 'is-reading' : ''}`, `aria-label="${busy ? esc(t('readFailure.retryingAria', { label: label.toLowerCase() })) : esc(t('readFailure.retryAria', { label: label.toLowerCase() }))}" title="${busy ? esc(t('common.retrying')) : esc(t('common.retry'))}" ${busy ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`)}</div>`;
+const expandedComposerDrafts = new Set();
 let view = {
     search: "",
     deleteConfirmed: false,
@@ -1563,7 +1565,7 @@ function openModal(name, data = {}) {
     if (!existing?.contains(sourceFocus))
         overlayAnchor = focusKey(sourceFocus) || focusReturn;
     if (name === 'chat-response-settings')
-        overlayAnchor = '#response-settings-trigger';
+        overlayAnchor = data.entry || '#response-settings-trigger';
     overlayContext = `${adapter.identityEpoch}:${location.hash}:${view.tab}:${view.path}`;
     modalChoice++;
     lastFocus = sourceFocus;
@@ -1620,7 +1622,7 @@ function closeModal(restoreFocus = true) {
     const responseSettings = view.modal === 'chat-response-settings';
     const responseContext = responseSettings && chatSettingsContextCurrent();
     const source = view.data.source, oldFocus = lastFocus;
-    const selector = requestEntry || (responseSettings && responseContext ? source === 'command' ? '#composer' : '#response-settings-trigger' : focusReturn);
+    const selector = requestEntry || (responseSettings && responseContext ? source === 'command' ? '#composer' : view.data.entry || '#response-settings-trigger' : focusReturn);
     const caret = [Number(view.data.caretStart), Number(view.data.caretEnd)];
     if (responseSettings && pendingWebCommand && ['model', 'thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair)
         pendingWebCommand = undefined;
@@ -1671,7 +1673,7 @@ function brand() {
 function topbar(toolbar = '') {
     if (adapter.state.sessionState !== "ready")
         return `<header class="topbar">${brand()}<div class="topbar-right">${languageTrigger()}</div></header>`;
-    return `<header class="topbar${toolbar ? ' topbar-works' : ''}">${brand()}${toolbar}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${!adapter.state.signedIn ? languageTrigger() : ''}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span>`, "account", "account-button quiet", `aria-label="${esc(t('topbar.accountMenuAria', { account: adapter.state.core.account || t('topbar.account') }))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
+    return `<header class="topbar${toolbar ? ' topbar-works' : ''}">${brand()}${toolbar}${view.modal !== "connection" && route()[0] !== "works" ? coreConnectionStatus() : ""}<div class="topbar-right">${toolbar ? connection() : ''}${!adapter.state.signedIn ? languageTrigger() : ''}${btn(`<span class="avatar">${esc(adapter.state.core.account.slice(0, 1).toUpperCase() || "?")}</span>${toolbar ? `<span class="works-account-name">${esc(adapter.state.core.account)}</span>` : ''}`, "account", "account-button quiet", `aria-label="${esc(t('topbar.accountMenuAria', { account: adapter.state.core.account || t('topbar.account') }))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'account'}"`)}</div></header>`;
 }
 function defaultCorePreferences() {
     const p = adapter.preferences, blocked = ['saving', 'clearing', 'unconfirmed'].includes(p.phase);
@@ -1745,7 +1747,7 @@ function worksRefreshButton() {
     return btn(pending && (!!adapter.worksChecked || !!adapter.worksError || adapter.state.works.length > 0) ? pendingDots() : icon('refresh'), 'retry-works', `icon-button quiet ${pending ? 'is-reading' : ''}`, `title="${esc(label)}" aria-label="${esc(label)}" ${pending ? 'disabled aria-busy="true" data-read-busy="true"' : ''}`);
 }
 function worksToolbar() {
-    return `<div class="list-controls works-toolbar"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div>${connection()}<div class="actions">${orphanTasksEntry()}${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>`;
+    return `<div class="list-controls works-toolbar"><div class="search-box">${icon("search")}<input id="search" value="${esc(view.search)}" placeholder="${esc(t('works.searchPlaceholder'))}" aria-label="${esc(t('works.searchAria'))}">${view.search ? btn(icon("close"), "clear-search", "icon-button quiet", `aria-label="${esc(t('works.clearSearch'))}"`) : ""}</div><div class="actions">${orphanTasksEntry()}${worksRefreshButton()}${btn(icon("upload"), "import", "icon-button quiet", `title="${esc(t('works.import'))}" aria-label="${esc(t('works.import'))}"`)}${btn(icon("plus"), "new-work", "icon-button primary", `title="${esc(t('works.newWork'))}" aria-label="${esc(t('works.newWork'))}"`)}</div></div>`;
 }
 function works() {
     applyDocumentTitle(t('doc.works'));
@@ -1777,10 +1779,17 @@ function workRouteFeedback(w) {
 }
 function workHeader(w, standalone = false, navigation = '') {
     const model = workHeaderModel({ id: w.id, name: w.name, status: adapter.project(w).label, standalone });
-    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), model.backAction, "icon-button quiet", `aria-label="${esc(t(model.backLabelKey))}"`)}<span class="header-divider"></span><img class="work-brand-logo" src="/desktop/piwork-logo.png" alt="" width="28" height="28"><h1 title="${esc(w.name)}">${esc(w.name)}</h1><span class="work-header-status" role="group" aria-label="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}" title="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}">${controlMarkup(workControl(w), true) || badge(adapter.project(w).label)}</span>${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div>${navigation}<div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-header" data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
+    const control = workControl(w);
+    const presentation = workHeaderStatusPresentation({
+        workId: w.id, control, operation: control?.operationId ? adapter.getOperation(control.operationId) : undefined,
+        synchronizationPending: adapter.workSynchronizationPending(w.id),
+    });
+    const status = presentation === 'control' ? controlMarkup(control, true)
+        : presentation === 'reading' ? pendingStatus(t('work.reading')) : badge(adapter.project(w).label);
+    return `<header class="work-header"><div class="work-header-main">${btn(icon("arrow", 19), model.backAction, "icon-button quiet", `aria-label="${esc(t(model.backLabelKey))}"`)}<span class="header-divider"></span><img class="work-brand-logo" src="/desktop/piwork-logo.png" alt="" width="28" height="28"><h1 title="${esc(w.name)}">${esc(w.name)}</h1><span class="work-header-status" role="group" aria-label="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}" title="${esc(t('service.observed'))}: ${esc(stateText(adapter.project(w).label))}">${status}</span>${workRouteFeedback(w)}${view.modal !== "connection" ? coreConnectionStatus() : ""}</div>${navigation}<div class="actions header-actions">${quickAction(w)}${btn(icon("more"), "work-menu", "icon-button quiet", `data-menu-scope="work-header" data-id="${w.id}" aria-label="${esc(t('work.optionsAria'))}"`)}</div></header>`;
 }
 function workTabs(settings) {
-    return `<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices')], ['Files', t('work.tabFiles')], ['Chat', t('work.tabChat')]].map(([value, label]) => btn(label, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div></nav>`;
+    return `<nav class="work-tabs" aria-label="${esc(t('work.areasAria'))}"><div>${[['Services', t('work.tabServices')], ['Files', t('work.tabFiles')], ['Chat', t('work.tabChat')]].map(([value, label]) => btn(`${icon(`nav-${value.toLowerCase()}`, 18)}<span>${label}</span>`, `tab-${value}`, !settings && view.tab === value ? "tab active" : "tab")).join("")}</div></nav>`;
 }
 function workPage(w) {
     const settings = route()[2] === "settings", panels = workspacePanels.get(w.id);
@@ -1932,6 +1941,16 @@ function conversationHistoryControls(w, session) {
         return '';
     return `<div class="history-pagination">${earlier}${error}${inline ? `<p class="history-limit" role="status">${esc(limit)}</p>` : ''}</div>`;
 }
+function resizeComposerEditor() {
+    const input = root.querySelector('#composer');
+    if (!input)
+        return;
+    const expanded = expandedComposerDrafts.has(input.dataset.draftKey || '');
+    input.style.height = '1px';
+    const geometry = composerEditorGeometry(input.scrollHeight, innerHeight, expanded);
+    input.style.height = `${geometry.height}px`;
+    input.style.overflowY = geometry.overflow;
+}
 function agent(w, focus) {
     const session = w.sessions.find((s) => s.id === view.session) || w.sessions.find(s => s.source?.kind !== 'service');
     if (session) {
@@ -1954,7 +1973,9 @@ function agent(w, focus) {
     const busy = active && activeRun.sessionId !== session?.id;
     const activeUnconfirmed = supported && (!observed?.confirmed || !!observed.error);
     const checkingActive = !!observed?.visibleLoading;
-    const draft = view.drafts[draftKey(w, session?.id || "")] || "";
+    const composerKey = draftKey(w, session?.id || "");
+    const composerExpanded = expandedComposerDrafts.has(composerKey);
+    const draft = view.drafts[composerKey] || "";
     adapter.activateChat(w.id, session?.id || "");
     if (!adapter.imageCapabilities.has(w.id))
         queueMicrotask(() => { void adapter.loadImageCapabilities(w.id); });
@@ -1983,17 +2004,20 @@ function agent(w, focus) {
     // A reply status belongs to the last message of its own Run. A Run with
     // no messages yet gets a standalone slot in the conversation.
     const replySlot = replyRun && session && !session.messages.some(message => message.runId === replyRun.id) ? replyStatusMarkup(w, session.id, replyRun) : '';
-    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${conversationError ? readFailure(t('agent.conversationReadFailed'), conversationLimit ? `${conversationError} ${conversationLimit}` : conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages, replyRun)}${replySlot}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<textarea id="composer" rows="3" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea><div class="composer-bottom">${modelComposer(w, session?.id || "")}<div class="composer-actions">${btn(icon("upload", 16), "add-chat-images", "icon-button quiet", `title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${btn(icon("settings", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (!draft.trim() && !draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? t('chat.commandMode') : t('chat.sendAsText'), "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
+    return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout === "chat-only" || view.layout === 'service-chat' && innerWidth < 900) && view.fullscreenError ? feedback(esc(view.fullscreenError), "warning") : ""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w, session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w, session?.id || ""))}">${conversationError ? readFailure(t('agent.conversationReadFailed'), conversationLimit ? `${conversationError} ${conversationLimit}` : conversationError, 'retry-conversation', readingConversation) : ''}${session ? conversationHistoryControls(w, session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w, session.id, session.messages, replyRun)}${replySlot}${session ? unmatchedExecutions(w, session.id, session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer${composerExpanded ? ' expanded' : ''}">${imageDraftMarkup(w, draftKey(w, session?.id || ""))}<div class="composer-text-wrap"><textarea id="composer" data-draft-key="${esc(composerKey)}" rows="2" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea>${btn(icon(composerExpanded ? "composer-collapse" : "composer-expand", 18), "toggle-composer-editor", "icon-button quiet composer-expand", `title="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-label="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-expanded="${composerExpanded}" aria-controls="composer"`)}</div>${composerExpanded ? `<div class="composer-expand-hint"><span>${t('chat.composerLines', { count: draft.split("\n").length })}</span><span>${t('chat.editorHint')}</span></div>` : ''}<div class="composer-bottom"><div class="composer-options">${btn(icon("composer-attachment", 18), "add-chat-images", "icon-button quiet", `title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${modelComposer(w, session?.id || "")}</div><div class="composer-actions">${btn(icon("more", 16), "chat-input-options", "icon-button quiet chat-input-options", `title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal === 'chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (!draft.trim() && !draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w, draft)}</div></div>${modelFeedback(w, session?.id || "")}<div class="composer-caption${draft.trimStart().startsWith("/") ? ' slash-mode' : ''}" id="composer-help">${draft.trimStart().startsWith("/") ? btn(view.literalSlash ? t('chat.commandMode') : t('chat.sendAsText'), "toggle-slash-mode", "text-button", `aria-pressed="${view.literalSlash}"`) : ""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
 }
 function modelComposer(w, sessionId) {
     const { name, thinking, state, initialLoading } = chatSettings(w, sessionId);
-    // The trigger keeps one width while the model catalog is read: the dots take
-    // the glyph's own box and the name lives in the accessible label.
-    if (initialLoading)
-        return view.modal === 'chat-response-settings'
-            ? btn(t('chat.loadingResponseSettings'), 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" aria-label="${esc(t('chat.loadingResponseSettingsAria'))}" aria-busy="true" aria-haspopup="dialog"`)
-            : btn(`<span class="pending-icon-slot" aria-hidden="true">${pendingDots()}</span>`, 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" aria-label="${esc(t('chat.loadingResponseSettingsAria'))}" aria-busy="true" aria-haspopup="dialog"`);
-    return btn(`<span class="response-model-name">${esc(name)}</span><span class="response-thinking">· ${esc(thinking)}</span>${icon('down', 12)}`, 'open-chat-settings', 'quiet response-settings-trigger', `id="response-settings-trigger" title="${state.ref === null ? esc(t('chat.titleWithDefault', { name, thinking })) : esc(t('chat.title', { name, thinking }))}" aria-label="${sessionId ? esc(t('chat.settingsAria', { name, thinking })) : esc(t('chat.settingsAriaNewSession', { name, thinking }))}" aria-haspopup="dialog"`);
+    const trigger = (kind, label) => {
+        const model = kind === 'model';
+        const id = model ? 'response-settings-trigger' : 'thinking-settings-trigger';
+        const loading = view.modal === 'chat-response-settings' ? esc(t('chat.loadingResponseSettings')) : `<span class="pending-icon-slot" aria-hidden="true">${pendingDots()}</span>`;
+        const content = initialLoading ? loading : `${model ? icon('spark', 14) : ''}<span class="${model ? 'response-model-name' : 'response-thinking'}">${esc(label)}</span>${icon('down', 12)}`;
+        const title = model ? state.ref === null ? t('chat.titleWithDefault', { name, thinking }) : t('chat.title', { name, thinking }) : `${t('response.thinking')}: ${thinking}`;
+        const aria = `${t(model ? 'response.model' : 'response.thinking')}: ${initialLoading ? t('chat.loadingResponseSettingsAria') : label}`;
+        return btn(content, model ? 'open-chat-settings' : 'open-thinking-settings', `quiet response-settings-trigger ${kind}-picker`, `id="${id}" title="${esc(title)}" aria-label="${esc(aria)}" ${initialLoading ? 'aria-busy="true"' : ''} aria-haspopup="dialog"`);
+    };
+    return trigger('model', name) + trigger('thinking', thinking);
 }
 function sessionDisplayName(w, session) {
     if (!session)
@@ -2088,14 +2112,14 @@ function focusChatSettings(kind) {
     const recovery = dialog.querySelector('.options-status .button:not([disabled]),.modal-footer .button');
     (option || (row && !row.disabled ? row : recovery))?.focus({ preventScroll: true });
 }
-function openChatPicker(kind) {
+function openChatPicker(kind, entry) {
     const work = current();
     if (!work)
         return;
     const composer = root.querySelector('#composer');
     view.commandDismissed = view.drafts[draftKey(work)] || '';
-    focusReturn = kind ? '#composer' : '#response-settings-trigger';
-    openModal('chat-response-settings', { workId: work.id, sessionId: view.session, epoch: String(adapter.identityEpoch), tab: view.tab, source: kind ? 'command' : 'summary', expanded: kind || '', caretStart: String(composer?.selectionStart ?? 0), caretEnd: String(composer?.selectionEnd ?? 0) });
+    focusReturn = entry || (kind ? '#composer' : '#response-settings-trigger');
+    openModal('chat-response-settings', { workId: work.id, sessionId: view.session, epoch: String(adapter.identityEpoch), tab: view.tab, source: kind && !entry ? 'command' : 'summary', entry: entry || '#response-settings-trigger', expanded: kind || '', caretStart: String(composer?.selectionStart ?? 0), caretEnd: String(composer?.selectionEnd ?? 0) });
     focusChatSettings(kind);
 }
 function confirmPendingChatCommand() {
@@ -3495,6 +3519,9 @@ async function handleAction(action, el, record, requestEntry) {
         case 'open-chat-settings':
             openChatPicker();
             break;
+        case 'open-thinking-settings':
+            openChatPicker('thinking', '#thinking-settings-trigger');
+            break;
         case 'toggle-chat-setting': {
             if (!chatSettingsContextCurrent())
                 break;
@@ -3877,6 +3904,7 @@ async function handleAction(action, el, record, requestEntry) {
             view.config = null;
             view.configDirty = false;
             view.file = "";
+            expandedComposerDrafts.clear();
             closeModal();
             toast(result.credentialCleared === false ? new LocalizedMessage('action.signOutCleanup', { command: adapter.logoutCommand() }) : new LocalizedMessage(result.remoteRevocationConfirmed ? 'action.signedOut' : 'action.signedOutUnconfirmed'), result.credentialCleared === false ? 'error' : result.remoteRevocationConfirmed ? 'success' : 'warning');
             break;
@@ -4167,6 +4195,20 @@ async function handleAction(action, el, record, requestEntry) {
                 });
             }
             break;
+        case 'toggle-composer-editor': {
+            if (!currentWork)
+                break;
+            const key = root.querySelector('#composer')?.dataset.draftKey;
+            if (!key)
+                break;
+            if (expandedComposerDrafts.has(key))
+                expandedComposerDrafts.delete(key);
+            else
+                expandedComposerDrafts.add(key);
+            render();
+            root.querySelector('#composer')?.focus({ preventScroll: true });
+            break;
+        }
         case "tab-Services":
         case "tab-Files":
         case "tab-Chat":
@@ -5662,6 +5704,7 @@ function render() {
         queueMicrotask(() => { servicePreparationScheduled = false; prepareSelectedEntry(); });
     }
     applyWorkspaceSizing();
+    resizeComposerEditor();
     for (const trigger of root.querySelectorAll('[data-action]')) {
         const name = overlayForAction(trigger.dataset.action || '');
         if (!anchoredOverlay(name) || trigger.closest('#modal'))
@@ -6345,6 +6388,16 @@ root.addEventListener("keydown", (e) => {
         closeModal();
         return;
     }
+    if ((!dialog?.open || nonmodalDialog()) && e.key === 'Escape' && e.target.id === 'composer') {
+        const input = e.target;
+        if (expandedComposerDrafts.delete(input.dataset.draftKey || '')) {
+            e.preventDefault();
+            e.stopPropagation();
+            render();
+            root.querySelector('#composer')?.focus({ preventScroll: true });
+            return;
+        }
+    }
     if (dialog?.open && overlayRole(view.modal) === 'menu' && dialog.contains(e.target)) {
         const options = [...dialog.querySelectorAll('[role=menuitem]:not([disabled]),[role=menuitemradio]:not([disabled])')];
         const index = options.indexOf(document.activeElement), next = menuDestination(e.key, index, options.length);
@@ -6580,6 +6633,7 @@ adapter.subscribe(() => {
         view.serviceOpenError = "";
         view.operationQuery = '';
         view.snapshotQuery = '';
+        expandedComposerDrafts.clear();
         view.config = null;
         view.configDirty = false;
         view.drafts = {};

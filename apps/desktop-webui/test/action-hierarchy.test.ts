@@ -1,6 +1,6 @@
 const { ExportFeedbackRegistry } = await import(new URL('../browser/export-feedback.js', import.meta.url).href);
 const { sharedIcon } = await import(new URL('../browser/feedback-primitives.js', import.meta.url).href);
-const { menuCommands, workHeaderModel, serviceToolbarModel } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
+const { menuCommands, workHeaderModel, workHeaderStatusPresentation, serviceToolbarModel } = await import(new URL('../browser/work-chrome.js', import.meta.url).href);
 const { confirmedDirectorySelection } = await import(new URL('../browser/file-results.js', import.meta.url).href);
 const { exportPanelModel, renderExportPanel, renderExportRecoveryPanel } = await import(new URL('../browser/export-panel.js', import.meta.url).href);
 const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.meta.url).href);
@@ -26,12 +26,12 @@ function fixture() {
   const work: any = { id: 'work-a', name: 'A', desired: 'stopped', files: [], color: 'blue', icon: 'grid', resourceErrors: {} };
   const c: any = {
   ...localeSandbox,
-    pendingDots, sharedIcon, menuCommands, workHeaderModel, serviceToolbarModel, confirmedDirectorySelection,
+    pendingDots, sharedIcon, menuCommands, workHeaderModel, workHeaderStatusPresentation, serviceToolbarModel, confirmedDirectorySelection,
     acceptedFlows: [], exportFeedback: new ExportFeedbackRegistry(),
     view: { layout:'workspace', modal: '', data: { scope: 'work-header', epoch: '1' }, path: '/', selected: [], file: '', modalError: '' },
     adapter: { identityEpoch: 1, connectionCheck: { checking: false, error: '' }, state: { sessionState: 'ready', core: { account: 'admin', role: 'admin', address: 'https://core.test' }, snapshots: [], operations: [] },
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
-      getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
+      workSynchronizationPending: () => false, getOperation: () => undefined, getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(), workControl: () => undefined, controlMarkup: () => '', operationAction: (op: any) => op.kind,
     exportFlows: { forWork: () => undefined, get: () => undefined },
     filesRestoreNotice: '', uploadProgressMarkup: () => '', filesUploadState: () => undefined, transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
@@ -263,6 +263,7 @@ test('Work header keeps one allocated status slot and preserves observed status 
   assert.equal(initial.split('class="work-header-status"').length - 1, 1);
   assert.match(initial, /role="group" aria-label="Observed: Stopped" title="Observed: Stopped"/);
   assert.match(initial, /class="status stopped"/);
+  c.workControl = () => ({ phase: 'pending' });
   c.controlMarkup = () => '<span class="object-control-state" role="status" aria-busy="true">Start · Submitting</span>';
   const pending = c.workHeader(work);
   assert.equal(pending.split('class="work-header-status"').length - 1, 1);

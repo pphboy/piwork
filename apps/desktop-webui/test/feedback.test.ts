@@ -2715,6 +2715,14 @@ test('Chat redesign: unknown submission checks the original key and never retrie
  });
  await page.locator('#composer').fill('unknown original');await button(page,'send-message').click();
  const message=page.locator('.message.user').filter({hasText:'unknown original'});await expect(message.locator('.message-submission.unknown')).toBeVisible();
+ await button(page, 'toggle-composer-editor').click();
+ await expect(button(page, 'toggle-composer-editor')).toHaveAttribute('aria-expanded', 'true');
+ await expect(page.locator('#composer')).toHaveValue('unknown original');
+ await expect(button(page, 'send-message')).toBeDisabled();
+ await page.locator('#composer').press('Escape');
+ await expect(button(page, 'toggle-composer-editor')).toHaveAttribute('aria-expanded', 'false');
+ await expect(page.locator('#composer')).toHaveValue('unknown original');
+ await expect(button(page, 'send-message')).toBeDisabled();
  await message.locator('[data-action="chat-submission"]').click();await expect(button(page,'retry-chat-submission')).toHaveCount(0);
  await button(page,'check-chat-submission').click();await expect(message.locator('.message-submission.unknown')).toBeVisible();
  assert.equal(requests.filter(r=>r.path==='works/work-1/runs'&&r.method==='POST').length,1);
@@ -3966,4 +3974,169 @@ test('original snapshot lookup survives late stopped-Work Service hydration with
   await expect(page.locator('#modal .export-snapshot')).toContainText('original-export');
   assert.equal(requests.filter(r => r.path === 'work-snapshots/original-snapshot' && r.method === 'GET').length, 1);
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('V14 Works home keeps compact rows and ordered controls at desktop and mobile widths', async t => {
+  const works = [
+    { id: 'work-1', name: 'Recovery Work', description: 'An existing Work', observedState: 'ready', desiredState: 'running' },
+    { id: 'work-2', name: 'A very long existing Work name 保留原始工作名称 without overflow', description: 'Retained stopped Work', observedState: 'stopped', desiredState: 'stopped' },
+  ];
+  const { page, requests } = await fixture(t, r => r.path === 'works' ? { json: { works } } : undefined);
+  await button(page, 'back-works').click();
+  await expect(page.locator('.work-row')).toHaveCount(2);
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const header = await page.locator('.topbar-works').boundingBox();
+    const content = await page.locator('.works-page').boundingBox();
+    const row = await page.locator('.work-row').first().boundingBox();
+    assert(header && content && row);
+    assert.equal(header.height, width === 1440 ? 52 : 88);
+    assert.equal(Math.round(content.x), width === 1440 ? 32 : 12);
+    assert.ok(row.height >= 76 && row.height <= 96, `compact confirmed row at ${width}`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await expect(button(page, 'retry-works')).toBeVisible();
+    await expect(button(page, 'new-work')).toBeVisible();
+    await expect(button(page, 'account')).toBeVisible();
+    if (width === 1440) {
+      const search = await page.locator('#search').boundingBox();
+      const actions = await page.locator('.works-toolbar > .actions').boundingBox();
+      const connection = await button(page, 'connection').boundingBox();
+      const account = await button(page, 'account').boundingBox();
+      assert(search && actions && connection && account);
+      assert.ok(search.x < actions.x && actions.x < connection.x && connection.x < account.x);
+      await expect(page.locator('.works-account-name')).toHaveText('owner');
+      assert.equal((await page.locator('.work-table-head').boundingBox())?.height, 34);
+    }
+    const directory = process.env.PIWORK_TEST_SCREENSHOT_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: `${directory}/06-works-home-${width}.png`, fullPage: true });
+    }
+  }
+  await page.locator('#search').fill('Recovery');
+  await expect(page.locator('.work-row')).toHaveCount(1);
+  await button(page, 'clear-search').click();
+  await expect(page.locator('.work-row')).toHaveCount(2);
+  await openWorkForRecovery(page);
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    const header = await page.locator('.work-header').boundingBox();
+    const tabs = await page.locator('.work-header > .work-tabs').boundingBox();
+    assert(header && tabs);
+    assert.equal(header.height, width === 1440 ? 52 : 88);
+    if (width === 360) assert.equal(tabs.height, 39);
+    for (const area of ['Services', 'Files', 'Chat']) {
+      const tab = button(page, `tab-${area}`);
+      await expect(tab).toBeVisible();
+      const glyph = await tab.locator('svg').boundingBox();
+      assert(glyph);
+      assert.equal(glyph.width, 18);
+      assert.equal(glyph.height, 18);
+      assert.equal(await tab.evaluate(el => getComputedStyle(el).gap), '6px');
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  }
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0, 'layout and search must not mutate a Work');
+});
+
+test('V13 composer preserves the draft while compact sizing and editor expansion remain view-only', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await openWorkForRecovery(page);
+  await button(page, 'tab-Chat').click();
+  const editor = page.locator('#composer');
+  await editor.fill('Preserve this draft 草稿');
+  for (const width of [1440, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const name of ['Services', 'Files', 'Chat']) {
+      const tab = button(page, `tab-${name}`);
+      await expect(tab).toHaveText(name);
+      await expect(tab.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+      const bounds = await tab.locator('svg').boundingBox();
+      assert.equal(bounds?.width, 18);
+      assert.equal(bounds?.height, 18);
+    }
+    const geometry = await page.locator('.composer').evaluate(box => {
+      const input = box.querySelector('textarea')!;
+      const send = box.querySelector<HTMLElement>('[data-action=send-message]')!;
+      const upload = box.querySelector<HTMLElement>('[data-action=add-chat-images]')!;
+      const model = box.querySelector<HTMLElement>('#response-settings-trigger')!;
+      const expand = box.querySelector<SVGElement>('.composer-expand svg')!;
+      return { background: getComputedStyle(box).backgroundColor, height: input.getBoundingClientRect().height,
+        resize: getComputedStyle(input).resize, uploadWidth: upload.getBoundingClientRect().width, expandWidth: expand.getBoundingClientRect().width,
+        sendWidth: send.getBoundingClientRect().width, sendHeight: send.getBoundingClientRect().height,
+        sendColor: getComputedStyle(send).backgroundColor, uploadX: upload.getBoundingClientRect().x, modelX: model.getBoundingClientRect().x };
+    });
+    assert.equal(geometry.background, 'rgb(255, 255, 255)');
+    assert.equal(geometry.resize, 'none');
+    assert.equal(geometry.uploadWidth, 28);
+    assert.equal(geometry.expandWidth, 18);
+    assert.equal(geometry.height, 42);
+    assert.equal(geometry.sendWidth, 28);
+    assert.equal(geometry.sendHeight, 28);
+    assert.equal(geometry.sendColor, 'rgb(35, 107, 229)');
+    assert.ok(geometry.uploadX < geometry.modelX);
+    await button(page, 'toggle-composer-editor').click();
+    await expect(button(page, 'toggle-composer-editor')).toHaveAttribute('aria-expanded', 'true');
+    assert.ok((await editor.boundingBox())!.height >= 180);
+    await expect(editor).toBeFocused();
+    await editor.press('Escape');
+    await expect(button(page, 'toggle-composer-editor')).toHaveAttribute('aria-expanded', 'false');
+    await expect(editor).toHaveValue('Preserve this draft 草稿');
+    assert.equal((await editor.boundingBox())!.height, 42);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    const directory = process.env.PIWORK_TEST_SCREENSHOT_DIR;
+    if (directory) {
+      await mkdir(directory, { recursive: true });
+      await page.screenshot({ path: `${directory}/07-composer-${width}.png`, fullPage: true });
+    }
+  }
+  await editor.fill('/literal');
+  await expect(page.locator('.composer-caption.slash-mode')).toBeVisible();
+  await expect(button(page, 'toggle-slash-mode')).toBeVisible();
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0, 'editor presentation must not submit a Run or change preferences');
+});
+
+test('independent Model and Thinking entries retain paired autosave and unknown admission', async t => {
+  const model = (modelRef: string | null) => ({ modelRef, label: modelRef ? 'Second model' : 'Work model', provider: 'fixture', model: 'supported', thinkingLevels: ['off', 'high'], defaultThinkingLevel: 'off' });
+  let selected: string | null = null;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 4 } };
+    if (r.path.endsWith('/chat-models')) return { json: { defaultModel: model(null), models: [model('second-model')], availability: 'available' } };
+    if (r.path.endsWith('/chat-options')) {
+      if (r.method === 'PATCH') {
+        const pair = JSON.parse(r.body);
+        if (pair.thinkingLevel === 'high') return { abort: true };
+        selected = pair.modelRef;
+      }
+      return { json: { sessionId: 'session-1', modelRef: selected, model: model(selected), thinkingLevel: 'off', thinkingProfile: null, availability: 'available' } };
+    }
+  });
+  await page.locator('#composer').fill('Keep /thinking as draft text');
+  await button(page, 'open-chat-settings').click();
+  await expect(page.locator('#model-select')).toBeFocused();
+  await page.locator('#model-select').click();
+  await page.locator('[data-option-value="second-model"]').click();
+  await expect.poll(() => requests.filter(r => r.method === 'PATCH').length).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#response-settings-trigger')).toBeFocused();
+  await button(page, 'open-thinking-settings').click();
+  await expect(page.locator('#thinking-select')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#response-thinking-options')).toBeVisible();
+  await expect(page.locator('#thinking-settings-trigger')).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('#response-settings-trigger')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('[data-kind="thinking"][data-option-value="high"]').click();
+  await expect(page.locator('#response-settings-status')).toContainText(/not confirmed|unknown/i);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#thinking-settings-trigger')).toBeFocused();
+  await expect(page.locator('#composer')).toHaveValue('Keep /thinking as draft text');
+  await expect(button(page, 'send-message')).toBeDisabled();
+  await button(page, 'open-thinking-settings').click();
+  await expect(page.locator('#thinking-select')).toBeDisabled();
+  await expect(page.locator('#model-select')).toBeDisabled();
+  const writes = requests.filter(r => r.method === 'PATCH').map(r => JSON.parse(r.body));
+  assert.deepEqual(writes, [
+    { modelRef: 'second-model', thinkingLevel: 'off', thinkingProfile: null },
+    { modelRef: 'second-model', thinkingLevel: 'high', thinkingProfile: null },
+  ]);
+  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });

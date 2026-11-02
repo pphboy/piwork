@@ -177,7 +177,7 @@ async function login(page) {
   await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.waitForURL(url=>!url.pathname.includes('login'));
   await page.goto(base);
-  await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Overview',level:1,exact:true})).toBeVisible();
 }
 test.use({ viewport:{width:1440,height:900} });
 test('delivered workspaces retain every management deep link, mobile layout, and secret isolation', async ({browser}) => {
@@ -205,12 +205,12 @@ test('delivered workspaces retain every management deep link, mobile layout, and
       await expect(brand).toBeFocused();
       expect(await brand.evaluate(el=>getComputedStyle(el).outlineStyle)).toBe('solid');
       await page.keyboard.press('Enter');
-      await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'Overview',level:1,exact:true})).toBeVisible();
       await page.screenshot({path:join(screenshots,`console-overview-${width}.png`),fullPage:true});
-      if (width < 700) await page.getByRole('button',{name:'Open navigation'}).click();
+      await expect(page.getByRole('navigation',{name:'Main navigation'})).toBeVisible();
       await expect(page.getByRole('link',{name:'Overview',exact:true})).toBeVisible();
-      await expect(page.getByRole('link',{name:'User access',exact:true})).toBeVisible();
-      await expect(page.getByRole('link',{name:'Work setup',exact:true})).toBeVisible();
+      await expect(page.getByRole('link',{name:'Users',exact:true})).toBeVisible();
+      await expect(page.getByRole('link',{name:'Setup',exact:true})).toBeVisible();
       for(const path of ['/users','/runtime','/default-work','/skills','/packages','/operations']) {
         await page.goto(base+path); await expect(page.locator('h1')).toBeVisible();
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),path).toBe(true);
@@ -222,7 +222,7 @@ test('delivered workspaces retain every management deep link, mobile layout, and
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await brand.focus();
       await page.keyboard.press('Enter');
-      await expect(page.getByRole('heading',{name:'What’s next for your Core?'})).toBeVisible();
+      await expect(page.getByRole('heading',{name:'Overview',level:1,exact:true})).toBeVisible();
       const state=await page.evaluate(()=>({local:{...localStorage},session:{...sessionStorage},text:document.body.innerText}));
       expect(JSON.stringify(state)).not.toContain('core-secret-bearer'); expect(JSON.stringify(await context.cookies())).not.toContain('core-secret-bearer');
       expect(await page.locator('[onclick],[style]').count()).toBe(0);

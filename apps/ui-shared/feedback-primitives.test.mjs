@@ -22,3 +22,27 @@ test('fixed pending markup is decorative and contains exactly three dots', () =>
   assert.match(pendingDots(), /aria-hidden="true"/);
   assert.equal((pendingDots().match(/<i>/g) || []).length, 3);
 });
+
+test('Work navigation and composer use their dedicated approved glyphs without replacing global icons', () => {
+  for (const name of ['nav-services', 'nav-files', 'nav-chat']) {
+    const svg = sharedIcon(name, 14);
+    assert.match(svg, /width="18" height="18"/);
+    assert.match(svg, /stroke-width="1.75"/);
+    assert.match(svg, /aria-hidden="true"/);
+  }
+  for (const name of ['composer-attachment', 'composer-expand', 'composer-collapse']) assert.match(sharedIcon(name, 15), /width="15" height="15"/);
+  for (const name of ['grid', 'folder', 'chat']) assert.equal(sharedIcon(name), undefined);
+  assert.match(sharedIcon('refresh'), /stroke-width="1.7"/);
+});
+
+test('Administration aliases preserve requested navigation and card sizes with scoped V14 strokes', () => {
+  for (const name of ['admin-overview', 'admin-users', 'admin-setup', 'admin-models']) {
+    assert.match(sharedIcon(name, 18), /width="18" height="18"/);
+    assert.match(sharedIcon(name, 21), /width="21" height="21"/);
+    assert.match(sharedIcon(name), /stroke-width="1.75"/);
+    assert.match(sharedIcon(name), /stroke="currentColor"/);
+    assert.match(sharedIcon(name), /aria-hidden="true"/);
+  }
+  assert.equal(sharedIcon('users'), undefined);
+  assert.equal(sharedIcon('settings'), undefined);
+});
