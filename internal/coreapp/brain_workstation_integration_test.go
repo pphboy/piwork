@@ -517,7 +517,7 @@ func TestNativeBrainAcceptedActionGapRecovery(t *testing.T) {
 					continue
 				}
 				request = f.read(f.path + "/agent-requests/" + r["requestId"].(string))["request"].(map[string]any)
-				program := "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/var/data/work.sqlite',{readOnly:true});const row=db.prepare('SELECT action_refs_json FROM agent_requests WHERE request_id=?').get(" + stringMustJSON(r["requestId"]) + ");console.log(row.action_refs_json);db.close();"
+				program := "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/var/data/work.sqlite',{readOnly:true});db.exec('PRAGMA busy_timeout=5000');const row=db.prepare('SELECT action_refs_json FROM agent_requests WHERE request_id=?').get(" + stringMustJSON(r["requestId"]) + ");console.log(row.action_refs_json);db.close();"
 				raw := f.agentEval(program)
 				var refs []map[string]any
 				if json.Unmarshal([]byte(strings.TrimSpace(raw)), &refs) == nil && len(refs) == 1 && refs[0]["status"] == "known" {
@@ -578,7 +578,7 @@ func TestNativeBrainAcceptedActionGapRecovery(t *testing.T) {
 		if expected == "needs_attention" && done["autoRunCount"] != count {
 			t.Fatal("readonly failure consumed another model Run", done)
 		}
-		program := "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/var/data/workspace/data/workstation/workstation.sqlite',{readOnly:true});console.log(JSON.stringify(db.prepare('SELECT action_id,id AS job_id FROM ws_jobs').all()));db.close();"
+		program := "import {DatabaseSync} from 'node:sqlite';const db=new DatabaseSync('/var/data/workspace/data/workstation/workstation.sqlite',{readOnly:true});db.exec('PRAGMA busy_timeout=5000');console.log(JSON.stringify(db.prepare('SELECT action_id,id AS job_id FROM ws_jobs').all()));db.close();"
 		jobs := f.agentEval(program)
 		if strings.Count(jobs, stringMustJSON(original["actionId"])) != 1 || strings.Count(jobs, stringMustJSON(original["jobId"])) != 1 {
 			t.Fatal("original business effect replayed or lost", mode, jobs, original)

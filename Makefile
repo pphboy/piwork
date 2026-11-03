@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 export GOTOOLCHAIN := local
 export CGO_ENABLED := 0
+TEST_JOBS ?= auto
 
 .PHONY: help generate build build-go native-agent-images native-helper-images native-compatibility-images workstation-fixture test test-go test-integration test-integration-go test-native-host harness-fixtures webui-assets acceptance acceptance-index release
 
@@ -21,7 +22,7 @@ help:
 	@echo 'native-helper-images Build Go file/snapshot helper images'
 	@echo 'native-compatibility-images Build real SDK-version and registry fault fixtures'
 	@echo 'test-go              Run Go unit and wire contract tests'
-	@echo 'test-integration-go  Run isolated Engine and retained deterministic SDK tests'
+	@echo 'test-integration-go  Run full five-package inventory once (TEST_JOBS=auto|N)'
 	@echo 'acceptance-index     Reconcile pending scenario evidence with the matrix'
 	@echo 'test-native-host     Run released programs in scratch against an independent Engine'
 
@@ -86,15 +87,10 @@ web-base-image:
 native-history4-web-base-fixture:
 	docker build -f internal/coreapp/testdata/Dockerfile.memory-history4-web-base -t piwork-memory-history4-web-base:acceptance .
 
-test-integration-go: harness-fixtures build-go native-compatibility-images native-helper-images workstation-fixture
-	PIWORK_TEST_NATIVE_AGENT_IMAGE=piwork-agentd:go-migration-acceptance \
-	PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE=piwork-file-helper:go-migration-acceptance \
-	PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE=piwork-snapshot-helper:go-migration-acceptance \
-	PIWORK_TEST_NATIVE_OLD_SDK_IMAGE=piwork-agentd:go-migration-sdk-0860 \
-	PIWORK_TEST_NATIVE_UNAVAILABLE_REGISTRY_IMAGE=piwork-agentd:go-migration-registry-unavailable \
-	go test -mod=readonly -tags=integration -v -timeout=120m ./internal/testsupport ./internal/dockerengine ./internal/coreapp ./internal/workruntime ./internal/packageprepare
+test-integration-go:
+	node scripts/run-core-integration.mjs --jobs "$(TEST_JOBS)"
 
-test-integration: build test-integration-go
+test-integration: test-integration-go
 	npm run test:browser -w @piwork/desktop-webui
 	npm run test:real-core -w @piwork/desktop-webui
 	npm run test:browser -w @piwork/console-webui

@@ -24,15 +24,22 @@ func TestNativeServiceExitDiagnosisAndWorkRecovery(t *testing.T) {
 	for _, afterReady := range []bool{false, true} {
 		for _, exitCode := range []int{0, 7} {
 			name := fmt.Sprintf("exit-%t-%d", afterReady, exitCode)
-			delay := 400
+			releasePath := "/var/data/workspace/.release-" + name
 			definition := map[string]any{"name": name, "image": map[string]string{"reference": image}, "command": "node", "workingDirectory": "/", "restartPolicy": "never"}
 			if afterReady {
-				delay = 2500
+				definition["mounts"] = []any{map[string]any{"source": "workspace", "target": "/var/data/workspace", "readOnly": true}}
+				definition["workingDirectory"] = "/var/data/workspace"
 			} else {
 				definition["ports"] = []any{map[string]any{"name": "http", "containerPort": 8099, "protocol": "tcp"}}
 				definition["readiness"] = map[string]any{"kind": "http", "portName": "http", "path": "/health", "deadlineMs": 5000}
 			}
-			definition["args"] = []string{"-e", fmt.Sprintf("setTimeout(()=>process.exit(%d),%d)", exitCode, delay)}
+			// Exit only after the Core has reached the intended phase.
+			// Wall-clock sleeps could race Docker start/inspection under load.
+			script := fmt.Sprintf("require('node:http').createServer((request,response)=>{response.on('finish',()=>setImmediate(()=>process.exit(%d)));response.writeHead(503);response.end('unready');}).listen(8099,'0.0.0.0')", exitCode)
+			if afterReady {
+				script = fmt.Sprintf("const fs=require('node:fs');setInterval(()=>{if(fs.existsSync(%s))process.exit(%d)},20)", stringMustJSON(releasePath), exitCode)
+			}
+			definition["args"] = []string{"-e", script}
 			status, created := packageHTTPCall(t, base, path+"/services", "POST", auth, map[string]any{"definition": definition, "idempotencyKey": name})
 			if status != 202 {
 				t.Fatal(status, created)
@@ -40,6 +47,11 @@ func TestNativeServiceExitDiagnosisAndWorkRecovery(t *testing.T) {
 			operationID, serviceID := created["operationId"].(string), created["serviceId"].(string)
 			if afterReady {
 				waitWorkOperation(t, ctx, a, operationID)
+				flow := brainAcceptance{t: t, a: a, base: base, auth: auth, work: workID, ctx: ctx}
+				released := flow.agentEval("import {writeFileSync} from 'node:fs';writeFileSync(" + stringMustJSON(releasePath) + ",'release');console.log('exit released')")
+				if strings.TrimSpace(released) != "exit released" {
+					t.Fatal("ready exit signal not confirmed", released)
+				}
 			} else {
 				waitApplyFailure(t, ctx, a, operationID)
 			}

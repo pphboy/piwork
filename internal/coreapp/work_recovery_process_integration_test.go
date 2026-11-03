@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -64,9 +66,9 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 	if err := initial.Close(); err != nil {
 		t.Fatal(err)
 	}
+	binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
 	start := func() (*exec.Cmd, string, *bytes.Buffer) {
 		seedProcessRuntime(t, directory, image)
-		binary = processFixtureBinary(t, image, image, os.Getenv("PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE"), os.Getenv("PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE"))
 		cmd := exec.CommandContext(ctx, binary, processStartupArgs(t, directory)...)
 		cmd.Env = []string{
 			"PATH=" + filepath.Join(t.TempDir(), "no-host-tools"), "DOCKER_HOST=" + host, "DOCKER_CONFIG=" + t.TempDir(),
@@ -112,6 +114,24 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		return nil, "", nil
 	}
 	first, base, firstErrors := start()
+	leasePort := func() int {
+		raw, err := os.ReadFile(directory + ".test-rpc.json")
+		var lease struct{ Port int }
+		if err != nil || json.Unmarshal(raw, &lease) != nil || lease.Port == 0 {
+			t.Fatal("fixture RPC lease unavailable", err)
+		}
+		return lease.Port
+	}
+	port := leasePort()
+	// Keep a second real installation and Agent alive throughout crash/adoption.
+	peer, peerBase, peerAuth, peerWork, _ := nativeApplyFixtureConfig(t, true)
+	if peer.serviceListener.Addr().(*net.TCPAddr).Port == port {
+		t.Fatal("concurrent installations shared an RPC port")
+	}
+	peerStoreID := peer.Store.InstallationID()
+	if peerStoreID == scope.ID() {
+		t.Fatal("concurrent installations shared identity")
+	}
 	status, login := httpCall(t, base, "/api/v1/login", http.MethodPost, "", map[string]any{"account": "admin", "password": "development-fixture-pass"})
 	if status != 200 {
 		t.Fatal("first Core login failed", status, login)
@@ -151,6 +171,15 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 	if !created {
 		t.Fatal("Work create did not finish before the crash fixture deadline")
 	}
+	firstWork := brainAcceptance{t: t, base: base, auth: authorization, work: workID, path: "/api/v1/works/" + workID, ctx: ctx}
+	completedRun := firstWork.chat("deploy deterministic service", "original-callback")
+	peerFlow := brainAcceptance{t: t, a: peer, base: peerBase, auth: peerAuth, work: peerWork, path: "/api/v1/works/" + peerWork, ctx: ctx}
+	peerFlow.chat("deploy deterministic service", "peer-callback")
+	for _, flow := range []*brainAcceptance{&firstWork, &peerFlow} {
+		if services := flow.read(flow.path + "/services")["services"].([]any); len(services) != 1 {
+			t.Fatal("isolated mTLS callbacks published into the wrong installation")
+		}
+	}
 	containers, err := raw.ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +197,11 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = first.Wait()
+	probe, err := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", fmt.Sprint(port)))
+	if err != nil {
+		t.Fatal("crashed Core left a fixture listener alive", err)
+	}
+	probe.Close()
 	orphan, err := raw.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: scope.ID() + "-unknown-agent",
 		Config: &container.Config{Image: image, Labels: map[string]string{
@@ -182,6 +216,17 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 		t.Log("first Core diagnostic:", firstErrors.String())
 	}
 	second, secondBase, secondErrors := start()
+	if leasePort() != port {
+		t.Fatal("crash adoption changed the original Agent callback port")
+	}
+	firstWork.base = secondBase
+	if history := firstWork.read(firstWork.path + "/runs/" + completedRun["runId"].(string)); history["state"] != float64(4) {
+		t.Fatal("adoption lost the original completed Run")
+	}
+	firstWork.chat("Synthetic history after adoption", "after-adoption")
+	if status, _ := httpCall(t, peerBase, "/api/v1/works/"+peerWork+"/sessions", http.MethodGet, peerAuth, nil); status != 200 || peer.Store.InstallationID() != peerStoreID {
+		t.Fatal("another installation was affected by crash recovery")
+	}
 	if _, err := raw.ContainerInspect(ctx, orphan.ID, client.ContainerInspectOptions{}); err != nil {
 		t.Fatal("Core startup deleted an unknown managed Agent", err)
 	}
@@ -213,4 +258,10 @@ func TestNativeCoreCrashAdoptsExistingAgent(t *testing.T) {
 	if err := second.Wait(); err != nil {
 		t.Fatal("Core did not shut down cleanly after adoption", err, secondErrors.String())
 	}
+	probe, err = net.Listen("tcp4", net.JoinHostPort("0.0.0.0", fmt.Sprint(port)))
+	if err != nil {
+		t.Fatal("normal shutdown retained RPC listener", err)
+	}
+	probe.Close()
+	t.Logf("concurrent installations used separate mTLS listeners; crash/normal shutdown released %d; original Agent adopted once", port)
 }

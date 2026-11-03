@@ -113,7 +113,9 @@ func TestNoArgumentsStartsOnePersistentApplicationAndReleasesItsLock(t *testing.
 	defer cancel()
 	var out, stderr lockedOutput
 	done := make(chan int, 1)
-	go func() { done <- Run(ctx, nil, &out, &stderr) }()
+	go func() {
+		done <- RunWithRPCListener(ctx, nil, &out, &stderr, func() (net.Listener, error) { return net.Listen("tcp4", "0.0.0.0:0") })
+	}()
 	var origin string
 	for i := 0; i < 200 && origin == ""; i++ {
 		for _, line := range strings.Split(out.text(), "\n") {
@@ -225,9 +227,6 @@ func TestEitherListenerConflictClosesPartialStartup(t *testing.T) {
 	for _, occupied := range []string{"browser", "core", "rpc"} {
 		t.Run(occupied, func(t *testing.T) {
 			occupiedAddress := "127.0.0.1:0"
-			if occupied == "rpc" {
-				occupiedAddress = "127.0.0.1:7172"
-			}
 			listener, err := net.Listen("tcp", occupiedAddress)
 			if err != nil {
 				t.Fatal(err)
@@ -241,7 +240,19 @@ func TestEitherListenerConflictClosesPartialStartup(t *testing.T) {
 				coreAddress = strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
 			}
 			var out, diagnostic bytes.Buffer
-			code := Run(context.Background(), []string{"--ui-port", ui, "--core-port", coreAddress, "--data-dir", directory}, &out, &diagnostic)
+			var rpcAddress string
+			acquire := func() (net.Listener, error) {
+				address := "127.0.0.1:0"
+				if occupied == "rpc" {
+					address = listener.Addr().String()
+				}
+				bound, err := net.Listen("tcp4", address)
+				if err == nil {
+					rpcAddress = bound.Addr().String()
+				}
+				return bound, err
+			}
+			code := RunWithRPCListener(context.Background(), []string{"--ui-port", ui, "--core-port", coreAddress, "--data-dir", directory}, &out, &diagnostic, acquire)
 			if code != 1 || strings.Contains(out.String(), "app.listening") {
 				t.Fatal("partial startup published", code, out.String())
 			}
@@ -250,7 +261,30 @@ func TestEitherListenerConflictClosesPartialStartup(t *testing.T) {
 				t.Fatal("failure retained data lock", err)
 			}
 			_ = core.Close(context.Background())
+			if rpcAddress != "" {
+				released, err := net.Listen("tcp4", rpcAddress)
+				if err != nil {
+					t.Fatal("startup rollback retained RPC listener", err)
+				}
+				released.Close()
+			}
 		})
+	}
+}
+
+func TestRPCProductionDefaultsAndFixtureOptionsStaySeparate(t *testing.T) {
+	listen, advertise := rpcAddresses(nil)
+	if listen != "0.0.0.0:7172" || advertise != "piwork-core:7172" {
+		t.Fatal("production RPC defaults changed")
+	}
+	listen, advertise = rpcAddresses(func() (net.Listener, error) { return nil, nil })
+	if listen != "" || advertise != "" {
+		t.Fatal("fixture must derive advertise from its real listener")
+	}
+	for _, args := range [][]string{{"--rpc-port", "1234"}, {"--test-rpc-port", "1234"}, {"--fixture", "true"}} {
+		if Run(context.Background(), args, io.Discard, io.Discard) != 2 {
+			t.Fatal("product accepted fixture-only option")
+		}
 	}
 }
 

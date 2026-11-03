@@ -97,6 +97,19 @@ func parseStartup(args []string) (startupOptions, error) {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return run(ctx, args, stdout, stderr, nil)
+}
+
+// RunWithRPCListener shares production startup while allowing an internal caller
+// to acquire its own listener. No additional product argument or environment key is read.
+func RunWithRPCListener(ctx context.Context, args []string, stdout, stderr io.Writer, acquire func() (net.Listener, error)) int {
+	if acquire == nil {
+		return Run(ctx, args, stdout, stderr)
+	}
+	return run(ctx, args, stdout, stderr, acquire)
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, acquire func() (net.Listener, error)) int {
 	if len(args) == 1 {
 		switch args[0] {
 		case "--help", "-h":
@@ -114,7 +127,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "piwork-core: invalid startup options; use --help (user commands: piwork-cli)")
 		return 2
 	}
-	return start(ctx, options, stdout, stderr)
+	return start(ctx, options, stdout, stderr, acquire)
 }
 
 func defaultDirectory() (string, error) {
@@ -125,7 +138,14 @@ func defaultDirectory() (string, error) {
 	return filepath.Join(base, "piwork", "server"), nil
 }
 
-func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer) int {
+func rpcAddresses(acquire func() (net.Listener, error)) (string, string) {
+	if acquire != nil {
+		return "", ""
+	}
+	return "0.0.0.0:7172", "piwork-core:7172"
+}
+
+func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer, acquire func() (net.Listener, error)) int {
 	directory := options.directory
 	var err error
 	if directory == "" {
@@ -175,9 +195,10 @@ func start(ctx context.Context, options startupOptions, stdout, stderr io.Writer
 		fmt.Fprintln(stderr, "piwork-core: startup identity unavailable")
 		return 1
 	}
+	rpcListen, rpcAdvertise := rpcAddresses(acquire)
 	core, err := coreapp.New(ctx, coreapp.Options{DataDirectory: directory, Initialization: initialization, SetupSecret: setupSecret, Stdout: stdout, Stderr: stderr,
 		PackageHelperImage: defaults.PackageHelper, FileHelperImage: defaults.FileHelper, SnapshotHelperImage: defaults.SnapshotHelper,
-		AgentGRPCListen: "0.0.0.0:7172", AgentGRPCAdvertise: "piwork-core:7172",
+		AgentGRPCListen: rpcListen, AgentGRPCAdvertise: rpcAdvertise, AgentRPCListener: acquire,
 		DockerOptions: dockerengine.SelectionOptions{DockerHost: os.Getenv("DOCKER_HOST"), DockerContext: os.Getenv("DOCKER_CONTEXT"), DockerConfig: os.Getenv("DOCKER_CONFIG"), HomeDirectory: home}})
 	if err != nil {
 		switch {

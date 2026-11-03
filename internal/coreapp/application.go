@@ -49,11 +49,13 @@ type Options struct {
 	SnapshotHelperImage string
 	AgentGRPCListen     string
 	AgentGRPCAdvertise  string
-	Stdout              io.Writer
-	Stderr              io.Writer
-	WorkDrainTimeout    time.Duration
-	WorkStopTimeout     time.Duration
-	ShutdownTimeout     time.Duration
+	// Internal listener acquisition seam; the application owns the returned resource.
+	AgentRPCListener func() (net.Listener, error)
+	Stdout           io.Writer
+	Stderr           io.Writer
+	WorkDrainTimeout time.Duration
+	WorkStopTimeout  time.Duration
+	ShutdownTimeout  time.Duration
 	// Later lifecycle/file/package/snapshot modules register actual recovery
 	// and shutdown here. With no registration, an installation with durable
 	// Work/job records remains RECOVERING; it cannot be advertised as ready.

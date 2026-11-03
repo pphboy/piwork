@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn,execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -10,22 +10,16 @@ import test, { after } from 'node:test';
 import { chromium, expect, type Page } from '@playwright/test';
 
 const root=fileURLToPath(new URL('../../../../',import.meta.url));
-const fixtureRPC=!process.env.PIWORK_TEST_UNIFIED_BIN && !process.env.PIWORK_RUN_ENGINE_BROWSER;
-// Fake-engine browser cases do not need a container callback. Give their
-// fixture an ephemeral RPC listener so an unrelated running Core is safe.
+
+// All browser fixtures use the same development entry as Go process tests.
 function fixtureBinary():string {
   if (process.env.PIWORK_TEST_UNIFIED_BIN) return process.env.PIWORK_TEST_UNIFIED_BIN;
-  if (process.env.PIWORK_RUN_ENGINE_BROWSER) return join(root,'dist/go/piwork-core');
   const directory=mkdtempSync(join(tmpdir(),'piwork-browser-core-'));
   try {
-    const source=join(root,'internal/app/run.go'), overlaySource=join(directory,'run.go'), overlay=join(directory,'overlay.json');
-    const original=readFileSync(source,'utf8');
-    const listener='AgentGRPCListen: "0.0.0.0:7172", AgentGRPCAdvertise: "piwork-core:7172"';
-    assert.equal(original.split(listener).length,2,'fixture RPC listener source must match exactly once');
-    writeFileSync(overlaySource,original.replace(listener,'AgentGRPCListen: "127.0.0.1:" + os.Getenv("PIWORK_TEST_AGENT_RPC_PORT"), AgentGRPCAdvertise: "piwork-core:7172"'));
-    writeFileSync(overlay,JSON.stringify({Replace:{[source]:overlaySource}}));
     const output=join(directory,'piwork-core');
-    execFileSync('go',['build','-mod=readonly','-overlay',overlay,'-o',output,'./cmd/piwork-core'],{cwd:root,env:{...process.env,CGO_ENABLED:'0',GOTOOLCHAIN:'local'},stdio:'inherit'});
+    const builder=new URL('scripts/native-test-server.mjs',new URL('file://'+root)).href;
+    const program=`import {buildNativeTestServer} from ${JSON.stringify(builder)}; import {readFileSync} from 'node:fs'; buildNativeTestServer(${JSON.stringify(directory)},JSON.parse(readFileSync(${JSON.stringify(join(root,'internal/distribution/images.json'))},'utf8')));`;
+    execFileSync(process.execPath,['--input-type=module','-e',program],{cwd:root,env:process.env,stdio:'inherit'});
     after(()=>rmSync(directory,{recursive:true,force:true}));
     return output;
   } catch(error) {rmSync(directory,{recursive:true,force:true});throw error;}
@@ -47,15 +41,20 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
   const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>!name.startsWith('PIWORK_')));
   // Reserve all ports together so the fixture's RPC listener cannot take the
   // UI or Core port between selection and process startup.
-  const coreReserve=createServer();await new Promise<void>(done=>coreReserve.listen(0,'127.0.0.1',done));
-  const corePort=(coreReserve.address() as {port:number}).port;
-  const rpcReserve=fixtureRPC ? createServer() : undefined;
-  if(rpcReserve)await new Promise<void>(done=>rpcReserve.listen(0,'127.0.0.1',done));
-  const rpcPort=rpcReserve ? (rpcReserve.address() as {port:number}).port : undefined;
-  if(rpcReserve)await new Promise<void>(done=>rpcReserve.close(()=>done()));
+  let retainedRPC=0;
+  try {retainedRPC=JSON.parse(readFileSync(directory+'.test-rpc.json','utf8')).port;} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  const coreReserve=createServer();
+  let corePort=0;
+  for(let attempt=0;attempt<128;attempt++) {
+    await new Promise<void>(done=>coreReserve.listen(0,'127.0.0.1',done));
+    corePort=(coreReserve.address() as {port:number}).port;
+    if(corePort!==retainedRPC)break;
+    await new Promise<void>(done=>coreReserve.close(()=>done()));
+  }
+  assert.notEqual(corePort,retainedRPC,'HTTP allocation must exclude the retained RPC lease');
   await new Promise<void>(done=>coreReserve.close(()=>done()));
   await new Promise<void>((resolve,reject)=>reserve.close(err=>err?reject(err):resolve()));
-  const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,...(rpcPort ? {PIWORK_TEST_AGENT_RPC_PORT:String(rpcPort)} : {}),DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
+  const processHandle=spawn(binary,['--ui-port',String(port),'--core-port',String(corePort),'--data-dir',directory],{env:{...env,...environment,DISPLAY:'',WAYLAND_DISPLAY:'',DOCKER_HOST:engineHost||'unix://'+join(directory,'missing-engine.sock')},stdio:['pipe','pipe','pipe']}) as ChildProcessWithoutNullStreams;
   let output='',stderr='',exited=false;
   processHandle.stdout.on('data',data=>{output+=data.toString();});
   processHandle.stderr.on('data',data=>{stderr+=data.toString();});
@@ -68,7 +67,10 @@ async function start(environment:Record<string,string>={}, existing?:{directory:
         processHandle.once('exit',()=>{clearTimeout(timeout);resolve();});
       });
     }
-    if(!preserve)await rm(directory,{recursive:true,force:true});
+    if(!preserve) {
+      await rm(directory,{recursive:true,force:true});
+      await rm(directory+'.test-rpc.json',{force:true});
+    }
   };
   try {
     for(let i=0;i<200;i++) {

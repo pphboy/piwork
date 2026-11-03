@@ -29,6 +29,9 @@ type serviceRPC struct {
 }
 
 func validateServiceRPCOptions(options Options) error {
+	if options.AgentRPCListener != nil && options.AgentGRPCListen != "" {
+		return errors.New("service control listener sources conflict")
+	}
 	if options.AgentGRPCListen != "" {
 		host, port, err := net.SplitHostPort(options.AgentGRPCListen)
 		number, parseErr := strconv.Atoi(port)
@@ -39,7 +42,7 @@ func validateServiceRPCOptions(options Options) error {
 	if options.AgentGRPCAdvertise != "" {
 		host, port, err := net.SplitHostPort(options.AgentGRPCAdvertise)
 		number, parseErr := strconv.Atoi(port)
-		if options.AgentGRPCListen == "" || err != nil || parseErr != nil || number < 1 || number > 65535 || host == "" || len(host) > 253 || strings.ContainsAny(host, "/\\@%\x00\r\n ") {
+		if options.AgentGRPCListen == "" && options.AgentRPCListener == nil || err != nil || parseErr != nil || number < 1 || number > 65535 || host == "" || len(host) > 253 || strings.ContainsAny(host, "/\\@%\x00\r\n ") {
 			return errors.New("service control advertised endpoint is invalid")
 		}
 	}
@@ -51,7 +54,7 @@ func validateServiceRPCOptions(options Options) error {
 func (a *Application) BindRPC(ctx context.Context) error { return a.listenServiceRPC(ctx) }
 
 func (a *Application) listenServiceRPC(ctx context.Context) error {
-	if a.options.AgentGRPCListen == "" {
+	if a.options.AgentGRPCListen == "" && a.options.AgentRPCListener == nil {
 		return nil
 	}
 	if a.serviceServer != nil {
@@ -86,13 +89,29 @@ func (a *Application) listenServiceRPC(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", a.options.AgentGRPCListen)
+	var listener net.Listener
+	if a.options.AgentRPCListener != nil {
+		listener, err = a.options.AgentRPCListener()
+	} else {
+		listener, err = net.Listen("tcp", a.options.AgentGRPCListen)
+	}
 	if err != nil {
+		if listener != nil {
+			listener.Close()
+		}
 		return errors.New("Core service control listener is unavailable")
+	}
+	if listener == nil {
+		return errors.New("Core service control listener is missing")
+	}
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || address.Port == 0 {
+		listener.Close()
+		return errors.New("Core service control listener is not TCP")
 	}
 	endpoint := a.options.AgentGRPCAdvertise
 	if endpoint == "" {
-		endpoint = net.JoinHostPort("piwork-core", strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
+		endpoint = net.JoinHostPort("piwork-core", strconv.Itoa(address.Port))
 	}
 	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(config)), grpc.UnaryInterceptor(internaltls.ServiceUnaryInterceptor(a.Store.InstallationID(), active)), grpc.MaxRecvMsgSize(1<<20), grpc.MaxSendMsgSize(4<<20), grpc.MaxConcurrentStreams(64))
 	servicesv1.RegisterWorkServicesServer(server, &serviceRPC{App: a})

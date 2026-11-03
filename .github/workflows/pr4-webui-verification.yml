@@ -31,7 +31,7 @@ jobs:
           - {suite: backend-history, minutes: 75}
     name: ${{ matrix.suite }}
     concurrency:
-      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}${{ matrix.suite == 'integration-go' && '-core-repair-v1' || '' }}
+      group: pr4-webui-${{ github.event.pull_request.number }}-${{ matrix.suite }}${{ matrix.suite == 'desktop-browser' && '-bounded-tap-v1' || '' }}${{ matrix.suite == 'integration-go' && '-core-inventory-v2' || '' }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.minutes }}
@@ -69,6 +69,7 @@ jobs:
           npx --no-install playwright install --with-deps chromium
           node --input-type=module -e "import {chromium} from '@playwright/test'; console.log('PIWORK_TEST_BROWSER_BIN='+chromium.executablePath())" >> "$GITHUB_ENV"
       - name: Build current source
+        if: matrix.suite != 'integration-go'
         id: build
         run: make build
       - name: Unit, contracts and boundaries
@@ -119,7 +120,9 @@ jobs:
           command -v unzip
           df -h /
           docker pull python:3.13-slim
-          make native-compatibility-images native-helper-images workstation-fixture
+          if [[ '${{ matrix.suite }}' != integration-go ]]; then
+            make native-compatibility-images native-helper-images workstation-fixture
+          fi
           if [[ '${{ matrix.suite }}' == backend-engine ]]; then
             exit 0
           fi
@@ -132,6 +135,10 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' piwork-memory-history4:acceptance)" = "$old"
           test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.source.modified"}}' piwork-memory-history4:acceptance)" = false
           test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.work-history.schema"}}' piwork-memory-history4:acceptance)" = 4
+          if [[ '${{ matrix.suite }}' == integration-go ]]; then
+            echo 'Historical source reconstructed; the full runner prepares the current candidate and bridge once.'
+            exit 0
+          fi
           make native-history4-web-base-fixture
           test "$(docker image inspect --format '{{index .Config.Labels "io.piwork.fixture.web-base-history4"}}' "$PIWORK_TEST_NATIVE_HISTORY4_IMAGE")" = true
           docker image inspect --format '{{.Id}} {{json .RepoDigests}}' piwork-memory-history4:acceptance "$PIWORK_TEST_NATIVE_HISTORY4_IMAGE"
@@ -215,6 +222,19 @@ jobs:
       - name: Existing Go Engine integration
         if: matrix.suite == 'integration-go' && !cancelled() && steps.fixtures.outcome == 'success'
         run: make test-integration-go
+      - name: Full Core integration evidence
+        if: matrix.suite == 'integration-go' && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-integration-${{ github.event.pull_request.head.sha }}
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            dist/core-integration/**/result.json
+            dist/core-integration/**/plan.json
+            dist/core-integration/**/unit-*.jsonl
+            dist/core-integration/**/cleanup.log
+            dist/core-integration/**/processes.jsonl
       - name: Requested synthetic Desktop screenshots
         if: matrix.suite == 'real-core' && !cancelled() && steps.desktop_real_core.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # official v4

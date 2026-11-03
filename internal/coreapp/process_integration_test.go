@@ -15,6 +15,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/client"
+	"piwork/internal/corestore"
+	"piwork/internal/testsupport"
 )
 
 func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
@@ -29,6 +33,27 @@ func TestNativeCoreProcessHealthIdentityRestartWithoutHostTools(t *testing.T) {
 	if dockerHost == "" {
 		dockerHost = "unix:///var/run/docker.sock"
 	}
+	scope, err := testsupport.NewScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := corestore.Open(t.Context(), corestore.Options{Directory: directory, InstallationID: scope.ID()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial.Close()
+	raw, err := client.NewClientWithOpts(client.WithHost(dockerHost), client.WithAPIVersionNegotiation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		defer raw.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := scope.Cleanup(ctx, raw); err != nil {
+			t.Error(err)
+		}
+	})
 	image := os.Getenv("PIWORK_TEST_NATIVE_AGENT_IMAGE")
 	if image == "" {
 		image = "piwork-agentd:go-migration-acceptance"

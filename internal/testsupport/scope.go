@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"os"
 	"regexp"
 
 	"github.com/containerd/errdefs"
@@ -32,7 +33,21 @@ func NewScope() (*Scope, error) {
 	identity[6] = identity[6]&0x0f | 0x40
 	identity[8] = identity[8]&0x3f | 0x80
 	id := hex.EncodeToString(identity[:])
-	return &Scope{id: "piwork-test-" + id[:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:]}, nil
+	scope := &Scope{id: "piwork-test-" + id[:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:]}
+	// The runner learns ownership at creation, including scopes whose test dies
+	// before logging. One O_APPEND write per ID keeps independent processes safe.
+	if ledger := os.Getenv("PIWORK_TEST_SCOPE_LEDGER"); ledger != "" {
+		file, err := os.OpenFile(ledger, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
+		if err != nil {
+			return nil, err
+		}
+		_, writeErr := file.WriteString(scope.id + "\n")
+		closeErr := file.Close()
+		if err := errors.Join(writeErr, closeErr); err != nil {
+			return nil, err
+		}
+	}
+	return scope, nil
 }
 func ExistingScope(id string) (*Scope, error) {
 	if !installationPattern.MatchString(id) {

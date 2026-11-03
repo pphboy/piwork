@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"piwork/internal/corestore"
+	"piwork/internal/testsupport"
 	"piwork/internal/testsupport/sqlitefixture"
 )
 
@@ -35,7 +36,16 @@ func TestCoreWALProcessChild(t *testing.T) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	os.Exit(Run(ctx, args, os.Stdout, os.Stderr))
+	var directory string
+	var excluded []int
+	for i := 0; i+1 < len(args); i += 2 {
+		if args[i] == "--data-dir" {
+			directory = args[i+1]
+		} else if port, err := strconv.Atoi(args[i+1]); err == nil {
+			excluded = append(excluded, port)
+		}
+	}
+	os.Exit(RunWithRPCListener(ctx, args, os.Stdout, os.Stderr, func() (net.Listener, error) { return testsupport.LeaseRPCListener(directory, "", excluded...) }))
 }
 
 type walCoreProcess struct {
@@ -181,12 +191,14 @@ func walProcessRequest(t *testing.T, base, path, method, token string, body any)
 }
 
 func TestCoreProcessCheckpointFailureAndWALReopen(t *testing.T) {
-	// The product RPC port is fixed. Never stop or take over an existing Core.
-	reservation, err := net.Listen("tcp4", "0.0.0.0:7172")
-	if err != nil {
-		t.Skip("Agent RPC 7172 belongs to another process; use an isolated network namespace")
+	if os.Getenv("PIWORK_TEST_CORE_BINARY") != "" {
+		// An explicitly requested production ELF smoke retains its real default.
+		reservation, err := net.Listen("tcp4", "0.0.0.0:7172")
+		if err != nil {
+			t.Skip("explicit production ELF smoke requires isolated default RPC network")
+		}
+		reservation.Close()
 	}
-	reservation.Close()
 	directory := filepath.Join(t.TempDir(), "core")
 	uiPort, corePort := walProcessPort(t), walProcessPort(t)
 	for corePort == uiPort || corePort == 7172 {
@@ -236,7 +248,16 @@ func TestCoreProcessCheckpointFailureAndWALReopen(t *testing.T) {
 	if err != nil || !bytes.Equal(marker, after) {
 		t.Fatal("reopen changed storage marker", err)
 	}
-	for _, port := range []int{uiPort, corePort, 7172} {
+	rpcPort := 7172
+	if os.Getenv("PIWORK_TEST_CORE_BINARY") == "" {
+		var lease struct{ Port int }
+		raw, err := os.ReadFile(directory + ".test-rpc.json")
+		if err != nil || json.Unmarshal(raw, &lease) != nil || lease.Port == 0 {
+			t.Fatal("missing fixture RPC lease", err)
+		}
+		rpcPort = lease.Port
+	}
+	for _, port := range []int{uiPort, corePort, rpcPort} {
 		listener, err := net.Listen("tcp4", "0.0.0.0:"+strconv.Itoa(port))
 		if err != nil {
 			t.Fatal("Core retained a listener", port, err)

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,11 +23,6 @@ import (
 )
 
 func TestNativeCredentialCoreCrashAdoptsInflightRun(t *testing.T) {
-	port, err := net.Listen("tcp4", "0.0.0.0:7172")
-	if err != nil {
-		t.Fatal("Agent RPC port is unavailable for the isolated Core fixture", err)
-	}
-	port.Close()
 	gateway, image := nativeModelGateway(t)
 	gateway.mu.Lock()
 	gateway.allowedKey = "synthetic-process-old"

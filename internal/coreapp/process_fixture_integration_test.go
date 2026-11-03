@@ -3,8 +3,9 @@
 package coreapp
 
 import (
-	"encoding/base64"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -32,11 +33,29 @@ func processFixtureBinary(t *testing.T, agent, packageHelper, fileHelper, snapsh
 	images, _ := json.Marshal(map[string]string{"agent": agent, "packageHelper": packageHelper, "fileHelper": fileHelper, "snapshotHelper": snapshotHelper})
 	_, source, _, _ := runtime.Caller(0)
 	binary := filepath.Join(t.TempDir(), "piwork-core")
-	cmd := exec.Command("go", "build", "-mod=readonly", "-trimpath", "-ldflags", "-X piwork/internal/distribution.EncodedImages="+base64.RawStdEncoding.EncodeToString(images), "-o", binary, "./cmd/piwork-core")
-	cmd.Dir = filepath.Join(filepath.Dir(source), "../..")
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fixture build: %v: %s", err, output)
+	if prepared := os.Getenv("PIWORK_TEST_CORE_FIXTURE_BIN"); prepared != "" {
+		data, err := os.ReadFile(prepared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(data)) != os.Getenv("PIWORK_TEST_CORE_FIXTURE_SHA256") {
+			t.Fatal("prepared Core fixture identity changed")
+		}
+		if err := os.WriteFile(binary, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		cmd := exec.Command("go", "build", "-mod=readonly", "-trimpath", "-o", binary, "./scripts/corefixture")
+		cmd.Dir = filepath.Join(filepath.Dir(source), "../..")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("fixture build: %v: %s", err, output)
+		}
+	}
+	config := append([]byte(`{"images":`), images...)
+	config = append(config, '}')
+	if err := os.WriteFile(binary+".fixture.json", config, 0600); err != nil {
+		t.Fatal(err)
 	}
 	return binary
 }
@@ -49,10 +68,26 @@ func processStartupArgs(t *testing.T, directory string) []string {
 		}
 	}()
 	args := []string{"--data-dir", directory}
+	var lease struct{ Port int }
+	if raw, err := os.ReadFile(directory + ".test-rpc.json"); err == nil {
+		if err := json.Unmarshal(raw, &lease); err != nil {
+			t.Fatal("invalid fixture RPC receipt", err)
+		}
+	}
 	for _, flag := range []string{"--ui-port", "--core-port"} {
 		listener, err := net.Listen("tcp4", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
+		}
+		for attempt := 0; listener.Addr().(*net.TCPAddr).Port == lease.Port; attempt++ {
+			listener.Close()
+			if attempt == 127 {
+				t.Fatal("HTTP port allocation conflicts with retained RPC lease")
+			}
+			listener, err = net.Listen("tcp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		listeners = append(listeners, listener)
 		args = append(args, flag, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
