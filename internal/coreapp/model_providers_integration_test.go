@@ -376,10 +376,9 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 		if output, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("hosted browser fixture build: %v: %s", err, output)
 		}
-		screens, _ := filepath.Abs("../../dist/model-browser-evidence")
 		script, _ := filepath.Abs("testdata/model-provider-browser.mjs")
 		command := exec.CommandContext(ctx, node, script)
-		command.Env = append(os.Environ(), "PIWORK_TEST_NATIVE_CLI="+cli, "PIWORK_TEST_HOSTED_FIXTURE="+hosted, "PIWORK_TEST_MODEL_CORE_URL="+base, "PIWORK_TEST_MODEL_WORK_ID="+work, "PIWORK_TEST_MODEL_GATEWAY="+g.URL, "PIWORK_TEST_MODEL_SCREENSHOT_DIR="+screens)
+		command.Env = append(os.Environ(), "PIWORK_TEST_NATIVE_CLI="+cli, "PIWORK_TEST_HOSTED_FIXTURE="+hosted, "PIWORK_TEST_MODEL_CORE_URL="+base, "PIWORK_TEST_MODEL_WORK_ID="+work, "PIWORK_TEST_MODEL_GATEWAY="+g.URL)
 		output, err := command.CombinedOutput()
 		if err != nil {
 			t.Fatal("model browser integration failed", string(output))
@@ -389,6 +388,9 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 		g.mu.Unlock()
 		seen := map[string]bool{}
 		for _, request := range browserRequests {
+			if request.Stream && request.Model == "gpt-4.1-mini" && request.Key == "synthetic-browser-known" && request.API == "openai-responses" && request.Reasoning["effort"] == "max" {
+				seen["known-off-only"] = true
+			}
 			if !request.Stream || request.Model != "browser-custom-unknown" {
 				continue
 			}
@@ -400,10 +402,10 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 			case "synthetic-browser-messages":
 				config, _ := request.Body["output_config"].(map[string]any)
 				seen[request.Key] = seen[request.Key] || request.API == "anthropic-messages" && request.Thinking["type"] == "adaptive" && config["effort"] == "high"
-				seen["hosted-budget"] = seen["hosted-budget"] || request.API == "anthropic-messages" && request.Thinking["type"] == "enabled" && request.Thinking["budget_tokens"] == float64(6144)
+				seen["hosted-budget"] = seen["hosted-budget"] || request.API == "anthropic-messages" && request.Thinking["type"] == "enabled" && request.Thinking["budget_tokens"] == float64(1024)
 			}
 		}
-		if !seen["synthetic-browser-first"] || !seen["synthetic-browser-second"] || !seen["synthetic-browser-messages"] || !seen["hosted-budget"] {
+		if !seen["synthetic-browser-first"] || !seen["synthetic-browser-second"] || !seen["synthetic-browser-messages"] || !seen["hosted-budget"] || !seen["known-off-only"] {
 			t.Fatal("browser compatibility settings did not reach the selected provider", seen)
 		}
 		t.Log(strings.TrimSpace(string(output)))
@@ -672,7 +674,7 @@ func TestNativeFlatUnknownDefaultAndDuplicateModelConnections(t *testing.T) {
 		}
 		list := modelNativeCall(t, base, auth, path+"/chat-models", "GET", nil, 200)
 		def := list["defaultModel"].(map[string]any)
-		if list["contractVersion"] != float64(4) || def["thinkingAvailability"] != "unknown" || len(def["thinkingLevels"].([]any)) != 0 {
+		if list["contractVersion"] != float64(5) || def["thinkingAvailability"] != "unknown" || len(def["thinkingLevels"].([]any)) != 0 {
 			t.Fatal("unknown default hidden", list)
 		}
 		run := modelNativeRun(t, ctx, base, auth, work, created["sessionId"].(string), fmt.Sprint("unknown-default-run-", i))
@@ -759,6 +761,103 @@ func TestNativeFlatUnknownDefaultAndDuplicateModelConnections(t *testing.T) {
 		}
 	}
 	t.Log("Four flat model configs, duplicate unknown IDs and new default Sessions execute both SDK protocols with independent credentials and nullable ordinary facts")
+}
+
+func TestNativeKnownModelProtocolThinking(t *testing.T) {
+	g, image := nativeModelGateway(t)
+	t.Setenv("PIWORK_TEST_NATIVE_AGENT_IMAGE", image)
+	_, base, auth, work, _ := nativeApplyFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	path := "/api/v1/works/" + work
+	refs := map[string]any{}
+	for _, tc := range []struct{ api, id string }{
+		{"openai-responses", "gpt-5.1"}, {"openai-responses", "gpt-4.1-mini"}, {"openai-responses", "synthetic-unknown-responses"},
+		{"anthropic-messages", "claude-sonnet-4-5"}, {"anthropic-messages", "claude-3-haiku-20240307"}, {"anthropic-messages", "synthetic-unknown-messages"},
+	} {
+		model := modelNativeCall(t, base, auth, "/api/v1/admin/models", "POST", map[string]any{"model": tc.id, "api": tc.api, "baseUrl": g.URL + "/v1", "credential": "synthetic-protocol-" + tc.id}, 201)
+		refs[tc.id] = model["modelRef"]
+		session := modelNativeCall(t, base, auth, path+"/sessions", "POST", map[string]string{"idempotencyKey": "protocol-" + tc.id}, 201)["sessionId"].(string)
+		list := modelNativeCall(t, base, auth, path+"/chat-models", "GET", nil, 200)
+		if list["contractVersion"] != float64(5) {
+			t.Fatal("known-model compatibility not negotiated", list)
+		}
+		var profiles []any
+		for _, value := range list["models"].([]any) {
+			entry := value.(map[string]any)
+			if entry["modelRef"] == model["modelRef"] {
+				profiles, _ = entry["compatibleThinkingProfiles"].([]any)
+			}
+		}
+		if len(profiles) == 0 {
+			t.Fatal("protocol compatibility missing", tc.id)
+		}
+		for _, value := range profiles {
+			profile := value.(map[string]any)["profile"].(string)
+			level := "max"
+			if profile == "messages-budget-v1" {
+				level = "high"
+			}
+			modelNativeCall(t, base, auth, path+"/sessions/"+session+"/chat-options", "PATCH", map[string]any{"modelRef": model["modelRef"], "thinkingLevel": level, "thinkingProfile": profile}, 200)
+			run := modelNativeRun(t, ctx, base, auth, work, session, tc.id+"-"+profile)
+			request := g.last()
+			if run["thinkingProfile"] != profile || run["thinkingLevel"] != level || request.Model != tc.id || request.Key != "synthetic-protocol-"+tc.id {
+				t.Fatal("accepted compatibility or model binding diverged", run)
+			}
+			switch profile {
+			case "responses-effort-v1":
+				if request.Reasoning["effort"] != level {
+					t.Fatal("Responses effort changed", request.Reasoning)
+				}
+			case "messages-adaptive-v1":
+				if request.Thinking["type"] != "adaptive" || request.Body["output_config"].(map[string]any)["effort"] != level {
+					t.Fatal("adaptive effort changed", request.Thinking)
+				}
+			case "messages-budget-v1":
+				if request.Thinking["type"] != "enabled" || request.Thinking["budget_tokens"] != float64(6144) {
+					t.Fatal("budget changed", request.Thinking)
+				}
+			}
+		}
+	}
+	if statePath := os.Getenv("PIWORK_TEST_THINKING_MCP_STATE"); statePath != "" {
+		control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			if r.Method == http.MethodPost && r.URL.Path == "/reject-next" {
+				g.rejectNext = http.StatusUnprocessableEntity
+				_, _ = w.Write([]byte(`{"ready":true}`))
+				return
+			}
+			if r.Method != http.MethodGet || r.URL.Path != "/requests" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			views := []map[string]any{}
+			for _, request := range g.requests {
+				views = append(views, map[string]any{"api": request.API, "model": request.Model, "thinking": request.Thinking, "reasoning": request.Reasoning, "outputConfig": request.Body["output_config"], "stream": request.Stream})
+			}
+			_ = json.NewEncoder(w).Encode(views)
+		}))
+		defer control.Close()
+		state, _ := json.Marshal(map[string]any{"coreUrl": base, "workId": work, "models": refs, "controlUrl": control.URL})
+		if err := os.WriteFile(statePath, state, 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Log("Waiting for external Playwright MCP acceptance")
+		for {
+			if _, err := os.Stat(statePath + ".continue"); err == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal("external browser acceptance did not finish", ctx.Err())
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+	t.Log("Known, unknown and SDK Off-only models send explicitly selected protocol compatibility with the same pinned SDK")
 }
 
 func TestNativeSameSessionUsesAppliedEnvironmentAndSurvivesColdImport(t *testing.T) {
