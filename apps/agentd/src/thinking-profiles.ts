@@ -19,12 +19,21 @@ export function compatibleThinkingProfiles(api: ModelApi | undefined) {
 
 export function validThinkingSelection(
   api: ModelApi | undefined, levels: readonly ThinkingLevel[], level: ThinkingLevel | null,
-  profile?: ThinkingProfile, allowSavedProfile = false,
+  profile?: ThinkingProfile,
 ): boolean {
   if (profile !== undefined) {
     const definition = THINKING_PROFILES[profile];
     return !!definition && definition.api === api && level !== null &&
-      (levels.length === 0 || allowSavedProfile) && (definition.levels as readonly ThinkingLevel[]).includes(level);
+      (definition.levels as readonly ThinkingLevel[]).includes(level);
   }
   return level === null ? levels.length === 0 : levels.includes(level);
+}
+
+// Compatibility is a protocol request; SDK capability lookup only applies to
+// SDK selections. Keep all setting/read/acceptance paths on this same rule.
+export async function thinkingLevelsForSelection(
+  models: { thinking?: (model: RunModelSnapshot) => Promise<{ thinkingLevels: ThinkingLevel[] }> },
+  model: RunModelSnapshot, profile?: ThinkingProfile,
+): Promise<readonly ThinkingLevel[]> {
+  return profile ? [] : models.thinking ? (await models.thinking(model)).thinkingLevels : ["off"];
 }

@@ -86,3 +86,21 @@ test("compatible profiles require a matching non-null level and remain distinct 
  assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:null}),true);
  assert.equal(Check(SetSessionChatOptionsSchema,{modelRef:null,thinkingLevel:'off'}),true);
 });
+
+test("version 5 catalogs preserve SDK evidence alongside model-independent compatible choices", () => {
+  const profiles = [{profile:'responses-effort-v1',levels:['off','high','xhigh','max']}];
+  const known = {...model,provider:'openai',model:'gpt-5.1',thinkingLevels:['off','high'],compatibleThinkingProfiles:profiles};
+  const offOnly = {...known,model:'gpt-4.1-mini',thinkingLevels:['off']};
+  const unknown = {...known,model:'unlisted-alias',thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};
+  const list = {contractVersion:5,models:[known,offOnly,unknown],defaultModel:known,checkedAt,availability:'available'};
+  assert.equal(Check(ChatCapabilitiesSchema,{contractVersion:5}),true);
+  assert.equal(Check(ChatCapabilitiesSchema,{contractVersion:6}),false);
+  assert.equal(Check(ChatModelListSchema,list),true);
+  assert.equal(Check(ChatModelListSchema,{...list,models:[]}),true);
+  assert.equal(Check(ChatModelListSchema,{...list,defaultModel:null,defaultUnavailableReason:'Choose a model.'}),true);
+  for (const contractVersion of [1,2,3,4,6]) assert.equal(Check(ChatModelListSchema,{...list,contractVersion}),false);
+  for (const extra of [{credential:'private'},{thinkingLevels:['ultra']},{compatibleThinkingProfiles:[]},{compatibleThinkingProfiles:[{profile:'invented',levels:['high']}]}]) {
+    assert.equal(Check(ChatModelListSchema,{...list,models:[{...known,...extra}]}),false);
+  }
+  assert.equal(Check(ChatModelListSchema,{contractVersion:4,models:[model],defaultModel:model,checkedAt,availability:'available'}),true);
+});

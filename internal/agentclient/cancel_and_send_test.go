@@ -45,6 +45,21 @@ func newCancelRPCFixture() (*Client, *cancelRPCFixture) {
 	f := &cancelRPCFixture{ready: &agentv1.ReadinessResponse{WorkId: "work-1", Generation: 1, InstanceId: "agent-1", ProtocolVersion: "v2", ContextContractVersion: 1, PackageContractVersion: 1, RunModelContractVersion: 1, WorkFeedbackContractVersion: 1, WorkHistorySchemaVersion: 5, ContextIdentity: "context-1", InitializationComplete: true, AcceptingRuns: true, ChatControlsContractVersion: 3, CancelAndSendContractVersion: &version}, active: &agentv1.GetActiveRunResponse{}}
 	return &Client{scope: internaltls.Scope{WorkID: "work-1", Generation: 1, InstanceID: "agent-1"}, rpc: f}, f
 }
+
+func TestChatControlCapabilitiesRecognizeFiveWithoutGuessingFutureVersions(t *testing.T) {
+	c, f := newCancelRPCFixture()
+	for _, version := range []uint32{0, 1, 2, 3, 4, 5, 6} {
+		f.ready.ChatControlsContractVersion = version
+		chat, cancel, err := c.ChatControlCapabilities(context.Background(), "context-1")
+		want := version
+		if version == 6 {
+			want = 0
+		}
+		if err != nil || chat != want || cancel != 1 {
+			t.Fatalf("version %d: chat=%d cancel=%d err=%v", version, chat, cancel, err)
+		}
+	}
+}
 func TestActiveRunQueryScopeEmptyAndOptionalCapability(t *testing.T) {
 	c, f := newCancelRPCFixture()
 	ctx := context.Background()

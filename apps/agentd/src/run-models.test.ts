@@ -6,6 +6,9 @@ import test from "node:test";
 import { AgentRunModels, RunModelError } from "./run-models.js";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@piwork/pi-adapter";
+import { compatibleThinkingProfiles } from "./thinking-profiles.js";
+import { Check } from "typebox/value";
+import { ChatModelListSchema } from "@piwork/contracts";
 
 test("model discovery filters with the actual SDK and never exposes endpoint or credential", async () => {
   const selected = { modelRef: "catalog-model-0001", label: "Claude", provider: "anthropic", model: "custom-claude", baseUrl: "https://fixture.example.test/anthropic" };
@@ -20,6 +23,29 @@ test("model discovery filters with the actual SDK and never exposes endpoint or 
   const resolved = await models.resolve(selected.modelRef);
   assert.equal(await models.credential(resolved), "secret-only-in-private-channel");
   assert.doesNotMatch(JSON.stringify(resolved), /secret-only/);
+});
+
+test("production chat catalogs always offer protocol profiles regardless of SDK recognition", async () => {
+  for (const [provider,api,ids] of [
+    ['openai','openai-responses',['gpt-5.1','gpt-4.1-mini','unlisted-responses-alias']],
+    ['anthropic','anthropic-messages',['claude-sonnet-4-5','claude-3-haiku-20240307','unlisted-messages-alias']],
+  ] as const) {
+    for (const id of ids) {
+      const model={modelRef:null,label:id,provider,model:id,api,baseUrl:'https://fixture.invalid/v1'};
+      const resolver=new AgentRunModels({...model,id,deterministic:false},{
+        async models(){return{models:[],defaultModel:model,checkedAt:'2026-11-03T00:00:00Z'};},
+        async resolveModel(){return{model,credential:'synthetic-key'};},
+      });
+      const original=await resolver.thinking(model);
+      const listed=await resolver.chatList();
+      assert.equal(listed.contractVersion,5);
+      assert.equal(Check(ChatModelListSchema,listed),true);
+      assert.deepEqual(listed.defaultModel!.thinkingLevels,original.thinkingLevels);
+      assert.equal(listed.defaultModel!.defaultThinkingLevel,original.defaultThinkingLevel);
+      assert.deepEqual('compatibleThinkingProfiles' in listed.defaultModel! && listed.defaultModel!.compatibleThinkingProfiles,compatibleThinkingProfiles(api));
+      assert.doesNotMatch(JSON.stringify(listed),/baseUrl|credential|synthetic-key/);
+    }
+  }
 });
 
 test("model list failure is unavailable and explicit unsupported selection has no default fallback", async () => {

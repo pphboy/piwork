@@ -319,7 +319,7 @@ test('compatible preference is frozen at admission and replay does not resolve i
  await withStore(async store=>{
   let resolves=0,release!:()=>void;
   const gate=new Promise<void>(resolve=>{release=resolve;});
-  const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'synthetic';},async resolve(ref){resolves++;if(resolves>1)throw new Error('model changed');return {modelRef:ref,label:'Unknown',provider:'openai',model:'future-model',api:'openai-responses'};},async thinking(){return{thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:'unknown'};}};
+  const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return 'synthetic';},async resolve(ref){resolves++;if(resolves>1)throw new Error('model changed');return {modelRef:ref,label:'Known Off-only',provider:'openai',model:'gpt-4.1-mini',api:'openai-responses'};},async thinking(){throw new Error('SDK lookup must not gate compatibility');}};
   const daemon=new AgentDaemonControl({workId:'work-a',generation:1,instanceId:'instance'});daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-a',loadedSkills:[],resolvedTools:[],initializationComplete:true});
   const manager=new RunManager(store,daemon,{async execute(context){await gate;assert.equal(context.actualModel?.thinkingProfile,'responses-effort-v1');assert.equal(context.actualModel?.thinkingLevel,'xhigh');return{finalText:'done'};}},()=>new Date(NOW),models);
   store.setSessionModelPreference('work-a','session-a',JSON.stringify({modelRef:null,thinkingLevel:'xhigh',thinkingProfile:'responses-effort-v1'}));

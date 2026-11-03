@@ -6,6 +6,29 @@ import (
 	"testing"
 )
 
+func TestModelIndependentThinkingCatalog(t *testing.T) {
+	known := map[string]any{"modelRef": nil, "label": "Known", "provider": "openai", "model": "gpt-5.1", "thinkingLevels": []any{"off"}, "defaultThinkingLevel": "off", "compatibleThinkingProfiles": []any{map[string]any{"profile": "responses-effort-v1", "levels": []any{"off", "high", "xhigh", "max"}}}}
+	list := map[string]any{"contractVersion": float64(5), "models": []any{known}, "defaultModel": known, "checkedAt": "2026-11-03T00:00:00Z", "availability": "available"}
+	if err := Validate("ChatModelListSchema", list); err != nil {
+		t.Fatal("known SDK Off-only model lost protocol compatibility", err)
+	}
+	for _, version := range []int{1, 2, 3, 4, 6} {
+		list["contractVersion"] = float64(version)
+		if Validate("ChatModelListSchema", list) == nil {
+			t.Fatalf("version %d accepted new known-model shape", version)
+		}
+	}
+	list["contractVersion"] = float64(5)
+	list["models"] = []any{}
+	if err := Validate("ChatModelListSchema", list); err != nil {
+		t.Fatal("default-only catalog rejected", err)
+	}
+	known["credential"] = "synthetic-private"
+	if Validate("ChatModelListSchema", list) == nil {
+		t.Fatal("private credential accepted")
+	}
+}
+
 func TestCompatibleThinkingRequestPresence(t *testing.T) {
 	for _, tc := range []struct {
 		raw           string

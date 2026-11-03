@@ -27,7 +27,7 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 	if err := VerifyReadiness(scope, "context-1", false, &current); err != nil {
 		t.Fatal("current history 7 rejected", err)
 	}
-	for _, version := range []uint32{0, 1, 2, 3, 4} {
+	for _, version := range []uint32{0, 1, 2, 3, 4, 5, 6} {
 		value := *base
 		value.ChatControlsContractVersion = version
 		if err := VerifyReadiness(scope, "context-1", false, &value); err != nil {

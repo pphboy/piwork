@@ -4663,6 +4663,10 @@
           {
             "type": "number",
             "const": 4
+          },
+          {
+            "type": "number",
+            "const": 5
           }
         ]
       },
@@ -6782,6 +6786,1123 @@
           }
         },
         "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": [
+          "contractVersion",
+          "models",
+          "defaultModel",
+          "checkedAt",
+          "availability"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "number",
+            "const": 5
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "modelRef",
+                    "label",
+                    "provider",
+                    "model",
+                    "thinkingLevels",
+                    "defaultThinkingLevel",
+                    "compatibleThinkingProfiles"
+                  ],
+                  "properties": {
+                    "modelRef": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 16,
+                          "maxLength": 128,
+                          "pattern": "^[a-zA-Z0-9-]+$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "provider": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "thinkingLevels": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "off"
+                          },
+                          {
+                            "type": "string",
+                            "const": "minimal"
+                          },
+                          {
+                            "type": "string",
+                            "const": "low"
+                          },
+                          {
+                            "type": "string",
+                            "const": "medium"
+                          },
+                          {
+                            "type": "string",
+                            "const": "high"
+                          },
+                          {
+                            "type": "string",
+                            "const": "xhigh"
+                          },
+                          {
+                            "type": "string",
+                            "const": "max"
+                          }
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 7,
+                      "uniqueItems": true
+                    },
+                    "defaultThinkingLevel": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "off"
+                        },
+                        {
+                          "type": "string",
+                          "const": "minimal"
+                        },
+                        {
+                          "type": "string",
+                          "const": "low"
+                        },
+                        {
+                          "type": "string",
+                          "const": "medium"
+                        },
+                        {
+                          "type": "string",
+                          "const": "high"
+                        },
+                        {
+                          "type": "string",
+                          "const": "xhigh"
+                        },
+                        {
+                          "type": "string",
+                          "const": "max"
+                        }
+                      ]
+                    },
+                    "compatibleThinkingProfiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "profile",
+                          "levels"
+                        ],
+                        "properties": {
+                          "profile": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "const": "responses-effort-v1"
+                              },
+                              {
+                                "type": "string",
+                                "const": "messages-adaptive-v1"
+                              },
+                              {
+                                "type": "string",
+                                "const": "messages-budget-v1"
+                              }
+                            ]
+                          },
+                          "levels": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "off"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "minimal"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "low"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "medium"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "high"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "xhigh"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "max"
+                                }
+                              ]
+                            },
+                            "minItems": 1,
+                            "maxItems": 7,
+                            "uniqueItems": true
+                          },
+                          "budgets": {
+                            "type": "object",
+                            "properties": {
+                              "minimal": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "low": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "medium": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "high": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            },
+                            "additionalProperties": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "minItems": 1,
+                      "maxItems": 2
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "required": [
+                        "modelRef",
+                        "label",
+                        "provider",
+                        "model",
+                        "thinkingLevels",
+                        "defaultThinkingLevel"
+                      ],
+                      "properties": {
+                        "modelRef": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 16,
+                              "maxLength": 128,
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "thinkingLevels": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "const": "off"
+                              },
+                              {
+                                "type": "string",
+                                "const": "minimal"
+                              },
+                              {
+                                "type": "string",
+                                "const": "low"
+                              },
+                              {
+                                "type": "string",
+                                "const": "medium"
+                              },
+                              {
+                                "type": "string",
+                                "const": "high"
+                              },
+                              {
+                                "type": "string",
+                                "const": "xhigh"
+                              },
+                              {
+                                "type": "string",
+                                "const": "max"
+                              }
+                            ]
+                          },
+                          "minItems": 1,
+                          "maxItems": 7,
+                          "uniqueItems": true
+                        },
+                        "defaultThinkingLevel": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "off"
+                            },
+                            {
+                              "type": "string",
+                              "const": "minimal"
+                            },
+                            {
+                              "type": "string",
+                              "const": "low"
+                            },
+                            {
+                              "type": "string",
+                              "const": "medium"
+                            },
+                            {
+                              "type": "string",
+                              "const": "high"
+                            },
+                            {
+                              "type": "string",
+                              "const": "xhigh"
+                            },
+                            {
+                              "type": "string",
+                              "const": "max"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "modelRef",
+                        "label",
+                        "provider",
+                        "model",
+                        "thinkingAvailability",
+                        "thinkingLevels",
+                        "defaultThinkingLevel",
+                        "compatibleThinkingProfiles"
+                      ],
+                      "properties": {
+                        "modelRef": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 16,
+                              "maxLength": 128,
+                              "pattern": "^[a-zA-Z0-9-]+$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "provider": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "thinkingAvailability": {
+                          "type": "string",
+                          "const": "unknown"
+                        },
+                        "thinkingLevels": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "const": "off"
+                              },
+                              {
+                                "type": "string",
+                                "const": "minimal"
+                              },
+                              {
+                                "type": "string",
+                                "const": "low"
+                              },
+                              {
+                                "type": "string",
+                                "const": "medium"
+                              },
+                              {
+                                "type": "string",
+                                "const": "high"
+                              },
+                              {
+                                "type": "string",
+                                "const": "xhigh"
+                              },
+                              {
+                                "type": "string",
+                                "const": "max"
+                              }
+                            ]
+                          },
+                          "maxItems": 0
+                        },
+                        "defaultThinkingLevel": {
+                          "type": "null"
+                        },
+                        "compatibleThinkingProfiles": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "profile",
+                              "levels"
+                            ],
+                            "properties": {
+                              "profile": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "const": "responses-effort-v1"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "messages-adaptive-v1"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "messages-budget-v1"
+                                  }
+                                ]
+                              },
+                              "levels": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "off"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "minimal"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "low"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "medium"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "high"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "xhigh"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "max"
+                                    }
+                                  ]
+                                },
+                                "minItems": 1,
+                                "maxItems": 7,
+                                "uniqueItems": true
+                              },
+                              "budgets": {
+                                "type": "object",
+                                "properties": {
+                                  "minimal": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "low": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "medium": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  },
+                                  "high": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                },
+                                "additionalProperties": false
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "minItems": 1,
+                          "maxItems": 2
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "maxItems": 256
+          },
+          "defaultModel": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "modelRef",
+                      "label",
+                      "provider",
+                      "model",
+                      "thinkingLevels",
+                      "defaultThinkingLevel",
+                      "compatibleThinkingProfiles"
+                    ],
+                    "properties": {
+                      "modelRef": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 16,
+                            "maxLength": 128,
+                            "pattern": "^[a-zA-Z0-9-]+$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "provider": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      },
+                      "model": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "thinkingLevels": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "off"
+                            },
+                            {
+                              "type": "string",
+                              "const": "minimal"
+                            },
+                            {
+                              "type": "string",
+                              "const": "low"
+                            },
+                            {
+                              "type": "string",
+                              "const": "medium"
+                            },
+                            {
+                              "type": "string",
+                              "const": "high"
+                            },
+                            {
+                              "type": "string",
+                              "const": "xhigh"
+                            },
+                            {
+                              "type": "string",
+                              "const": "max"
+                            }
+                          ]
+                        },
+                        "minItems": 1,
+                        "maxItems": 7,
+                        "uniqueItems": true
+                      },
+                      "defaultThinkingLevel": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "off"
+                          },
+                          {
+                            "type": "string",
+                            "const": "minimal"
+                          },
+                          {
+                            "type": "string",
+                            "const": "low"
+                          },
+                          {
+                            "type": "string",
+                            "const": "medium"
+                          },
+                          {
+                            "type": "string",
+                            "const": "high"
+                          },
+                          {
+                            "type": "string",
+                            "const": "xhigh"
+                          },
+                          {
+                            "type": "string",
+                            "const": "max"
+                          }
+                        ]
+                      },
+                      "compatibleThinkingProfiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "profile",
+                            "levels"
+                          ],
+                          "properties": {
+                            "profile": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "responses-effort-v1"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "messages-adaptive-v1"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "messages-budget-v1"
+                                }
+                              ]
+                            },
+                            "levels": {
+                              "type": "array",
+                              "items": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "const": "off"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "minimal"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "low"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "medium"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "high"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "xhigh"
+                                  },
+                                  {
+                                    "type": "string",
+                                    "const": "max"
+                                  }
+                                ]
+                              },
+                              "minItems": 1,
+                              "maxItems": 7,
+                              "uniqueItems": true
+                            },
+                            "budgets": {
+                              "type": "object",
+                              "properties": {
+                                "minimal": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "low": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "medium": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                },
+                                "high": {
+                                  "type": "integer",
+                                  "minimum": 1
+                                }
+                              },
+                              "additionalProperties": false
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "minItems": 1,
+                        "maxItems": 2
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "required": [
+                          "modelRef",
+                          "label",
+                          "provider",
+                          "model",
+                          "thinkingLevels",
+                          "defaultThinkingLevel"
+                        ],
+                        "properties": {
+                          "modelRef": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 16,
+                                "maxLength": 128,
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "provider": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "model": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "thinkingLevels": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "off"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "minimal"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "low"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "medium"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "high"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "xhigh"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "max"
+                                }
+                              ]
+                            },
+                            "minItems": 1,
+                            "maxItems": 7,
+                            "uniqueItems": true
+                          },
+                          "defaultThinkingLevel": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "const": "off"
+                              },
+                              {
+                                "type": "string",
+                                "const": "minimal"
+                              },
+                              {
+                                "type": "string",
+                                "const": "low"
+                              },
+                              {
+                                "type": "string",
+                                "const": "medium"
+                              },
+                              {
+                                "type": "string",
+                                "const": "high"
+                              },
+                              {
+                                "type": "string",
+                                "const": "xhigh"
+                              },
+                              {
+                                "type": "string",
+                                "const": "max"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "required": [
+                          "modelRef",
+                          "label",
+                          "provider",
+                          "model",
+                          "thinkingAvailability",
+                          "thinkingLevels",
+                          "defaultThinkingLevel",
+                          "compatibleThinkingProfiles"
+                        ],
+                        "properties": {
+                          "modelRef": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 16,
+                                "maxLength": 128,
+                                "pattern": "^[a-zA-Z0-9-]+$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "provider": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128
+                          },
+                          "model": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          "thinkingAvailability": {
+                            "type": "string",
+                            "const": "unknown"
+                          },
+                          "thinkingLevels": {
+                            "type": "array",
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "const": "off"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "minimal"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "low"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "medium"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "high"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "xhigh"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "max"
+                                }
+                              ]
+                            },
+                            "maxItems": 0
+                          },
+                          "defaultThinkingLevel": {
+                            "type": "null"
+                          },
+                          "compatibleThinkingProfiles": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "required": [
+                                "profile",
+                                "levels"
+                              ],
+                              "properties": {
+                                "profile": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "const": "responses-effort-v1"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "messages-adaptive-v1"
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "messages-budget-v1"
+                                    }
+                                  ]
+                                },
+                                "levels": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string",
+                                        "const": "off"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "minimal"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "low"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "medium"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "high"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "xhigh"
+                                      },
+                                      {
+                                        "type": "string",
+                                        "const": "max"
+                                      }
+                                    ]
+                                  },
+                                  "minItems": 1,
+                                  "maxItems": 7,
+                                  "uniqueItems": true
+                                },
+                                "budgets": {
+                                  "type": "object",
+                                  "properties": {
+                                    "minimal": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "low": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "medium": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "high": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                }
+                              },
+                              "additionalProperties": false
+                            },
+                            "minItems": 1,
+                            "maxItems": 2
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "defaultUnavailableReason": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "unavailableModels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "modelRef",
+                "label",
+                "provider",
+                "model",
+                "reason",
+                "recovery"
+              ],
+              "properties": {
+                "modelRef": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 16,
+                      "maxLength": 128,
+                      "pattern": "^[a-zA-Z0-9-]+$"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "model": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "capabilities-unconfirmed"
+                    },
+                    {
+                      "type": "string",
+                      "const": "sdk-unsupported"
+                    }
+                  ]
+                },
+                "recovery": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 256
+          },
+          "checkedAt": {
+            "type": "string",
+            "minLength": 20,
+            "maxLength": 40,
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+          },
+          "availability": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "available"
+              },
+              {
+                "type": "string",
+                "const": "unavailable"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       }
     ]
   },
@@ -7280,6 +8401,508 @@
               }
             },
             "additionalProperties": false
+          }
+        ]
+      },
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "modelRef",
+              "label",
+              "provider",
+              "model",
+              "thinkingLevels",
+              "defaultThinkingLevel",
+              "compatibleThinkingProfiles"
+            ],
+            "properties": {
+              "modelRef": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9-]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "thinkingLevels": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "off"
+                    },
+                    {
+                      "type": "string",
+                      "const": "minimal"
+                    },
+                    {
+                      "type": "string",
+                      "const": "low"
+                    },
+                    {
+                      "type": "string",
+                      "const": "medium"
+                    },
+                    {
+                      "type": "string",
+                      "const": "high"
+                    },
+                    {
+                      "type": "string",
+                      "const": "xhigh"
+                    },
+                    {
+                      "type": "string",
+                      "const": "max"
+                    }
+                  ]
+                },
+                "minItems": 1,
+                "maxItems": 7,
+                "uniqueItems": true
+              },
+              "defaultThinkingLevel": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "const": "off"
+                  },
+                  {
+                    "type": "string",
+                    "const": "minimal"
+                  },
+                  {
+                    "type": "string",
+                    "const": "low"
+                  },
+                  {
+                    "type": "string",
+                    "const": "medium"
+                  },
+                  {
+                    "type": "string",
+                    "const": "high"
+                  },
+                  {
+                    "type": "string",
+                    "const": "xhigh"
+                  },
+                  {
+                    "type": "string",
+                    "const": "max"
+                  }
+                ]
+              },
+              "compatibleThinkingProfiles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "profile",
+                    "levels"
+                  ],
+                  "properties": {
+                    "profile": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "responses-effort-v1"
+                        },
+                        {
+                          "type": "string",
+                          "const": "messages-adaptive-v1"
+                        },
+                        {
+                          "type": "string",
+                          "const": "messages-budget-v1"
+                        }
+                      ]
+                    },
+                    "levels": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "off"
+                          },
+                          {
+                            "type": "string",
+                            "const": "minimal"
+                          },
+                          {
+                            "type": "string",
+                            "const": "low"
+                          },
+                          {
+                            "type": "string",
+                            "const": "medium"
+                          },
+                          {
+                            "type": "string",
+                            "const": "high"
+                          },
+                          {
+                            "type": "string",
+                            "const": "xhigh"
+                          },
+                          {
+                            "type": "string",
+                            "const": "max"
+                          }
+                        ]
+                      },
+                      "minItems": 1,
+                      "maxItems": 7,
+                      "uniqueItems": true
+                    },
+                    "budgets": {
+                      "type": "object",
+                      "properties": {
+                        "minimal": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "low": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "medium": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "high": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 2
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "modelRef",
+                  "label",
+                  "provider",
+                  "model",
+                  "thinkingLevels",
+                  "defaultThinkingLevel"
+                ],
+                "properties": {
+                  "modelRef": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128,
+                        "pattern": "^[a-zA-Z0-9-]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "thinkingLevels": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "off"
+                        },
+                        {
+                          "type": "string",
+                          "const": "minimal"
+                        },
+                        {
+                          "type": "string",
+                          "const": "low"
+                        },
+                        {
+                          "type": "string",
+                          "const": "medium"
+                        },
+                        {
+                          "type": "string",
+                          "const": "high"
+                        },
+                        {
+                          "type": "string",
+                          "const": "xhigh"
+                        },
+                        {
+                          "type": "string",
+                          "const": "max"
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 7,
+                    "uniqueItems": true
+                  },
+                  "defaultThinkingLevel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "off"
+                      },
+                      {
+                        "type": "string",
+                        "const": "minimal"
+                      },
+                      {
+                        "type": "string",
+                        "const": "low"
+                      },
+                      {
+                        "type": "string",
+                        "const": "medium"
+                      },
+                      {
+                        "type": "string",
+                        "const": "high"
+                      },
+                      {
+                        "type": "string",
+                        "const": "xhigh"
+                      },
+                      {
+                        "type": "string",
+                        "const": "max"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "modelRef",
+                  "label",
+                  "provider",
+                  "model",
+                  "thinkingAvailability",
+                  "thinkingLevels",
+                  "defaultThinkingLevel",
+                  "compatibleThinkingProfiles"
+                ],
+                "properties": {
+                  "modelRef": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 16,
+                        "maxLength": 128,
+                        "pattern": "^[a-zA-Z0-9-]+$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "thinkingAvailability": {
+                    "type": "string",
+                    "const": "unknown"
+                  },
+                  "thinkingLevels": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "off"
+                        },
+                        {
+                          "type": "string",
+                          "const": "minimal"
+                        },
+                        {
+                          "type": "string",
+                          "const": "low"
+                        },
+                        {
+                          "type": "string",
+                          "const": "medium"
+                        },
+                        {
+                          "type": "string",
+                          "const": "high"
+                        },
+                        {
+                          "type": "string",
+                          "const": "xhigh"
+                        },
+                        {
+                          "type": "string",
+                          "const": "max"
+                        }
+                      ]
+                    },
+                    "maxItems": 0
+                  },
+                  "defaultThinkingLevel": {
+                    "type": "null"
+                  },
+                  "compatibleThinkingProfiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "profile",
+                        "levels"
+                      ],
+                      "properties": {
+                        "profile": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "const": "responses-effort-v1"
+                            },
+                            {
+                              "type": "string",
+                              "const": "messages-adaptive-v1"
+                            },
+                            {
+                              "type": "string",
+                              "const": "messages-budget-v1"
+                            }
+                          ]
+                        },
+                        "levels": {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "const": "off"
+                              },
+                              {
+                                "type": "string",
+                                "const": "minimal"
+                              },
+                              {
+                                "type": "string",
+                                "const": "low"
+                              },
+                              {
+                                "type": "string",
+                                "const": "medium"
+                              },
+                              {
+                                "type": "string",
+                                "const": "high"
+                              },
+                              {
+                                "type": "string",
+                                "const": "xhigh"
+                              },
+                              {
+                                "type": "string",
+                                "const": "max"
+                              }
+                            ]
+                          },
+                          "minItems": 1,
+                          "maxItems": 7,
+                          "uniqueItems": true
+                        },
+                        "budgets": {
+                          "type": "object",
+                          "properties": {
+                            "minimal": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "low": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "medium": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "high": {
+                              "type": "integer",
+                              "minimum": 1
+                            }
+                          },
+                          "additionalProperties": false
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 2
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
           }
         ]
       }

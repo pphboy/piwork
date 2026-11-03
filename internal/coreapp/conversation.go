@@ -146,7 +146,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			send(w, 200, capabilities)
 			return true, nil
 		}
-		if version != 1 && version != 2 && version != 3 && version != 4 {
+		if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
 			return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 		}
 		var result any
@@ -324,7 +324,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 			if e != nil {
 				return true, conversationError(e)
 			}
-			if version != 1 && version != 2 && version != 3 && version != 4 {
+			if version != 1 && version != 2 && version != 3 && version != 4 && version != 5 {
 				return true, contracts.NewError("CHAT_OPTIONS_UNSUPPORTED", "")
 			}
 			modes = append(modes, string(input.InputMode.Value))
