@@ -68,7 +68,7 @@ Key 轮换 SHALL 不主动停止或替换正在运行的 Work Agent。Core 重�
 
 **Identifier:** AIM-003
 
-管理员 SHALL 在新增/编辑模型表单直接 Test 当前完整草稿，或检查已保存模型；名称不是 Test 必填项，无 Provider 前置步骤。保存项省略 Key 使用当前保存值。Test SHALL 向指定 Model ID 发送固定 user 消息 Reply with OK.，通过单次 Go HTTP Responses /responses 或 Messages /v1/messages 请求取得实际 assistant 文本，路径与保存/实际执行规范化一致。
+管理员 SHALL 在新增/编辑模型表单直接 Test 当前完整草稿，或检查已保存模型；名称不是 Test 必填项，无 Provider 前置步骤。保存项省略 Key 使用当前保存值。Test SHALL 向指定 Model ID 发送固定 user 消息 `Reply OK`，通过单次 Go HTTP Responses /responses 或 Messages /v1/messages 请求取得实际 assistant 文本，路径与保存/实际执行规范化一致。 Test SHALL 使用非流式最小消息体，只包含所选模型、一条上述 user 消息及 64 个输出 token 的上限；不附加 system、工具、历史或 Thinking 配置。鉴权、客户端标识和必要的匿名会话信息 SHALL 由传输层处理，用户不需填写额外字段。
 
 Test SHALL 不保存草稿、改默认/启停、创建 Work/Session/Run/Apply 或启动资源，不通过 Agent 执行，不自动重试。Test 成功、失败、未执行均不构成保存、启用或进入 Choose model 的门槛。网络、远端 404、认证、模型或协议失败只影响本次检查；结构错误定位字段，明确此时未外发。
 
@@ -87,6 +87,10 @@ Modal SHALL 展示目标、测试消息、实际回复或安全原因/恢复建�
 #### Scenario: 原协议与结果边界
 - **WHEN** 两种协议分别返回正常文本、空/推理/工具内容、超大回复或安全错误
 - **THEN** 按实际协议提取和分类，截断明确，私有材料不回显，不能仅凭 2xx 显示成功
+
+#### Scenario: 最小推理请求
+- **WHEN** 管理员在任一模型入口显式发起新的 Test
+- **THEN** 系统向指定模型发送一次固定 `Reply OK`，使用当前协议的最小消息体、64 个输出 token 上限及非流式模式，不调用 Agent 或创建业务会话，页面显示同一实际测试消息
 
 ### Requirement: 独立模型准入与删除保护
 
@@ -148,9 +152,9 @@ Modal SHALL 展示目标、测试消息、实际回复或安全原因/恢复建�
 
 **Identifier:** AIM-007
 
-模型 Test SHALL 仅依据用户所选的 `anthropic-messages` 或 `openai-responses` 协议及模型草稿或保存项的 Base URL、Model ID 和 Key 构造请求，遵循相应官方协议的请求路径、鉴权、请求结构及可见 assistant 文本响应语义。Messages 的根地址、末尾 `/v1` 与尾斜杠形式 SHALL 保留前缀且解析为同一 `/v1/messages`；Responses SHALL 在 API base 后追加 `/responses`。Test、模型保存与实际执行 SHALL 对同一输入使用一致的协议、规范化端点、模型和凭据绑定。
+模型 Test 的协议、连接目标、模型与凭据 SHALL 以用户所选的 `anthropic-messages` 或 `openai-responses` 以及草稿或保存项的 Base URL、Model ID 和 Key 为准，遵循相应官方协议的请求路径、鉴权、请求结构及可见 assistant 文本响应语义。Messages 的根地址、末尾 `/v1` 与尾斜杠形式 SHALL 保留前缀且解析为同一 `/v1/messages`；Responses SHALL 在 API base 后追加 `/responses`。Test、模型保存与实际执行 SHALL 对同一输入使用一致的协议、规范化端点、模型和凭据绑定。
 
-Test SHALL 不因服务商、域名或模型名称添加专有请求头、选择不同鉴权、替换模型或改变请求协议；用户无需提供供应商专用配置。Test SHALL 保持 AIM-003 的单次消息、独立保存、超时、响应大小与秘密保护约束。Test SHALL 如实呈现单次请求得到的实际非空 assistant 文本或可安全表达的失败类别和真实 HTTP 状态，不把原始上游敏感文本回显，也不把上游通用鉴权错误断言为 Key 一定无效。
+Test SHALL 保持所选协议、鉴权与模型；传输层 SHALL 为预先确认的兼容端点自动提供必要的匿名客户端会话信息，且在首次外发前完成准备。端点匹配 SHALL 使用规范化后的精确主机、协议和路径范围，其他端点不附加该兼容信息；不得从上游任意错误文本动态决定头部或自动重试。用户无需填写供应商、SessionID 或自定义请求头。Test SHALL 保持 AIM-003 的单次消息、独立保存、超时、响应大小与秘密保护约束。Test SHALL 如实呈现单次请求得到的实际非空 assistant 文本或可安全表达的失败类别和真实 HTTP 状态，不把原始上游敏感文本回显，也不把上游通用鉴权错误断言为 Key 一定无效。
 
 Test 成功 SHALL 仅证明当前短消息请求取得协议规定的非空 assistant 文本，MUST NOT 声称流式输出、工具调用或完整聊天已通过；失败 SHALL 不断言实际聊天必然失败。Test 和聊天使用不同执行路径时，其事实与边界 SHALL 可辨。
 
@@ -166,7 +170,7 @@ Test 成功 SHALL 仅证明当前短消息请求取得协议规定的非空 assi
 
 #### Scenario: 相同协议不随服务商改变
 - **WHEN** 两个不同主机提供同一所选标准协议并收到相同模型测试参数
-- **THEN** 两次请求遵守同一协议语义，系统不依据域名、供应商或模型名插入专有请求行为
+- **THEN** 两次请求遵守同一协议语义，消息体、鉴权、模型与单次请求语义不随服务商改变；只有命中明确兼容范围的端点附加必要匿名会话头，其他端点不附加
 
 #### Scenario: 真实响应和有限结论
 - **WHEN** 端点返回非空 assistant 正文、空正文、工具或推理内容、错误响应或非法协议响应
@@ -184,6 +188,18 @@ Test 成功 SHALL 仅证明当前短消息请求取得协议规定的非空 assi
 - **WHEN** 测试并保存相同的协议、等价 Base URL、Model ID 和 Key，随后发起获准的普通聊天
 - **THEN** Test 与聊天使用各自执行路径中的相同协议、规范化目标、模型和对应凭据；各自结果分别报告
 
+#### Scenario: 无额外输入的匿名请求上下文
+- **WHEN** Test 的规范化目标命中需要会话标识的兼容范围
+- **THEN** 系统为该次显式 Test 生成新的匿名临时标识并在第一次请求中附加所需会话头，不持久创建业务会话、不复用用户或 Work 身份，不要求管理员补填字段
+
+#### Scenario: 相似地址不获得兼容信息
+- **WHEN** 目标为相似主机名、不受支持的路径或协议
+- **THEN** 系统继续按所选协议处理或按现有 URL 校验拒绝，不误加另一端点的兼容会话头，也不携凭据跟随重定向
+
+#### Scenario: 用户端点真实最小推理成功
+- **WHEN** 用户提供的 `https://opencode.ai/inference/go/anthropic`、`deepseek-v4.1-flash` 与有效 Key 已在对照请求中成功，管理员在新构建页面显式点击 Test
+- **THEN** Piwork 实际发送一次 `Reply OK` 请求，获得真实 HTTP 200 和可见 `OK` 回复，保存配置与已有 Work 不受影响；curl 或合成服务成功不能替代该页面验收
+
 ### Requirement: 独立模型的管理员 API 与兼容迁移
 
 **Identifier:** AIM-API-001
@@ -194,9 +210,15 @@ Test 成功 SHALL 仅证明当前短消息请求取得协议规定的非空 assi
 
 Responses SHALL 在 API base 后追加 /responses；Messages 根地址和等价末尾 /v1 规范化为一个 /v1/messages 并保留网关前缀。除 loopback HTTP 外要求 HTTPS，拒绝完整请求路径、内嵌凭据、query/fragment。型号/协议/实际端点改变发布新的执行引用，等价 Messages 地址、改名、Test 与 Key 轮换不改已捕获引用。
 
-模型 Test SHALL 使用表单覆盖和当前/已有 Key 发一次 Reply with OK. 请求，不自动重试或携凭据跟随重定向；20 秒、响应 64 KiB、安全助手文本 8 KiB，非空助手文本即可，空/reasoning/工具结果不算成功。Test 不保存草稿、不改变默认、不启动 Work，也不是保存/启用门槛；供应商认证失败不注销管理员，弹窗晚到响应不重开，旧结果可查看并标明陈旧。
+模型 Test SHALL 使用表单覆盖和当前/已有 Key 发一次 `Reply OK` 请求，不自动重试或携凭据跟随重定向；20 秒、响应 64 KiB、安全助手文本 8 KiB，非空助手文本即可，空/reasoning/工具结果不算成功。Test 不保存草稿、不改变默认、不启动 Work，也不是保存/启用门槛；供应商认证失败不注销管理员，弹窗晚到响应不重开，旧结果可查看并标明陈旧。
 
 旧 Provider 子模型 SHALL 事务且幂等迁移为独立连接，保留有效启用、Key、引用、Work 捕获和显式定义，无子模型不猜测。升级前停止并备份配套数据/卷，旧二进制不直接打开新 registry。未显式选择兼容推理的未知 Thinking 使用 Normal/null，旧缺省 Off 和自动 Run 的普通模式不混同；chat contract 3 的 reader 与快照完整保留 null，导入使用目标唯一匹配模型及其 Key，源授权不迁移。
+
+新 Test 结果的 `testMessage` SHALL 为 `Reply OK`；配套 reader SHALL 同时接受已有 `Reply with OK.` 结果并按原值展示，新请求不得继续发送旧提示词。此兼容读取不改变保存项、Key、modelRef 或历史内容。
+
+#### Scenario: 新旧测试消息读取兼容
+- **WHEN** 新 reader 分别收到新 `Reply OK` 结果与已有 `Reply with OK.` 结果
+- **THEN** 两者均按真实返回内容展示，旧结果保留原测试消息，下一次显式 Test 只发送 `Reply OK`
 
 #### Scenario: 按现行契约操作与核对
 - **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
