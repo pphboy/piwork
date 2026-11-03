@@ -3,7 +3,7 @@ import { pendingDots } from './pending.js';
 import { t, LocalizedMessage } from './locale.js';
 export const blankModel = () => ({ name: '', model: '', api: 'openai-responses', baseUrl: '', key: '' });
 // Sent verbatim to the model under test and validated by the server response.
-export const testMessage = 'Reply with OK.';
+export const testMessage = 'Reply OK';
 export const modelField = (field) => ({ name: 'model-name', model: 'model-id', api: 'model-api', baseUrl: 'model-base-url', credential: 'model-key' }[field.split('.')[0]] || '');
 export const modelPlaceholder = (api) => api === 'anthropic-messages' ? 'https://gateway.example' : 'https://gateway.example/v1';
 export const modelProtocolHelp = (api) => api === 'anthropic-messages' ? t('modelForm.protocol.messages') : t('modelForm.protocol.responses');
@@ -52,7 +52,7 @@ export function modelDraftIssue(d, editing = false) {
     return null;
 }
 export function validModelTest(value) {
-    return typeof value.success === 'boolean' && typeof value.category === 'string' && value.testMessage === testMessage &&
+    return typeof value.success === 'boolean' && typeof value.category === 'string' && [testMessage, 'Reply with OK.'].includes(value.testMessage) &&
         (value.success ? typeof value.replyText === 'string' && !!value.replyText.trim() && typeof value.replyTruncated === 'boolean' : typeof value.reason === 'string' && typeof value.message === 'string' && typeof value.recovery === 'string');
 }
 export function modelTestSummary(result, currentRevision) {

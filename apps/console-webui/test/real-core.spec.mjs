@@ -142,7 +142,7 @@ test('real message Test sends to the specified model and displays actual Respons
       await page.goto(origin+'/admin/models');await page.getByLabel('Display name (optional)',{exact:true}).fill(provider);await page.getByLabel('API type',{exact:true}).selectOption(api);await page.getByLabel('Base URL',{exact:true}).fill(baseUrl+'/v1/');await page.getByLabel('API Key',{exact:true}).fill('synthetic-'+api);await page.getByLabel('Model ID',{exact:true}).fill('specified-test-model');
       await page.getByRole('button',{name:'Test',exact:true}).click();
       await expect(page.locator('[data-model-test-reply]')).toHaveText('Actual '+api+' reply from specified-test-model');
-      await expect(page.getByRole('dialog')).toContainText('Reply with OK.');
+      await expect(page.getByRole('dialog')).toContainText('Reply OK');
       await page.getByRole('dialog').locator('.dialog-footer').getByRole('button',{name:'Close',exact:true}).click();
       await page.getByRole('button',{name:'Add model',exact:true}).click();await page.getByRole('link',{name:provider,exact:true}).click();
       await page.getByRole('button',{name:'Test',exact:true}).click();
@@ -157,8 +157,17 @@ test('real message Test sends to the specified model and displays actual Respons
     expect(captured.length).toBe(4);
     for(const request of captured){
       expect(request.body.model).toBe('specified-test-model');expect(request.body.stream).toBe(false);
-      if(request.api==='openai-responses'){expect(request.path).toBe('/v1/responses');expect(request.body.input).toBe('Reply with OK.');expect(request.key).toBe('Bearer synthetic-openai-responses');}
-      else{expect(request.path).toBe('/v1/messages');expect(request.body.messages).toEqual([{role:'user',content:'Reply with OK.'}]);expect(request.key).toBe('synthetic-anthropic-messages');}
+      if(request.api==='openai-responses'){
+        expect(request.path).toBe('/v1/responses');
+        expect(request.body.input).toBe('Reply OK');
+        expect(request.body.max_output_tokens).toBe(64);
+        expect(request.key).toBe('Bearer synthetic-openai-responses');
+      }else{
+        expect(request.path).toBe('/v1/messages');
+        expect(request.body.messages).toEqual([{role:'user',content:'Reply OK'}]);
+        expect(request.body.max_tokens).toBe(64);
+        expect(request.key).toBe('synthetic-anthropic-messages');
+      }
     }
     failureStatus=404;
       await page.goto(origin+'/admin/models');

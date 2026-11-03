@@ -42,7 +42,7 @@ export const DraftModelTestInputSchema = Type.Object({ api: ModelApiSchema, base
 export const ModelTestInputSchema = Type.Union([SavedModelTestInputSchema, ProviderModelTestInputSchema, DraftModelTestInputSchema]);
 const testResultProperties = {
   api: ModelApiSchema, model, checkedAt: TimestampSchema, durationMs: Type.Integer({ minimum: 0 }),
-  testMessage: Type.Literal("Reply with OK."),
+  testMessage: Type.Union([Type.Literal("Reply OK"), Type.Literal("Reply with OK.")]),
   httpStatus: Type.Optional(Type.Integer({ minimum: 100, maximum: 599 })),
 };
 export const ModelTestSuccessSchema = Type.Object({

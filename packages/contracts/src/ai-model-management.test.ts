@@ -25,6 +25,14 @@ test('message Test results require actual bounded replies only on success and re
   for(const extra of [{credential:'synthetic'},{rawBody:'private'},{thinking:'private'},{credentialRef:'internal'}])assert.equal(Check(ModelTestResultSchema,{...success,...extra}),false);
   for(const extra of [{reason:'unknown'},{message:'x'.repeat(513)},{recovery:''},{reason:undefined},{message:undefined}])assert.equal(Check(ModelTestResultSchema,{...failure,...extra}),false);
 });
+test('message Test readers retain the original message for new and legacy results', () => {
+  for (const testMessage of ['Reply OK', 'Reply with OK.']) {
+    const result = { api: 'anthropic-messages', model: 'synthetic', testMessage, checkedAt: '2026-01-01T00:00:00Z', durationMs: 1, success: true, category: 'success', replyText: 'OK', replyTruncated: false };
+    assert.equal(Check(ModelTestResultSchema, result), true);
+    assert.equal(result.testMessage, testMessage);
+    assert.equal(Check(ModelTestResultSchema, { ...result, testMessage: 'Unexpected prompt' }), false);
+  }
+});
 test("Test targets and runtime selection cannot mix authority or credential inputs", () => {
   const id = "provider-fixture-0001";
   assert.equal(Check(ModelTestInputSchema, { providerId: id, model: "fixture-model" }), true);

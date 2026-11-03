@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+	"piwork/internal/buildinfo"
 	"piwork/internal/contracts"
 	"piwork/internal/identity"
 )
@@ -24,7 +26,7 @@ type modelTestInput struct {
 	Credential string `json:"credential"`
 }
 
-const modelTestMessage = "Reply with OK."
+const modelTestMessage = "Reply OK"
 
 func (a *Application) modelTestHTTP(w http.ResponseWriter, r *http.Request, actor identity.Principal) error {
 	in, err := readModelTestInput(r)
@@ -160,10 +162,10 @@ func (a *Application) checkModelHTTP(ctx context.Context, in modelTestInput) con
 	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	path := "/responses"
-	body := map[string]any{"model": in.Model, "input": modelTestMessage, "stream": false, "max_output_tokens": 128}
+	body := map[string]any{"model": in.Model, "input": modelTestMessage, "stream": false, "max_output_tokens": 64}
 	if in.API == "anthropic-messages" {
 		path = "/v1/messages"
-		body = map[string]any{"model": in.Model, "messages": []map[string]string{{"role": "user", "content": modelTestMessage}}, "stream": false, "max_tokens": 128}
+		body = map[string]any{"model": in.Model, "messages": []map[string]string{{"role": "user", "content": modelTestMessage}}, "stream": false, "max_tokens": 64}
 	}
 	raw, _ := json.Marshal(body)
 	request, err := http.NewRequestWithContext(ctx, "POST", in.BaseURL+path, bytes.NewReader(raw))
@@ -171,6 +173,9 @@ func (a *Application) checkModelHTTP(ctx context.Context, in modelTestInput) con
 		return finish()
 	}
 	request.Header.Set("Content-Type", "application/json")
+	for name, values := range modelTestContextHeaders(in.API, request.URL, uuid.NewString(), buildinfo.Version) {
+		request.Header[name] = values
+	}
 	if in.API == "anthropic-messages" {
 		request.Header.Set("x-api-key", in.Credential)
 		request.Header.Set("anthropic-version", "2023-06-01")

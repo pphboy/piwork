@@ -96,6 +96,17 @@ test('Test details describe the short-message scope for successful and failed re
     if (value.success) assert.match(details, /Reply incomplete or truncated/);
   }
 });
+test('minimal Test uses the new prompt while retaining legacy result messages', async () => {
+  const { modelTestDetails, validModelTest, testMessage } = await import(new URL('./model-form.js', moduleURL));
+  assert.equal(testMessage, 'Reply OK');
+  for (const prompt of ['Reply OK', 'Reply with OK.']) {
+    const value = { success: true, category: 'success', testMessage: prompt, replyText: 'OK', replyTruncated: false, checkedAt: '2026-01-01T00:00:00Z', durationMs: 1 };
+    assert.equal(validModelTest(value), true);
+    const details = modelTestDetails({ target: { provider: 'Fixture', api: 'anthropic-messages', model: 'model' }, revision: 1, pending: false, value }, 1);
+    assert.ok(details.includes(`<pre>${prompt}</pre>`));
+    assert.equal(validModelTest({ ...value, testMessage: 'Unexpected prompt' }), false);
+  }
+});
 test('unknown model write remains locked across navigation until explicit readback', async () => {
   const error = new Error('Synthetic acceptance unknown');
   // ConsoleError is the actual contract; no copied error classifier.

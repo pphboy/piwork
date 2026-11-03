@@ -52,6 +52,11 @@ export const EXEMPT = [
   {
     file: 'apps/console-webui/src/model-form.ts',
     text: 'Reply with OK.',
+    reason: '旧模型测试结果中的固定请求内容，不是界面文案',
+  },
+  {
+    file: 'apps/console-webui/src/model-form.ts',
+    text: 'Reply OK',
     reason: '模型连通性测试的固定请求内容，不是界面文案',
   },
   {

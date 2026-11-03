@@ -6,7 +6,7 @@ import {t, LocalizedMessage, type Feedback as FeedbackText} from './locale.js';
 export type ModelDraft = {name:string; model:string; api:ModelConfig['api']; baseUrl:string; key:string};
 export const blankModel = ():ModelDraft => ({name:'', model:'', api:'openai-responses', baseUrl:'', key:''});
 // Sent verbatim to the model under test and validated by the server response.
-export const testMessage = 'Reply with OK.';
+export const testMessage = 'Reply OK';
 export type ModelTestRecord = {target:{provider:string;api:string;model:string};revision:number;pending:boolean;startedAt?:number;value?:ModelTestResult;error?:FeedbackText;errorField?:string;diagnosticId?:string;notStarted?:boolean};
 export const modelField = (field:string) => ({name:'model-name',model:'model-id',api:'model-api',baseUrl:'model-base-url',credential:'model-key'}[field.split('.')[0]] || '');
 export const modelPlaceholder = (api:string) => api==='anthropic-messages'?'https://gateway.example':'https://gateway.example/v1';
@@ -48,7 +48,7 @@ export function modelDraftIssue(d:ModelDraft, editing=false):{field:string;messa
  return null;
 }
 export function validModelTest(value:Record<string,any>):value is ModelTestResult {
- return typeof value.success==='boolean' && typeof value.category==='string' && value.testMessage===testMessage &&
+ return typeof value.success==='boolean' && typeof value.category==='string' && [testMessage,'Reply with OK.'].includes(value.testMessage) &&
   (value.success ? typeof value.replyText==='string' && !!value.replyText.trim() && typeof value.replyTruncated==='boolean' : typeof value.reason==='string' && typeof value.message==='string' && typeof value.recovery==='string');
 }
 export function modelTestSummary(result: ModelTestRecord|null, currentRevision: number){if(!result)return '';

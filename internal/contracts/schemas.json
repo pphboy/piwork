@@ -15024,8 +15024,16 @@
         "minimum": 0
       },
       "testMessage": {
-        "type": "string",
-        "const": "Reply with OK."
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "Reply OK"
+          },
+          {
+            "type": "string",
+            "const": "Reply with OK."
+          }
+        ]
       },
       "httpStatus": {
         "type": "integer",
@@ -15293,8 +15301,16 @@
             "minimum": 0
           },
           "testMessage": {
-            "type": "string",
-            "const": "Reply with OK."
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "Reply OK"
+              },
+              {
+                "type": "string",
+                "const": "Reply with OK."
+              }
+            ]
           },
           "httpStatus": {
             "type": "integer",
@@ -15363,8 +15379,16 @@
             "minimum": 0
           },
           "testMessage": {
-            "type": "string",
-            "const": "Reply with OK."
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "Reply OK"
+              },
+              {
+                "type": "string",
+                "const": "Reply with OK."
+              }
+            ]
           },
           "httpStatus": {
             "type": "integer",
@@ -15516,8 +15540,16 @@
         "minimum": 0
       },
       "testMessage": {
-        "type": "string",
-        "const": "Reply with OK."
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "Reply OK"
+          },
+          {
+            "type": "string",
+            "const": "Reply with OK."
+          }
+        ]
       },
       "httpStatus": {
         "type": "integer",

@@ -145,7 +145,7 @@ for (const width of [390, 1920]) for (const api of ['anthropic-messages', 'opena
  const state = await fixture(page, {handle: r => {
   if (!r.path.endsWith('/model-tests')) return null;
   count++;
-  const common = {api: r.body.api, model: r.body.model, testMessage: 'Reply with OK.', checkedAt: '2026-01-01T00:00:00Z', durationMs: 1, httpStatus: count === 1 ? 200 : 401};
+  const common = {api: r.body.api, model: r.body.model, testMessage: 'Reply OK', checkedAt: '2026-01-01T00:00:00Z', durationMs: 1, httpStatus: count === 1 ? 200 : 401};
   return {json: count === 1 ? {...common, success: true, category: 'success', replyText: 'Synthetic reply', replyTruncated: true} : {...common, success: false, category: 'authentication', reason: 'provider-authentication', message: 'Request rejected.', recovery: 'Check access.'}};
  }});
  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
@@ -156,6 +156,7 @@ for (const width of [390, 1920]) for (const api of ['anthropic-messages', 'opena
  await key(page);
  await page.locator('[data-model-action="test"]').click();
  await expect(page.locator('#test-dialog [data-model-test-reply]')).toHaveText('Synthetic reply');
+ await expect(page.locator('#test-dialog pre').first()).toHaveText('Reply OK');
  await expect(page.locator('#test-dialog')).toContainText('checks one short message');
  await expect(page.locator('#test-dialog')).toContainText('Reply incomplete or truncated');
  await page.screenshot({path: `/tmp/piwork-quick-setup-${api}-${width}-success.png`});

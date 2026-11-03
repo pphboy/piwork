@@ -74,19 +74,22 @@ func TestStandardModelTestDraftSavedAndOverrides(t *testing.T) {
 						t.Fatalf("test failed: %d %v", status, result)
 					}
 					got := <-requests
-					if got.path != tc.path || got.body["model"] != tc.model || got.body["stream"] != false {
+					if got.path != tc.path || got.body["model"] != tc.model || got.body["stream"] != false || len(got.body) != 4 {
 						t.Fatalf("wrong target or body: %s %v", got.path, got.body)
 					}
 					if api == "anthropic-messages" {
-						if got.key != tc.key || got.version != "2023-06-01" || got.authorization != "" || got.body["max_tokens"] != float64(128) {
+						if got.key != tc.key || got.version != "2023-06-01" || got.authorization != "" || got.body["max_tokens"] != float64(64) {
 							t.Fatal("incorrect Messages authentication or token limit")
 						}
 						messages, ok := got.body["messages"].([]any)
-						if !ok || len(messages) != 1 || messages[0].(map[string]any)["content"] != modelTestMessage || messages[0].(map[string]any)["role"] != "user" {
+						if !ok || len(messages) != 1 || messages[0].(map[string]any)["content"] != "Reply OK" || messages[0].(map[string]any)["role"] != "user" {
 							t.Fatal("incorrect Messages input")
 						}
-					} else if got.authorization != "Bearer "+tc.key || got.key != "" || got.body["input"] != modelTestMessage || got.body["max_output_tokens"] != float64(128) {
+					} else if got.authorization != "Bearer "+tc.key || got.key != "" || got.body["input"] != "Reply OK" || got.body["max_output_tokens"] != float64(64) {
 						t.Fatal("incorrect Responses authentication or input")
+					}
+					if !strings.HasPrefix(got.headers.Get("User-Agent"), "piwork/") {
+						t.Fatal("Test did not identify its own client")
 					}
 					for header := range got.headers {
 						switch http.CanonicalHeaderKey(header) {
