@@ -408,10 +408,24 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 		}
 		t.Log(strings.TrimSpace(string(output)))
 	}
+	testRequests := make(map[string]modelGatewayRequest)
 	for _, model := range []map[string]any{rm, mm} {
 		result := modelNativeCall(t, base, auth, "/api/v1/admin/model-tests", "POST", map[string]any{"modelId": model["id"]}, 200)
 		if result["success"] != true {
 			t.Fatal("HTTP Test failed", result)
+		}
+		request := g.last()
+		if request.Stream {
+			t.Fatal("short message Test unexpectedly streamed")
+		}
+		testRequests[request.API] = request
+	}
+	assertBinding := func(api string) {
+		t.Helper()
+		want, ok := testRequests[api]
+		actual := g.last()
+		if !ok || !actual.Stream || actual.API != want.API || actual.Path != want.Path || actual.Model != want.Model || actual.Key != want.Key {
+			t.Fatalf("HTTP Test and SDK Run used different %s binding", api)
 		}
 	}
 	path := "/api/v1/works/" + work
@@ -421,11 +435,13 @@ func TestNativeMultiProviderLifecycleThinkingAndPackageRoundTrip(t *testing.T) {
 	}
 	selectModel(rm["modelRef"], "high")
 	first := modelNativeRun(t, ctx, base, auth, work, session, "responses-high")
+	assertBinding("openai-responses")
 	if first["thinkingLevel"] != "high" || g.last().Reasoning["effort"] != "high" {
 		t.Fatal("Responses Thinking mismatch")
 	}
 	selectModel(mm["modelRef"], "high")
 	modelNativeRun(t, ctx, base, auth, work, session, "messages-high")
+	assertBinding("anthropic-messages")
 	if g.last().Thinking["type"] != "enabled" {
 		t.Fatal("Messages Thinking mismatch")
 	}

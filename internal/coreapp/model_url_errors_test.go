@@ -96,8 +96,14 @@ func TestModelTestErrorsPreserveFieldsAndSafeRecovery(t *testing.T) {
 			defer server.Close()
 			code, result := httpCall(t, base, "/api/v1/admin/model-tests", "POST", auth, map[string]any{"api": "openai-responses", "baseUrl": server.URL, "model": "synthetic", "credential": "synthetic-secret"})
 			raw, _ := json.Marshal(result)
-			if code != 200 || result["success"] != false || result["reason"] != tc.reason || contracts.Validate("ModelTestResultSchema", result) != nil || calls != 1 || strings.Contains(string(raw), "synthetic-secret") || strings.Contains(string(raw), "/private/path") {
+			if code != 200 || result["success"] != false || result["reason"] != tc.reason || result["httpStatus"] != float64(tc.status) || contracts.Validate("ModelTestResultSchema", result) != nil || calls != 1 || strings.Contains(string(raw), "synthetic-secret") || strings.Contains(string(raw), "/private/path") {
 				t.Fatal("unsafe or incorrect error", code, result)
+			}
+			if tc.status == 401 || tc.status == 403 {
+				message := strings.ToLower(result["message"].(string))
+				if strings.Contains(message, "invalid key") || strings.Contains(message, "key is invalid") {
+					t.Fatal("unconfirmed key diagnosis", result)
+				}
 			}
 			p, err := a.createModelProvider(context.Background(), actor, contracts.CreateModelProvider{Name: "Failed Test still saves", Api: "openai-responses", BaseUrl: server.URL, Credential: "synthetic-secret"})
 			if err != nil || !p.Enabled {

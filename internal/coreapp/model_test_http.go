@@ -198,11 +198,12 @@ func (a *Application) checkModelHTTP(ctx context.Context, in modelTestInput) con
 		reason = providerReason
 		return finish()
 	}
-	text, parseReason := modelTestAssistantText(in.API, data)
+	text, upstreamTruncated, parseReason := modelTestAssistantText(in.API, data)
 	if parseReason != "" {
 		reason = parseReason
 		return finish()
 	}
+	replyTruncated = upstreamTruncated
 	// Providers may echo the authentication value even in a successful message.
 	// Redact before truncation so a boundary cannot expose a partial Key.
 	text = strings.ReplaceAll(text, in.Credential, "[redacted]")
@@ -220,7 +221,7 @@ func (a *Application) checkModelHTTP(ctx context.Context, in modelTestInput) con
 
 // Only visible assistant text is projected. Reasoning, tool calls and protocol
 // metadata remain in the bounded upstream response and are never returned.
-func modelTestAssistantText(api string, data []byte) (string, string) {
+func modelTestAssistantText(api string, data []byte) (string, bool, string) {
 	type block struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -232,25 +233,29 @@ func modelTestAssistantText(api string, data []byte) (string, string) {
 	}
 	var reply struct {
 		message
-		Status string          `json:"status"`
-		Error  json.RawMessage `json:"error"`
-		Output []message       `json:"output"`
+		Status     string          `json:"status"`
+		StopReason string          `json:"stop_reason"`
+		Error      json.RawMessage `json:"error"`
+		Output     []message       `json:"output"`
 	}
 	if json.Unmarshal(data, &reply) != nil || len(reply.Error) != 0 && string(reply.Error) != "null" {
-		return "", "protocol-mismatch"
+		return "", false, "protocol-mismatch"
 	}
 	var messages []message
+	var truncated bool
 	blockType := "output_text"
 	if api == "anthropic-messages" {
 		if reply.Type != "message" || reply.Role != "assistant" {
-			return "", "protocol-mismatch"
+			return "", false, "protocol-mismatch"
 		}
 		messages = []message{reply.message}
 		blockType = "text"
+		truncated = reply.StopReason == "max_tokens" || reply.StopReason == "model_context_window_exceeded"
 	} else {
-		if reply.Status != "completed" {
-			return "", "protocol-mismatch"
+		if reply.Status != "completed" && reply.Status != "incomplete" {
+			return "", false, "protocol-mismatch"
 		}
+		truncated = reply.Status == "incomplete"
 		messages = reply.Output
 	}
 	var parts []string
@@ -265,7 +270,7 @@ func modelTestAssistantText(api string, data []byte) (string, string) {
 		}
 	}
 	if len(parts) == 0 {
-		return "", "empty-reply"
+		return "", false, "empty-reply"
 	}
-	return strings.Join(parts, "\n"), ""
+	return strings.Join(parts, "\n"), truncated, ""
 }

@@ -79,3 +79,36 @@ func TestModelMessageTestExtractsOnlyAssistantTextAndBoundsReply(t *testing.T) {
 		}
 	}
 }
+
+func TestModelMessageTestReportsIncompleteText(t *testing.T) {
+	_, base, auth, _ := modelManagementFixture(t)
+	for _, tc := range []struct {
+		name, api, body string
+		success         bool
+		truncated       bool
+	}{
+		{"responses incomplete text", "openai-responses", `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"Partial reply"}]}]}`, true, true},
+		{"responses incomplete without text", "openai-responses", `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"reasoning"}]}`, false, false},
+		{"messages token limit", "anthropic-messages", `{"type":"message","role":"assistant","stop_reason":"max_tokens","content":[{"type":"text","text":"Partial reply"}]}`, true, true},
+		{"messages context limit", "anthropic-messages", `{"type":"message","role":"assistant","stop_reason":"model_context_window_exceeded","content":[{"type":"text","text":"Partial reply"}]}`, true, true},
+		{"messages context limit without text", "anthropic-messages", `{"type":"message","role":"assistant","stop_reason":"model_context_window_exceeded","content":[]}`, false, false},
+		{"messages natural end", "anthropic-messages", `{"type":"message","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Partial reply"}]}`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			code, result := httpCall(t, base, "/api/v1/admin/model-tests", "POST", auth, map[string]any{"api": tc.api, "baseUrl": server.URL, "model": "synthetic", "credential": "synthetic-key"})
+			if code != 200 || result["success"] != tc.success {
+				t.Fatalf("unexpected result: %d %v", code, result)
+			}
+			if tc.success && (result["replyText"] != "Partial reply" || result["replyTruncated"] != tc.truncated) {
+				t.Fatal("incorrect text or truncation status", result)
+			}
+			if !tc.success && (result["reason"] != "empty-reply" || result["replyText"] != nil) {
+				t.Fatal("empty incomplete response was presented as text", result)
+			}
+		})
+	}
+}
