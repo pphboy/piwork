@@ -2,6 +2,27 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 const {DesktopAdapter}=await import(new URL('../browser/adapter.js',import.meta.url).href);
 
+test('version 5 known models select compatible levels independently of SDK options',async t=>{
+ const model={modelRef:null,label:'Known',provider:'openai',model:'gpt-4.1-mini',thinkingLevels:['off'],defaultThinkingLevel:'off',compatibleThinkingProfiles:[{profile:'responses-effort-v1',levels:['off','high','xhigh','max']}]};
+ const bodies:Array<Record<string,unknown>>=[];
+ t.mock.method(globalThis,'fetch',async (_input:unknown,init?:RequestInit)=>{
+  const body=JSON.parse(String(init?.body));bodies.push(body);
+  return Response.json({sessionId:'session-1',modelRef:null,model,thinkingLevel:body.thinkingLevel,...(body.thinkingProfile?{thinkingProfile:body.thinkingProfile}:{}),availability:'available'});
+ });
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[],thinkingLevel:'off'}],services:[]}];
+ adapter.models.set('work-1',{loading:false,confirmed:true,error:'',models:[],defaultModel:model});adapter.chatCapabilities.set('work-1',5);
+ t.after(()=>adapter.clearIdentity());
+ adapter.selectThinking('work-1','session-1','max','responses-effort-v1');await adapter.saveModel('work-1','session-1');
+ assert.equal(adapter.modelReady('work-1','session-1'),true);
+ assert.equal(adapter.modelSelection('work-1','session-1').thinking,'max');
+ adapter.selectThinking('work-1','session-1','off','responses-effort-v1');await adapter.saveModel('work-1','session-1');
+ adapter.selectThinking('work-1','session-1','off');await adapter.saveModel('work-1','session-1');
+ assert.deepEqual(bodies.map(body=>[body.thinkingLevel,body.thinkingProfile]),[['max','responses-effort-v1'],['off','responses-effort-v1'],['off',null]]);
+ adapter.chatCapabilities.set('work-1',4);
+ assert.throws(()=>adapter.selectThinking('work-1','session-1','max','responses-effort-v1'));
+ assert.equal(bodies.length,3);
+});
+
 test('compatible thinking keeps profile and level together through save and readback',async t=>{
  const bodies:Array<Record<string,unknown>>=[];
  const model={modelRef:null,label:'Alias',provider:'anthropic',model:'unknown',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['high']},{profile:'messages-budget-v1',levels:['high'],budgets:{high:6144}}]};
@@ -195,4 +216,49 @@ test('failed message retry requires the original compatible profile even at the 
  await assert.rejects(adapter.retryChatSubmission('work-1','session-1',key),{code:'MODEL_NOT_CONFIRMED'});assert.equal(bodies.length,1);
  pair.profile='messages-adaptive-v1';
  await assert.rejects(adapter.retryChatSubmission('work-1','session-1',key),{code:'INVALID_REQUEST'});assert.equal(bodies.length,2);assert.equal(bodies[1]!.prompt,bodies[0]!.prompt);
+});
+
+test('plain level selection deduplicates mappings and retains the saved route on reselect',async t=>{
+ const model={modelRef:null,label:'Known',provider:'anthropic',model:'known',thinkingLevels:['off','high'],defaultThinkingLevel:'off',compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','low','high','max']},{profile:'messages-budget-v1',levels:['off','minimal','low','high']}]};
+ const bodies:Array<Record<string,unknown>>=[];
+ t.mock.method(globalThis,'fetch',async (_input:unknown,init?:RequestInit)=>{
+  const input=JSON.parse(String(init?.body));bodies.push(input);
+  return Response.json({sessionId:'session-1',modelRef:null,model,thinkingLevel:input.thinkingLevel,...(input.thinkingProfile?{thinkingProfile:input.thinkingProfile}:{}),availability:'available'});
+ });
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'One',messages:[],modelPreference:{...model,availability:'available'},thinkingLevel:'high',thinkingProfile:'messages-budget-v1'}],services:[]}];
+ adapter.models.set('work-1',{loading:false,confirmed:true,error:'',models:[],defaultModel:model});adapter.chatCapabilities.set('work-1',5);
+ t.after(()=>adapter.clearIdentity());
+ assert.deepEqual(adapter.getThinkingOptions('work-1','session-1').map((v:{level:string})=>v.level),['off','minimal','low','high','max']);
+ adapter.selectThinkingLevel('work-1','session-1','high');assert.equal(bodies.length,0);assert.equal(adapter.modelSelection('work-1','session-1').profile,'messages-budget-v1');
+ adapter.selectThinkingLevel('work-1','session-1','minimal');await adapter.saveModel('work-1','session-1');
+ adapter.selectThinkingLevel('work-1','session-1','high');await adapter.saveModel('work-1','session-1');
+ assert.deepEqual(bodies.map(body=>[body.thinkingLevel,body.thinkingProfile]),[['minimal','messages-budget-v1'],['high',null]]);
+ assert.equal(adapter.modelReady('work-1','session-1'),true);
+});
+
+for(const kind of ['unknown','known','mismatched-profile'] as const)test(`plain level confirmation repairs unavailable ${kind} High`,async t=>{
+ const model={modelRef:null,label:'Model',provider:'anthropic',model:'model',thinkingLevels:kind==='known'?['off','high']:[],defaultThinkingLevel:kind==='known'?'off':null,...(kind==='known'?{}:{thinkingAvailability:'unknown'}),compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','high']}]};
+ const bodies:Array<Record<string,unknown>>=[];
+ t.mock.method(globalThis,'fetch',async (_input:unknown,init?:RequestInit)=>{
+  const body=JSON.parse(String(init?.body));bodies.push(body);
+  return Response.json({sessionId:'session-1',modelRef:null,model,thinkingLevel:body.thinkingLevel,...(body.thinkingProfile?{thinkingProfile:body.thinkingProfile}:{}),availability:'available'});
+ });
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'Old',messages:[],chatAvailability:'unavailable',modelPreference:{...model,availability:'unavailable'},thinkingLevel:'high',...(kind==='mismatched-profile'?{thinkingProfile:'responses-effort-v1'}:{})}],services:[]}];
+ adapter.models.set('work-1',{loading:false,confirmed:true,error:'',models:[],defaultModel:model});adapter.chatCapabilities.set('work-1',5);t.after(()=>adapter.clearIdentity());
+ assert.equal(adapter.modelReady('work-1','session-1'),false);
+ adapter.selectThinkingLevel('work-1','session-1','high');await adapter.saveModel('work-1','session-1');
+ assert.equal(bodies.length,1);assert.equal(bodies[0]!.thinkingLevel,'high');assert.equal(bodies[0]!.thinkingProfile,kind==='known'?null:'messages-adaptive-v1');
+ assert.equal(adapter.modelReady('work-1','session-1'),true);
+ adapter.selectThinkingLevel('work-1','session-1','high');await adapter.saveModel('work-1','session-1');assert.equal(bodies.length,1);
+});
+
+test('same repaired level while saving does not schedule another write',async t=>{
+ const model={modelRef:null,label:'Unknown',provider:'anthropic',model:'alias',thinkingAvailability:'unknown',thinkingLevels:[],defaultThinkingLevel:null,compatibleThinkingProfiles:[{profile:'messages-adaptive-v1',levels:['off','high']}]};
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});t.after(()=>release());
+ const bodies:Array<Record<string,unknown>>=[];
+ t.mock.method(globalThis,'fetch',async (_input:unknown,init?:RequestInit)=>{const body=JSON.parse(String(init?.body));bodies.push(body);await gate;return Response.json({sessionId:'session-1',modelRef:null,model,thinkingLevel:body.thinkingLevel,thinkingProfile:body.thinkingProfile,availability:'available'});});
+ const adapter=new DesktopAdapter();adapter.state.signedIn=true;adapter.state.works=[{id:'work-1',status:'Ready',desired:'running',sessions:[{id:'session-1',title:'Old',messages:[],chatAvailability:'unavailable',modelPreference:{...model,availability:'unavailable'},thinkingLevel:'high'}],services:[]}];adapter.models.set('work-1',{loading:false,confirmed:true,error:'',models:[],defaultModel:model});adapter.chatCapabilities.set('work-1',5);t.after(()=>adapter.clearIdentity());
+ adapter.selectThinkingLevel('work-1','session-1','high');const pending=adapter.saveModel('work-1','session-1');const revision=adapter.modelSelection('work-1','session-1').revision;
+ adapter.selectThinkingLevel('work-1','session-1','high');assert.equal(adapter.modelSelection('work-1','session-1').revision,revision);assert.equal(bodies.length,1);
+ release();await pending;assert.equal(bodies.length,1);assert.equal(adapter.modelReady('work-1','session-1'),true);
 });
