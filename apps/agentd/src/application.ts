@@ -1,6 +1,7 @@
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
 import { join } from "node:path";
+import { closeMcpWithDeadline } from './mcp-shutdown.js';
 import {
   Server,
   ServerCredentials,
@@ -316,10 +317,7 @@ export class AgentApplication {
         stage: loadingStage, outcome: "failed", code: loadingStage === "skill-load" ? "SKILL_LOAD_FAILED" : "PACKAGE_LOAD_FAILED",
         correlationId: config.correlationId ?? config.instanceId, workId: config.workId,
       });
-      if (mcp !== undefined) await Promise.race([
-        mcp.close(),
-        new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
-      ]);
+      if (mcp !== undefined) await closeMcpWithDeadline(() => mcp!.close());
       await brainLoop?.close();
       await brainFlow?.close();
       store.close();
@@ -357,10 +355,7 @@ export class AgentApplication {
     await this.feedbackServer?.close();
     await this.runs.drain(5_000);
     await this.brainFlow?.close();
-    await Promise.race([
-      this.mcp.close(),
-      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
-    ]);
+    await closeMcpWithDeadline(() => this.mcp.close());
     await new Promise<void>((resolve) => this.server.tryShutdown(() => resolve()));
     this.store.close();
     this.control?.close();
