@@ -139,6 +139,52 @@ test('Test has its own pending and stale result; explicit failure still permits 
  const held=gate();const state=await fixture(page,{handle:async r=>{if(r.path.endsWith('/model-tests')){await held.promise;return{json:{success:false,category:'authentication',testMessage:'Reply with OK.',reason:'provider-authentication',message:'Synthetic Key rejected.',recovery:'Check the Key.',checkedAt:'2026-10-20T00:00:00Z',durationMs:1}};}return null;}});await key(page);await page.getByRole('button',{name:'Test',exact:true}).click();await expect(page.locator('#test-dialog .pending-dots')).toHaveCount(1);await expect(page.getByRole('button',{name:'Test',exact:true})).toBeDisabled();await page.locator('#test-dialog').getByRole('button',{name:'Close',exact:true}).click();await advanced(page);await page.locator('#model-id').fill('edited');held.resolve();await expect(page.locator('#model-test-result')).toContainText('Previous configuration');await expect(page.locator('#model-test-result .pending-dots')).toHaveCount(0);await page.getByRole('button',{name:'Save and continue',exact:true}).click();await expect(page.locator('#preparation-answer')).toBeVisible();expect(writes(state).map(r=>r.path)).toEqual(['/console/api/admin/model-tests','/console/api/admin/models','/console/api/admin/runtime']);
 });
 
+for (const width of [390, 1920]) for (const api of ['anthropic-messages', 'openai-responses']) test(`standard model test scope in quick setup ${width} ${api}`, async ({page}) => {
+ await page.setViewportSize({width, height: width === 390 ? 844 : 1080});
+ let count = 0;
+ const state = await fixture(page, {handle: r => {
+  if (!r.path.endsWith('/model-tests')) return null;
+  count++;
+  const common = {api: r.body.api, model: r.body.model, testMessage: 'Reply with OK.', checkedAt: '2026-01-01T00:00:00Z', durationMs: 1, httpStatus: count === 1 ? 200 : 401};
+  return {json: count === 1 ? {...common, success: true, category: 'success', replyText: 'Synthetic reply', replyTruncated: true} : {...common, success: false, category: 'authentication', reason: 'provider-authentication', message: 'Request rejected.', recovery: 'Check access.'}};
+ }});
+ await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+ await advanced(page);
+ await page.locator('#model-id').fill('synthetic-model');
+ await page.locator('#model-api').selectOption(api);
+ await page.locator('#model-base-url').fill('https://model.example.invalid/v1');
+ await key(page);
+ await page.locator('[data-model-action="test"]').click();
+ await expect(page.locator('#test-dialog [data-model-test-reply]')).toHaveText('Synthetic reply');
+ await expect(page.locator('#test-dialog')).toContainText('checks one short message');
+ await expect(page.locator('#test-dialog')).toContainText('Reply incomplete or truncated');
+ await page.screenshot({path: `/tmp/piwork-quick-setup-${api}-${width}-success.png`});
+ await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('zh-CN'));
+ await expect(page.locator('#test-dialog')).toContainText('仅检查一条短消息');
+ await expect(page.locator('#test-dialog')).toContainText('回复未完成或已截断');
+ await expect(page.locator('#model-key')).toHaveValue('synthetic-key');
+ await page.screenshot({path: `/tmp/piwork-quick-setup-${api}-${width}-zh.png`});
+ await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+ await expect(page.locator('#model-key')).toHaveValue('synthetic-key');
+ await page.locator('#test-dialog .dialog-footer [data-action="close-test"]').click();
+ await page.locator('[data-model-action="test"]').click();
+ await expect(page.locator('#test-dialog')).toContainText('Request rejected.');
+ await expect(page.locator('#test-dialog')).toContainText('checks one short message');
+ await page.screenshot({path: `/tmp/piwork-quick-setup-${api}-${width}-failure.png`});
+ await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('zh-CN'));
+ await expect(page.locator('#test-dialog')).toContainText('仅检查一条短消息');
+ await expect(page.locator('#test-dialog')).toContainText('模型请求失败');
+ await expect(page.locator('#model-key')).toHaveValue('synthetic-key');
+ await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+ await page.locator('#test-dialog .dialog-footer [data-action="close-test"]').click();
+ await expect(page.locator('[data-continue]')).toBeEnabled();
+ await page.locator('[data-continue]').click();
+ await expect(page.locator('#preparation-answer')).toBeVisible();
+ expect(writes(state).map(r => r.path)).toEqual(['/console/api/admin/model-tests', '/console/api/admin/model-tests', '/console/api/admin/models', '/console/api/admin/runtime']);
+ expect(state.snapshot.runtime.modelRef).toBe('model-1');
+ expect(count).toBe(2);
+});
+
 const identityWrites=state=>state.requests.filter(request=>request.method!=='GET');
 const expectPlainSession=state=>expect(state.requests.filter(request=>['setup/session','setup/redeem'].includes(request.path))).toEqual([]);
 async function fillCredentials(page,{creating=true,account='admin',password='synthetic-password'}={}){

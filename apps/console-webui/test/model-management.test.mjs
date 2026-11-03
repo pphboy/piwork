@@ -80,6 +80,22 @@ test('optional Test in flight does not gate a legal Save or invoke unrelated mod
   await testing;
   manager.leave();
 });
+test('Test details describe the short-message scope for successful and failed results', async () => {
+  const { modelTestDetails } = await import(new URL('./model-form.js', moduleURL));
+  const { chooseLocale } = await import(new URL('./locale.js', moduleURL));
+  chooseLocale('en');
+  for (const value of [
+    { success: true, replyText: 'Synthetic reply', replyTruncated: true },
+    { success: false, category: 'authentication', message: 'Request rejected', recovery: 'Check access.' },
+  ]) {
+    const result = { target: { provider: 'Fixture', api: 'anthropic-messages', model: 'model' }, revision: 1, pending: false, value: { ...value, testMessage: 'Reply with OK.', checkedAt: '2026-01-01T00:00:00Z', durationMs: 1 } };
+    const details = modelTestDetails(result, 1);
+    assert.match(details, /checks one short message/);
+    assert.match(details, /does not verify streaming, tools, or a complete chat/);
+    assert.match(details, /Saving and enabling remain independent/);
+    if (value.success) assert.match(details, /Reply incomplete or truncated/);
+  }
+});
 test('unknown model write remains locked across navigation until explicit readback', async () => {
   const error = new Error('Synthetic acceptance unknown');
   // ConsoleError is the actual contract; no copied error classifier.

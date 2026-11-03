@@ -196,6 +196,62 @@ async function closeModelTest(page){
   await expect(page.locator('dialog')).toHaveCount(0);
 }
 
+for (const width of [390, 1920]) for (const api of ['anthropic-messages', 'openai-responses']) test(`standard model test scope in management ${width} ${api}`, async ({page}) => {
+  await page.setViewportSize({width, height: width === 390 ? 844 : 1080});
+  let count = 0;
+  const choices = [];
+  const state = await modelsFixture(page, r => {
+    if (r.path === 'admin/default-work' && r.method === 'PATCH') {
+      choices.push(JSON.parse(r.body));
+      return {json: {configuration: {modelRef: choices.at(-1).modelRef}}};
+    }
+    if (r.path !== 'admin/model-tests') return;
+    const input = JSON.parse(r.body);
+    count++;
+    const base = {api: input.api, model: input.model, testMessage: 'Reply with OK.', checkedAt: '2026-01-01T00:00:00Z', durationMs: 1, httpStatus: count === 1 ? 200 : 401};
+    return {json: count === 1 ? {...base, success: true, category: 'success', replyText: 'Synthetic reply', replyTruncated: true} : {...base, success: false, category: 'authentication', reason: 'provider-authentication', message: 'Request rejected.', recovery: 'Check access.'}};
+  });
+  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+  await page.locator('#model-id').fill('synthetic-model');
+  await page.locator('#model-api').selectOption(api);
+  await page.locator('#model-base-url').fill('https://model.example.invalid/v1');
+  await page.locator('#model-key').fill('synthetic-key');
+  await page.locator('[data-model-action="test"]').click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog.locator('[data-model-test-reply]')).toHaveText('Synthetic reply');
+  await expect(dialog).toContainText('checks one short message');
+  await expect(dialog).toContainText('Reply incomplete or truncated');
+  await page.screenshot({path: `/tmp/piwork-model-management-${api}-${width}-success.png`});
+  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('zh-CN'));
+  dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('仅检查一条短消息');
+  await expect(dialog).toContainText('回复未完成或已截断');
+  await page.screenshot({path: `/tmp/piwork-model-management-${api}-${width}-zh.png`});
+  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+  await closeModelTest(page);
+  await page.locator('[data-model-action="test"]').click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Request rejected.');
+  await expect(dialog).toContainText('checks one short message');
+  await page.screenshot({path: `/tmp/piwork-model-management-${api}-${width}-failure.png`});
+  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('zh-CN'));
+  await expect(page.getByRole('dialog')).toContainText('仅检查一条短消息');
+  await expect(page.getByRole('dialog')).toContainText('模型请求失败');
+  await page.evaluate(async () => (await import('/browser/locale.js')).chooseLocale('en'));
+  await closeModelTest(page);
+  await page.locator('[data-model-form="model"] button[type="submit"]').click();
+  await expect(page.getByRole('link', {name: 'synthetic-model', exact: true})).toBeVisible();
+  await page.getByRole('link', {name: 'synthetic-model', exact: true}).click();
+  await page.locator('[data-model-action="default"]').click();
+  await expect.poll(() => choices.length).toBe(1);
+  expect(choices[0].modelRef).toBe(state.models[0].modelRef);
+  expect(count).toBe(2);
+  page.once('dialog', dialog => dialog.dismiss());
+  await page.locator('[data-model-action="delete"]').click();
+  await expect.poll(() => state.models.length).toBe(1);
+  await page.screenshot({path: `/tmp/piwork-model-management-${api}-${width}-confirm.png`});
+});
+
 for(const reason of ['provider-authentication','model-unavailable','rate-limited','dns','tls','connection','network','timeout','provider-error','protocol-mismatch','empty-reply','response-too-large'])test(`message Test ${reason} feedback explains recovery and never blocks save or expires administrator login`,async({page})=>{
   let calls=0;
   const categories={'provider-authentication':'authentication','model-unavailable':'model','rate-limited':'rate-limit',dns:'network',tls:'network',connection:'network',network:'network',timeout:'timeout','provider-error':'protocol','protocol-mismatch':'protocol','empty-reply':'protocol','response-too-large':'response-limit'};
@@ -277,7 +333,11 @@ for(const api of ['openai-responses','anthropic-messages'])test(`message Test Mo
     const state=await modelsFixture(page,async r=>{if(r.path==='admin/model-tests'){count++;await gate.promise;const body=JSON.parse(r.body);return{json:{success:true,api,model:body.model,testMessage:'Reply with OK.',replyText:reply,replyTruncated:true,category:'success',httpStatus:200,checkedAt:new Date().toISOString(),durationMs:42}};}});
     await page.getByLabel('Display name (optional)',{exact:true}).fill('Modal provider');await page.getByLabel('API type',{exact:true}).selectOption(api);await page.getByLabel('Base URL',{exact:true}).fill('https://fixture.invalid');await page.getByLabel('API Key',{exact:true}).fill('synthetic-modal-key');await page.getByLabel('Model ID',{exact:true}).fill('specified-model');
     await page.getByRole('button',{name:'Test',exact:true}).click();const dialog=page.getByRole('dialog');await expect(dialog).toContainText('Sending the test message');await expect(dialog).toContainText('specified-model');await expect(dialog).toContainText('Reply with OK.');
-    gate.resolve();await expect(page.locator('[data-model-test-reply]')).toHaveText(reply);await expect(dialog).toContainText('Reply truncated');await expect(dialog).toContainText('42 ms');await expect(dialog.locator('img')).toHaveCount(0);
+    gate.resolve();
+    await expect(page.locator('[data-model-test-reply]')).toHaveText(reply);
+    await expect(dialog).toContainText('Reply incomplete or truncated');
+    await expect(dialog).toContainText('42 ms');
+    await expect(dialog.locator('img')).toHaveCount(0);
     expect(await page.evaluate(()=>window.testInjected)).toBeUndefined();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await page.keyboard.press('Escape');await expect(page.locator('dialog')).toHaveCount(0);await expect(page.getByRole('button',{name:'Test',exact:true})).toBeFocused();await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('synthetic-modal-key');
     await page.getByRole('button',{name:'View test result',exact:true}).click();await expect(page.locator('[data-model-test-reply]')).toHaveText(reply);expect(count).toBe(1);await closeModelTest(page);expect(state.writes).toHaveLength(0);

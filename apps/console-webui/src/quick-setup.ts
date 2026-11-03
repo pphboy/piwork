@@ -499,11 +499,17 @@ const click=(event:MouseEvent)=>{
 function relocalize(){
  if(disposed||!options.current())return;
  capture();
+ const draftKey=draft.key;
  const testOpen=!!root.querySelector<HTMLDialogElement>('#test-dialog')?.open;
  const leaveOpen=!!root.querySelector<HTMLDialogElement>('#leave-dialog')?.open;
  render();
  // Re-rendering must not discard a typed Key; only stage changes clear secrets.
- const keyInput=root.querySelector<HTMLInputElement>('#model-key');if(keyInput&&!writing)keyInput.value=draft.key;
+ const keyInput=root.querySelector<HTMLInputElement>('#model-key');
+ if(keyInput&&!writing){
+  keyInput.value=draftKey;
+  draft.key=draftKey;
+  options.dirty(dirty());
+ }
  if(testOpen){updateTest();root.querySelector<HTMLDialogElement>('#test-dialog')?.showModal();}
  if(leaveOpen&&leaveAction)root.querySelector<HTMLDialogElement>('#leave-dialog')?.showModal();
 }

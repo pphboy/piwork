@@ -69,6 +69,7 @@ onLocaleChange(() => {
     else
         statusErrorRenderer = null;
     renderPage();
+    modelManagement.refreshLocale();
     refreshAccountMenu();
     syncNotices();
     const input = document.querySelector('#login-form #password');
@@ -1635,11 +1636,19 @@ function openDialog(title, description, body, submitLabel, action, kind = "prima
     setTimeout(() => focus?.focus(), 0);
 }
 function openModelTestDialog(body) {
-    openDialog(t('dialog.modelTestTitle'), t('dialog.modelTestDetail'), body, '', () => { }, 'primary', false, true);
+    openDialog(() => t('dialog.modelTestTitle'), t('dialog.modelTestDetail'), body, '', () => { }, 'primary', false, true);
     const target = dialog;
     return {
-        update(body) { if (dialog === target && target.isConnected)
-            target.querySelector('.dialog-body').innerHTML = `<div id="dialog-feedback"></div>${body}`; },
+        update(body) {
+            if (dialog !== target || !target.isConnected)
+                return;
+            currentModalTitle = t('dialog.modelTestTitle');
+            target.querySelector('#dialog-title').textContent = currentModalTitle;
+            target.querySelector('.dialog-heading p').textContent = t('dialog.modelTestDetail');
+            target.querySelector('.dialog-heading [data-action="close-dialog"]').setAttribute('aria-label', t('dialog.closeAria'));
+            target.querySelector('.dialog-footer [data-action="close-dialog"]').textContent = t('common.close');
+            target.querySelector('.dialog-body').innerHTML = `<div id="dialog-feedback"></div>${body}`;
+        },
         close() { if (dialog === target)
             closeDialog(true); },
     };

@@ -904,13 +904,17 @@ export function mountQuickSetup(root, options) {
         if (disposed || !options.current())
             return;
         capture();
+        const draftKey = draft.key;
         const testOpen = !!root.querySelector('#test-dialog')?.open;
         const leaveOpen = !!root.querySelector('#leave-dialog')?.open;
         render();
         // Re-rendering must not discard a typed Key; only stage changes clear secrets.
         const keyInput = root.querySelector('#model-key');
-        if (keyInput && !writing)
-            keyInput.value = draft.key;
+        if (keyInput && !writing) {
+            keyInput.value = draftKey;
+            draft.key = draftKey;
+            options.dirty(dirty());
+        }
         if (testOpen) {
             updateTest();
             root.querySelector('#test-dialog')?.showModal();

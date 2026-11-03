@@ -84,6 +84,7 @@ export class ModelManagement{
   private testMarkup(){return modelTestSummary(this.testResult,this.revision);}
   private testModalMarkup(){return modelTestDetails(this.testResult,this.revision);}
   private openTestResult(){if(this.testResult&&this.showTestDialog){this.testDialog?.close();this.testDialog=this.showTestDialog(this.testModalMarkup());}}
+  refreshLocale(){if(this.testResult)this.testDialog?.update(this.testModalMarkup());}
 
  private beginPending(action:string){this.lastAction=action;
  this.pendingAction=action;

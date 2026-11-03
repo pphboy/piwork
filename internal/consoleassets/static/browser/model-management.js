@@ -153,6 +153,8 @@ export class ModelManagement {
         this.testDialog?.close();
         this.testDialog = this.showTestDialog(this.testModalMarkup());
     } }
+    refreshLocale() { if (this.testResult)
+        this.testDialog?.update(this.testModalMarkup()); }
     beginPending(action) {
         this.lastAction = action;
         this.pendingAction = action;
