@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"piwork/internal/contracts"
@@ -17,7 +18,8 @@ import (
 
 type fileHTTPWriter struct {
 	http.ResponseWriter
-	started bool
+	started     bool
+	cancelledIO atomic.Bool
 }
 
 func (w *fileHTTPWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
@@ -32,10 +34,24 @@ func (w *fileHTTPWriter) Write(data []byte) (int, error) {
 	return w.ResponseWriter.Write(data)
 }
 
+func (w *fileHTTPWriter) retireCancelledConnection(request *http.Request) {
+	if w.cancelledIO.Load() {
+		// An expired read deadline can cancel net/http's connection context.
+		// Clearing the deadline cannot make that connection safe for another
+		// authenticated request; finish this reply and retire the connection.
+		request.Close = true
+		if w.started {
+			panic(http.ErrAbortHandler)
+		}
+		w.Header().Set("Connection", "close")
+	}
+}
+
 func (a *Application) serveFiles(writer http.ResponseWriter, request *http.Request) {
 	w := &fileHTTPWriter{ResponseWriter: writer}
 	var rangeSize *int64
 	err := a.handleFiles(w, request, &rangeSize)
+	w.retireCancelledConnection(request)
 	if err == nil {
 		return
 	}
@@ -163,10 +179,14 @@ func (a *Application) handleFiles(w *fileHTTPWriter, r *http.Request, rangeSize 
 		return fileprotocol.Failure("FILE_MEDIA_UNSUPPORTED")
 	}
 	controller := http.NewResponseController(w)
-	cancelIO := func() { _ = controller.SetReadDeadline(time.Now()); _ = controller.SetWriteDeadline(time.Now()) }
+	cancelIO := func() {
+		w.cancelledIO.Store(true)
+		_ = controller.SetReadDeadline(time.Now())
+		_ = controller.SetWriteDeadline(time.Now())
+	}
 	input := fileExecutionInput{Identity: identity, Path: target.Segments, Conditions: emptyFileConditions(), CancelIO: cancelIO}
 	// Also cover XML/empty-body reads before the helper job is accepted.
-	stopIO := context.AfterFunc(ctx, cancelIO)
+	stopIO := afterFileCancellation(ctx, cancelIO)
 	defer stopIO()
 	if r.Method == "OPTIONS" {
 		w.Header().Set("Allow", workfiles.Allow)

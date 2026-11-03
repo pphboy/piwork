@@ -51,7 +51,7 @@ func (a *Application) executeFileJob(parent context.Context, input fileExecution
 	ctx, cancel := context.WithCancelCause(budget)
 	defer cancel(nil)
 	if input.CancelIO != nil {
-		stop := context.AfterFunc(ctx, input.CancelIO)
+		stop := afterFileCancellation(ctx, input.CancelIO)
 		defer stop()
 	}
 	stopLifetime := context.AfterFunc(a.ctx, func() { cancel(fileprotocol.Failure("FILE_TRANSFER_TIMEOUT")) })
@@ -66,7 +66,7 @@ func (a *Application) executeFileJob(parent context.Context, input fileExecution
 	// Cancellation must also release a caller's blocked upload read. The HTTP
 	// layer sets its connection deadlines when this request context is closed.
 	if input.Body != nil {
-		stop := context.AfterFunc(ctx, func() { input.Body.Close() })
+		stop := afterFileCancellation(ctx, func() { input.Body.Close() })
 		defer stop()
 	}
 	var last, firstFrameDeadline atomic.Int64

@@ -3,12 +3,17 @@
 package coreapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/client"
 	"piwork/internal/contracts"
+	"piwork/internal/corelogs"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 )
@@ -116,8 +121,8 @@ func TestNativeShutdownConfirmsOtherWorksAfterFailedAgentDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if err := a.Close(context.Background()); err == nil {
-		t.Fatal("unconfirmed drain was reported as clean shutdown")
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatal("confirmed container shutdown failed", err)
 	}
 	if time.Since(started) > 4*time.Second {
 		t.Fatal("configured process deadline exceeded", time.Since(started))
@@ -134,6 +139,30 @@ func TestNativeShutdownConfirmsOtherWorksAfterFailedAgentDrain(t *testing.T) {
 		}
 	}
 	waitForShutdownStoreRelease(t, a.options.DataDirectory)
+	files, err := filepath.Glob(filepath.Join(a.options.DataDirectory, "logs", "core", "*.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainUnconfirmed := false
+	for _, file := range files {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range bytes.Split(raw, []byte{'\n'}) {
+			if len(line) == 0 {
+				continue
+			}
+			var record corelogs.Record
+			if err := json.Unmarshal(line, &record); err != nil {
+				t.Fatal("invalid persisted shutdown diagnostic", err)
+			}
+			drainUnconfirmed = drainUnconfirmed || record.Event == "work.drain" && record.Level == "warn" && record.Fields["workId"] == first && record.Fields["outcome"] == "unconfirmed"
+		}
+	}
+	if !drainUnconfirmed {
+		t.Fatal("confirmed stop erased the unconfirmed drain diagnostic")
+	}
 	reopened, err := corestore.Open(ctx, corestore.Options{Directory: a.options.DataDirectory})
 	if err != nil {
 		t.Fatal("shutdown retained store lock", err)

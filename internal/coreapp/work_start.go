@@ -611,19 +611,33 @@ func (a *Application) stopCapturedWorkLockedWithDrain(ctx context.Context, workI
 		return err
 	}
 	var drainErr error
-	// A Docker-confirmed stopped instance without a retained route needs no RPC.
-	// A live/unknown instance or captured transport still needs a real receipt.
+	var drainDiagnosticErr error
+	// Only a live/unknown instance can supply an RPC receipt. A retained route
+	// for a Docker-confirmed stopped instance remains explicitly unconfirmed.
 	if drainRoute != nil || view.State == nil || view.State.Running {
-		drainErr = drainCapturedRoute(ctx, drainRoute, scope, contextID, drainTimeout)
+		if view.State != nil && !view.State.Running {
+			// Docker has already confirmed termination. A retained connection to
+			// that dead instance cannot provide a receipt; do not spend the stop
+			// budget reconnecting to it or claim it drained successfully.
+			drainErr = errors.New("Work Agent drain was not confirmed")
+		} else {
+			drainErr = drainCapturedRoute(ctx, drainRoute, scope, contextID, drainTimeout)
+		}
+		if drainErr != nil {
+			drainDiagnosticErr = a.RecordAppEvent("work.drain", "warn", map[string]string{
+				"workId": workID, "generation": strconv.FormatInt(generation, 10),
+				"instanceId": instanceID, "outcome": "unconfirmed",
+			})
+		}
 	}
 	stopCtx, cancel := context.WithTimeout(ctx, stopTimeout+5*time.Second)
 	stopErr := a.workRuntime.StopAgent(stopCtx, scope, contextID, stopTimeout)
 	cancel()
 	if stopErr != nil {
-		return errors.Join(drainErr, stopErr)
+		return errors.Join(drainErr, drainDiagnosticErr, stopErr)
 	}
 	if err := a.reconcileHistoryUpgradeLocked(ctx, workID); err != nil {
-		return errors.Join(drainErr, err)
+		return errors.Join(drainErr, drainDiagnosticErr, err)
 	}
 	now = time.Now().UTC().Format(time.RFC3339Nano)
 	err = a.Store.Write(ctx, func(tx *sql.Tx) error {
@@ -633,7 +647,10 @@ func (a *Application) stopCapturedWorkLockedWithDrain(ctx context.Context, workI
 		_, err := tx.ExecContext(ctx, `UPDATE works SET observed_state=?,updated_at=? WHERE id=?`, observed, now, workID)
 		return err
 	})
-	return errors.Join(drainErr, err)
+	// Drain is a graceful-exit receipt. StopAgent has independently confirmed
+	// this exact container stopped; retain the drain diagnostic without turning
+	// that confirmed termination into a failed Stop or replacement.
+	return errors.Join(drainDiagnosticErr, err)
 }
 
 // A missing or mismatched transport is not a successful drain receipt. The

@@ -269,6 +269,11 @@ func (r *Runtime) ListContainers(ctx context.Context, kind string) ([]container.
 	out := []container.InspectResponse{}
 	for _, item := range list.Items {
 		view, err := r.engine.api.ContainerInspect(ctx, item.ID, client.ContainerInspectOptions{})
+		// The list is a snapshot. A confirmed removal between list and inspect
+		// is absent, while other errors and every surviving identity still fail.
+		if errdefs.IsNotFound(err) {
+			continue
+		}
 		if err != nil {
 			return nil, runtimeError(err)
 		}
