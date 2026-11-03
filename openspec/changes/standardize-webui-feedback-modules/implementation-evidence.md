@@ -482,3 +482,23 @@ Requests进入点另有源级缺陷：菜单item移除后其focusKey无法恢复
 ## 范围复核
 
 依赖锁文件、Go依赖、当前主规格与归档未改；冻结V13 hash一致。新增内容的有限凭据模式检查未发现真实凭据，但不构成全面安全认证。保留所有未执行、条件跳过及未解释失败，不将 Draft PR 宣称为无问题或可直接合并。
+
+## 2026-11-03 V14 apply 复核
+
+候选为 `3822c238579e1c4db2ff6090acf5786835d9e451` 加本轮 Core 停止修正；WebUI 源码本轮没有再次改写，实际资源从当前源正式重建，UI 再生成字节检查通过。Desktop UI input hash `82a6e6093008c838cdf1711abfef7825b70229c4912fa36f5b365192643f8347`，Console `3594f75085ce95698f290b732e3c97e0b7245a619f25c7b4f68d0fcd481b5bef`。本段只补充当前执行，不重写以上历史结果。
+
+- `make build`、随后执行全部剩余配方的 `make -o build test`、生成 UI 漂移、native/WebUI boundary、repository-docs、ui-language、增量 style 和 diff 检查通过。Desktop 直接测试 1002、Console unit 161、共享 UI 34 项通过。验证使用 Node 24.20.0、Go 1.25.5；本机 worktree VCS 和 umask 的环境处理及原失败记录归 `repair-core-integration-and-drain-contracts/design.md`。
+- Playwright MCP 首次空白页成功后在 run_code 断开，用户明确授权本轮使用仓库 Playwright 入口。Console 正式浏览器套件 258/258 通过（`dist/apply-console-browser-final.log`），串行真实 Core 8/8 通过（`dist/apply-console-real-core-serial.log`），含双语、真实模型 Test、用户撤销、Runtime/Defaults 与 Package。真实 Core 共用 7172，先前并发碰撞的失败保留，不当成产品修复。
+- Desktop 正式套件本轮首次完整结果为 1572 PASS / 5 FAIL，原日志 `dist/apply-desktop-browser-final.log` 保留：两个 export browser 用例缺 `/usr/bin/chromium`，两个用例动态 module fetch 失败，onboarding 的内部 Go build 受本机 VCS 影响。显式 Chromium 后，前两项及 recovered Service 用例 3/3 通过；401 expired-identity 用例单独复验通过；onboarding 使用测试构建的 VCS 环境修正复验，仍保留原可选 Engine 条件。不能把该分项复验改称原完整命令零失败。
+- V14 专项 `V14 Works home...`、`V13 composer preserves...`、`independent Model and Thinking...` 及 Administration 1440/360 双语 composition 通过；现有菜单/来源/恢复覆盖不变。独立实际浏览器复核正式资源，1440/360 Header 为 52/88px、Agent 次级栏 39px、textarea 42px、附件/发送 28px；白色框保留 CSS 83px 最小高度，当前内容实测 87px。Model/Thinking 分别实际打开为 225/180px，均在视口内，Escape 回原按钮。
+- 未知设置实测只有一次 `{modelRef:null,thinkingLevel:"high"}` PATCH；原设置第一次显式 GET 失败，第二次成功，失败原因消失且新草稿逐字保留、Send 恢复，没有 Run POST。测量结果在 `dist/apply-ui-visual-results.json`，临时夹具只服务合成数据，不构成真实模型/Engine 证据。
+- 六张当前实际截图均在 `/tmp/piwork-apply-v14/`：`06-works-home-{1440,360}.png`、`desktop-work-{1440,360}.png`、`console-overview-{1440,360}.png`；正常支持模型及两个浮层另有 `work-supported-*`、`model-*`、`thinking-*`。已逐张查看宽窄布局并对照冻结 V14 的共享头部、图标和输入区样式；Service 页面内容、模型、用户和状态来自合成夹具，不能冒充真实后端。V13/V14 冻结附件未改。
+- 当前真实 Desktop 链确认文件/图片下载 hash、跨账号拒绝、Save/Apply、首个 Stop 与唯一 Start 后的原 Service 文档可见；之后新页面原 Operation 查询返回 200，但未进入技术详情，`dist/apply-desktop-real-core.log` 保留失败与所属页面/entry 诊断。原 Work/Operation 查询不能削弱守卫或重放；完整 Import/Export/日志链本轮仍待收尾，因此 8.2 继续未完成。
+
+分项复验收尾：onboarding 32 PASS / 0 FAIL / 1 个原可选 Engine SKIP（`dist/apply-onboarding-browser-recheck.log`）；首次完整 Desktop 命令五项失败均有当前候选的通过复验，原日志保留，仍不改写为同一完整命令零失败。V14 9.1–9.3 完成；8.2 留给真实链及最终风险复核。
+
+真实链收尾：`dist/apply-desktop-real-core-diagnostic.log` 最终 exit 0，原查询的身份/route/Work/modal/代次/目标/query/ActionRecord 八项守卫均未放宽，复验均为 true；原 Operation 详情成功，第一次失败未重写为已通过，也不宣称已根治偶发。真实 Export 1 次、prepare 1 次、download 1 次，605727168 字节；Import Stopped 后仅显式 Start，原 Session/Thinking、启用/停用 Service、38 字节 sentinel、二进制与图片 hash、跨账号拒绝和无主页面 reload 通过。源 Core 关闭后，在第二安装读回原 Session 历史文件链接；两安装分别检查精确标签清理，containers/networks/volumes 均为 0。
+
+真实日志导出 `dist/apply-log-export-gui.log` exit 0：真实 Service exit 17、原稳定 key 恢复、detail 重查、两次显式下载 hash 相同、保留 complete=false 与一个真实缺口、敏感合成标记 redacted、浏览器直连 Core 请求为 0。为与完整 Go 中的固定 7172 进程测试隔离，仅该 GUI fixture 通过 Go overlay 将 mTLS listen/advertise 同改为独立端口 59581；生产源码、参数和默认 7172 不变，业务代码/真实 Engine/Agent/helper 与其余当前候选一致。overlay 与 fixture 身份保存在忽略的 `dist/apply-log-overlay.json`、`dist/apply-log-export-gui/fixture-build.json`，不把夹具的端口隔离当作生产入口验收。独立 CLI 部署及 Core 容器部署未为日志 GUI 再跑，也不称穷尽故障矩阵。
+
+来源覆盖表、共享→feature/feature→入口方向与重复所有者复核没有因本轮新增第二套 UI 写入者；通知、原 ID、未知锁和身份清理仍归原 owner。当前 strict/文档/diff 检查通过，8.2 的 WebUI 实际链证据完成；完整 Go 后端套件的终态继续单独归 repair change 5.2，不将本段局部通过替代该门禁。未同步主规格、归档、提交、push 或 release。
