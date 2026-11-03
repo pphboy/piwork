@@ -159,13 +159,16 @@ try {
   // A new page uses the same authenticated Desktop, but no in-memory task state.
   const recoverOnNewPage = async (workName, id, kind, expectedServiceEntry) => {
     const recoveredPage = await context.newPage();
-    const mutations = [], receipts = [];
+    const mutations = [], receipts = [], originalReads = [];
     let stage = 'open Works';
     recoveredPage.on('response', response => {
       const path = new URL(response.url()).pathname;
       if (path.startsWith('/_desktop/api/')) receipts.push({ method: response.request().method(), path, status: response.status() });
     });
     recoveredPage.on('request', request => {
+      if (request.method() === 'GET' && new URL(request.url()).pathname === `/_desktop/api/operations/${encodeURIComponent(id)}`) {
+        originalReads.push({ stage });
+      }
       if (['GET', 'HEAD', 'OPTIONS'].includes(request.method())) return;
       const path = new URL(request.url()).pathname;
       mutations.push({ method: request.method(), path,
@@ -227,15 +230,18 @@ try {
         assert.deepEqual(mutations, [], 'recovering an original task must be read-only');
       }
     } catch (error) {
-      const presentation = await recoveredPage.evaluate(() => {
+      const presentation = await recoveredPage.evaluate(expectedID => {
         const dialogs = [...document.querySelectorAll('#modal')];
         return { hash: location.hash, modalCount: dialogs.length, modals: dialogs.map(dialog => ({
           open: dialog.hasAttribute('open'), className: dialog.className,
           header: dialog.querySelector('.modal-head h2')?.textContent || '',
           technicalSummaryCount: dialog.querySelectorAll('.operation-technical > summary').length,
+          queryMatches: dialog.querySelector('#operation-query')?.value?.trim() === expectedID,
+          lookupDisabled: dialog.querySelector('[data-action="lookup-operation"]')?.hasAttribute('disabled') ?? null,
+          alertCount: dialog.querySelectorAll('[role="alert"]').length,
         })) };
-      }).catch(() => ({ unavailable: true }));
-      console.error('Original task recovery diagnostic', JSON.stringify({ stage, presentation, receipts }));
+      }, id).catch(() => ({ unavailable: true }));
+      console.error('Original task recovery diagnostic', JSON.stringify({ stage, presentation, originalReads, receipts }));
       throw error;
     } finally { await recoveredPage.close(); }
   };
