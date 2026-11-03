@@ -146,6 +146,41 @@ func TestRealNativeAgentImageStaticCapabilitiesAndBuildEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// The runtime user must be able to traverse copied directories and load
+		// workspace modules even when the build host uses a restrictive umask.
+		pids := int64(64)
+		created, err := engine.api.ContainerCreate(ctx, client.ContainerCreateOptions{
+			Name: scope.ID() + "-" + variant + "-workspace-imports",
+			Config: &container.Config{Image: image.ID, User: "10001:10001", Entrypoint: []string{"node"},
+				Cmd: []string{"--input-type=module", "-e", `import {accessSync,constants} from 'node:fs'; accessSync('/workspace/apps/agentd/dist/main.js',constants.R_OK); for (const name of ['@piwork/contracts','@piwork/work-store','@piwork/pi-adapter','@piwork/pi-package']) await import(name);`}, Labels: labels},
+			HostConfig: &container.HostConfig{ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true"}, NetworkMode: "none", Resources: container.Resources{Memory: 256 << 20, PidsLimit: &pids}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			view, err := engine.api.ContainerInspect(ctx, created.ID, client.ContainerInspectOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !view.Container.State.Running {
+				if view.Container.State.ExitCode != 0 {
+					t.Fatal("non-root workspace import failed", variant, view.Container.State.ExitCode)
+				}
+				break
+			}
+			select {
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+		if _, err := engine.api.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	old, err := engine.InspectImage(ctx, "piwork-agentd:synthetic-incompatible-helper")
 	if err != nil {

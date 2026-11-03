@@ -19,9 +19,10 @@ RUN python -m pip download --only-binary=:all: --require-hashes \
  && python -m pip install --no-index --require-hashes --no-cache-dir \
       --find-links /tmp/piwork-wheels -r /opt/piwork-web-base/requirements.lock \
  && rm -rf /tmp/piwork-wheels
-COPY tools/*.py tools/*.js /opt/piwork-web-base/lib/
+COPY --chmod=0644 tools/*.py tools/*.js /opt/piwork-web-base/lib/
 COPY --chmod=0755 tools/piwork-web /usr/local/bin/piwork-web
-RUN python /opt/piwork-web-base/lib/freeze_environment.py
+RUN chmod -R a+rX /opt/piwork-web-base \
+ && python /opt/piwork-web-base/lib/freeze_environment.py
 ENV PYTHONPATH=/opt/piwork-web-base/lib \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONNOUSERSITE=1 \

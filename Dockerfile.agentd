@@ -74,19 +74,20 @@ ENV HOME=/var/data \
     PI_CODING_AGENT_DIR=/tmp/piwork-child-agent
 WORKDIR /workspace
 COPY --from=build /workspace/node_modules ./node_modules
-COPY --from=build /workspace/apps/agentd/package.json ./apps/agentd/package.json
+COPY --from=build --chmod=0644 /workspace/apps/agentd/package.json ./apps/agentd/package.json
 COPY --from=build /workspace/apps/agentd/dist ./apps/agentd/dist
-COPY --from=build /workspace/packages/contracts/package.json ./packages/contracts/package.json
+COPY --from=build --chmod=0644 /workspace/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=build /workspace/packages/contracts/dist ./packages/contracts/dist
-COPY --from=build /workspace/packages/work-store/package.json ./packages/work-store/package.json
+COPY --from=build --chmod=0644 /workspace/packages/work-store/package.json ./packages/work-store/package.json
 COPY --from=build /workspace/packages/work-store/dist ./packages/work-store/dist
-COPY --from=build /workspace/packages/pi-adapter/package.json ./packages/pi-adapter/package.json
+COPY --from=build --chmod=0644 /workspace/packages/pi-adapter/package.json ./packages/pi-adapter/package.json
 COPY --from=build /workspace/packages/pi-adapter/dist ./packages/pi-adapter/dist
-COPY --from=build /workspace/packages/pi-package/package.json ./packages/pi-package/package.json
+COPY --from=build --chmod=0644 /workspace/packages/pi-package/package.json ./packages/pi-package/package.json
 COPY --from=build /workspace/packages/pi-package/dist ./packages/pi-package/dist
 COPY --from=native-build --chmod=0755 /native/piwork-service-mcp /usr/local/bin/piwork-service-mcp
 COPY --from=native-build --chmod=0755 /native/piwork-package-helper /usr/local/bin/piwork-package-helper
-RUN mkdir -p /var/data/workspace /workspace/apps/agentd \
+RUN chmod -R a+rX /workspace/apps /workspace/packages \
+ && mkdir -p /var/data/workspace /workspace/apps/agentd \
  && chown -R 10001:10001 /var/data /workspace/apps/agentd
 USER 10001:10001
 ENTRYPOINT ["node", "/workspace/apps/agentd/dist/main.js"]

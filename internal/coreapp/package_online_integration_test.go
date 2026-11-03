@@ -67,7 +67,18 @@ func TestNativeOnlinePiSubagentsInstallApplyAndExecute(t *testing.T) {
 	}
 	defer raw.Close()
 	_, file, _, _ := runtime.Caller(0)
-	fixturePath := filepath.Join(filepath.Dir(file), "../../scripts/pi-package-online-model-fixture.mjs")
+	fixtureSource := filepath.Join(filepath.Dir(file), "../../scripts/pi-package-online-model-fixture.mjs")
+	fixtureBytes, err := os.ReadFile(fixtureSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixturePath := filepath.Join(t.TempDir(), "model-fixture.mjs")
+	if err := os.WriteFile(fixturePath, fixtureBytes, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(fixturePath, 0644); err != nil {
+		t.Fatal(err)
+	}
 	labels := map[string]string{dockerengine.InstallationLabel: a.Store.InstallationID(), "piwork.test_fixture": "true"}
 	fixture, err := raw.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{Image: agent.Image, Entrypoint: []string{"node"}, Cmd: []string{"/fixture.mjs"}, Env: []string{"PIWORK_FIXTURE_MODEL_KEY=online-acceptance-only"}, Labels: labels}, HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode("container:" + agent.ID), ReadonlyRootfs: true, CapDrop: []string{"ALL"}, SecurityOpt: []string{"no-new-privileges:true"}, Mounts: []mount.Mount{{Type: mount.TypeBind, Source: fixturePath, Target: "/fixture.mjs", ReadOnly: true}}}})
 	if err != nil {
