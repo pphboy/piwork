@@ -6,85 +6,13 @@
 
 ## Requirements
 
-### Requirement: 交付两个入口镜像及可独立使用的发行包
-
-**Identifier:** DOCKER-DELIVERY-001
-
-新版本 SHALL 以一个统一 Linux 服务端入口镜像和一条 Docker 启动命令作为默认安装方式，镜像运行同版统一 Go 程序，包含 Core、管理/工作台/引导资源和非敏感 Agent/helper 引用。Agent 引用 SHALL 随版本内嵌并由服务端自动用于 runtime，不提供用户手填、选择或高级覆盖。默认入口无需 CLI/Console 容器、必填业务环境变量、发行压缩包、release.env、环境模板或源码；用户通过本机/远程浏览器完成配置。
-
-piwork-cli 镜像、原生用户 CLI 及高级终端使用 SHALL 继续作为独立可选入口，不能成为默认网页安装前置条件。Core 自动准备匹配运行依赖，用户不手工启动内部 Agent/Service/helper。
-
-入口及依赖 SHALL 固定实际发行版本/digest，记录同一源码、两套 UI、协议和存储身份，不覆盖旧标签或使用 latest 掩盖身份。缺依赖、身份/协议或相应验收时不得标记交付完成。本地 candidate 与 published 分开；构建/验证不授权 push、上传或官网发布。旧压缩包、校验、离线材料及下载地址保持版本归属，不伪装成新默认交付。
-
-统一镜像 SHALL 在同一进程内启动独立 ControlPlane 17891 和 Core 17871。默认浏览器入口、内嵌工作台/Admin/引导及 Service Proxy 属于 ControlPlane；CLI/operator 直接调用 Core，不经 UI 端口。新版本不提供旧 7171 合并入口或托管 Service 端口池兼容监听；无参数仍一键启动。
-
-#### Scenario: 直接使用已发布镜像
-- **WHEN** 用户已有受支持 Linux Docker，执行当前发行的默认命令
-- **THEN** 一个入口容器提供引导和完整远程工作台，无必填 env 或另启 CLI/Console 的步骤
-
-#### Scenario: 只连接已有服务器
-- **WHEN** 用户打开已有统一服务器网页，或独立使用原 CLI
-- **THEN** 浏览器无本机 Docker/CLI 依赖，CLI 按原契约连接，不持有 Core 初始化秘密
-
-#### Scenario: 运行依赖没有发布
-- **WHEN** 必需镜像不可取得、协议不匹配或标签指向不同输入
-- **THEN** 候选检查失败，不覆盖标签、不把本地候选称为已公开可用
-
-#### Scenario: 仅修复问题且未请求发行
-- **WHEN** 用户查阅旧安装包，或维护者只完成本地构建
-- **THEN** 旧材料保留原校验及版本归属，本地工作不自动 push/发布官网
-
-#### Scenario: 下载发行包而不是构建源码
-- **WHEN** 用户持有旧发行包及对应可信校验信息
-- **THEN** 按旧版本入口完成校验与安装，无需构建源码；旧材料不被伪装成新镜像已具备的默认配置
-
-#### Scenario: 已有下载地址时使用可选下载步骤
-- **WHEN** 用户按旧版本手册使用实际压缩包和 SHA256 文件地址
-- **THEN** Linux Bash 或 Windows PowerShell 下载后比较可信预期 checksum，成功后才解压和验证内部清单；这些操作不成为新默认入口的前置条件
-
-#### Scenario: 已取得离线发行包
-- **WHEN** 用户离线取得旧版本完整包和对应可信 SHA256
-- **THEN** 可独立校验、解压并按对应版本安装，无需再次下载同一包，说明后续镜像仍须可取得
-
-#### Scenario: 下载或校验失败
-- **WHEN** 旧版本可选下载失败或任何发行材料的 checksum 非法或与可信预期值不符
-- **THEN** 停止使用相应材料，不只输出 hash 后继续解压或安装，不将损坏材料称为已验证候选
-
-#### Scenario: 旧包缺少新模板
-- **WHEN** 已校验旧包缺少后续加入的 Docker run 配置模板
-- **THEN** 旧版本手册保留独立空白原始值示例，不修改真实已填配置；此兼容过程不重新进入新默认 Quick Start，也不宣称旧包包含新材料
-
-#### Scenario: 只取得一个 Compose 文件
-- **WHEN** Linux 用户只取得当前统一服务端 Compose 并已有受支持 Engine
-- **THEN** 无需旁置 YAML/env 或必填业务 env 即可启动完整网页，CLI 为显式可选
-
-### Requirement: 明确 Core 与客户端的平台边界
-
-**Identifier:** DOCKER-DELIVERY-002
-
-统一服务端 Docker SHALL 在本机 Linux Docker Engine 上运行，首版沿用 linux/amd64、Engine 28+ 基线；实际平台状态须有对应证据。直接 Docker run 不要求 Compose，可选 Compose 要求 v2.24+。本次不交付 Windows 原生 Core 或 Windows 容器镜像。
-
-本机或另一台电脑的浏览器 SHALL 能直接访问统一服务端，包括 Windows 浏览器，不要求客户端 Docker/CLI/代理或域名。独立 CLI Docker 仍支持 Linux Engine、Windows Docker Desktop 的 Linux 容器模式并连接可达 Core；该能力不表示在 Windows 本机部署 Core 已验收。
-
-#### Scenario: Windows 用户连接 Linux Core
-- **WHEN** Windows 用户直接打开 Linux 服务端 IP
-- **THEN** 可登录并使用完整托管工作台，无客户端 Docker/CLI 或 WSL 命令前置步骤
-
-#### Scenario: 使用 Windows 容器模式
-- **WHEN** 用户试图用 Windows 容器模式运行 Linux 镜像
-- **THEN** 说明平台不匹配和受支持入口，不以构建或模拟结果冒充支持
-
-#### Scenario: Linux 终端试用未安装 Compose
-- **WHEN** Linux 已有 Docker Engine 但未安装 Compose
-- **THEN** 默认单条 Docker run 仍可启动完整应用
-
 ### Requirement: Core 管理运行过程并保留准确的宿主路径
 
 **Identifier:** DOCKER-DELIVERY-003
 
-统一服务端 SHALL 挂载同一 Linux Engine 的 Unix socket，默认 /var/run/docker.sock，并设置 DOCKER_HOST=unix:///var/run/docker.sock，不依赖宿主 Docker CLI 或不完整 Docker context 文件。Core 数据目录 SHALL 在宿主和容器使用相同绝对路径；默认 Docker run 与 Core-only Compose 使用 /var/lib/piwork/quickstart/core，单机部署示例使用独立的 /var/lib/piwork/examples/single-host/core 和专属 CLI 状态卷；已有高级 Core Demo 的 /var/lib/piwork/core 保持独立，以满足 Engine 创建 Agent/helper bind mount 的宿主路径语义。Core SHALL 按既有安装/Work 身份管理 Agent、Service/helper、Work 私网及私有/workspace 卷，不由用户 Compose 管理这些内部对象。
+统一服务端 SHALL 挂载同一 Linux Engine 的 Unix socket，默认 /var/run/docker.sock，并设置 DOCKER_HOST=unix:///var/run/docker.sock，不依赖宿主 Docker CLI 或不完整 Docker context 文件。Core 数据目录 SHALL 在宿主和容器使用相同绝对路径；默认 Docker run 与 Core-only Compose 使用 /var/lib/piwork/quickstart/core，单机部署示例使用独立的 /var/lib/piwork/examples/single-host/core；已有高级 Core Demo 的 /var/lib/piwork/core 保持独立，以满足 Engine 创建 Agent/helper bind mount 的宿主路径语义。Core SHALL 按既有安装/Work 身份管理 Agent、Service/helper、Work 私网及私有/workspace 卷，不由用户 Compose 管理这些内部对象。
 
-新空数据路径 SHALL 可由默认启动挂载自动创建，并由现有安全初始化设定私有权限，不要求用户先执行 mkdir。Core SHALL 保留私有目录/文件权限和单实例锁；新安装默认以 UID 0 创建独占数据目录，已有数据须匹配其所有者及 socket 访问权限，禁止无条件改变已有文件所有者或放宽校验。缺失 socket 不得被 Compose 自动建成目录。可选 CLI SHALL 不挂载 Docker socket、Core 数据或 Work 私有卷。默认统一程序所需业务配置由默认值/显式参数及页面提供，不以模型 env 作为挂载正确性的前提。
+新空数据路径 SHALL 可由默认启动挂载自动创建，并由现有安全初始化设定私有权限，不要求用户先执行 mkdir。Core SHALL 保留私有目录/文件权限和单实例锁；新安装默认以 UID 0 创建独占数据目录，已有数据须匹配其所有者及 socket 访问权限，禁止无条件改变已有文件所有者或放宽校验。缺失 socket 不得被 Compose 自动建成目录。原生 CLI 不需要 Docker socket、Core 数据或 Work 私有卷。默认统一程序所需业务配置由默认值/显式参数及页面提供，不以模型 env 作为挂载正确性的前提。
 
 #### Scenario: Core 启动一个 Work
 - **WHEN** 登录用户创建 Work，Core 需要创建 Agent 和只读配置挂载
@@ -98,119 +26,15 @@ piwork-cli 镜像、原生用户 CLI 及高级终端使用 SHALL 继续作为独
 - **WHEN** 用户按默认命令启动新安装且独立试用数据路径尚不存在
 - **THEN** 挂载和安全初始化创建合法私有目录，不额外要求宿主准备目录，不影响其他安装
 
-### Requirement: 容器网络覆盖本机和外部服务
-
-**Identifier:** DOCKER-DELIVERY-004
-
-统一服务端 SHALL 沿用 Linux host 网络和同机 Engine Unix socket，Core 直接访问受管 Work 私网，Agent 通过既有 WorkServices mTLS 回连。用户 Service 容器不发布 Docker 宿主端口。ControlPlane 默认监听 `0.0.0.0:17891`，浏览器只通过该端口完成工作台、Admin、文件、事件与 `/services/<workId>/<serviceId>/<port>/`；不要求额外 Service 端口池、域名、DNS/PAC/hosts 或客户端代理。
-
-Core SHALL 保留独立 HTTP 端口，默认 `127.0.0.1:17871`，供同机 ControlPlane、用户 CLI 与 operator 使用。需要远程或 bridge 容器 CLI 时，部署 SHALL 显式选择可达的 `--core-listen` 地址和相应网络范围，客户端直接指定该 Core origin；不得把 loopback Core 当作 bridge 容器已可访问或要求 CLI 经过 ControlPlane。浏览器的默认完整使用不以远程 Core 可达为前提。
-
-Agent WorkServices 7172 SHALL 保留当前 mTLS 安装/Work/代次/角色校验与容器可达性，不用 Core HTTP 17871 替代，不因浏览器单端口而关闭或仅绑定容器不可达的 loopback。部署材料 SHALL 区分浏览器端口、可选远程 Core 端口和仅容器需要的 RPC 网络范围；保留必要回连，不能把内部监听宣称为浏览器入口或“整个系统仅一个 TCP listener”。
-
-主站及 Service 浏览器 URL SHALL 使用实际客户端可达的 ControlPlane origin，不指向 Core/容器或客户端 localhost。HTTPS/受信反向代理 SHALL 在同一浏览器入口验证前缀、来源、证书和流式连接，不关闭校验、不信任任意 Forwarded 头。高级 CLI 的 HTTP(S)、host-gateway、自定义 CA、终端和显式本机 Desktop 契约保留；模型/MCP 可达性仍从 Work 网络判断，不因 CLI 宿主别名放宽 URL 校验。
-
-#### Scenario: 同机和远程 IP 访问
-- **WHEN** Docker 服务端运行，独立客户端网络只允许访问服务器 17891
-- **THEN** 能使用完整工作台与多个支持前缀的 Service，浏览器不请求 17871、7172 或其他 Service listener，用户容器无宿主端口直出
-
-#### Scenario: 同机和远程 CLI
-- **WHEN** 同机 CLI 使用默认 Core 地址，或部署者显式开放可达 Core 地址供远程 CLI
-- **THEN** CLI 直接通过 17871 按原身份工作，不使用浏览器 Cookie 或 ControlPlane 代理
-
-#### Scenario: Linux 同机 Core 和 CLI
-- **WHEN** 单机高级示例使用独立 bridge CLI 与 host-gateway
-- **THEN** 示例同时提供可达 Core listener 和正确上游地址，不把 127.0.0.1 的 Core 当成容器可达，不扩大 CLI 对 Engine/安装数据的权限
-
-#### Scenario: Agent 回连与 HTTPS
-- **WHEN** 浏览器入口配置 HTTPS，Agent 创建并管理 Service
-- **THEN** 浏览器仍只使用同一个 HTTPS origin，Agent 保持原 mTLS 回连并校验当前代次，不借用浏览器或用户 token
-
-#### Scenario: 显式启动高级 Desktop
-- **WHEN** ControlPlane 已使用 17891，而用户另外启动独立 CLI Desktop
-- **THEN** 材料指向其既有显式 --port 选项，默认冲突按原错误契约报告，不自动换端口或让两个实例共享错误身份
-
-#### Scenario: HTTPS 或入口池缺项
-- **WHEN** HTTPS 反向代理没有转发 Service 前缀/升级连接，或部署仍要求旧入口池端口
-- **THEN** 检查指出当前同 origin 路径配置缺项，修正同一入口而不恢复端口池，不能仅凭首页成功报告可用
-
-#### Scenario: 高级客户端和模型网络
-- **WHEN** CLI 使用显式 HTTP(S) Core、自定义 CA 或 host-gateway，Work 调用模型/MCP
-- **THEN** CLI 保持原地址/CA 与直接 Core 访问，模型/MCP 仍按 Work 网络和既有 URL 校验，不被宿主别名放宽
-
-#### Scenario: CLI 在 Windows 而模型在其他机器
-- **WHEN** Windows CLI 连接可达的 Linux Core 17871，而模型位于另一机器
-- **THEN** CLI 直接使用 Core API，模型仍必须从 Work 网络可达，客户端宿主地址不能代替模型地址；不宣称 Windows Core 支持
-
-### Requirement: 客户端状态和文件交换可跨容器重建
-
-**Identifier:** DOCKER-DELIVERY-005
-
-CLI SHALL 使用独立持久状态卷保存登录和 Desktop 偏好，通过 `PIWORK_CONFIG_PATH=/var/lib/piwork/client/credentials.json` 复用现有私有文件和并发控制。终端首次试用 SHALL 只要求此状态卷，创建或重建容器时自动复用它，无需手工创建卷。文件交换 SHALL 作为导入、导出、文件配置和自定义 CA 的可选高级步骤，使用独立 `/exchange` 存储及完整 Docker 复制或挂载操作；浏览器上传/下载使用既有 Desktop 流程。文件交换卷不是 Work 存储，也不是 Core 数据备份。
-
-Desktop 与无 Desktop 命令 SHALL 可共享同一状态卷。运行中的 Desktop 不承诺自动采纳另一个 CLI 新写入的账号/Core；文档 SHALL 要求在这种切换后重启 Desktop，再直接打开普通地址；open 只是可选打开方式。`PIWORK_CORE_URL` 的调用覆盖与 Desktop 偏好优先级保持原契约。
-
-#### Scenario: 重建 CLI
-- **WHEN** 用户停止并重新创建 Desktop CLI，保留状态和交换卷
-- **THEN** 已保存的账号/Core 偏好和交换文件仍存在，普通浏览器会话自动建立，保存登录按原规则核验，无需新授权链接；旧控制实例身份不用于新进程
-
-#### Scenario: 从宿主导入并导出 Work
-- **WHEN** 用户将 `.work` 复制进 `/exchange` 并导入，或将导出结果复制回宿主
-- **THEN** 操作使用该容器路径并保留原有停机、所有权、目标文件不得存在等规则，不要求挂载 Work 卷到 CLI
-
-#### Scenario: 退出并重新进入终端 CLI
-- **WHEN** 用户退出 `--rm` 交互 CLI 容器，再用同一状态卷启动新容器
-- **THEN** 原用户凭证仍可用于对应 Core，Work 不因 CLI 退出而停止，首次试用不需要交换卷或 Desktop 进程
-
-### Requirement: 提供完整的中文操作命令与新增操作清单
-
-**Identifier:** DOCKER-DELIVERY-006
-
-双语发行材料 SHALL 给出统一程序和 Docker 默认网页流程、普通访问地址的取得及直接创建/登录路径、初始化、状态/日志、正常关闭、重建、升级/回退及数据保留命令。默认流程零必填业务环境变量；PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD 只在测试/自动部署的可选说明出现，成对创建首管理员并遵守原密码规则，不作为持续密码来源。
-
-模型连接、Key 和 CoreRuntime SHALL 通过网页配置，不再要求 PIWORK_MODEL_PROVIDER/MODEL/MODEL_ID/API_KEY/MODEL_API_KEY/MODEL_BASE_URL 或镜像 env。说明 SHALL 区分代码构建所用变量、独立 CLI/系统环境与被移除的服务端业务初始化输入，不误删用户 Service 环境。
-
-命令 SHALL 完整可复制，说明执行位置、固定发行身份、socket/同路径数据挂载、主站及 Service listener 网络条件、60 秒关闭预算和空安装直接创建管理员的方式。高级 operator/CLI/文件交换和旧版安装材料保留独立导航及原身份/格式边界；密码不放命令参数，真实秘密不进入静态材料或验收输出；默认步骤不再取得、轮换或校验设置链接，不要求 setup link 命令。
-
-#### Scenario: 新用户按文档操作
-- **WHEN** 用户只执行默认 Docker 命令并在本机或远程浏览器打开服务器普通 IP 地址
-- **THEN** 可以创建管理员和配置模型/runtime，无设置链接/浏览器 Access、安装包、env 编辑、CLI 登录或第二入口容器前置步骤
-
-#### Scenario: 测试可选 ADMIN env
-- **WHEN** 测试者成对传入有效 ADMIN 值
-- **THEN** 只初始化持久管理员，模型仍走网页，重启不覆盖已有账号，普通教程不因此要求 env
-
-#### Scenario: 秘密包含特殊字符
-- **WHEN** 测试 ADMIN 值包含特殊字符，或只提供一项/非法值
-- **THEN** 合法值按原字面传递，非法值安全拒绝，不执行 shell 内容、不回显秘密
-
-#### Scenario: 采用无 Desktop CLI Docker
-- **WHEN** 用户以显式 Docker 命令调用同一 CLI 镜像的业务入口
-- **THEN** 说明覆盖身份、配置、Work/Operation、Session/Run/chat、Service、快照、proxy 及文件交换，不要求先启动 Desktop
-
-#### Scenario: 必填值不合法
-- **WHEN** 测试者选择可选 ADMIN 初始化但只提供一项、空或非法值
-- **THEN** 安全拒绝且不输出值；默认网页安装不存在模型必填 env 或旧模型 env 校验
-
-### Requirement: 原生 CLI 交付继续独立存在
-
-**Identifier:** DOCKER-DELIVERY-007
-
-既有 Linux/Windows 原生 CLI 产物、命令名、默认 Desktop、可信 open/logout 和发行链 SHALL 保留；原生安装不得新增 Docker、Go、Node 或 Python 的用户运行依赖。未启用显式容器模式时 SHALL 保持原生 loopback 监听、浏览器打开和错误语义。Docker 验收不得代替 `support-cross-platform-cli-and-default-desktop` 中尚未完成的原生平台检查。
-
-#### Scenario: 用户继续使用原生 CLI
-- **WHEN** 用户按照既有方式安装并运行原生 `piwork-cli`
-- **THEN** 仍可使用全部原有入口，监听和打开浏览器行为保持，Docker 包是额外可选交付
-
 ### Requirement: 保留安装状态并明确备份与回退边界
 
 **Identifier:** DOCKER-DELIVERY-008
 
-Core/CLI 停止、重建和 down 的默认说明 SHALL 保留 Core 目录、客户端卷及 Core 管理的 Work 卷。Core 正常关闭 SHALL 沿用 work-lifecycle 的既有有界排空与停止 Agent/Service 流程，保持 Work desiredState、Service 启用意图及数据，不隐式将持久目标改为 stopped 或删除 Work；重启按安装身份恢复 desiredState=running 的 Work 及启用的 Service。CLI 停止 SHALL 不停止 Work。持续业务停机 SHALL 显式执行 Work stop；常规升级/卸载不得使用 down -v、全局 prune 或删除未核对的运行卷。
+Core 停止、重建和 down 的默认说明 SHALL 保留 Core 目录及 Core 管理的 Work 卷，原生 CLI 的私有配置按客户端契约保留。Core 正常关闭 SHALL 沿用 work-lifecycle 的既有有界排空与停止 Agent/Service 流程，保持 Work desiredState、Service 启用意图及数据，不隐式将持久目标改为 stopped 或删除 Work；重启按安装身份恢复 desiredState=running 的 Work 及启用的 Service。CLI 停止 SHALL 不停止 Work。持续业务停机 SHALL 显式执行 Work stop；常规升级/卸载不得使用 down -v、全局 prune 或删除未核对的运行卷。
 
 Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停止为前提，不要求 Work 在 Core 退出期间继续运行。某 Work 关闭失败仍须尝试其他 Work，无法确认停止时按既有非零退出及恢复诊断契约处理；异常退出不能记为已确认正常关闭。默认独立入口、Core Compose 和单机部署示例 SHALL 给予 Core 60 秒关闭窗口。CLI 的启动、退出和重进 SHALL 不创建、启动、停止或重建 Core；此约束在单机部署示例中同样成立。
 
-升级 SHALL 固定新的发行身份并保留旧镜像引用、对应 Compose 文件及发行清单；旧安装继续保留其 release.env。升级前 SHALL 检查数据格式与迁移规则，初始化 env 不覆盖持久管理员/模型，默认配置修改使用统一管理页或已有 operator 入口。回退 SHALL 仅在格式兼容时恢复旧镜像；不兼容时恢复一致性确认的 Core 数据和匹配 Work 卷。.work 导出/import 是产生新 Work 的 Work 级迁移，不能称为保留原 ID 的安装回滚。
+升级 SHALL 固定新的发行身份并保留旧镜像引用、对应 Compose 文件及发行清单。升级前 SHALL 检查数据格式与迁移规则，初始化 env 不覆盖持久管理员/模型，默认配置修改使用统一管理页或既有受保护管理 API。回退 SHALL 仅在格式兼容时恢复旧镜像；不兼容时恢复一致性确认的 Core 数据和匹配 Work 卷。.work 导出/import 是产生新 Work 的 Work 级迁移，不能称为保留原 ID 的安装回滚。
 
 #### Scenario: Core 重建后恢复
 - **WHEN** 用户保留数据目录和匹配运行卷，用原默认入口重建 Core
@@ -230,7 +54,7 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 
 新候选 SHALL 使用实际统一镜像、独立空安装及无本版依赖缓存的 Linux Engine，分别验证默认 Docker run 和可选 Compose 的零业务 env 网页安装；每种方式均须网页创建首管理员、保存模型/runtime、准备依赖、创建 Work 并取得首条真实模型回复。测试/自动部署的 ADMIN env 路径另行验证；Compose 加 ADMIN env 的通过记录不能代替 Compose 零 env 记录，Docker run 的零 env 记录也不能代替 Compose。
 
-必做网络验收 SHALL 采用 `0.0.0.0` 通配监听，再从另一电脑或独立客户端网络命名空间通过服务器实际非回环 IP 完成上述流程和规定功能；基础默认路径不预填 `--public-origin`，可使用局域网或隔离网络，无需公网地址或公网连通性实测。NAT/受信代理的显式 origin 覆盖作为对应高级场景单独记录，精确 Host/Origin/CSRF 保持，托管 Service 使用明确的同源信任边界。IPv6 URL/来源保留单元/契约检查，实际 IPv6 网络不作为本变更完成前提。
+必做网络验收 SHALL 采用 `0.0.0.0` 通配监听，再从另一电脑或独立客户端网络命名空间通过服务器实际非回环 IP 完成上述流程和规定功能；基础默认路径不预填 `--public-origin`，可使用局域网或隔离网络，无需公网地址或公网连通性实测。多网卡实际 IPv4 与本机入口按 core-service-startup 验证，Host/Origin/CSRF 保持，托管 Service 使用明确的同源信任边界。IPv6 URL/来源保留单元/契约检查，实际 IPv6 网络不作为本变更完成前提。
 
 引导页、Runtime 管理页和旧 `/runtime` 深链接 SHALL 均无需也不能输入 Agent 镜像；验收核对已保存 runtime 的引用与实际服务端制品内嵌的发行默认一致。镜像准备失败的验收使用隔离 Engine/registry 故障夹具，不以给产品增加镜像覆盖入口来制造或修复故障。
 
@@ -240,7 +64,7 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 
 本地验证不授权推送；获明确发行授权后另验匿名读取、远端 digest 和全部依赖身份，不改写旧候选/历史证据。
 
-网络验收 SHALL 明确区分两条路径：浏览器网络只放行 ControlPlane 17891、禁止直连 Core/旧端口池时完成完整网页流程；CLI/operator 使用 Core 17871 完成对应真实用户/管理命令。单纯改变端口常量或编译通过不能证明双服务边界，须有实际网络调用及两个 listener 的启动/失败/关闭证据。
+网络验收 SHALL 明确区分两条路径：浏览器网络只放行 ControlPlane 17891、禁止直连 Core/旧端口池时完成完整网页流程；CLI/operator API 使用 Core 17871 完成对应真实用户/管理请求。单纯改变端口常量或编译通过不能证明双服务边界，须有实际网络调用及两个 listener 的启动/失败/关闭证据。
 
 默认 Web base、模板和脑包路径契约变化 SHALL 使用同一实际候选验证：多个 Service 并发、深层刷新、自定义资源/API、应用 Cookie/Authorization、SSE/WebSocket、反馈、自动更新与 Stop/Export/Inspect/Import/Start。旧根路径应用限制明确，不自动迁移源码/镜像，不用旧独立 origin 的成功记录代替新同源前缀验收。
 
@@ -269,7 +93,7 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 - **THEN** 只声明实际验证的客户端支持，不由浏览器或交叉编译推断 Windows Core
 
 #### Scenario: 默认终端路径与 Core Demo 均可用
-- **WHEN** 维护统一网页默认安装、可选 Compose 与高级 CLI/Core Demo
+- **WHEN** 维护统一网页默认安装、可选 Compose 与Linux 原生 CLI/Core Demo
 - **THEN** 默认验证远程完整网页，仍交付的高级路径按各自版本/身份验证，不成为默认前置
 
 #### Scenario: 候选无法通过既有发行门禁
@@ -277,7 +101,7 @@ Core 正常关闭成功 SHALL 以本安装全部受管 Work 运行容器已停�
 - **THEN** 阻止候选通过，保留安全诊断，不重提业务操作、不伪造证据或自动推送
 
 #### Scenario: Core 与 UI 分别验证
-- **WHEN** 相同候选的浏览器通过 17891 完成使用，CLI 通过 17871 执行业务，operator 通过 17871 执行管理
+- **WHEN** 相同候选的浏览器通过 17891 完成使用，CLI 通过 17871 执行业务，operator API 通过 17871 执行管理
 - **THEN** 各自使用正确身份和实际 HTTP 链路，浏览器没有 Core 请求，CLI 无需 ControlPlane；仍只有一个持久 Core 所有者
 
 #### Scenario: 官方应用导入后仍支持前缀
@@ -398,122 +222,17 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 - **WHEN** 当前候选手册、探针、单机原生 CLI、模板或官网生成材料仍使用旧端口池/合并入口，或新说明指向不支持的已发布镜像
 - **THEN** 检查失败并定位不一致，不改写旧 release 的 commit/digest 来伪造一致性
 
-### Requirement: 发行维护的本地候选和真实发布身份
-
-**Identifier:** DOCKER-MAINT-001
-
-发行维护 SHALL 以同一真实版本/commit/dirty/源码输入/Desktop 摘要制作 Core、CLI、Agent、file/snapshot helper，package helper 复用 Agent；Docker 多阶段构建内运行 Go1.25.5/Node24，维护宿主无需这些解释器。metadata/materials 构建目标不独立发布工具镜像，构建上下文不包含真实秘密/数据。
-
-候选 SHALL 在本地完成静态/运行/协议/资源检查和 SHA256SUMS，manifestVersion2 标 candidate，不填虚构 registry digest。五角色本地 image ID、标签/协议/资源及实时远端身份在首次 push 前全部核对，任一冲突/认证/网络/无法确认均零推送。登录 registry 不代表授权；明确授权后同一入口执行 push，不能绕过预检。匿名拉取/manifest digest/publishedImageId 确认后单独生成 published 材料，保留原 candidate。
-
-README/手册/Core-only Compose/单机示例与官网下载材料 SHALL 按同版记录核对，候选不得宣称可下载，旧发行记录不为后续源码回填身份。正式更新日志按实际版本维护，未发行内容为 Unreleased；结构检查与正式 require-current 分离。所有写外部官网、push/上传/Release 仍须用户明确请求，本次迁移不执行。
-
-#### Scenario: 按现行契约操作与核对
-- **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
-- **THEN** 操作、边界、拒绝及恢复遵循上述契约，不依赖已移除的开发手册；历史版本描述不覆盖当前有效 Spec
-
-以下为已有操作/验证入口的示例，使用实际返回 ID 和隔离测试资源；命令存在不表示本次已执行或验收通过。源码构建使用 Go 1.25.5、Node 24，容器/浏览器专项须预备相应依赖。
-
-```bash
-piwork_release_commit=$(git rev-parse --verify HEAD)
-piwork_release_modified=false
-if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then
-    piwork_release_modified=true
-fi
-
-docker build -f Dockerfile.docker-release --target metadata \
-    --build-arg "PIWORK_COMMIT=$piwork_release_commit" \
-    --build-arg "PIWORK_MODIFIED=$piwork_release_modified" \
-    --build-arg PIWORK_RELEASE_REGISTRY=docker.io/pphboy \
-    --output type=local,dest=dist/docker/inputs \
-    .
-```
-
-```bash
-piwork_release_input="$PWD/dist/docker/inputs"
-piwork_release_build_args=(
-    --platform linux/amd64
-    --build-arg "PIWORK_VERSION=$(cat "$piwork_release_input/version")"
-    --build-arg "PIWORK_COMMIT=$(cat "$piwork_release_input/commit")"
-    --build-arg "PIWORK_MODIFIED=$(cat "$piwork_release_input/modified")"
-    --build-arg "PIWORK_DIRTY=$(cat "$piwork_release_input/modified")"
-    --build-arg "PIWORK_SOURCE_INPUT_HASH=$(cat "$piwork_release_input/sourceInputHash")"
-    --build-arg "PIWORK_DESKTOP_UI_HASH=$(cat "$piwork_release_input/desktopUIHash")"
-    --build-arg "PIWORK_RELEASE_REGISTRY=$(cat "$piwork_release_input/registry")"
-)
-
-docker build -f Dockerfile.core "${piwork_release_build_args[@]}" \
-    -t "$(cat "$piwork_release_input/core")" .
-docker build -f Dockerfile.cli "${piwork_release_build_args[@]}" \
-    -t "$(cat "$piwork_release_input/cli")" .
-docker build -f Dockerfile.agentd "${piwork_release_build_args[@]}" \
-    --target production --build-arg NPM_REGISTRY=https://registry.npmjs.org \
-    -t "$(cat "$piwork_release_input/agent")" .
-docker build -f Dockerfile.file-helper.native "${piwork_release_build_args[@]}" \
-    -t "$(cat "$piwork_release_input/fileHelper")" .
-docker build -f Dockerfile.snapshot-helper.native "${piwork_release_build_args[@]}" \
-    -t "$(cat "$piwork_release_input/snapshotHelper")" .
-```
-
-```bash
-docker run --rm --network none \
-    --user "$(id -u):$(id -g)" \
-    --volume "$PWD:/source" --workdir /source \
-    node:24-bookworm-slim \
-    node scripts/sync-docker-quickstart.mjs
-
-bash scripts/collect-docker-release.sh dist/docker/inputs
-
-docker build -f Dockerfile.docker-release --target materials \
-    "${piwork_release_build_args[@]}" \
-    --build-context release-input=./dist/docker/inputs \
-    --output type=local,dest=dist/docker/candidate \
-    .
-
-(cd dist/docker/candidate && sha256sum --check SHA256SUMS)
-```
-
-```sh
-sh dist/docker/candidate/push-commands.sh --check
-```
-
-```sh
-sh dist/docker/candidate/push-commands.sh --push
-```
-
-```bash
-docker build -f Dockerfile.docker-release --target published-materials \
-    "${piwork_release_build_args[@]}" \
-    --build-context release-input=./dist/docker/inputs \
-    --output type=local,dest=dist/docker/published \
-    .
-
-docker run --rm --network none \
-    --user "$(id -u):$(id -g)" \
-    --volume "$PWD:/source" --workdir /source \
-    node:24-bookworm-slim \
-    node scripts/sync-docker-quickstart.mjs dist/docker/published/release-manifest.json
-
-(cd dist/docker/published && sha256sum --check SHA256SUMS)
-```
-
-```sh
-node scripts/check-docker-quickstart.mjs
-node --test scripts/check-docker-quickstart.test.mjs
-node --test scripts/build-docker-release.test.mjs scripts/docker-cli-entrypoint.test.mjs scripts/docker-publish-preflight.test.mjs
-```
-
 ### Requirement: 使用 Docker 命令制作可审阅的发行候选
 
 **Identifier:** DOCKER-DELIVERY-012
 
-维护者 SHALL 能从同一源码输入用 Docker build 构建全部入口和运行依赖镜像，并通过 Docker 构建输出生成 统一服务端 Compose、可选单机部署示例及发行候选清单；宿主仅需相应 Docker 构建能力、Git 与终端工具，不要求安装 Go、Node、npm 或 Make，不要求先构建宿主 dist 文件。发行流程 SHALL 不新增独立发布的 Release 工具镜像，既有原生构建与发行入口继续独立存在。
+维护者 SHALL 能从同一源码输入用 Docker build 构建Core 入口及 Agent/helper 运行依赖镜像，并通过 Docker 构建输出生成 统一服务端 Compose、可选单机部署示例及发行候选清单；宿主仅需相应 Docker 构建能力、Git 与终端工具，不要求安装 Go、Node、npm 或 Make，不要求先构建宿主 dist 文件。发行流程 SHALL 不新增独立发布的 Release 工具镜像，既有原生构建与发行入口继续独立存在。
 
-构建 SHALL 记录真实源码 commit、修改状态、源码输入摘要、版本、平台和 统一服务端两套内嵌 UI 及 CLI 资源身份，检查镜像与二进制身份及各协议一致。构建输入在候选生成期间变化、身份未知、引用不匹配或必需材料缺失 SHALL 使检查失败；真实秘密不得作为构建输入写入镜像层、标签或清单。
+构建 SHALL 记录真实源码 commit、修改状态、源码输入摘要、版本、平台和 统一服务端两套内嵌 UI 资源身份，检查镜像与二进制身份及各协议一致。构建输入在候选生成期间变化、身份未知、引用不匹配或必需材料缺失 SHALL 使检查失败；真实秘密不得作为构建输入写入镜像层、标签或清单。
 
 本地构建、候选检查和生成推送命令 SHALL 不执行 push。用户明确审核允许后，维护者才使用 Docker push 发布已检查的镜像；随后核对匿名读取、远端 digest 及候选身份，并生成对应正式材料。未完成远端检查 SHALL 不标记正式可用。
 
-发布入口 SHALL 在首次推送前核对全部角色的实时本地镜像身份与用户已审阅候选清单，包括源码输入、平台、协议和 CLI 资源身份，并查询远端标签的实际 manifest/config 身份。不能以本地标签名、旧检查记录或可选 existingImageId 字段代替实时核验。任一角色身份改变、远端标签冲突、认证/网络错误或查询结果无法确认 SHALL 阻止全部推送；只有明确确认标签不存在或远端身份匹配才可继续。预检及演练 SHALL 不执行 push，镜像 config ID 不得冒充 registry manifest digest。
+发布入口 SHALL 在首次推送前核对全部角色的实时本地镜像身份与用户已审阅候选清单，包括源码输入、平台、协议和两套 UI 资源身份，并查询远端标签的实际 manifest/config 身份。不能以本地标签名、旧检查记录或可选 existingImageId 字段代替实时核验。任一角色身份改变、远端标签冲突、认证/网络错误或查询结果无法确认 SHALL 阻止全部推送；只有明确确认标签不存在或远端身份匹配才可继续。预检及演练 SHALL 不执行 push，镜像 config ID 不得冒充 registry manifest digest。
 
 #### Scenario: 审阅后本地标签改变
 - **WHEN** 任一待推送标签被指向与已审阅候选不同的镜像
@@ -525,32 +244,144 @@ node --test scripts/build-docker-release.test.mjs scripts/docker-cli-entrypoint.
 
 #### Scenario: 宿主没有 Go 或 Node
 - **WHEN** 维护者仅有支持的 Docker 构建能力、Git 和终端工具，使用干净源码输入
-- **THEN** 可以构建并核查 统一服务端、可选 CLI、Agent/helper 和候选材料，统一服务端两套内嵌资源及 CLI 资源来自同一输入，运行镜像不携带宿主编译工具链
+- **THEN** 可以构建并核查 统一服务端、Agent/helper 和候选材料，统一服务端两套内嵌资源来自同一输入，运行镜像不携带宿主编译工具链
 
 #### Scenario: 生成候选供用户判断
 - **WHEN** 本地镜像和候选材料验证完成
 - **THEN** 输出实际身份、材料校验、验证结果及待执行推送命令，不自动推送、不把本地候选标为正式发行
 
 #### Scenario: 源码或镜像身份变化
-- **WHEN** 构建后输入、镜像、统一服务端/CLI 资源或协议标签与记录不一致
+- **WHEN** 构建后输入、镜像、统一服务端资源或协议标签与记录不一致
 - **THEN** 候选检查失败并要求重新制作一致候选，不能用修改清单来绕过检查
 
-### Requirement: Docker CLI 默认进入终端并保留显式命令
+### Requirement: 交付统一 Core 镜像及可独立使用的发行包
 
-**Identifier:** DOCKER-DELIVERY-013
+**Identifier:** DOCKER-DELIVERY-001
 
-CLI Docker 镜像在默认无参数启动时 SHALL 等待所选 Core 的 /readyz?profile=docker-delivery，成功后进入交互终端，不启动 Desktop、不打开浏览器。等待 SHALL 有最多 600 秒的总预算，失败时非零退出并给出不包含秘密的状态/日志方向，不能进入可误认为已就绪的默认试用终端。
+系统 SHALL 交付一个 Linux Core 入口镜像，运行同版 piwork-core 并内嵌管理/工作台/引导及生产 Agent/helper 引用。一条 Docker 启动命令即可提供完整网页，不要求 CLI/Console 容器、业务 env、release.env、源码或另一个宿主程序。Agent 引用随版本固定，运行依赖由 Core 准备，用户不手工启动内部容器。
 
-提供显式参数时 SHALL 直接执行原 piwork-cli 入口，保留 help/version、业务命令及显式 Desktop 的参数和退出码，不强制其先等待网络或进入 shell。入口 SHALL 正确转交信号；Core/CLI 的运行工具边界、用户凭证存储和原生 CLI 默认 Desktop 保持。
+CLI Docker 镜像及专用容器模式、终端入口、Compose 服务、状态卷和交换卷教程 SHALL 删除；用户通过浏览器或 Linux 原生 piwork-cli 连接已有 Core。内部 Agent、fileHelper、snapshotHelper 镜像及 Agent 内 packageHelper/MCP 保留。
 
-#### Scenario: 默认进入交互终端
-- **WHEN** 用户执行默认交互 CLI Docker 命令且 Core 完整就绪
-- **THEN** 进入可运行 piwork-cli 的终端，保留独立用户状态，未启动 Desktop
+镜像和材料 SHALL 固定实际版本/身份，核对同一源码、两套 UI、协议及存储契约，不使用 latest 或覆盖旧标签掩盖变化。candidate/published 分离；构建验证不授权 push、上传或网站发布。历史已发布制品记录保留原身份，不混入当前发行材料或要求维护旧命令兼容路径。
 
-#### Scenario: 离线查询版本或帮助
-- **WHEN** Core 不可达但用户向 CLI 镜像传入 --version 或 --help
-- **THEN** 命令立即按既有无网络入口返回，不等待 Core 或进入交互终端
+Core 镜像 SHALL 遵守三参数及 HTTP 双端口契约，不提供旧 7171 合并入口、Service 端口池或 piwork-serve 别名。
 
-#### Scenario: 显式业务或 Desktop 参数
-- **WHEN** 用户向 CLI 镜像提供原有业务命令或 desktop --no-open
-- **THEN** 完整转发参数、退出码与信号，终端默认值不改变显式命令及原生客户端行为
+#### Scenario: 空安装启动
+- **WHEN** 用户在支持的 Linux Engine 上执行默认 Docker run
+- **THEN** 一个 Core 容器提供完整网页引导、管理和工作台，无必填业务 env 或 CLI 容器
+
+#### Scenario: 独立连接
+- **WHEN** 浏览器或 Linux 原生 CLI 连接已有 Core
+- **THEN** 不需要客户端 Docker、Core 安装数据或初始化秘密
+
+#### Scenario: 旧产物不能混入候选
+- **WHEN** 当前候选制作或核验时存在旧 CLI 镜像、旧材料或依赖身份不匹配
+- **THEN** 当前清单只包含四个有效角色；身份不匹配则失败，不能把旧发布记录改成新候选
+
+### Requirement: Linux 交付与跨平台浏览器访问边界
+
+**Identifier:** DOCKER-DELIVERY-002
+
+Core Docker SHALL 仅在本机 Linux Docker Engine 运行，沿用 linux/amd64、Engine 28+ 基线；Docker run 不要求 Compose，可选 Compose 要求 v2.24+。Core 与原生 CLI 的当前发行均为 Linux Only，不生成 Windows/macOS 程序或 CLI 容器镜像。
+
+本机或远程浏览器 SHALL 可直接访问 Core UI，包括 Windows 浏览器；该能力不等于支持对应系统原生 Core/CLI，不要求客户端 Docker、WSL、代理或域名。
+
+#### Scenario: Windows 浏览器访问
+- **WHEN** Windows 用户打开 Linux Core 的实际 IP
+- **THEN** 正常登录并使用网页，无客户端 Docker/CLI 前置条件
+
+#### Scenario: Linux 不安装 Compose
+- **WHEN** Linux 已有受支持 Engine 而无 Compose
+- **THEN** 默认 Docker run 仍可使用
+
+#### Scenario: 非 Linux 目标
+- **WHEN** 维护者请求生成非 Linux 当前发行
+- **THEN** 构建/发布入口拒绝不受支持目标，不留下被当作成功候选的产物
+
+### Requirement: Core 容器的 HTTP 入口与内部回连
+
+**Identifier:** DOCKER-DELIVERY-004
+
+Core Docker SHALL 使用 Linux host 网络和同机 Engine Unix socket，Core 访问受管 Work 私网，用户 Service 不发布宿主端口。UI 默认 0.0.0.0:17891，Core API 默认 0.0.0.0:17871，均为 HTTP；仅通过 --ui-port/--core-port 改端口。ControlPlane 后端访问 loopback Core，浏览器只通过 UI 使用工作台、管理、文件、事件及 /services/<workId>/<serviceId>/<port>/。远程原生 CLI 直接访问 Core，不需要 --core-listen 或 ControlPlane 代理。
+
+Agent WorkServices 7172 SHALL 保留容器可达性及原 mTLS 安装/Work/代次/角色校验，不用 HTTP 端口替代，不增加用户 RPC 参数。部署材料明确两个 HTTP 端口和内部 RPC 的职责，不声称系统只有一个 listener。
+
+主站与 Service URL SHALL 使用本次已验证的 HTTP UI origin，按 core-service-startup 校验本机地址、Host/Origin/CSRF，不信任任意 Forwarded，不提供内置 HTTPS/public-origin 配置。Service 继续遵守路径前缀、响应 Cookie 分区和脚本 Cookie 限制。此调整不改变外部模型/MCP 的网络准入或原生 CLI 通用 HTTP(S)/CA 处理。
+
+#### Scenario: 浏览器只访问 UI
+- **WHEN** 另一网络客户端仅能访问 UI 端口，通过实际服务器 IP 使用网页
+- **THEN** 工作台和支持前缀的 Service 可用，浏览器不请求 Core/RPC，用户容器无宿主端口直出
+
+#### Scenario: 外部 Linux CLI
+- **WHEN** 外部原生 CLI 指定服务器 Core HTTP origin
+- **THEN** 按用户身份直接连接，不依赖 UI Cookie 或修改服务器监听参数
+
+#### Scenario: 内部 Agent 回连
+- **WHEN** Agent 创建并管理 Service
+- **THEN** 通过原 mTLS RPC 核验当前 Work/代次，不借用户 token，不因 HTTP-only 删除内部身份
+
+#### Scenario: 同机 Desktop 端口冲突
+- **WHEN** Core UI 已用 17891，另行启动独立 CLI Desktop
+- **THEN** 按既有 CLI --port 显式选择其他端口，默认冲突准确报错，不自动换端口或共用身份
+
+### Requirement: 提供对应当前 Linux 交付的双语操作材料
+
+**Identifier:** DOCKER-DELIVERY-006
+
+双语发行材料 SHALL 给出统一程序和 Docker 默认网页流程、普通访问地址的取得及直接创建/登录路径、初始化、状态/日志、正常关闭、重建、升级/回退及数据保留命令。默认流程零必填业务环境变量；PIWORK_ADMIN_ACCOUNT/PIWORK_ADMIN_PASSWORD 只在测试/自动部署的可选说明出现，成对创建首管理员并遵守原密码规则，不作为持续密码来源。
+
+模型连接、Key 和 CoreRuntime SHALL 通过网页配置，不再要求 PIWORK_MODEL_PROVIDER/MODEL/MODEL_ID/API_KEY/MODEL_API_KEY/MODEL_BASE_URL 或镜像 env。说明 SHALL 区分代码构建所用变量、独立 CLI/系统环境与被移除的服务端业务初始化输入，不误删用户 Service 环境。
+
+命令 SHALL 完整可复制，说明执行位置、固定发行身份、socket/同路径数据挂载、主站及 Service listener 网络条件、60 秒关闭预算和空安装直接创建管理员的方式。Linux 原生 CLI 使用材料保留用户身份边界；当前文档删除旧 operator 命令、CLI 容器/文件交换、独立 Console 及其他原生平台步骤，历史已发布记录单独保留其身份；密码不放命令参数，真实秘密不进入静态材料或验收输出；默认步骤不再取得、轮换或校验设置链接，不要求 setup link 命令。
+
+#### Scenario: 新用户按文档操作
+- **WHEN** 用户只执行默认 Docker 命令并在本机或远程浏览器打开服务器普通 IP 地址
+- **THEN** 可以创建管理员和配置模型/runtime，无设置链接/浏览器 Access、安装包、env 编辑、CLI 登录或第二入口容器前置步骤
+
+#### Scenario: 测试可选 ADMIN env
+- **WHEN** 测试者成对传入有效 ADMIN 值
+- **THEN** 只初始化持久管理员，模型仍走网页，重启不覆盖已有账号，普通教程不因此要求 env
+
+#### Scenario: 秘密包含特殊字符
+- **WHEN** 测试 ADMIN 值包含特殊字符，或只提供一项/非法值
+- **THEN** 合法值按原字面传递，非法值安全拒绝，不执行 shell 内容、不回显秘密
+
+#### Scenario: 原生客户端连接已有 Core
+- **WHEN** 用户按 Linux 原生 CLI 说明连接已有服务器
+- **THEN** 可默认进入 Desktop 或执行业务命令，无 Core 启停、operator 初始化或 CLI Docker 步骤
+
+#### Scenario: 必填值不合法
+- **WHEN** 测试者选择可选 ADMIN 初始化但只提供一项、空或非法值
+- **THEN** 安全拒绝且不输出值；默认网页安装不存在模型必填 env 或旧模型 env 校验
+
+### Requirement: Linux 原生 CLI 独立于容器交付
+
+**Identifier:** DOCKER-DELIVERY-007
+
+Linux 原生 piwork-cli SHALL 继续独立交付和构建，保留默认 Desktop、可信 open/logout、用户命令和本机恢复，不要求本机 Docker、Go、Node 或 Python。Desktop/proxy 仅使用原生 loopback 监听，不保留 CLI 容器模式环境变量分支。Docker 验收不能代替 Linux 原生 CLI 实际运行验收。
+
+#### Scenario: 独立使用客户端
+- **WHEN** 用户只安装 Linux piwork-cli 并连接已有 Core
+- **THEN** 原用户能力和本机监听/浏览器行为可用，不启动 Core 或容器
+
+### Requirement: 四角色镜像候选与真实发布身份
+
+**Identifier:** DOCKER-MAINT-001
+
+发行维护 SHALL 以同一真实版本、commit、dirty、源码输入、两套 UI 和协议身份制作 core、agent、fileHelper、snapshotHelper 四个镜像角色，packageHelper 复用 Agent；删除 CLI 镜像角色和相关发布假设。Docker 多阶段构建内使用 Go 1.25.5/Node 24，宿主无需这些解释器；metadata/materials 不是独立发布工具镜像，真实秘密和数据不得进入构建上下文。
+
+本地候选 SHALL 完成静态/运行/协议/资源及 SHA256 检查，标为 candidate，不虚构 registry digest。首次 push 前核对全部四角色的实时本地 image ID、标签/协议/资源及远端身份；冲突、认证/网络错误或无法确认均零推送。登录 registry 不构成授权，明确授权后才推送，匿名拉取/manifest digest/publishedImageId 核对后另生成 published 材料，原 candidate 保留。
+
+手册、Core-only Compose、单机示例、原生两个程序和官网候选材料 SHALL 对齐本版身份；根 README 仅维护平台短说明和导航。候选不宣称可下载，不改写历史发行记录。正式日志按精确版本维护，结构检查与 require-current 分开；本地构建不自动推送或部署网站。
+
+#### Scenario: 四角色候选
+- **WHEN** 维护者从同一输入生成候选
+- **THEN** 清单/收集/预检/校验均只要求四个有效角色，无 CLI 镜像遗留，packageHelper 引用与 Agent 对应
+
+#### Scenario: 候选身份变化
+- **WHEN** 任一角色标签、输入或 UI/协议身份与已审阅候选不符
+- **THEN** 首次推送前失败，不改写候选掩盖差异，不推送部分角色
+
+#### Scenario: 仅本地制作
+- **WHEN** 用户只要求构建或执行 make release
+- **THEN** 只得到可核对的本地候选和校验，不生成虚构 published 身份或对外发布

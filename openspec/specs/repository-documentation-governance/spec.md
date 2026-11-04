@@ -180,7 +180,7 @@
 
 **Identifier:** RDOC-008
 
-仓库 SHALL 保留 npm ci / make build / make test 的无真实秘密基础流程，以及 generate、integration、acceptance、release 和独立 CLI/browser 入口；构建依赖与用户运行依赖分开。Docker 测试 SHALL 使用唯一 installation/fixture 标签并只清理自身资源，确定性 SDK 测试不默认调用付费模型；真实提供商/Windows/SELinux 平台证据与合成夹具分别记录。生成报告默认 dist，超时/跳过不算通过，970 项历史索引不替代实际执行。浏览器、镜像及旧 history4 夹具须明确预备，不靠降低生产限额或删除场景通过。
+仓库 SHALL 保留 npm ci / make build / make test 的无真实秘密基础流程，以及 generate、integration、acceptance、release 和独立 CLI/browser 入口；构建依赖与用户运行依赖分开。Docker 测试 SHALL 使用唯一 installation/fixture 标签并只清理自身资源，确定性 SDK 测试不默认调用付费模型；真实提供商/跨平台浏览器/SELinux 环境证据与合成夹具分别记录。生成报告默认 dist，超时/跳过不算通过，970 项历史索引不替代实际执行。浏览器、镜像及旧 history4 夹具须明确预备，不靠降低生产限额或删除场景通过。
 
 #### Scenario: 选择专项验证入口
 - **WHEN** 维护者选择修改范围内的验证并具备该项所需 Go/Node、浏览器或镜像依赖
@@ -190,11 +190,11 @@
 
 ```sh
 make generate          # 固定 proto 生成及 Go HTTP 契约
-make build             # harness、浏览器资源和七个 Go 程序
+make build             # harness、浏览器资源和两个 Linux 宿主程序
 make test              # Go 单元/契约、保留 harness 单元、浏览器类型检查
-make test-integration  # 真实 Engine、确定性 Pi SDK、Go Desktop/Console 浏览器
+make test-integration  # 真实 Engine、确定性 Pi SDK、Go Desktop/Core 管理 UI 浏览器
 make acceptance        # 集成测试及 970 项场景证据完整性门槛
-make release           # 三个宿主入口和镜像清单、校验和、发布包
+make release           # 两个 Linux 宿主入口和生产镜像清单、校验和、发布包
 make test-native-host  # 发布包 + scratch 宿主 + 独立 Engine 的完整运行检查
 ```
 
@@ -217,14 +217,14 @@ go test -mod=readonly -tags=integration ./internal/coreapp \
 ```sh
 npm ci
 mkdir -p dist/go
-CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-serve ./cmd/piwork-serve
+CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-core ./cmd/piwork-core
 CGO_ENABLED=0 go build -mod=readonly -o dist/go/piwork-cli ./cmd/piwork-cli
 node scripts/measure-work-latency.mjs --mode both --samples 20 \
   --output dist/work-latency/after.json
 ```
 
 ```sh
-node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-serve \
+node scripts/measure-work-latency.mjs --core dist/work-latency/baseline/piwork-core \
   --mode api --samples 20 --baseline --output dist/work-latency/before-api.json
 ```
 

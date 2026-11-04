@@ -6,78 +6,28 @@ Defines an executable local `piwork` command-line client that connects to Core, 
 
 ## Requirements
 
-### Requirement: Resolve one Core endpoint consistently
-
-系统 SHALL 提供独立的 operator 控制面和登录用户客户端命令；既有规范中的 `piwork-serve` operator 职责及配置保持，`piwork-cli` 用于用户客户端。业务 CLI SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存凭证中的 Core、默认 `http://127.0.0.1:17871` 的顺序解析。operator SHALL 按显式 `--core`、`--env-file` 中的控制面地址和文档化默认值解析，并使用 operator credential。
-
-默认或显式 Desktop 启动 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、Desktop 默认 Core 配置、保存凭证中的 Core、相同 loopback 默认值的顺序解析。参数和环境变量 SHALL 仅影响本次启动，不自动保存。业务 CLI SHALL 不读取 Desktop 偏好；`desktop open/logout` SHALL 继续只选择既有本机实例，不重新解析 Core。
-
-Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁移旧凭证。需要读取的配置损坏、版本不支持、地址字段非法、超过大小限制或无法安全访问 SHALL 返回 exit 1 和安全恢复方向，保留原文件，不静默改连其他 Core；已由参数或环境选定地址时 SHALL 不读取无须使用的 Desktop 偏好。通过参数、环境或旧凭证选定的地址无效 SHALL 返回 exit 2，不继续尝试低优先级地址。凭证仅 SHALL 用于与其 Core origin 相同的请求。
-
-用户 CLI、operator 和独立 Desktop 后端 SHALL 直接访问 Core HTTP 服务，不能要求先启动或经由 ControlPlane 17891。默认端口变化不得迁移已有凭据 origin、改写显式地址、试探旧端口或把连接失败转成浏览器登录；选定旧地址不可达时提供显式配置当前 Core 后重新登录的方向。远程 Core 的可达性由部署监听决定，不由客户端自动修改服务器。
-
-#### Scenario: Use the user client endpoint
-- **WHEN** 用户运行业务 CLI 且未提供显式地址
-- **THEN** 使用 `PIWORK_CORE_URL`、保存凭证中的地址或 loopback 默认值；Desktop 默认配置不影响该选择
-
-#### Scenario: Override the Core URL explicitly
-- **WHEN** 用户提供 `--core <url>`，另有环境、Desktop 配置或保存凭证地址
-- **THEN** 业务 CLI 或 Desktop 使用显式地址；Desktop 启动不覆盖持久配置，不把另一 Core 的 token 发给该地址
-
-#### Scenario: Reuse the saved endpoint
-- **WHEN** 没有显式或环境地址，业务 CLI 有保存凭证，或 Desktop 没有默认配置但有保存凭证
-- **THEN** 使用该凭证的 Core 地址，不重写或迁移凭证
-
-#### Scenario: Use the operator endpoint
-- **WHEN** 操作者运行既有 operator 管理或配置入口
-- **THEN** 使用 operator 配置和凭证，不读取 `piwork-cli` 用户 token 或 Desktop 偏好
-
-#### Scenario: Desktop 默认地址和旧凭证并存
-- **WHEN** Desktop 配置 Core B，凭证属于 Core A，且没有参数或环境覆盖
-- **THEN** Desktop 连接 B 并呈现未登录状态，不发送 A 的 token；业务 CLI 仍解析为 A
-
-#### Scenario: 退出登录后保留 Desktop 默认配置
-- **WHEN** 用户保存 Desktop 默认 Core 后清理当前登录，随后重新启动
-- **THEN** 仍选择保存的 Core，不因凭证删除回到 loopback，不恢复已清理的 token
-
-#### Scenario: 缺失、损坏和被覆盖的配置
-- **WHEN** 默认配置不存在、需要读取的配置损坏，或参数/环境已经覆盖损坏配置
-- **THEN** 分别使用原有回退、返回 exit 1 且不监听、或按覆盖地址正常启动；损坏文件均不被自动删除
-
-#### Scenario: 无效高优先级地址
-- **WHEN** 参数、环境或保存配置给出不合法 Core origin
-- **THEN** 拒绝选定地址，不悄悄使用凭证或 loopback，不泄漏 token
-
-#### Scenario: 无历史配置直接使用新 Core
-- **WHEN** 同机客户端没有显式地址、环境覆盖、相关偏好或保存凭据
-- **THEN** 连接 127.0.0.1:17871，使用原用户或 operator 身份，不访问 17891
-
-#### Scenario: 已保存旧端口
-- **WHEN** 保存凭据或 Desktop 偏好仍指向已停止的 7171
-- **THEN** 报告所选地址不可达，不把旧 token 转发到 17871 或其他发现的服务；用户可显式选择新 Core 并正常登录
-
 ### Requirement: Report Core and Work-runtime status
 
-两个 CLI SHALL 提供状态命令但职责不同：`piwork-serve status` 可在未登录用户时查询 Core 初始化、operator 和 readiness 状态；`piwork-cli status` 查询用户可见的 Core 健康与 Work runtime 状态。两者都必须隐藏 secret。
+piwork-cli status SHALL 查询用户可见的 Core 健康与 Work runtime 状态并隐藏 secret。Core 初始化和准备状态由网页及既有状态 API 展示，不再提供独立 operator status 命令。
 
 #### Scenario: Report an empty Core
 
 - **WHEN** Core 正在运行但尚未创建管理员
-- **THEN** `piwork-serve status` 显示 `ADMIN_REQUIRED`，`piwork-cli status` 仍能显示健康但不得假装用户已登录
+- **THEN** 网页显示 ADMIN_REQUIRED，`piwork-cli status` 仍能显示健康但不得假装用户已登录
 
 #### Scenario: Report a ready Core
 
 - **WHEN** Core and its Work runtime are ready
-- **THEN** `piwork status` reports both as ready and exits with status 0
+- **THEN** `piwork-cli status` reports both as ready and exits with status 0
 
 #### Scenario: Report unavailable Docker
 
 - **WHEN** Core is reachable but its Docker dependency is unavailable
-- **THEN** `piwork status` identifies the runtime dependency as unavailable and exits nonzero without a stack trace
+- **THEN** `piwork-cli status` identifies the runtime dependency as unavailable and exits nonzero without a stack trace
 
 ### Requirement: Log in and persist credentials safely
 
-`piwork-cli login` SHALL 接受账号，通过隐藏输入或标准输入获取密码；成功后持久保存包含 Core URL、token、到期时间与公开身份的版本化记录。POSIX 凭证父目录 SHALL 仅允许当前用户访问，凭证文件 SHALL 为 `0600`，符号链接等不安全目标 MUST 拒绝。`piwork-serve` 和它的 `piwork` 别名不提供用户 login，不读取该用户凭证文件。
+`piwork-cli login` SHALL 接受账号，通过隐藏输入或标准输入获取密码；成功后持久保存包含 Core URL、token、到期时间与公开身份的版本化记录。POSIX 凭证父目录 SHALL 仅允许当前用户访问，凭证文件 SHALL 为 `0600`，符号链接等不安全目标 MUST 拒绝。`piwork-core` 不提供用户 login，不读取该用户凭证文件。
 
 凭证读取、保存与删除 SHALL 使用同一安全存储边界。读取现有凭证前 SHALL 核验父目录属于当前有效用户且没有 group/other 访问权限，并核验凭证为当前用户所有的普通 `0600` 文件；路径中的符号链接目录及符号链接文件 MUST 拒绝。新建凭证目录 SHALL 使用当前用户专属权限；已有目录权限或归属不满足要求时 SHALL 明确拒绝，不通过修改不安全目录的权限来继续访问。失败 SHALL 保留原凭证及外部目标，不发送从不安全路径取得的凭证，不输出凭证内容。
 
@@ -94,7 +44,7 @@ Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁�
 - **THEN** CLI 报告公开认证错误，先前保存的有效凭证保持不变
 
 #### Scenario: Wrong command surface
-- **WHEN** 用户执行 `piwork login` 或 `piwork-serve login`
+- **WHEN** 用户执行 `piwork-core login`
 - **THEN** 命令以 usage 错误退出，不读取用户凭据或联系用户登录端点
 
 ### Requirement: Show identity and perform server-side logout
@@ -121,9 +71,9 @@ logout 的成功撤销响应，或所选且与凭证归属匹配的 Core 返回�
 
 **Identifier:** CLI-WORK-001
 
-`piwork-cli` SHALL provide Work lifecycle, `work config show`, `work config set`, field-specific configuration commands, and explicit `work config apply` without public revision arguments. `work create` SHALL accept `--base-image <image>`, repeatable `--skill <skill-name>`, `--no-skills`, `--agents-md-file <path>`, and `--config <file>`. If neither Skill option nor a `skills` field is supplied, Core SHALL copy the current default Work Skill selection; explicit Skill flags SHALL replace defaults and a configuration-file selection, while `--no-skills` SHALL select an empty set. The CLI SHALL reject duplicate names and mutually exclusive Skill options before contacting Core. Core SHALL copy selected managed Skill directories, AGENTS content, and the resolved configuration into Work-owned storage before reporting successful creation. `piwork-serve` MUST NOT create or control user Works.
+`piwork-cli` SHALL provide Work lifecycle, `work config show`, `work config set`, field-specific configuration commands, and explicit `work config apply` without public revision arguments. `work create` SHALL accept `--base-image <image>`, repeatable `--skill <skill-name>`, `--no-skills`, `--agents-md-file <path>`, and `--config <file>`. If neither Skill option nor a `skills` field is supplied, Core SHALL copy the current default Work Skill selection; explicit Skill flags SHALL replace defaults and a configuration-file selection, while `--no-skills` SHALL select an empty set. The CLI SHALL reject duplicate names and mutually exclusive Skill options before contacting Core. Core SHALL copy selected managed Skill directories, AGENTS content, and the resolved configuration into Work-owned storage before reporting successful creation. `piwork-core` 命令行 MUST NOT 提供用户 Work 操作子命令；Core 的 Work API 和领域能力保持。
 
-SDK-invalid imported Skill bytes SHALL be diagnosed asynchronously during required initialization rather than rejected as a CLI syntax error. Both `work config set <workId> --config <file>` and `work config skills set <workId>` SHALL update desired state consistently; omitted fields in field-specific commands SHALL preserve unrelated desired fields. `--no-skills` SHALL be parsed as a boolean flag on create, per-Work Skill set, and operator default-Work set. Missing selection on the field-specific Skill-set command SHALL be a usage error, not implicit clearing. `work config apply <workId> [--wait] [--idempotency-key <key>]` SHALL report acceptance immediately unless waiting was requested and use the same durable Operation observation behavior as create/start.
+SDK-invalid imported Skill bytes SHALL be diagnosed asynchronously during required initialization rather than rejected as a CLI syntax error. Both `work config set <workId> --config <file>` and `work config skills set <workId>` SHALL update desired state consistently; omitted fields in field-specific commands SHALL preserve unrelated desired fields. `--no-skills` SHALL be parsed as a boolean flag on create and per-Work Skill set. Missing selection on the field-specific Skill-set command SHALL be a usage error, not implicit clearing. `work config apply <workId> [--wait] [--idempotency-key <key>]` SHALL report acceptance immediately unless waiting was requested and use the same durable Operation observation behavior as create/start.
 
 work create SHALL 额外支持重复 --package <name> 或互斥 --no-packages，优先于配置文件 packages 与默认集合；重复/空 name 或矛盾选项在 auth/file/network 前拒绝。work config set 同样支持该选择，对已存在 Work 只引用自身 desired 已安装包；flags 选中项 enabled=true，其他字段省略保留，disabled 可用专用命令或完整配置表示。包安装与 apply 分离，create --wait 的成功仍要求最终完整 context ready。
 
@@ -207,7 +157,7 @@ work create SHALL 额外支持重复 --package <name> 或互斥 --no-packages，
 
 **Identifier:** CLI-CHAT-001
 
-`piwork-cli` SHALL independently provide login, Session, Run, Work configuration, and chat commands; `piwork-serve` MUST NOT provide user conversation commands. The user client's credential file and operator credential file MUST remain separate. A chat request SHALL use the Work's active copied context, including active Skills, AGENTS content, base image, model, and tool policy, and SHALL report `pendingApply` rather than applying desired changes implicitly or exposing a configuration revision.
+`piwork-cli` SHALL independently provide login, Session, Run, Work configuration, and chat commands; `piwork-core` MUST NOT provide user conversation commands. The user client's credential file and operator credential file MUST remain separate. A chat request SHALL use the Work's active copied context, including active Skills, AGENTS content, base image, model, and tool policy, and SHALL report `pendingApply` rather than applying desired changes implicitly or exposing a configuration revision.
 
 #### Scenario: Continue a Work conversation
 - **WHEN** 用户使用 `piwork-cli chat <workId>` 发送消息
@@ -244,10 +194,10 @@ The CLI SHALL provide Session list/show and Run show/watch/cancel commands so a 
 
 **Identifier:** CLI-OUTPUT-001
 
-两个CLI SHALL 使用各自稳定的命令帮助和退出码。`piwork-serve`的错误必须区分Core未运行、管理员未初始化、默认配置缺失、Skill导入失败和权限失败；`piwork-cli`必须区分未登录、Core不可用、Skill不可用、Work不可用和Run失败。任何输出不得包含用户登录密码、平台bearer token、operator credential、模型API key、secret path、Skill import path或internal digest。唯一的密码展示例外是统一proxy成功启动时向启动者一次显示本进程随机生成的WebDAV本地临时密码；该值不得进入URL、PAC、普通日志、错误或后续请求输出，不得持久写入平台登录文件或Work。Work配置命令 SHALL 返回稳定Work/Operation身份及active/desired/pending状态，不返回公开revision。
+piwork-cli SHALL 保留稳定帮助和退出码，区分未登录、Core不可用、Skill不可用、Work不可用和Run失败。任何输出不得包含用户登录密码、平台bearer token、operator credential、模型API key、secret path、Skill import path或internal digest。唯一的密码展示例外是统一proxy成功启动时向启动者一次显示本进程随机生成的WebDAV本地临时密码；该值不得进入URL、PAC、普通日志、错误或后续请求输出，不得持久写入平台登录文件或Work。Work配置命令 SHALL 返回稳定Work/Operation身份及active/desired/pending状态，不返回公开revision。
 
 #### Scenario: Reject a command on the wrong CLI
-- **WHEN** 用户在`piwork-cli`执行operator Skill mutation或admin users，或用`piwork-serve`进行chat
+- **WHEN** 用户在`piwork-cli`执行operator Skill mutation或admin users，或用`piwork-core`进行chat
 - **THEN** 命令立即以usage错误退出，不联系Core或执行状态变更
 
 #### Scenario: Request JSON output
@@ -263,7 +213,7 @@ The CLI SHALL provide Session list/show and Run show/watch/cancel commands so a 
 - **THEN** CLI/API拒绝已废弃输入，不改变desired context，也不返回当前revision
 
 #### Scenario: Reject obsolete revision options
-- **WHEN** 用户向默认Work或单Work配置命令传入`--expected-revision`
+- **WHEN** 用户向单Work配置命令传入`--expected-revision`
 - **THEN** CLI返回说明无revision命令格式的usage错误，不联系Core
 
 #### Scenario: Reject invalid command input
@@ -546,7 +496,7 @@ work export/import SHALL 无条件携带完整 Pi package 闭包；不新增 ski
 
 JSON 模式 SHALL 对每个成功命令输出恰好一个对象：inspect 为 WSNAP-002 安全摘要；export/download 为 `{workId,snapshotId,operationId,path,digest,size}`；import 非 wait 为 `{workId,name,operationId,correlationId,reused}`；import wait 为既有终态 Operation envelope 加目标 name，export waiting 额外带 snapshotId。text 模式用可读摘要/缩进 JSON，进度与敏感内容警告只写 stderr。相对于旧“internal digest 不公开”的限制，新 digest 仅指用户包校验 hash，不暴露平台 context identity。
 
-syntax/local file exit 2；缺登录/401/403 exit 3；404 exit 4；网络、503、transfer/观察超时 exit 5；409、已接受任务 failed/superseded exit 6；包校验400/413、不兼容、目标模型或自定义外部 MCP 凭证不可用与410 exit 1；成功 exit 0。接受前错误 stdout 为空，且 stderr SHALL 显示安全的错误 code 与可执行处理方向；不能仅输出 `Work snapshot request cannot be accepted`。接受后观察失败输出带 ID 的 waiting；校验过的包下载后本地发布失败也必须在安全错误中保留 snapshotId。旧 Work/service/chat、operator CLI 和通用 operation show 行为 SHALL 不变，不新增 service create/update。
+syntax/local file exit 2；缺登录/401/403 exit 3；404 exit 4；网络、503、transfer/观察超时 exit 5；409、已接受任务 failed/superseded exit 6；包校验400/413、不兼容、目标模型或自定义外部 MCP 凭证不可用与410 exit 1；成功 exit 0。接受前错误 stdout 为空，且 stderr SHALL 显示安全的错误 code 与可执行处理方向；不能仅输出 `Work snapshot request cannot be accepted`。接受后观察失败输出带 ID 的 waiting；校验过的包下载后本地发布失败也必须在安全错误中保留 snapshotId。用户 Work/service/chat 和通用 operation show 行为 SHALL 不变，不新增 service create/update。
 
 #### Scenario: One JSON result
 - **WHEN** --json work export 完成接受、观察、下载
@@ -555,37 +505,6 @@ syntax/local file exit 2；缺登录/401/403 exit 3；404 exit 4；网络、503�
 #### Scenario: Preserve service boundary
 - **WHEN** 用户运行 work service create 或 update
 - **THEN** 仍是 usage error，本变更仅支持作为整个包恢复服务定义
-
-### Requirement: Manage Core packages from the operator CLI
-
-**Identifier:** CLI-PKG-001
-
-`piwork-serve` SHALL 提供以下命令，使用 operator 身份；全局 --core/--json 沿用现有解析：
-
-```text
-packages list
-packages show <name>
-packages install <source> [--default] [--wait] [--verbose]
-packages update <name> --source <source> [--wait] [--verbose]
-packages enable|disable|remove <name>
-config default-work show
-config default-work set [--package <name>]... [--no-packages]
-operation show <operation-id>
-```
-
-source SHALL 支持 PKG-001 四种形式，本地目录/ZIP 先按 PKG-003 上传。install --default SHALL 原子追加；default-work set --package SHALL 替换全部默认包，--no-packages 显式清空，两者互斥，均省略则保留原 packages。其他默认字段省略 SHALL 保留。operation show SHALL 只查询 Core package Operation，不提供 Work 内容读取。enable/disable/remove SHALL 同步返回结果，不接受 --wait。
-
-#### Scenario: Install each operator source
-- **WHEN** operator 分别使用 npm:spec、git:spec、本地目录或 .zip 执行 packages install --wait
-- **THEN** CLI 提交对应来源并等待原 Operation，成功时显示实际 name/version 和 enabled/default 状态
-
-#### Scenario: Update does not guess a source
-- **WHEN** operator 执行 packages update tools 却缺少 --source
-- **THEN** exit 2 且未发请求，不尝试重新读取历史本机目录
-
-#### Scenario: Observe a Core preparation failure
-- **WHEN** Core 包安装脚本失败，operator 使用 operation show 查询返回的 ID
-- **THEN** 显示持久 failed/stage/code，查询成功 exit 0，不泄露未经处理的脚本日志
 
 ### Requirement: Manage independent Work packages from the user CLI
 
@@ -667,7 +586,7 @@ install 的位置 source 与 --from-core <name> SHALL 恰选其一；update 的 
 
 **Identifier:** CLI-CORE-PROTOCOL-001
 
-用户客户端 SHALL 对普通业务命令、默认及显式 Desktop、Desktop 当前连接切换、默认 Core 保存/读取及 proxy 使用一致的 Core 协议准入：合法 HTTP 与 HTTPS origin 均可作为目标，不因目标是 loopback、局域网、公网、IP 或域名而拒绝 HTTP。该行为 SHALL 在 Windows 与 Linux 一致，不要求额外 flag、环境变量或确认步骤，不自动将 HTTP 改写为 HTTPS。
+用户客户端 SHALL 对普通业务命令、默认及显式 Desktop、Desktop 当前连接切换、默认 Core 保存/读取及 proxy 使用一致的 Core 协议准入：合法 HTTP 与 HTTPS origin 均可作为目标，不因目标是 loopback、局域网、公网、IP 或域名而拒绝 HTTP。该行为 SHALL 在 Linux 各命令入口一致，不要求额外 flag、环境变量或确认步骤，不自动将 HTTP 改写为 HTTPS。
 
 Core origin SHALL 沿用既有地址语法和规范化规则，拒绝缺失 scheme/host、不支持的协议、userinfo、非根路径、query、fragment 等非法地址。CLI 参数语法、帮助/版本/空 JSON 提前返回、地址优先级及无效高优先级地址不回退的契约 SHALL 保持。HTTP 地址不再属于协议准入错误；网络不可达、鉴权失败和服务端错误 SHALL 按原命令的失败/退出码契约处理。
 
@@ -675,7 +594,7 @@ Core origin SHALL 沿用既有地址语法和规范化规则，拒绝缺失 sche
 
 #### Scenario: 远程 HTTP 地址适用于所有客户端入口
 - **WHEN** 用户以合法远程 HTTP Core origin 调用普通命令、默认/显式 Desktop 或已登录的 proxy
-- **THEN** 客户端按原命令流程执行，不返回远程 HTTP usage 错误，不要求额外许可，不改写地址；Windows 与 Linux 一致
+- **THEN** 客户端按原命令流程执行，不返回远程 HTTP usage 错误，不要求额外许可，不改写地址；Linux 各命令入口一致
 
 #### Scenario: 地址来源不影响 HTTP 准入
 - **WHEN** 合法 HTTP Core 分别来自参数、环境、Desktop 默认配置或原凭证
@@ -701,7 +620,7 @@ Core origin SHALL 沿用既有地址语法和规范化规则，拒绝缺失 sche
 
 **Identifier:** CLI-SERVICE-PROXY-001
 
-`piwork-cli [--core <url>] proxy [--port <1..65535>]` SHALL 在原生模式前台监听`127.0.0.1`，默认17890；显式容器模式按 CLI-CONTAINER-001 监听容器内地址并保留宿主本机入口；启动前核验语法、当前用户凭证和Core service网关能力，并探测独立文件能力。Core URL SHALL 接受合法 HTTP 或 HTTPS origin，遵守 CLI-CORE-PROTOCOL-001，不因远程 HTTP 拒绝启动。启动成功 SHALL 输出代理地址、`/proxy.pac` URL及CLI-FILES-001规定的WebDAV信息；PAC SHALL 仅让符合默认Work域名形状的http/ws目标使用代理，其他目标DIRECT。
+`piwork-cli [--core <url>] proxy [--port <1..65535>]` SHALL 在 Linux 前台监听`127.0.0.1`，默认17890；启动前核验语法、当前用户凭证和Core service网关能力，并探测独立文件能力。Core URL SHALL 接受合法 HTTP 或 HTTPS origin，遵守 CLI-CORE-PROTOCOL-001，不因远程 HTTP 拒绝启动。启动成功 SHALL 输出代理地址、`/proxy.pac` URL及CLI-FILES-001规定的WebDAV信息；PAC SHALL 仅让符合默认Work域名形状的http/ws目标使用代理，其他目标DIRECT。
 
 service分支 SHALL 拒绝其他域名、HTTPS/wss、未登记域名和未声明端口，不修改系统代理、hosts或公网DNS。WebDAV SHALL 仅通过CLI-FILES-001定义的本地origin-form路径进入独立分支，不扩大service网关可转发目标。帮助无需凭证和网络；`--json`、非法或重复端口为usage错误exit 2，缺登录/确认的Core会话失效exit 3，必需Core service网关不可用exit 5，端口占用exit 6；启动失败不留监听进程。文件能力缺失按CLI-FILES-002降级。Ctrl+C SHALL 关闭两类连接并退出130，不停止Work。应用4xx/5xx及非会话文件错误不结束proxy。
 
@@ -761,12 +680,11 @@ proxy SHALL 在同一端口提供`http://127.0.0.1:<port>/works/<workId>/files/`
 - **WHEN** 仅安装CLI和通用WebDAV客户端的用户启动proxy
 - **THEN** 能通过Core访问文件，无需在客户端运行Docker、额外serve命令或本地service容器
 
-
 ### Requirement: 启动本地 Desktop WebUI
 
 **Identifier:** CLI-DESKTOP-001
 
-`piwork-cli [--core <url>] desktop [--port <1..65535>] [--no-open]` 及全局参数解析成功、无子命令且没有 `--json` 时的默认 Desktop 入口 SHALL 在原生模式前台启动仅监听 `127.0.0.1` 的本地 WebUI，默认端口 17891；原生模式默认打开系统浏览器，`--no-open` 仅输出本地打开地址。显式容器模式 SHALL 按 CLI-CONTAINER-001 提供宿主本机入口，并按 CLI-CONTAINER-DESKTOP-001 输出可直接打开的普通地址。地址 SHALL 使用受验证的 localhost 主机名；原生模式本机无需 Docker，容器交付使用已安装的 Docker；两种模式的本地 WebUI 均无需代理/PAC、hosts 编辑或安装本地站点证书。Desktop Core 地址 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存的 Desktop 默认地址、凭证 Core、`http://127.0.0.1:17871` 的优先级选择；参数与环境仅覆盖本次调用，普通业务命令仍按原地址优先级且不读取 Desktop 偏好；Core 可以使用合法 HTTP 或 HTTPS origin，不按目标位置限制 HTTP，遵守 CLI-CORE-PROTOCOL-001。普通地址 SHALL 不含浏览器入口 ticket 或其他授权片段；来源合法的浏览器自动建立必要会话，复用同 Core 的有效共享 CLI 凭据或进入正常登录。无登录或 Core 暂不可达 SHALL 仍可打开登录/连接页面和本地包 Inspect，不能借用其他 Core 的 token，不要求终端重新授权。
+`piwork-cli [--core <url>] desktop [--port <1..65535>] [--no-open]` 及全局参数解析成功、无子命令且没有 `--json` 时的默认 Desktop 入口 SHALL 在 Linux 前台启动仅监听 `127.0.0.1` 的本地 WebUI，默认端口 17891；默认打开系统浏览器，`--no-open` 仅输出本地打开地址。地址 SHALL 使用受验证的 localhost 主机名；本机无需 Docker，本地 WebUI 无需代理/PAC、hosts 编辑或安装本地站点证书。Desktop Core 地址 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、保存的 Desktop 默认地址、凭证 Core、`http://127.0.0.1:17871` 的优先级选择；参数与环境仅覆盖本次调用，普通业务命令仍按原地址优先级且不读取 Desktop 偏好；Core 可以使用合法 HTTP 或 HTTPS origin，不按目标位置限制 HTTP，遵守 CLI-CORE-PROTOCOL-001。普通地址 SHALL 不含浏览器入口 ticket 或其他授权片段；来源合法的浏览器自动建立必要会话，复用同 Core 的有效共享 CLI 凭据或进入正常登录。无登录或 Core 暂不可达 SHALL 仍可打开登录/连接页面和本地包 Inspect，不能借用其他 Core 的 token，不要求终端重新授权。
 
 启动前 SHALL 校验参数；未知参数、重复或非法端口、显式 Desktop 的 `--json` 返回 exit 2；端口占用返回 exit 6，资源缺失或监听失败返回 exit 5，不自动换端口或遗留半启动监听器。浏览器打开失败 SHALL 保持服务并打印手动打开地址；`--help` 不读取凭证或偏好、不启动监听、不访问网络。Ctrl+C SHALL 关闭本地连接、清理本次临时资源并退出 130，不停止 Work、不取消已经接受的 Core Operation/Run。平台会话失效 SHALL 回到登录状态而不退出 WebUI。既有 `proxy` 默认 17890、PAC、临时 WebDAV 密码及退出语义 SHALL 不变；Desktop 不要求先启动 proxy。
 
@@ -798,7 +716,7 @@ proxy SHALL 在同一端口提供`http://127.0.0.1:<port>/works/<workId>/files/`
 
 **Identifier:** CLI-DESKTOP-002
 
-`piwork-cli desktop open [--port <1..65535>] [--no-open]` SHALL 连接同一系统用户拥有的既有 Desktop，默认端口 17891，不新建监听实例、不连接 Core、不读取平台凭证、不改变该实例当前 Core。成功输出当前实例准确本机 origin 的普通地址，不含 ticket、证明或账号秘密；原生模式默认打开浏览器，`--no-open` 只打印地址。显式容器模式不尝试打开容器内部浏览器，地址及 exit 0 仍返回当前调用者；发行说明要求使用 `--no-open` 并在宿主浏览器手动打开。调用不依赖工作目录、`PIWORK_CONFIG_PATH` 或 Core 环境配置。该形式不接受全局 `--core` 或 `--json`、未知 flag、重复 flag、额外参数及非法端口；语法错误 exit 2，help exit 0 均先于文件/网络操作。
+`piwork-cli desktop open [--port <1..65535>] [--no-open]` SHALL 连接同一系统用户拥有的既有 Desktop，默认端口 17891，不新建监听实例、不连接 Core、不读取平台凭证、不改变该实例当前 Core。成功输出当前实例准确本机 origin 的普通地址，不含 ticket、证明或账号秘密；原生模式默认打开浏览器，`--no-open` 只打印地址。调用不依赖工作目录、`PIWORK_CONFIG_PATH` 或 Core 环境配置。该形式不接受全局 `--core` 或 `--json`、未知 flag、重复 flag、额外参数及非法端口；语法错误 exit 2，help exit 0 均先于文件/网络操作。
 
 open SHALL 只是可选的地址发现/浏览器打开操作，不签发、轮换或兑换浏览器入口授权；任何来源合法的新浏览器均可直接打开该普通地址。多次 open 不改变现有浏览器会话或平台身份。成功 exit 0，浏览器打开失败仍输出手动地址并 exit 0；实例不存在或已退出 exit 4，本机通道权限/安全校验拒绝 exit 3，协议不兼容或超时 exit 5。错误 stdout 为空，stderr 提供安全原因与下一步，不输出秘密、堆栈或任意路径；没有实例时不自动启动另一实例。Ctrl+C 结束 open 的本地等待不终止服务实例；原 `desktop` 的端口占用 exit 6 保持。
 
@@ -867,54 +785,6 @@ Desktop 本地后端 SHALL 按当前 Core/账号/Work 验证请求、转发模�
 #### Scenario: 身份改变时晚返回
 - **WHEN** 请求在旧 Core/账号下发出，返回前用户切换身份
 - **THEN** 旧内容不进入新身份、不释放新动作的锁，同身份已接受结果仍可按原 ID 找回
-
-### Requirement: 显式容器模式兼容本机发布端口
-
-**Identifier:** CLI-CONTAINER-001
-
-CLI SHALL 仅在 `PIWORK_CLI_CONTAINER_MODE=1` 时启用容器模式；未设置、空值或 `0` 保持原生模式。需要解析该模式的 Desktop/proxy/open 入口遇到其他值 SHALL 在本地资源/网络操作前返回 usage exit 2；help/version 和普通不使用本地监听/浏览器的业务命令不因此改变。
-
-容器模式 Desktop/proxy SHALL 监听容器内 `0.0.0.0`，公开 URL 继续使用同机 `desktop.localhost` 或既有 `127.0.0.1` proxy/WebDAV 地址，内外端口一致；原生模式保持原 loopback 监听。本机 Host、Origin、CSRF、自动建立的普通浏览器会话、WebDAV 临时 Basic 和平台鉴权 SHALL 保持；Desktop 不要求启动票据或本机浏览器授权。proxy 对端可来自 Docker 转发路径，不依据该模式信任请求中的 Forwarded/X-Forwarded-*，PAC 和文件入口依然限定准确本地 Host，拒绝跨站来源。容器模式只适用于宿主 loopback 发布和可信本地 Docker 管理者，不承诺独立容器网络的其他参与者可信，也不作为开放网络代理。
-
-#### Scenario: Windows Desktop 端口转发
-- **WHEN** Linux CLI 容器开启容器模式，宿主将 17891 仅发布到 127.0.0.1
-- **THEN** 同机 Windows 浏览器可直接打开普通地址，复用有效共享登录或进入正常账号登录，不因 Docker 转发后的 TCP 对端不是 loopback 而拒绝正常入口
-
-#### Scenario: 未开启容器模式的原生 CLI
-- **WHEN** 原生 CLI 不设置此 env，或设置为 0
-- **THEN** 本地监听仍仅绑定 127.0.0.1，原有 proxy loopback 对端限制及浏览器打开行为保持
-
-#### Scenario: 伪造本地来源
-- **WHEN** 请求使用错误 Host/跨站 Origin，或通过 Forwarded/X-Forwarded-* 伪造 loopback
-- **THEN** 来源校验拒绝，不创建普通浏览器会话、不借用平台 token、不转发文件请求
-
-#### Scenario: 无效模式与帮助
-- **WHEN** 模式值为 true 或 2 时执行 Desktop/proxy 启动，随后只请求 help/version
-- **THEN** 前者 exit 2 且无监听/资源副作用，后者按既有无 I/O 帮助/版本契约成功
-
-### Requirement: 在运行容器内重新打开与清理 Desktop
-
-**Identifier:** CLI-CONTAINER-DESKTOP-001
-
-容器模式 Desktop 启动 SHALL 不尝试打开容器内浏览器；主进程 stdout/stderr SHALL 输出宿主本机可直接打开的普通 origin，不输出入口 ticket、Core token 或密码。发行说明 SHALL 直接引导宿主浏览器访问该地址，不要求 `docker exec` 或 `desktop open` 取得授权。普通合法来源自动建立必要会话，并按同 Core 的有效共享 CLI 凭据或正常账号登录继续。容器内 `desktop open --no-open` 继续作为可选地址发现操作，返回同一普通地址。
-
-容器内 open/logout SHALL 使用已有同用户私有控制通道、实例绑定和退出语义；执行方必须在目标 Desktop 容器中且使用同一有效 UID。另起仅共享凭证卷的容器不得因此成为目标实例的控制调用者。重新创建容器后 SHALL 创建新的控制实例身份，旧控制路径和普通浏览器会话不用于新实例；新页面会话自动建立，平台保存凭据按原规则继续可用。服务健康检查 SHALL 不创建浏览器会话、不修改账号状态，不需要 Core 在线。
-
-#### Scenario: 正常启动并手动打开
-- **WHEN** CLI 容器主进程启动 Desktop，用户在宿主浏览器打开输出的普通地址
-- **THEN** 无需额外 exec/open 命令即可正常登录或使用有效共享 Core 登录，主日志不含 token 或授权 ticket
-
-#### Scenario: 链接过期或丢失
-- **WHEN** 用户没有旧启动链接但 CLI 容器仍运行，或在同容器执行 open --no-open
-- **THEN** 可直接打开普通 origin，open 也只返回普通地址；其他容器的 open 不能控制该实例，浏览器不出现 Access 门禁
-
-#### Scenario: 无浏览器 Cookie 注销
-- **WHEN** 用户在目标容器中执行 desktop logout
-- **THEN** 按原实例注销契约撤销旧平台内容授权、尝试远端注销和条件清理，不停止 Work/Run/Operation
-
-#### Scenario: 主进程重建
-- **WHEN** 用户保留状态卷并重建 CLI 容器，再打开普通地址
-- **THEN** 自动建立当前实例的普通浏览器会话，保存登录按原规则核验并继续，不能复用旧控制实例身份，也不需要新的授权链接
 
 ### Requirement: 原生用户 CLI 的操作和恢复入口
 
@@ -997,118 +867,17 @@ piwork-cli work start <importedWorkId> --wait
 
 **Identifier:** CLI-PLATFORM-001
 
-客户端 SHALL 支持 Windows/Linux 原生入口和任意工作目录，不依赖源码、相邻 WebUI、Go/Node/Python/Docker。Desktop 默认与显式入口按 --core、PIWORK_CORE_URL、独立偏好、凭证 Core、默认地址选择；业务 CLI 不读偏好。偏好保存/清除只影响后续启动，不切换连接或清凭据，响应未知先读回，损坏不静默回退。
+客户端 SHALL 支持 Linux 原生入口和任意工作目录，不依赖源码、相邻 WebUI、Go/Node/Python/Docker。Desktop 默认与显式入口按 --core、PIWORK_CORE_URL、独立偏好、凭证 Core、默认地址选择；业务 CLI 不读偏好。偏好保存/清除只影响后续启动，不切换连接或清凭据，响应未知先读回，损坏不静默回退。
 
-凭证路径 SHALL 按 PIWORK_CONFIG_PATH、显式 XDG_CONFIG_HOME、平台 UserConfigDir 选择；帮助/版本/离线 inspect 不创建状态。偏好为独立 v1 文件和锁，最大 64 KiB。Linux 保留 owner/0700/0600/flock；Windows 使用当前 SID/LocalSystem 受保护 DACL、固定目录 handle、拒绝 reparse/hardlink 和宽泛 ACL，不自动放宽权限。并发原子发布只读旧/新完整内容，不承诺所有设备物理断电；缺少变更序号时核对摘要，不以大小/mtime 不变证明同字节。未知容量、身份或进程存活不授权上传/清理。
+凭证路径 SHALL 按 PIWORK_CONFIG_PATH、显式 XDG_CONFIG_HOME、平台 UserConfigDir 选择；帮助/版本/离线 inspect 不创建状态。偏好为独立 v1 文件和锁，最大 64 KiB。保留 Linux owner/0700/0600/flock，拒绝不安全权限、链接和额外硬链接，不自动放宽权限。并发原子发布只读旧/新完整内容，不承诺所有设备物理断电；缺少变更序号时核对摘要，不以大小/mtime 不变证明同字节。未知容量、身份或进程存活不授权上传/清理。
 
-可信 desktop open/logout SHALL 使用私有实例控制并与 cwd、Core 环境及凭证路径无关，不接受 --core；Linux peer UID/Unix socket 和 Windows SID/PID/创建时间/named pipe 隔离保持。端口占用 exit 6，不自动换端口；关闭浏览器不退出，Ctrl+C/Ctrl+Break 有界收尾，强杀不保证回调。
+可信 desktop open/logout SHALL 使用私有实例控制并与 cwd、Core 环境及凭证路径无关，不接受 --core；Linux peer UID/Unix socket 隔离保持。端口占用 exit 6，不自动换端口；关闭浏览器不退出，Ctrl+C 有界收尾，强杀不保证回调。
 
-Windows 来源 SHALL 支持相对、盘符绝对、UNC、中文/空格，拒绝盘符相对、设备名、ADS、junction 与危险组件。普通目录模式为协议 0644/0755，不按扩展名猜执行位；需要执行位使用原协议 ZIP；离线 .work 不解压执行。客户端构建 SHALL 固定 Go 1.25.5/Node 24/CGO=0，独立编译 Desktop 和各目标，真实 build.json 记录 commit/dirty/目标/摘要；候选与 Windows 实机正式通过分别记录。
+Linux 本地来源与归档安全遵守 CLI-PORT-005；离线 .work 不解压执行。客户端构建 SHALL 固定 Go 1.25.5/Node 24/CGO=0，独立编译 Desktop 和 Linux 目标，真实 build.json 记录 commit/dirty/目标/摘要；候选与 Linux 实际运行通过分别记录。
 
 #### Scenario: 按现行契约操作与核对
 - **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
 - **THEN** 操作、边界、拒绝及恢复遵循上述契约，不依赖已移除的开发手册；历史版本描述不覆盖当前有效 Spec
-
-以下为已有操作/验证入口的示例，使用实际返回 ID 和隔离测试资源；命令存在不表示本次已执行或验收通过。源码构建使用 Go 1.25.5、Node 24，容器/浏览器专项须预备相应依赖。
-
-```sh
-piwork-cli                          # 默认启动 Desktop
-piwork-cli --core http://<core-host>:17871  # HTTP 默认入口
-piwork-cli --core http://core.example:17871 desktop --no-open
-piwork-cli --core https://core.example
-piwork-cli --help                   # 显式查看原业务命令
-piwork-cli help
-piwork-cli --json                   # 只输出帮助，不启动 Desktop
-piwork-cli desktop --port 17901 --no-open
-piwork-cli desktop open --port 17901 --no-open
-piwork-cli desktop logout --port 17901
-```
-
-```sh
-piwork-cli --core http://core.example:17871 status
-piwork-cli --core http://core.example:17871 proxy  # 先在这个 origin 登录
-PIWORK_CORE_URL=http://core.example:17871 piwork-cli
-```
-
-```powershell
-$env:PIWORK_CORE_URL = 'http://core.example:17871'
-.\piwork-cli.exe
-```
-
-```powershell
-.\piwork-cli.exe work packages install <workId> '.\本地 包' --wait
-.\piwork-cli.exe work packages install <workId> 'C:\Packages\package.zip' --wait
-.\piwork-cli.exe work packages install <workId> '\\server\share\package.zip' --wait
-```
-
-```sh
-npm ci
-npm run build:cli
-# 或 make build-cli
-node scripts/build-cli.mjs --target windows/amd64 --target linux/amd64
-```
-
-```text
-dist/cli/linux-amd64/piwork-cli
-dist/cli/linux-amd64/build.json
-dist/cli/windows-amd64/piwork-cli.exe
-dist/cli/windows-amd64/build.json
-```
-
-```sh
-go test -mod=readonly ./internal/clientfs ./internal/client ./internal/cli ./internal/pipackage
-go list -deps ./cmd/piwork-cli
-```
-
-```sh
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -mod=readonly -c -o clientfs.test.exe ./internal/clientfs
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -mod=readonly -c -o client.test.exe ./internal/client
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -mod=readonly -c -o cli.test.exe ./internal/cli
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -mod=readonly -c -o pipackage.test.exe ./internal/pipackage
-```
-
-```powershell
-.\clientfs.test.exe -test.v -test.timeout=90s
-.\client.test.exe -test.v -test.timeout=90s
-```
-
-```sh
-go build -mod=readonly -o storage-fixture scripts/check-cli-storage-fixture.go
-./storage-fixture --create --directory <新的哨兵目录>
-# 保存返回的 owner；以 owner 启动本次 Desktop，保持控制通道存活。
-# 再以另一普通账号执行：
-./storage-fixture --probe-other-user --directory <哨兵目录> --owner <owner> --control <活跃通道>
-```
-
-```sh
-go build -mod=readonly -o credential-fixture.exe scripts/check-cli-credential-fixture.go
-# Windows 设置 PIWORK_TEST_CREDENTIAL_FIXTURE 为该 helper 的绝对路径。
-npm run test:browser -w @piwork/desktop-webui
-```
-
-```sh
-node scripts/check-cli-platform.mjs --build dist/cli/linux-amd64 --report dist/cli/linux-amd64/native-evidence.json --fixtures <原生fixture配置.json>
-```
-
-```json
-{
-  "version": 1,
-  "scenarios": {
-    "core-command-families": { "command": "native-core-fixture", "args": ["--scenario", "core-command-families"] },
-    "core-packages-snapshots": { "command": "native-core-fixture", "args": ["--scenario", "core-packages-snapshots"] }
-  }
-}
-```
-
-```json
-{"id":"core-command-families","status":"pass","sha256":"本次候选摘要","target":"linux/amd64","diagnostic":"已执行的非敏感断言说明"}
-```
-
-```sh
-go run -mod=readonly scripts/package-cli-release.go --build dist/cli/linux-amd64 --evidence dist/cli/linux-amd64/native-evidence.json --output dist/cli-release
-# 在 Windows 原生验收后可在构建机打包其 PE：
-go run -mod=readonly scripts/package-cli-release.go --build dist/cli/windows-amd64 --evidence <Windows原生报告.json> --output dist/cli-release
-```
 
 ### Requirement: 文件能力独立降级并保持 service 代理
 
@@ -1263,3 +1032,49 @@ JSON 模式 export/download 成功 SHALL 在 stdout 恰输出一个 `{exportId,c
 #### Scenario: 旧结果已经完成后核对接受事实
 - **WHEN** 原受理响应曾丢失，客户端随后核对已有大最终结果的原提交键或显式重放同键同内容
 - **THEN** 返回同一 Run 的有界接受事实，必要结果通过分片读取，原摘要和幂等命中不改变
+
+### Requirement: 原生用户客户端一致选择 Core 地址
+
+系统 SHALL 提供 Linux 原生 piwork-cli 用户客户端。业务 Core 地址按显式 --core、PIWORK_CORE_URL、保存凭证中的 Core、默认 http://127.0.0.1:17871 的顺序解析。operator 身份与受保护 API 保留，但旧 operator 命令及其地址/env-file 解析 SHALL 删除。
+
+默认或显式 Desktop 启动 SHALL 按显式 `--core`、`PIWORK_CORE_URL`、Desktop 默认 Core 配置、保存凭证中的 Core、相同 loopback 默认值的顺序解析。参数和环境变量 SHALL 仅影响本次启动，不自动保存。业务 CLI SHALL 不读取 Desktop 偏好；`desktop open/logout` SHALL 继续只选择既有本机实例，不重新解析 Core。
+
+Desktop 默认配置不存在 SHALL 回退到原凭证/默认值，不要求迁移旧凭证。需要读取的配置损坏、版本不支持、地址字段非法、超过大小限制或无法安全访问 SHALL 返回 exit 1 和安全恢复方向，保留原文件，不静默改连其他 Core；已由参数或环境选定地址时 SHALL 不读取无须使用的 Desktop 偏好。通过参数、环境或旧凭证选定的地址无效 SHALL 返回 exit 2，不继续尝试低优先级地址。凭证仅 SHALL 用于与其 Core origin 相同的请求。
+
+用户 CLI、operator API 调用方和独立 Desktop 后端 SHALL 直接访问 Core HTTP 服务，不能要求先启动或经由 ControlPlane 17891。默认端口变化不得迁移已有凭据 origin、改写显式地址、试探旧端口或把连接失败转成浏览器登录；选定旧地址不可达时提供显式配置当前 Core 后重新登录的方向。远程 Core 的可达性由部署监听决定，不由客户端自动修改服务器。
+
+#### Scenario: Use the user client endpoint
+- **WHEN** 用户运行业务 CLI 且未提供显式地址
+- **THEN** 使用 `PIWORK_CORE_URL`、保存凭证中的地址或 loopback 默认值；Desktop 默认配置不影响该选择
+
+#### Scenario: Override the Core URL explicitly
+- **WHEN** 用户提供 `--core <url>`，另有环境、Desktop 配置或保存凭证地址
+- **THEN** 业务 CLI 或 Desktop 使用显式地址；Desktop 启动不覆盖持久配置，不把另一 Core 的 token 发给该地址
+
+#### Scenario: Reuse the saved endpoint
+- **WHEN** 没有显式或环境地址，业务 CLI 有保存凭证，或 Desktop 没有默认配置但有保存凭证
+- **THEN** 使用该凭证的 Core 地址，不重写或迁移凭证
+
+#### Scenario: Desktop 默认地址和旧凭证并存
+- **WHEN** Desktop 配置 Core B，凭证属于 Core A，且没有参数或环境覆盖
+- **THEN** Desktop 连接 B 并呈现未登录状态，不发送 A 的 token；业务 CLI 仍解析为 A
+
+#### Scenario: 退出登录后保留 Desktop 默认配置
+- **WHEN** 用户保存 Desktop 默认 Core 后清理当前登录，随后重新启动
+- **THEN** 仍选择保存的 Core，不因凭证删除回到 loopback，不恢复已清理的 token
+
+#### Scenario: 缺失、损坏和被覆盖的配置
+- **WHEN** 默认配置不存在、需要读取的配置损坏，或参数/环境已经覆盖损坏配置
+- **THEN** 分别使用原有回退、返回 exit 1 且不监听、或按覆盖地址正常启动；损坏文件均不被自动删除
+
+#### Scenario: 无效高优先级地址
+- **WHEN** 参数、环境或保存配置给出不合法 Core origin
+- **THEN** 拒绝选定地址，不悄悄使用凭证或 loopback，不泄漏 token
+
+#### Scenario: 无历史配置直接使用新 Core
+- **WHEN** 同机客户端没有显式地址、环境覆盖、相关偏好或保存凭据
+- **THEN** 连接 127.0.0.1:17871，使用原用户或 operator 身份，不访问 17891
+
+#### Scenario: 已保存旧端口
+- **WHEN** 保存凭据或 Desktop 偏好仍指向已停止的 7171
+- **THEN** 报告所选地址不可达，不把旧 token 转发到 17871 或其他发现的服务；用户可显式选择新 Core 并正常登录

@@ -6,116 +6,6 @@
 
 ## Requirements
 
-### Requirement: Provide a dedicated operator control plane
-
-**Identifier:** SERVE-CTRL-001
-
-系统 SHALL 提供名为 `piwork-serve` 的部署与控制面 CLI。该 CLI SHALL 能连接正在运行的 Core，查询健康与初始化状态，完成管理员、用户、Core-managed Skills、全局默认运行时和默认 Work configuration 管理；它 MUST NOT 读取或返回 Work 用户会话正文、Run 输出、模型 secret 明文或普通用户不可见的 Skill 文件。默认 Work configuration SHALL 只能通过 operator 控制面或已启用管理员的受保护管理 API 读取和修改，并 SHALL 使用 Skill name 而非导入 path 选择多个默认 Skills。
-
-operator 控制面 SHALL 额外提供 PKG-004 的 Core package catalog/default lifecycle 及只限 Core package Operation 的查询。普通 user credential 不得写 /control/packages/default-work；operator credential 不得借 Core operation 查询读取用户 Work package/Session 数据。default-work packages 使用 manifest name，支持替换列表、显式空集合及省略保持；flag 更新必须原子合并未指定字段。
-
-新增管理员 API SHALL 复用上述管理领域能力，使用登录管理员身份，继续排除其他用户 Work 会话正文和 Run 输出。除 CST-HTTP-BOUNDARY-001 对首次 bootstrap 的单用途委托外，原 /control/* 的 operator 凭证要求及 CLI 与用户客户端的分工 SHALL 保持；管理员 bearer 通过独立 /api/v1/admin/* 管理接口使用，不直接访问 /control/*。
-
-operator SHALL 直连 Core 17871，默认 `http://127.0.0.1:17871`，不经浏览器 ControlPlane 17891。网页首次创建的内部委托仅可调用既有 bootstrap 路由，不是 operator 身份，不可访问用户/配置/Skill/package 管理；正常网页登录和管理仍使用真实用户/admin bearer。
-
-#### Scenario: Operator controls an initialized Core
-- **WHEN** 部署者使用 `piwork-serve status`、`admin`、`skills` 或 `config` 连接 Core
-- **THEN** CLI 返回对应的控制面状态或变更结果，并使用独立的 operator 身份完成授权
-
-#### Scenario: Operator manages a Skill path
-- **WHEN** operator 执行 `piwork-serve skills add --path <directory>` 或其他已定义的 Skill 生命周期命令
-- **THEN** Core 执行授权操作，以规范化目录 basename 返回 Skill name 及公开管理状态，不解析 `SKILL.md`、披露或保存完整来源路径
-
-#### Scenario: Operator updates the default Work configuration
-- **WHEN** operator 执行 `piwork-serve config default-work set` 并使用重复的 `--skill <skill-name>`、`--no-skills`、`--base-image` 或 `--agents-md-file`
-- **THEN** Core 原子保存结果且不要求或返回公开 revision；省略 Skill 选项时保留当前选择，AGENTS 保存内容而非来源路径
-
-#### Scenario: Default changes do not mutate existing Works
-- **WHEN** Work A 已存在后，operator 修改默认 Skills、AGENTS 内容或 base image
-- **THEN** Work A 的 active 和 desired context 副本保持不变，仅后续创建的 Work 使用新默认值
-
-#### Scenario: Operator client is not a user client
-- **WHEN** 操作者尝试使用 `piwork-serve` 执行用户登录、创建用户 Work 或发送对话
-- **THEN** CLI 拒绝该命令并提示使用 `piwork-cli`
-
-#### Scenario: Read a Core package operation
-- **WHEN** operator 查询 Core install 返回的 Operation
-- **THEN** 返回安全阶段/结果；给同接口传 Work Operation ID 不得泄露 Work 数据
-
-#### Scenario: Keep unrelated defaults on package edit
-- **WHEN** operator 只更新默认 packages，同时其他请求修改默认模型
-- **THEN** 两项提交不因客户端旧快照互相覆盖，默认 Skill/AGENTS 等省略字段保留
-
-#### Scenario: 管理员使用稳定管理 API
-- **WHEN** 已启用管理员通过 /api/v1/admin/default-work 修改默认配置
-- **THEN** Core 授权该管理操作并保持原有默认与已有 Work 隔离语义，普通 user 会话仍被拒绝
-
-#### Scenario: 面板未启动仍能使用控制面
-- **WHEN** 独立面板进程停止或尚未启动
-- **THEN** piwork-serve 的 operator 管理、Core 健康与后台任务仍可独立运行
-
-### Requirement: Keep Core reachable before initialization
-
-**Identifier:** SERVE-START-001
-
-`piwork-serve serve` SHALL 在管理员或全局默认运行时尚未配置时仍启动健康 HTTP 服务。Readiness SHALL 返回稳定的初始化原因，例如 `ADMIN_REQUIRED`、`RUNTIME_NOT_CONFIGURED` 或 `RUNTIME_UNAVAILABLE`；需要管理员或运行时的业务操作 SHALL 返回可操作的错误，而不是使进程退出。Default Work configuration SHALL be independently reported as missing or invalid when it is required for Work creation.
-
-默认 packages=[] SHALL 是新 V1 的有效初始值。package preparation 若缺少有效默认 agent 环境或 Docker 不可用，SHALL 返回明确运行依赖错误且不使 Core 退出；已有包库 list/show 与健康查询仍可用。默认引用缺失、disabled、重复或超过 64 个 SHALL 原子拒绝，不覆盖既有默认配置。
-
-#### Scenario: Start an empty installation
-- **WHEN** 操作者在空数据目录运行 `piwork-serve serve`
-- **THEN** Core 监听成功，`/healthz` 成功，`/readyz` 返回非 ready 的管理员初始化原因，且不会创建默认 Work
-
-#### Scenario: Complete initialization while Core is running
-- **WHEN** 操作者通过 `piwork-serve admin bootstrap` 创建管理员并通过 `piwork-serve config set` 保存有效默认配置
-- **THEN** Core 更新健康与 readiness 状态，在 Docker 可用时进入 ready，后续 Work 创建可用
-
-#### Scenario: Reject an invalid default Work configuration
-- **WHEN** an operator attempts to save a missing, disabled, duplicate, or unusable Skill name, an invalid base image, or an unreadable AGENTS file
-- **THEN** the control plane returns a field-specific validation error, leaves the previous default configuration unchanged, and keeps Core serving health endpoints
-
-#### Scenario: Clear default Skills explicitly
-- **WHEN** an operator invokes `config default-work set --no-skills`
-- **THEN** Core stores an empty default Skill selection without altering unrelated default fields, and rejects combining `--no-skills` with any `--skill`
-
-#### Scenario: Reject preparation before runtime setup
-- **WHEN** operator 在 agent environment 未配置时安装 package
-- **THEN** 返回可操作运行依赖错误，无第三方脚本在 Core 执行，健康服务保持可用
-
-#### Scenario: Clear package defaults independently
-- **WHEN** operator 执行 default-work set --no-packages
-- **THEN** 只清空默认 packages，不禁用或删除 catalog 包，不更改 Skills 或已有 Work
-
-### Requirement: Initialize selected environment files safely
-
-`piwork-serve serve` SHALL 支持显式 `--env-file <path>`，解析 `.env`、`.env.test` 等键值文件。首次初始化时可使用文件中的管理员和默认运行时字段；已有持久管理员、默认配置或 CLI 凭证 MUST NOT 被重启时的 env 文件覆盖。密钥不得出现在日志、普通输出或 API 响应中。
-
-#### Scenario: Bootstrap from `.env.test`
-
-- **WHEN** 空数据目录通过 `--env-file .env.test` 启动，文件包含有效管理员和模型配置
-- **THEN** Core 创建管理员和默认运行时配置后继续监听，且不创建默认 Work
-
-#### Scenario: Preserve persisted state on restart
-
-- **WHEN** 已有数据目录使用不同管理员密码或模型配置再次通过同一个 env 文件启动
-- **THEN** Core 保留持久化状态，env 文件只补齐缺失状态或报告不可用配置，不覆盖已有值
-
-### Requirement: Separate operator and user credentials
-
-Core SHALL 为 `piwork-serve` 提供仅限本机控制面的 operator credential，并将其与 `piwork-cli` 的用户登录 token 分开存储、校验和撤销。operator credential MUST 使用当前用户可读的保护权限，不能授权用户 Work 对话内容。
-
-网页初始化的进程内委托仅按 CST-HTTP-BOUNDARY-001 使用既有 bootstrap 路由；它 SHALL NOT 读取、替代或暴露 operator credential，也不得用于本 Requirement 的一般控制命令。
-
-#### Scenario: Use operator credential for control commands
-
-- **WHEN** `piwork-serve admin` 或 `piwork-serve config` 连接 Core
-- **THEN** Core 接受有效 operator credential，并拒绝缺少或属于 `piwork-cli` 用户会话的凭证
-
-#### Scenario: Reject unsafe operator credential storage
-
-- **WHEN** operator credential 路径是符号链接或可被其他用户读取
-- **THEN** Core 拒绝使用该凭证并报告安全错误
-
 ### Requirement: 当前平台独立使用 Go 交付并禁止旧 TS Core 依赖
 
 **Identifier:** GO-DELIVERY-001
@@ -152,78 +42,86 @@ PiSDK/Agent、脑包 extension、浏览器和开发机验证驱动可以继续�
 - **WHEN** 接口和单元测试通过，但实际能力采用或独立导入回路未通过
 - **THEN** change 不得完成、归档或声明完整交付
 
-### Requirement: 独立 Console 的部署与浏览器恢复
+### Requirement: 保留独立 operator 管理 API 与身份边界
 
-**Identifier:** SCTRL-OPS-001
+**Identifier:** SERVE-CTRL-001
 
-Console SHALL 是同机独立 HTTPS 进程，仅连接 Core loopback API；浏览器可远端访问，停止 Console 不停止 Core 或已接受 Operation。public-origin 必须匹配实际 HTTPS origin 和监听端口，证书覆盖主机，私钥只允许 owner 读取。默认 Core 127.0.0.1:17871、监听 0.0.0.0:7173，数据目录 .piwork/console。Core 不可达仍显示登录页及真实可用性，不提供 bootstrap。
+Core SHALL 保留独立 operator 控制面及受保护 /control/* API，用于初始化、用户、Core Skills/packages、Runtime、默认 Work 和 Core package Operation 管理。operator 身份、凭证生成/校验和用户权限隔离保持；系统不再提供 piwork-serve 或其他 operator 管理命令适配层。默认日常管理入口是 Core 内嵌 UI，管理员 bearer 使用独立 /api/v1/admin/* API，共享管理领域能力。
 
-仅管理员 SHALL 能登录，普通用户由 CLI 管理自己的 Work。浏览器只持 Secure/HttpOnly/SameSite=Strict 会话 Cookie，Core bearer 在 Console 内存，重启重新登录。Overview/User access/Work setup/AI models 与辅助 Find operation 保持当前导航和深链接，未知写入先读回，默认配置只影响后续 Work。
+operator 和管理员 SHALL NOT 读取他人 Work 会话正文、Run 输出、模型 secret 明文或非公开 Skill 文件；Core Operation 查询只限 Core package，不接受 Work Operation ID 绕过授权。默认 Skills/packages 使用公开名称，列表替换、显式空集合及省略保持原有语义，字段更新原子合并未指定项，不修改既有 Work 副本。
 
-界面资源 SHALL 嵌入 Go 程序；修改 UI 后构建对应 WebUI、重新构建并重启 Console，单纯刷新不能装入新构建。Package Operation 只按已知 ID 恢复，不伪造全局历史；观察中断不取消或新键重提，Work scope ID 不作为管理 Operation 展示。
+operator API SHALL 直连 Core HTTP 端口，不经 UI 通用代理。网页首次创建的 Setup 委托只允许既有 bootstrap 路由，不是 operator 身份，不能访问其他管理接口；正常网页登录/管理使用真实用户/admin bearer。
 
-#### Scenario: 按现行契约操作与核对
-- **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
-- **THEN** 操作、边界、拒绝及恢复遵循上述契约，不依赖已移除的开发手册；历史版本描述不覆盖当前有效 Spec
+#### Scenario: 移除命令后 operator API 仍有效
+- **WHEN** 有效 operator credential 调用受保护管理 API
+- **THEN** 请求按原权限执行并返回安全结果，用户 token 不因此获得 operator 权限
 
-以下为已有操作/验证入口的示例，使用实际返回 ID 和隔离测试资源；命令存在不表示本次已执行或验收通过。源码构建使用 Go 1.25.5、Node 24，容器/浏览器专项须预备相应依赖。
+#### Scenario: 管理默认配置
+- **WHEN** operator 或管理员通过各自管理 API 修改默认 Skills/packages 或其他字段
+- **THEN** 原子合并，省略项保留，仅后续 Work 使用新默认值，已有 Work 副本不变
 
-```bash
-make build-go
-./dist/go/piwork-console serve \
-  --core http://127.0.0.1:17871 \
-  --listen 0.0.0.0:7173 \
-  --public-origin https://console.example.com:7173 \
-  --tls-cert /etc/piwork/console-cert.pem \
-  --tls-key /etc/piwork/console-key.pem \
-  --data-dir "$PWD/.piwork/console"
-```
+#### Scenario: 查询 Core Operation
+- **WHEN** operator 查询 Core package Operation 或试图查询 Work scope Operation
+- **THEN** 前者返回安全阶段/结果，后者不能泄露用户 Work 数据
 
-```bash
-mkdir -p .piwork/console-preview
-openssl req -x509 -newkey rsa:2048 -nodes -days 7 \
-  -keyout .piwork/console-preview/key.pem \
-  -out .piwork/console-preview/cert.pem \
-  -subj '/CN=127.0.0.1' -addext 'subjectAltName=IP:127.0.0.1'
-chmod 600 .piwork/console-preview/key.pem
-PIWORK_PREVIEW_CERT="$PWD/.piwork/console-preview/cert.pem"
-PIWORK_PREVIEW_KEY="$PWD/.piwork/console-preview/key.pem"
-make build-go
-./dist/go/piwork-console serve \
-  --core http://127.0.0.1:17871 \
-  --listen 127.0.0.1:7173 \
-  --public-origin https://127.0.0.1:7173 \
-  --tls-cert "$PIWORK_PREVIEW_CERT" \
-  --tls-key "$PIWORK_PREVIEW_KEY" \
-  --data-dir "$PWD/.piwork/console-preview/data"
-```
+#### Scenario: UI 与身份边界
+- **WHEN** 浏览器进行管理或首次创建管理员
+- **THEN** 分别使用管理员 bearer 或单用途 Setup 委托，不读取 operator credential，不开放 /control 通用代理
 
-### Requirement: operator 设置全局 Runtime 使用固定发行镜像
+### Requirement: 初始化前保持 Core 和网页可达
+
+**Identifier:** SERVE-START-001
+
+piwork-core SHALL 在管理员或默认运行时缺失时提供健康 HTTP 与网页引导。Readiness 如实报告 ADMIN_REQUIRED、RUNTIME_NOT_CONFIGURED、RUNTIME_UNAVAILABLE 及需要的默认 Work 配置状态；业务请求返回可操作错误，不使进程退出或创建默认 Work。
+
+默认 packages=[] SHALL 是有效初始值。运行环境缺失时 preparation 明确失败，库查询/健康仍可用；默认引用缺失、禁用、重复或超过 64 个须原子拒绝，不覆盖旧配置。默认 Skills、AGENTS 和 base image 继续执行原字段校验，省略保留、显式清空只影响目标字段。
+
+#### Scenario: 空安装在线初始化
+- **WHEN** 启动 piwork-core 后在网页创建管理员并保存 Runtime
+- **THEN** 无需命令初始化或重启；健康持续可用，实际依赖就绪后更新 readiness
+
+#### Scenario: 无效默认值
+- **WHEN** operator 或管理员 API 提交缺失、禁用、重复或不可用 Skill/package 及非法配置
+- **THEN** 返回字段错误并保留旧默认值，Core 继续服务
+
+#### Scenario: 独立清空与准备失败
+- **WHEN** 管理 API 显式清空默认 packages/Skills，或在运行依赖缺失时安装包
+- **THEN** 清空仅修改目标集合，不改已有 Work；安装安全报告运行依赖错误，不在 Core 执行第三方脚本
+
+### Requirement: 保持 operator 与用户凭证隔离
+
+Core SHALL 为 operator 控制面保留独立 operator credential，并将其与 `piwork-cli` 的用户登录 token 分开存储、校验和撤销。operator credential MUST 使用当前用户可读的保护权限，不能授权用户 Work 对话内容。
+
+网页初始化的进程内委托仅按 CST-HTTP-BOUNDARY-001 使用既有 bootstrap 路由；它 SHALL NOT 读取、替代或暴露 operator credential，也不得用于本 Requirement 的一般 operator 管理 API。
+
+#### Scenario: 使用 operator 凭证调用管理 API
+
+- **WHEN** 调用者通过 operator 管理 API 连接 Core
+- **THEN** Core 接受有效 operator credential，并拒绝缺少或属于 `piwork-cli` 用户会话的凭证
+
+#### Scenario: Reject unsafe operator credential storage
+
+- **WHEN** operator credential 路径是符号链接或可被其他用户读取
+- **THEN** Core 拒绝使用该凭证并报告安全错误
+
+### Requirement: operator API 设置 Runtime 使用服务端发行镜像
 
 **Identifier:** SERVE-RUNTIME-RELEASE-001
 
-operator `config set` SHALL 保留模型、可选 endpoint 及隐藏/stdin/file secret 输入，移除 `--agent-image` 参数；无参数帮助及语法错误检查不读取 secret、数据目录或网络。显式旧镜像参数 SHALL 返回 usage 错误及安全迁移方向，不能静默忽略或将值传入存储。在线设置 SHALL 由所连接的 Core 使用自身内嵌发行 Agent 引用，不能采用 operator 客户端所带版本的引用；离线初始化 SHALL 使用本地服务端程序内嵌的同一解析规则。
+受保护 /control/runtime SHALL 继续接受 operator 管理写入，使用目标 Core 内嵌发行 Agent 引用，不取调用方发行信息。模型、可选 endpoint 和 secret 沿用现有 API 校验；响应只返回非敏感 RuntimeView，确认持久化与后台依赖准备分别表达，不等待镜像拉取才返回。
 
-受保护 `/control/runtime` 写入 SHALL 支持省略镜像，旧 HTTP 镜像字段仅可与该服务端发行引用相同，不同值返回字段错误且原子保留旧配置。内嵌引用缺失/无效 SHALL 安全失败，不回退旧配置为新的写入选择，也不提示手填；固定引用改变不授权在普通读取或启动时改写已保存 Runtime。
+写入 SHALL 支持省略镜像，已有 HTTP 镜像字段只允许与目标 Core 发行引用相同，不同值原子拒绝并保留配置；发行引用无效时安全失败，不回退旧值作为新写入选择。普通读取/启动不改变已保存 Runtime 或 Work，独立 Work/default-Work 配置不被裁减。
 
-operator 凭证、默认 endpoint、目录锁、secret 处理及离线选择规则 SHALL 保留。只有未显式 Core 地址且默认 loopback 明确拒绝连接时才可按原规则离线；超时、断线或未知写入不能回退或重发。确认持久化与后台依赖准备分别表达，保存成功仍返回非敏感 RuntimeView，不等待镜像拉取完成。本约束只固定全局 CoreRuntime，不取消 Work 独立配置、operator 默认 Work 的既有独立配置或高级 helper 参数。
+系统 SHALL 删除 config set 命令、秘密交互适配及离线配置回退，保留 operator 凭证验证与上述在线 API。未知响应不得触发本地初始化或自动重发。
 
-#### Scenario: 在线客户端和 Core 版本不同
-- **WHEN** operator 客户端与目标 Core 内嵌的发行 Agent 引用不同，操作者提交合法模型设置
-- **THEN** 最终 Runtime 使用目标 Core 的引用，客户端不提交自身引用，原凭证及保存/准备语义保持
+#### Scenario: 调用方与 Core 版本不同
+- **WHEN** operator API 提交合法 Runtime 配置
+- **THEN** 使用目标 Core 的发行引用，凭证隔离、保存和准备语义保持
 
-#### Scenario: 离线配置
-- **WHEN** 原有离线条件满足，操作者不传镜像参数而提供合法模型与 stdin/file Key
-- **THEN** 在同一目录锁下使用本地服务端内嵌引用保存，输出无 Key，随后启动可读取该配置
+#### Scenario: 镜像字段试图覆盖
+- **WHEN** operator 提交不同于服务端发行引用的 agentImage
+- **THEN** 返回安全字段错误且原配置不变
 
-#### Scenario: 拒绝旧镜像参数
-- **WHEN** 调用 config set --agent-image，或帮助/无效参数与 secret 输入组合
-- **THEN** 旧参数返回 usage 退出码及不泄漏值的迁移方向，帮助正常退出；均不读取 Key、连接 Core 或修改数据
-
-#### Scenario: 旧 HTTP 请求试图改镜像
-- **WHEN** 有效 operator 提交与目标 Core 发行引用不同的 agentImage
-- **THEN** 控制面返回安全字段错误，Runtime 与默认配置均不改变，不能绕过网页限制
-
-#### Scenario: 在线结果未知
-- **WHEN** 在线配置已发送但响应丢失或超时
-- **THEN** 保留未知结果并指向只读核对，不执行离线初始化、再次配置或改用本地发行引用
+#### Scenario: 写入结果未知
+- **WHEN** 在线配置响应丢失或超时
+- **THEN** 通过原只读 API 核对，不自动重提或启动离线初始化

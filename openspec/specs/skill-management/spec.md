@@ -10,7 +10,7 @@
 
 **Identifier:** SKM-001
 
-`piwork-serve skills add` SHALL accept exactly one `--path <directory>` from an authenticated operator. Core SHALL require an absolute readable directory whose root is not a symbolic link, derive the sole public Skill identifier from the final non-empty directory basename after path normalization, and require that basename to match `[a-z0-9][a-z0-9-]{0,63}` without case conversion or character rewriting. The directory SHALL contain a readable regular `SKILL.md`; Core MUST NOT parse, decode, or derive identity or public metadata from its contents. Core SHALL recursively copy the complete directory into Core-managed durable storage and publish the Skill atomically only after validating the copied tree. The full source path MUST NOT be persisted, disclosed, or remain a runtime dependency. A Skill import SHALL contain at most 2,048 regular files and 32 MiB total content; symbolic links, devices, sockets, FIFOs, path escapes, duplicate directory basenames, and an individual file larger than 8 MiB MUST be rejected.
+Core SHALL 通过受保护 operator API 接受一个 path 字段进行目录导入，不要求或提供旧 skills add 命令。 Core SHALL require an absolute readable directory whose root is not a symbolic link, derive the sole public Skill identifier from the final non-empty directory basename after path normalization, and require that basename to match `[a-z0-9][a-z0-9-]{0,63}` without case conversion or character rewriting. The directory SHALL contain a readable regular `SKILL.md`; Core MUST NOT parse, decode, or derive identity or public metadata from its contents. Core SHALL recursively copy the complete directory into Core-managed durable storage and publish the Skill atomically only after validating the copied tree. The full source path MUST NOT be persisted, disclosed, or remain a runtime dependency. A Skill import SHALL contain at most 2,048 regular files and 32 MiB total content; symbolic links, devices, sockets, FIFOs, path escapes, duplicate directory basenames, and an individual file larger than 8 MiB MUST be rejected.
 
 #### Scenario: Import a valid directory
 - **WHEN** an operator adds absolute directory `/opt/piwork-skills/code-review` containing a regular `SKILL.md` and whose tree satisfies all import limits
@@ -22,7 +22,7 @@
 
 #### Scenario: Reject a duplicate Skill name
 - **WHEN** an operator adds a directory whose basename already identifies an existing Skill
-- **THEN** Core returns `SKILL_ALREADY_EXISTS`, keeps the existing managed artifact unchanged, and directs the operator to the update command
+- **THEN** Core returns `SKILL_ALREADY_EXISTS`, keeps the existing managed artifact unchanged, and 指向对应的更新 API
 
 #### Scenario: Ignore SKILL metadata when assigning identity
 - **WHEN** an operator adds directory `code-review` whose `SKILL.md` omits `name`, contains malformed frontmatter, or declares a different name
@@ -36,7 +36,7 @@
 
 **Identifier:** SKM-002
 
-Core SHALL 允许 operator 及已启用管理员通过各自受保护管理入口，使用导入时的 basename 查看、列出、更新、启用、禁用和移除 Skill。operator 的路径更新 SHALL 接受 `--path`，要求规范化来源目录 basename 等于目标 Skill，在完整树验证后原子替换当前 Core 制品。Core MUST NOT 在更新时解析 `SKILL.md`。添加或更新失败 MUST 保留原 catalog 与制品。Skill 仍被默认 Work 选择时 SHALL 拒绝禁用或移除；Core Skill 的更新、禁用或移除 MUST NOT 修改或破坏已有 Work 持有的副本。
+Core SHALL 允许 operator 及已启用管理员通过各自受保护管理入口，使用导入时的 basename 查看、列出、更新、启用、禁用和移除 Skill。operator 的路径更新 SHALL 接受 API 的 path 字段，要求规范化来源目录 basename 等于目标 Skill，在完整树验证后原子替换当前 Core 制品。Core MUST NOT 在更新时解析 `SKILL.md`。添加或更新失败 MUST 保留原 catalog 与制品。Skill 仍被默认 Work 选择时 SHALL 拒绝禁用或移除；Core Skill 的更新、禁用或移除 MUST NOT 修改或破坏已有 Work 持有的副本。
 
 管理员内容更新 SHALL 使用 SKM-004 的目录上传，要求所声明根目录名等于目标 Skill，成功后保留原 enabled 状态。内容入口不得读取调用者指定的宿主路径；operator 的原有路径导入继续有效。
 

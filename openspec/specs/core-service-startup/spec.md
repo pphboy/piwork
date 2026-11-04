@@ -6,125 +6,6 @@ Defines how a local piwork installation is initialized and run as a durable Core
 
 ## Requirements
 
-### Requirement: Bootstrap the first administrator explicitly
-
-Core SHALL 允许空安装通过普通地址直接进入的网页创建、显式 operator bootstrap，或成对可选的 ADMIN 环境变量创建首管理员。网页和 env 的初始化语义遵守 web-onboarding 与 CORE-DOCKER-INIT-001，所有入口 MUST 原子核验持久用户集合为空，不能因为管理员被禁用而重新开放。不得生成默认账号/密码，不覆盖任何已有身份。
-
-原 operator 在线/离线 bootstrap 的凭证、数据目录锁和未知结果不回退规则 SHALL 保留。网页创建不要求安装者证明或 operator credential；创建成功后仍须正常登录才取得管理员会话或 Work 操作权限。普通会话、来源与 CSRF 校验遵守 web-onboarding。
-
-#### Scenario: 网页创建空安装管理员
-- **WHEN** 安装者从服务器普通地址提交合法账号密码及普通 CSRF 上下文
-- **THEN** 原子创建持久首管理员并关闭首次创建入口，不需要停启 Core
-
-#### Scenario: Operator 离线或在线初始化
-- **WHEN** 有权限操作者按原契约执行 admin bootstrap
-- **THEN** 原目录锁、凭证及退出语义保持，不输出密码或摘要
-
-#### Scenario: 重复及并发 bootstrap
-- **WHEN** 已有用户时再次调用任一入口，或多个入口并发初始化
-- **THEN** 已有身份不变，并发最多一个创建成功，其余返回安全冲突
-
-#### Scenario: Bootstrap an empty installation
-
-- **WHEN** 操作者使用 `piwork-serve admin bootstrap --data-dir <path>` 提供账号和密码
-- **THEN** Core 创建首个管理员且不输出密码或摘要
-
-#### Scenario: Bootstrap an empty installation online
-
-- **WHEN** Core 已由 `piwork-serve serve` 监听且操作者通过 operator credential 调用 `piwork-serve admin bootstrap`
-- **THEN** Core 创建首个管理员并更新 readiness，不需要停止或重启 Core
-
-#### Scenario: Refuse repeated bootstrap
-
-- **WHEN** 管理员已经存在时调用任一 bootstrap 入口
-- **THEN** 请求失败且现有身份数据不变
-
-#### Scenario: Refuse repeated bootstrap (offline command)
-
-- **WHEN** an operator invokes bootstrap after an administrator already exists
-- **THEN** Core exits nonzero with a concise diagnostic and leaves the existing identity data unchanged
-
-### Requirement: Configure a usable local runtime profile
-
-Core SHALL 保留离线 runtime 配置命令，并提供受保护的在线全局默认配置 API。全局 CoreRuntime 的 Agent 镜像 SHALL 固定使用执行保存的服务端程序随版本内嵌的发行引用，模型配置命令/API 不要求操作者选择镜像；operator 的旧镜像参数按 SERVE-RUNTIME-RELEASE-001 移除，管理员和旧 HTTP 字段按 CADM-004 处理。内嵌发行引用无效时安全拒绝，不将手填镜像作为恢复方案。
-
-全局配置 SHALL 仅作为之后新建 Work 的默认值；已有 Work 的独立配置、模型引用和运行实例 MUST NOT 因全局配置变化而修改、重启或切换模型。读取、启动和升级 SHALL 如实保留已持久 Runtime，不自动替换其中镜像；用户显式保存时才采用当前发行引用。确认保存后后台准备与 readiness 继续分别表达。
-
-#### Scenario: Configure the global default online
-- **WHEN** 管理员通过 piwork-serve config set 提供合法模型、endpoint 和 secret，未指定镜像
-- **THEN** Core 使用自身内嵌发行镜像持久化全局默认，查询只返回非敏感字段和 secret 可用性
-
-#### Scenario: Configure an installation from standard input
-- **WHEN** operator 在既有离线条件下提供模型并通过标准输入提交 credential
-- **THEN** 本地服务端用内嵌发行镜像保存默认 Runtime，credential 不进入命令参数、普通输出、日志或公开响应
-
-#### Scenario: Change defaults without changing existing Works
-- **WHEN** 全局默认模型配置从 model-a 改为 model-b
-- **THEN** 新 Work 使用 model-b，已有 Work 保留原独立配置且不发生隐式重启
-
-#### Scenario: Detect an incomplete runtime profile
-- **WHEN** Core 启动时缺少可用的 Runtime 模型或发行依赖
-- **THEN** 健康和网页引导保持可用，readiness 显示具体未配置或不可用原因，Work 创建返回可操作错误
-
-#### Scenario: 保留已有 Runtime 的捕获镜像
-- **WHEN** 服务端程序发行镜像发生变化而用户仅启动或读取旧安装
-- **THEN** 原 Runtime 和 Work 继续保留捕获引用，不因固定发行默认而静默迁移；明确重新保存时才更新全局新 Work 默认
-
-### Requirement: Start one durable Core application
-
-统一服务端无参数或 `serve` SHALL 在同一个进程内启动持久 Core 和独立 ControlPlane HTTP 服务，在管理员和运行时配置缺失时仍打开健康 HTTP listener，初始化完成后再报告相应 readiness；配置存在时继续执行 Docker 验证和 Work recovery。它 MUST NOT 因缺少管理员或默认 runtime 而退出，也 MUST NOT 在启动过程中创建默认 Work。
-
-网络必做验收 SHALL 在局域网或独立客户端网络验证通配监听加实际 IP 路径，不要求公网地址或公网连通性实测。多网卡/NAT/受信代理仍可显式配置 `--public-origin`；此高级覆盖不替代基础默认路径验收。IPv6 URL 括号、来源解析保留相应单元/契约覆盖，实际 IPv6 网络实测不作为本变更完成前提。
-
-ControlPlane SHALL 默认监听 `0.0.0.0:17891`，Core SHALL 默认监听 `127.0.0.1:17871`。`--listen` 只选择 ControlPlane，`--core-listen` 独立选择 Core，显式非回环 Core 监听可供远程原生 CLI 直接连接；ControlPlane 后端始终使用启动器确认的 Core 地址。通配地址只用于监听，不作为浏览器或后端请求目标。浏览器工作流 SHALL 只使用 ControlPlane；Core 端口保留独立用户/admin/operator API，不提供网页、不把 CLI 重定向到 ControlPlane。
-
-两个必需 listener、存储锁和运行恢复 SHALL 由同一启动协调者管理。端口冲突、无效配置或部分初始化失败 SHALL 关闭本次已取得资源、非零退出且不留下半启动服务，不自动换端口、接管其他实例或回退到旧 7171。监听器异常结束 SHALL 触发统一有界关闭，正常终止仍遵守本安装 Work 停止与持久意图保留规则。
-
-#### Scenario: Start before initialization
-
-- **WHEN** 操作者在空或部分配置的数据目录启动 `serve`
-- **THEN** Core 监听健康接口，报告具体初始化状态，并允许控制面补齐缺失配置
-
-#### Scenario: Start a configured Core
-
-- **WHEN** 管理员、默认 runtime 和 Docker 都可用
-- **THEN** Core 完成 recovery 后进入 READY，并保留已有 Work 的独立配置
-
-#### Scenario: Start a configured local Core
-
-- **WHEN** an administrator and runtime profile exist and the Docker dependency is available
-- **THEN** `serve` 在同一进程启动 Core 与 ControlPlane 两个 listener，输出不含秘密的实际浏览器地址及 Core 地址，恢复完成后如实报告 ready
-
-#### Scenario: Reject a second Core owner
-
-- **WHEN** another Core process already owns the same data directory
-- **THEN** a second `serve` exits nonzero without opening another listener or modifying the store
-
-#### Scenario: Refuse accidental remote plaintext binding
-
-- **WHEN** 操作者使用仍受原明文 opt-in 约束的独立控制面调用请求非 loopback listener，且没有对应 opt-in
-- **THEN** Core rejects startup with a diagnostic identifying the required opt-in
-
-#### Scenario: 默认统一入口允许远程浏览器
-- **WHEN** 在 Linux 使用默认统一服务端入口启动
-- **THEN** 按文档化远程监听提供网页、健康及业务入口，输出实际可用 IP/URL，浏览器不需要客户端 Desktop；旧受保护监听解析不被全局放宽
-
-#### Scenario: 通配监听后经实际 IP 访问
-- **WHEN** 统一程序监听 `0.0.0.0:17891` 或相同通配地址的测试端口，另一电脑或独立客户端网络使用服务器实际非回环 IPv4 访问
-- **THEN** 默认访问地址和对应 Host 可用于初始化、登录、管理及工作台，无须在基础场景预填 `--public-origin`；输出不将通配地址或客户端 localhost 作为目标，仍执行精确 Host、Origin 和 CSRF 校验
-
-#### Scenario: 两端口与三种调用者
-- **WHEN** 一键启动完成，浏览器、同机用户 CLI 和 operator 分别使用默认入口
-- **THEN** 浏览器通过 17891 使用 UI/内容，CLI 和 operator 通过 17871 按各自身份调用 Core；ControlPlane 的业务请求也经 Core HTTP，只有一个持久 Core 所有者
-
-#### Scenario: 第二个端口被占用
-- **WHEN** ControlPlane 或 Core 的指定端口已被其他进程占用
-- **THEN** 本次启动非零退出、清理已取得 listener 和锁，不更改占用者，不留下可写半实例
-
-#### Scenario: 显式允许远程 CLI
-- **WHEN** 操作者显式把 Core 绑定到远程客户端可达地址，CLI 指定该 Core origin
-- **THEN** CLI 直接调用 Core，不需浏览器 Cookie、初始化委托或 ControlPlane 转发；浏览器配置仍只指向 17891
-
 ### Requirement: Expose distinct health and readiness probes
 
 统一应用 SHALL 在能够响应引导/健康时提供无认证 `GET /healthz`，并在存储初始化及启动恢复完成后通过无认证 `GET /readyz` 报告基础 Work 就绪；关闭时 readiness MUST 失效，runtime/Docker 阻断 Work 操作时 MUST 给出安全原因。未提供 profile 时 SHALL 保持既有 JSON 和基础 readiness 语义，包括 file/snapshot helper 缺失的原有功能降级。
@@ -165,6 +46,7 @@ Core SHALL expose public login and protected logout and current-identity endpoin
 #### Scenario: Revoke a login session
 - **WHEN** a client logs out with a valid bearer token
 - **THEN** Core revokes the session and rejects subsequent protected requests made with that token
+
 ### Requirement: Expose durable Work lifecycle control
 Core SHALL expose authenticated Work create/list/detail, start, stop, retry, delete, and Operation detail endpoints. Accepted mutations MUST return stable Work and Operation identifiers, execute asynchronously through the configured Docker runtime, enforce Work ownership, and expose preparation, readiness, and failure state without reporting a Work ready before its verified agentd generation accepts Runs.
 
@@ -179,6 +61,7 @@ Core SHALL expose authenticated Work create/list/detail, start, stop, retry, del
 #### Scenario: Hide another user's Work
 - **WHEN** a non-administrator queries or controls a Work owned by another user
 - **THEN** Core returns the same not-found response used for a nonexistent Work
+
 ### Requirement: Expose authorized Session and Run operations
 For a ready Work, Core SHALL expose authenticated Session create/list/detail and Run submit/detail/observe/cancel endpoints. Core MUST authorize the user before contacting agentd, route only to the current verified Work generation, preserve Run identity independently of the observing connection, and distinguish transport interruption from a Run terminal state.
 
@@ -193,6 +76,7 @@ For a ready Work, Core SHALL expose authenticated Session create/list/detail and
 #### Scenario: Lose an observation connection
 - **WHEN** the client connection closes while an accepted Run is executing
 - **THEN** Core leaves the Run executing and allows a later authorized request to observe or query the same Run
+
 ### Requirement: Recover Core and Work state across restart
 
 Core 重启时 SHALL 恢复用户、会话、Work 和每个 Work 的 desired/active 配置版本。恢复 MUST 使用 Work 保存的配置，不得用新的全局默认配置替换已有 Work。正常关闭已经停止的 Work 运行容器 SHALL 按持久运行意图恢复；原本期望 stopped 的 Work SHALL 保持停止。用户、Work、Operation、Session、Run 标识和持久历史 SHALL 保留，恢复不得重新提交历史 Run 或创建重复 Work。
@@ -250,7 +134,6 @@ Core 收到 SIGINT、SIGTERM，或因 Docker Compose stop/down/重建进入正�
 #### Scenario: Preserve service selection through shutdown
 - **WHEN** 一个 Work 含 enabled 服务和 disabled 服务，Core 优雅退出后再次启动
 - **THEN** 只恢复 desired-running Work 中的 enabled 服务，退出过程不改写这些选择或删除数据
-
 
 ### Requirement: 使用显式容器环境完成首次初始化
 
@@ -340,7 +223,7 @@ Core SHALL 自行检查 Engine、拉取缺失的配置镜像、校验平台及�
 
 `GET /control/status` SHALL 保留原 `state/ready/checks`，增加 `preparation={version:1,ready,components}`；components 固定为 `docker`、`agent`、`packageHelper`、`defaultContext`、`fileHelper`、`snapshotHelper`。每项 SHALL 包含 `state`、非负 `attempt`、`retryAfterSeconds` 与 `code`；state 为 `unconfigured|pending|preparing|ready|retrying|failed`，不适用的 delay/code 为 null，重试 delay 为非负秒数。此 `preparation.ready` 表示全部交付组件已准备，不等于基础 Work readiness；完整交付判定还要求基础 ready。Docker 持续不可用 SHALL 最多五秒使基础/交付就绪失效。
 
-`piwork-serve status` SHALL 通过既有入口读取该快照，成功查询的退出语义保持；组件状态不得带镜像地址/ID、宿主路径、账号、key/token、operator credential、证书、registry 原始响应或堆栈。错误码限定为 `DOCKER_UNAVAILABLE`、`IMAGE_UNAVAILABLE`、`IMAGE_INCOMPATIBLE`、`CONTEXT_PREPARATION_FAILED`、`RUNTIME_UNCONFIGURED`、`SHUTTING_DOWN` 或 null。严格管理 API 的 `AdminStatus` 不增加字段，用户业务状态格式也不因 Docker 交付改变。
+网页及既有状态 API SHALL 读取该快照，不再要求 piwork-serve status 命令；组件状态不得带镜像地址/ID、宿主路径、账号、key/token、operator credential、证书、registry 原始响应或堆栈。错误码限定为 `DOCKER_UNAVAILABLE`、`IMAGE_UNAVAILABLE`、`IMAGE_INCOMPATIBLE`、`CONTEXT_PREPARATION_FAILED`、`RUNTIME_UNCONFIGURED`、`SHUTTING_DOWN` 或 null。严格管理 API 的 `AdminStatus` 不增加字段，用户业务状态格式也不因 Docker 交付改变。
 
 #### Scenario: 完整就绪与基础就绪不同
 - **WHEN** Work 运行环境已 ready，但 file helper 尚在准备
@@ -386,50 +269,21 @@ Core SHALL 将当前实际默认 Work 配置所选 Agent 镜像的能力检查�
 
 **Identifier:** CST-OPS-001
 
-统一服务端的默认安装/业务初始化入口遵守 NATIVE-001、CORE-DOCKER-INIT-001 和 web-onboarding：默认网页引导不要求下列高级运维示例中的环境变量或独立 Desktop。下述显式 operator/开发示例仅属于其高级使用场景；模型变量名称作为 shell 交互输入的局部变量不代表保留服务端模型 env 解析。
+piwork-core SHALL 使用三参数启动和网页业务初始化，遵守 NATIVE-001、CORE-DOCKER-INIT-001 和 web-onboarding；Linux 原生 CLI 独立连接，管理 UI 随 Core 内嵌，不交付独立 Console 或 operator 命令。
 
-Core SHALL 作为 Linux 上的 Go daemon/operator 入口直接使用本机 Docker Engine Unix API，CLI 和 Console 分别交付。新安装采用空的 piwork-go-core/schema 1 数据目录，目录 0700、私有文件 0600，固定 owner 并拒绝链接及多进程并发占用；未知格式、无 marker 的非空目录和身份不一致 SHALL 在开放业务及创建 Docker 资源前拒绝，不自动转换或清空旧 TS 数据。备份 SHALL 在 Core 停止后保留整个数据目录以及受管 Docker 卷，不能把仅复制 SQLite 主文件称为完整备份。
+Core SHALL 使用本机 Docker Engine Unix API。安装保持 piwork-go-core/schema 1、目录 0700、私有文件 0600、固定 owner、拒绝链接及单实例锁；未知格式、无 marker 的非空目录和身份不一致必须在业务与 Docker 资源创建前拒绝，不自动转换或清空。完整备份须在 Core 停止后保存整个数据目录和受管 Docker 卷，不能仅复制 SQLite 主文件。
 
-Engine 目标 SHALL 按非空 DOCKER_CONTEXT、非空 DOCKER_HOST、Docker config currentContext、默认本机 Unix socket 选择，只接受本机 Unix endpoint；显式目标失败不切换 Engine。固定镜像 ID 已存在时无需读取 registry 凭据，拉取只使用对应 registry 的静态凭据或匿名访问，不调用宿主 Docker CLI/credential helper。Agent/helper 标签、静态能力和镜像 ID SHALL 先核验，缺能力不回退旧 TS/Python 程序。
+Engine 继续按非空 DOCKER_CONTEXT、DOCKER_HOST、Docker config currentContext、默认本机 Unix socket 的顺序选择，只接受本机 Unix endpoint；显式失败不切换 Engine。镜像已存在无需 registry 凭据，拉取使用静态凭据或匿名访问，不调用宿主 Docker CLI/credential helper。镜像身份、协议和能力均须验证，不能回退旧 helper。
 
-health 与 ready SHALL 分离；管理员、runtime、默认准备或恢复缺失时不能称 ready。运维参数按对应命令契约解析；统一服务端仅保留可选 ADMIN env 补充首次身份，模型和镜像不再由业务 env 初始化；通过页面/API 保存的可选 Base URL 仍区分缺省与空值。operator 与用户凭据 SHALL 分离；密码/Key 通过隐藏输入或 stdin/file 输入，不作为命令参数。保留的高级 operator env-file 解析不执行 shell。只有未显式选 Core 且默认 loopback 明确拒绝连接时才允许持同一目录锁离线初始化，超时或未知结果不授权本地回退。
+health 与 ready SHALL 分离；保留可选成对 ADMIN 首次身份初始化，模型和镜像不读旧业务初始化 env，不新增环境变量或文件替代被删除的启动参数。operator 凭证生命周期和与用户凭据的隔离 SHALL 保留，不删除凭证文件/元数据、不改存储格式或强制重置用户登录。网页单用途委托不替代 operator，管理员和 Work 权限按原边界校验。
 
-全局 Runtime 的 Agent 引用 SHALL 在服务端固定解析，config set 不再提供 --agent-image；在线取目标 Core 的发行信息，离线取本地服务端发行信息，错误提示不包含旧参数值。镜像身份仍可在非敏感配置读取或按需诊断中核对；已有 Runtime 与 Work 的捕获引用遵守保留及显式保存语义。独立 Work/default-Work 的既有高级配置和 helper 参数范围保持。
+全局 Runtime 保存使用目标 Core 的固定发行引用，已有 Runtime/Work 捕获值保持；Work/default-Work 业务配置不因启动参数删除裁减。旧命令、env-file 解析及离线命令回退 SHALL 删除。
 
 Core 正常退出 SHALL 停止本安装受管 Work 容器并保留 desired、数据和历史；重启协调原 journal/epoch/标签，未知创建和清理失败保留占用，不全局 prune。Service memoryBytes 的旧正数只作为历史兼容，应用 Service 不设有效内存限制/预留，投影明确 unlimited；CPU/数量和 Agent/helper 政策仍有效。旧受限 Service 由受管恢复替换并保留身份、固定镜像和 workspace。
 
 #### Scenario: 按现行契约操作与核对
 - **WHEN** 用户或维护者使用上述现行入口，并满足对应身份、平台与运行条件
 - **THEN** 操作、边界、拒绝及恢复遵循上述契约，不依赖已移除的开发手册；历史版本描述不覆盖当前有效 Spec
-
-以下为已有操作/验证入口的示例，使用实际返回 ID 和隔离测试资源；命令存在不表示本次已执行或验收通过。源码构建使用 Go 1.25.5、Node 24，容器/浏览器专项须预备相应依赖。
-
-```sh
-npm ci
-make build
-make native-agent-images native-helper-images
-export PIWORK_DATA_DIR="$PWD/.piwork-go-core"
-./dist/go/piwork-serve serve --data-dir "$PIWORK_DATA_DIR" --listen 127.0.0.1:17891 --core-listen 127.0.0.1:17871 \
-  --package-helper-image piwork-agentd:go-migration-production \
-  --file-helper-image piwork-file-helper:go-migration-acceptance \
-  --snapshot-helper-image piwork-snapshot-helper:go-migration-acceptance
-```
-
-```sh
-export PIWORK_DATA_DIR="$PWD/.piwork-go-core"
-export PIWORK_CORE_URL=http://127.0.0.1:17871
-./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  admin bootstrap --account admin
-read -r -p '模型提供方: ' PIWORK_MODEL_PROVIDER
-read -r -p '模型 ID: ' PIWORK_MODEL_ID
-./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" \
-  config set --model-provider "$PIWORK_MODEL_PROVIDER" --model "$PIWORK_MODEL_ID"
-./dist/go/piwork-serve --core "$PIWORK_CORE_URL" --data-dir "$PIWORK_DATA_DIR" status
-```
-
-```sh
-./dist/go/piwork-cli --core "$PIWORK_CORE_URL" desktop
-```
 
 ### Requirement: 原生辅助能力检查与保留 Agent 运行环境
 
@@ -578,3 +432,81 @@ Core SHALL 在启动恢复期间区分当前进程尚未核实的 Work 状态与
 #### Scenario: 所有者选择修复候选定向复验
 - **WHEN** 前轮完整性能基线有效，修复候选已集成到 Windows MicroVM 并完成真实启动，所有者明确要求按已有结果收尾
 - **THEN** 保留当前已完成样本，正常关闭当前测试 VM 后停止追加启动，按实际数量与制品身份单独记录增量回归判定；原完整基线和失败保留，不以小样本或旧包结果伪称新候选完整 P95 验收
+
+### Requirement: 通过网页和受保护 API 初始化首管理员
+
+Core SHALL 允许空安装通过普通网页、受保护 operator bootstrap API 或成对可选 ADMIN 环境变量创建首管理员。网页和 env 语义遵守 web-onboarding 与 CORE-DOCKER-INIT-001，所有入口必须原子核验持久用户集合为空，不因管理员被禁用而重新开放，不生成默认账号密码或覆盖已有身份。
+
+Core SHALL 保留 operator 凭证和网页单用途初始化委托的分离；网页不读取 operator 凭证，成功创建后仍须正常登录。旧 admin bootstrap 命令及离线初始化命令 SHALL 删除，不保留兼容入口。
+
+#### Scenario: 网页初始化
+- **WHEN** 空安装通过合法来源及 CSRF 提交账号密码
+- **THEN** 原子创建管理员并关闭首次创建入口，无需重启 Core，随后正常登录
+
+#### Scenario: operator API 初始化
+- **WHEN** 有效 operator credential 对空安装调用 bootstrap API
+- **THEN** 按原鉴权和原子性创建管理员，不输出密码或摘要；普通用户 token 不获此权限
+
+#### Scenario: 重复与并发
+- **WHEN** 已有用户时再次初始化，或多个允许入口并发初始化
+- **THEN** 已有身份保持，并发最多一个成功，不因旧命令删除放宽授权
+
+### Requirement: 通过在线管理配置全局 Runtime
+
+Core SHALL 通过网页和受保护的在线管理 API 配置全局默认 Runtime，删除离线配置命令。全局 CoreRuntime 的 Agent 引用固定使用保存请求目标 Core 内嵌的发行引用，模型配置无需选择镜像；API 字段校验继续遵守 CADM-004 和 SERVE-RUNTIME-RELEASE-001。引用缺失或无效时安全拒绝，不提示手填。
+
+全局配置 SHALL 仅作为之后新建 Work 的默认值；已有 Work 的独立配置、模型引用和运行实例不因全局修改而改变、重启或切换模型。读取、启动和升级如实保留已持久 Runtime；显式保存才采用当前发行引用，确认保存与后台准备/readiness 分别表达。
+
+#### Scenario: 网页保存 Runtime
+- **WHEN** 管理员提交合法模型、可选 endpoint 和 secret
+- **THEN** Core 用自身发行引用保存，响应只有非敏感字段和 secret 可用性，准备在后台进行
+
+#### Scenario: 仅更新新 Work 默认值
+- **WHEN** 全局模型从 model-a 改为 model-b
+- **THEN** 新 Work 使用新默认值，已有 Work 不隐式修改或重启
+
+#### Scenario: 配置不完整
+- **WHEN** 启动时缺少可用 Runtime 或依赖
+- **THEN** 健康和网页引导可用，readiness 给出实际原因，Work 创建返回可操作错误
+
+#### Scenario: 已有捕获引用
+- **WHEN** 程序升级后仅启动或读取安装
+- **THEN** 既有 Runtime/Work 引用保持，只有明确重新保存更新全局默认
+
+### Requirement: 以三项配置启动持久 Core 应用
+
+`piwork-core` SHALL 无子命令启动一个持久 Core 与独立 ControlPlane HTTP 服务，只接受 --ui-port、--core-port、--data-dir 三项运行配置；--help/-h 和 --version 是无数据/网络副作用的信息查询。UI/Core 默认端口为 17891/17871，默认目录为 Linux 用户配置目录下 piwork/server，显式相对路径按启动工作目录解析。端口必须为 1..65535 十进制整数，不能相同或等于内部 RPC 7172。重复、未知、空值、非法参数及额外位置参数 SHALL 在副作用前以 usage exit 2 拒绝，不回显秘密。
+
+UI 和 Core SHALL 分别绑定 0.0.0.0 上的所选端口并使用 HTTP；后端固定通过 127.0.0.1 的 Core HTTP 地址调用。浏览器只使用 UI，外部用户客户端和 operator API 直接使用 Core 端口。系统不提供 HTTPS listener、证书/public-origin 配置、旧 serve/管理子命令、旧监听参数或对应兼容开关。内部 Agent RPC 保留 7172 和容器可达地址及原 mTLS 身份，不增加第四个运行参数。
+
+系统 SHALL 支持通过 loopback、localhost、本机主机名和服务器实际 IPv4 使用 UI。每次请求的 Host 必须属于服务器核验的本机名称/IP 且端口正确；Origin 必须匹配该请求的 HTTP origin，变更仍需 CSRF，拒绝跨站来源及未知 Host。会话绑定其 origin；生成链接、Service 和事件/升级连接沿用当前已验证入口，不信任任意 Forwarded 头，不把浏览器 Host 当作 Core 上游。输出实际地址，不输出 0.0.0.0 作为访问 URL。浏览器打开器不可用不得使启动失败。
+
+空安装和 runtime/Docker 不可用 SHALL 仍提供健康和初始化页面，不创建默认 Work、不伪造 ready。已配置安装完成验证及恢复后报告真实 readiness。UI/Core/RPC listener、存储锁及后台恢复 SHALL 有统一生命周期；冲突、部分启动失败或必需监听异常结束触发有界清理，非零退出且无半启动服务，不换端口或接管其他实例。正常退出遵守本安装 Work 停止及持久意图保留规则。
+
+#### Scenario: 默认与自定义启动
+- **WHEN** Linux 用户直接启动 piwork-core，或提供三项合法配置
+- **THEN** 同一进程在对应端口提供 UI/Core HTTP，空安装可进入网页引导，默认无需业务 env 或 CLI 初始化
+
+#### Scenario: 无效和旧参数
+- **WHEN** 传入 serve、login、admin、--listen、--core-listen、TLS、public-origin、helper/RPC 参数、重复参数或非法端口
+- **THEN** exit 2 且不创建目录、监听、凭证或 Docker 资源，不静默忽略或转发
+
+#### Scenario: 多网卡与外部 CLI
+- **WHEN** 浏览器分别使用服务器两个实际 IPv4，外部 Linux CLI 使用 Core 端口
+- **THEN** 各 UI origin 都能正常初始化/登录/使用 Service，CLI 按用户身份直连 Core，不借浏览器 Cookie
+
+#### Scenario: 伪造来源
+- **WHEN** 请求包含未知 Host、错误端口、跨站 Origin 或伪造 Forwarded 上游
+- **THEN** 来源校验拒绝，不能建立授权会话或修改状态，后端 Core 目标不变
+
+#### Scenario: 端口或目录冲突
+- **WHEN** 任一 HTTP/RPC 端口被占用，或另一实例持有相同数据目录
+- **THEN** 本次进程非零退出并释放已取得资源，原占用者和安装不变，无可写半实例
+
+#### Scenario: 帮助与版本
+- **WHEN** 在不存在的数据目录和无 Docker 环境请求帮助或版本
+- **THEN** 返回正确帮助或 piwork-core 真实构建身份，不创建状态、不打开浏览器、不联网
+
+#### Scenario: 恢复与正常关闭
+- **WHEN** 配置完整安装启动，随后正常终止
+- **THEN** 按原日志和所有权恢复 Work，退出停止本安装受管容器并保留持久意图、配置、历史与数据
