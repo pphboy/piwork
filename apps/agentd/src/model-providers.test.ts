@@ -33,7 +33,10 @@ test("a revoked Work default still offers another provider without changing Sess
     async models(){return{models:[model],defaultModel:{modelRef:null,label:"",provider:"",model:""},defaultUnavailable:true,checkedAt:new Date().toISOString()};},
     async resolveModel(){return{model,credential:"synthetic-key"};},
   });
-  const list=await models.chatList();assert.equal(list.contractVersion,3);assert.equal(list.defaultModel,null);assert.equal(list.models.length,1);
+  const list=await models.chatList();
+  assert.equal(list.contractVersion,5);
+  assert.equal(list.defaultModel,null);
+  assert.equal(list.models.length,1);
   assert.ok(list.models[0]!.thinkingLevels.includes("high"));
   assert.doesNotMatch(JSON.stringify(list),/synthetic-key|baseUrl|capabilities|executionBindingId/);
 });
@@ -58,8 +61,14 @@ test('Chat reports safe recovery for unconfirmed capabilities and an incompatibl
   const resolver=new AgentRunModels({provider:'openai',id:'gpt-5.1',api:'openai-responses',deterministic:false},{
     async models(){return{models:[unknown,mismatch],defaultModel:model,checkedAt:new Date().toISOString()};},async resolveModel(){return{model,credential:'synthetic-private-key'};},
   });
-  const list=await resolver.chatList();assert.equal(list.contractVersion,4);assert.ok(list.defaultModel);assert.equal(list.models.length,1);assert.equal(list.models[0]!.model,'custom-unknown');assert.equal(list.models[0]!.defaultThinkingLevel,null);assert.deepEqual(list.models[0]!.thinkingLevels,[]);
-  if(list.contractVersion!==4)throw new Error('expected recovery contract');
+  const list=await resolver.chatList();
+  assert.equal(list.contractVersion,5);
+  assert.ok(list.defaultModel);
+  assert.equal(list.models.length,1);
+  assert.equal(list.models[0]!.model,'custom-unknown');
+  assert.equal(list.models[0]!.defaultThinkingLevel,null);
+  assert.deepEqual(list.models[0]!.thinkingLevels,[]);
+  if(list.contractVersion!==5)throw new Error('expected recovery contract');
   assert.deepEqual(list.models[0]!.compatibleThinkingProfiles?.map(p=>p.profile),['responses-effort-v1']);
   assert.deepEqual(list.unavailableModels!.map(m=>m.reason),['sdk-unsupported']);
   assert.match(list.unavailableModels![0]!.recovery,/Agent image.*Apply/);

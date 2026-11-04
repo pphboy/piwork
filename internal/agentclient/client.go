@@ -141,7 +141,7 @@ func (c *Client) ChatControlCapabilities(ctx context.Context, contextID string) 
 	if err != nil {
 		return 0, 0, err
 	}
-	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 || version == 4 {
+	if version := response.GetChatControlsContractVersion(); version == 1 || version == 2 || version == 3 || version == 4 || version == 5 {
 		chat = version
 	}
 	if response.GetCancelAndSendContractVersion() == 1 {

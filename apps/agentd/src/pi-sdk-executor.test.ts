@@ -17,6 +17,7 @@ import { createServer } from "node:http";
 import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@piwork/pi-adapter";
 import { Type } from "typebox";
+import { compatibleThinkingProfiles } from "./thinking-profiles.js";
 
 test("registers an Anthropic-compatible custom model at the configured endpoint", async () => {
   const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false });
@@ -591,4 +592,113 @@ test("unknown Responses models send each explicitly selected compatibility effor
     const switched=await knownManager.submitChat({workId:'work-responses',sessionId:knownSession.sessionId,submissionKey:'known-explicit-sdk',prompt:'Reply OK'});
     assert.equal((await knownManager.wait(switched.run.runId)).state,'succeeded');assert.equal(JSON.parse(switched.run.actualModelJson!).thinkingProfile,undefined);
   } finally {store.close();await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+});
+
+test("real SDK sends protocol compatibility for known, unknown, Off-only and model-specific definitions", async t => {
+  const root=await mkdtemp(join(tmpdir(),'piwork-protocol-thinking-'));
+  const requests:Array<Record<string,any>>=[];
+  let rejection=false;
+  const server=createServer(async(req,res)=>{
+    const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+    const body=JSON.parse(Buffer.concat(chunks).toString());requests.push(body);
+    if(rejection){res.writeHead(422,{'content-type':'application/json'});
+    res.end(JSON.stringify({error:{message:'synthetic-private-provider-error'}}));
+    return;}
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    const emit=(type:string,payload:unknown)=>res.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    if(req.url?.includes('messages')){
+      emit('message_start',{type:'message_start',message:{id:'fixture-message',type:'message',role:'assistant',model:body.model,content:[],stop_reason:null,usage:{input_tokens:1,output_tokens:0}}});
+      emit('content_block_start',{type:'content_block_start',index:0,content_block:{type:'text',text:''}});
+      emit('content_block_delta',{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'OK'}});
+      emit('content_block_stop',{type:'content_block_stop',index:0});
+      emit('message_delta',{type:'message_delta',delta:{stop_reason:'end_turn',stop_sequence:null},usage:{output_tokens:1}});
+      emit('message_stop',{type:'message_stop'});
+    }else{
+      const item={id:'fixture-item',type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:'OK',annotations:[]}]};
+      emit('response.created',{type:'response.created',response:{id:'fixture-response',status:'in_progress',model:body.model,output:[]}});
+      emit('response.output_item.added',{type:'response.output_item.added',output_index:0,item:{...item,status:'in_progress',content:[]}});
+      emit('response.output_text.delta',{type:'response.output_text.delta',output_index:0,content_index:0,delta:'OK'});
+      emit('response.output_item.done',{type:'response.output_item.done',output_index:0,item});
+      emit('response.completed',{type:'response.completed',response:{id:'fixture-response',status:'completed',model:body.model,output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:0}}}});
+    }
+    res.end();
+  });
+  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const address=server.address();
+  assert.ok(address&&typeof address!=='string');
+  const local=`http://127.0.0.1:${address.port}`;
+  // Preserve the official connection identity so the existing model-specific
+  // adapter is exercised, while forwarding synthetic traffic only to our fixture.
+  const realFetch=globalThis.fetch;
+  t.mock.method(globalThis,'fetch',(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{
+    const url=new URL(input instanceof Request?input.url:String(input));
+    return url.hostname==='api.deepseek.com'
+      ? realFetch(local+url.pathname,init)
+      : realFetch(input,init);
+  });
+  const store=WorkStore.open(join(root,'work.sqlite'));
+  try{
+    const workspace=join(root,'workspace'),agentDir=join(root,'agent');
+    await mkdir(workspace);
+    await mkdir(agentDir);
+    for(const [provider,api,id,official] of [
+      ['openai','openai-responses','gpt-5.1',false],
+      ['openai','openai-responses','gpt-4.1-mini',false],
+      ['openai','openai-responses','unlisted-responses-fixture',false],
+      ['anthropic','anthropic-messages','claude-sonnet-4-5',false],
+      ['anthropic','anthropic-messages','claude-3-haiku-20240307',false],
+      ['anthropic','anthropic-messages','unlisted-messages-fixture',false],
+      ['anthropic','anthropic-messages','deepseek-flash',true],
+    ] as const){
+      const baseUrl=official?'https://api.deepseek.com/anthropic':local+(api==='openai-responses'?'/v1':'');
+      const config={provider,id,api,baseUrl,deterministic:false};
+      const model={modelRef:null,label:id,provider,model:id,api,baseUrl};
+      const models=new AgentRunModels(config,{async models(){return{models:[],defaultModel:model,checkedAt:new Date().toISOString()};},async resolveModel(){return{model,credential:'synthetic-key'};}});
+      const sessions=new RealAgentSessions('work-protocol',store,workspace,join(root,'sessions'));
+      const session=sessions.create();
+      const daemon=new AgentDaemonControl({workId:'work-protocol',generation:1,instanceId:'agent-protocol'});
+      daemon.configure({modelCredentialStatus:'available',contextIdentity:'context-protocol',loadedSkills:[],resolvedTools:[],initializationComplete:true});
+      const executor=new PiSdkRunExecutor(sessions,agentDir,config,{models,resolvedTools:[],resourceLoaderFactory:async()=>{const loader=new DefaultResourceLoader({cwd:workspace,agentDir,noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true});
+      await loader.reload();
+      return loader;}});
+      const manager=new RunManager(store,daemon,executor,undefined,models);
+      for(const profile of compatibleThinkingProfiles(api))for(const level of profile.levels){
+        await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:level,thinkingProfile:profile.profile},models);
+        const before=requests.length;
+        const accepted=await manager.submitChat({workId:'work-protocol',sessionId:session.sessionId,submissionKey:`${id}-${profile.profile}-${level}`,prompt:'Reply OK',inputMode:'text'});
+        const run=await manager.wait(accepted.run.runId);
+        assert.equal(run.state,'succeeded',`${id}/${profile.profile}/${level}: ${run.errorJson}`);
+        assert.equal(requests.length,before+1);
+        const payload=requests.at(-1)!;
+        assert.equal(payload.model,id);
+        if(api==='openai-responses')assert.equal(payload.reasoning.effort,level==='off'?'none':level);
+        else if(level==='off'){assert.equal(payload.thinking.type,'disabled');
+        assert.equal(payload.thinking.budget_tokens,undefined);
+        assert.equal(payload.output_config?.effort,undefined);}
+        else if(profile.profile==='messages-adaptive-v1'){assert.equal(payload.thinking.type,'adaptive');
+        assert.equal(payload.output_config.effort,level);
+        assert.equal(payload.thinking.budget_tokens,undefined);}
+        else{assert.equal(payload.thinking.type,'enabled');
+        assert.equal(payload.thinking.budget_tokens,profile.budgets![level as keyof typeof profile.budgets]);
+        assert.equal(payload.output_config?.effort,undefined);}
+        assert.equal(JSON.parse(run.actualModelJson!).thinkingProfile,profile.profile);
+      }
+      rejection=true;
+      const before=requests.length;
+      const rejected=await manager.submitChat({workId:'work-protocol',sessionId:session.sessionId,submissionKey:`${id}-rejected`,prompt:'Preserve this failed input',inputMode:'text'});
+      const failed=await manager.wait(rejected.run.runId);
+      assert.equal(failed.state,'failed');
+      assert.equal(requests.length,before+1,'no fallback retry');
+      assert.doesNotMatch(failed.errorJson??'',/synthetic-private-provider-error/);
+      const saved=await sessions.chatOptions(session.sessionId,models);
+      assert.ok(saved.thinkingProfile);
+      assert.equal(saved.availability,'available');
+      const replay=await manager.submitChat({workId:'work-protocol',sessionId:session.sessionId,submissionKey:`${id}-rejected`,prompt:'Preserve this failed input',inputMode:'text'});
+      assert.equal(replay.run.runId,rejected.run.runId);
+      assert.equal(requests.length,before+1);
+      rejection=false;
+    }
+  }finally{store.close();
+  await new Promise<void>(resolve=>server.close(()=>resolve()));
+  await rm(root,{recursive:true,force:true});}
 });

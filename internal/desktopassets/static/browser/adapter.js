@@ -1,4 +1,5 @@
 import { RunFeedbackObservations } from './chat-run-feedback.js';
+import { thinkingOptions } from './thinking-options.js';
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
@@ -2304,7 +2305,7 @@ export class DesktopAdapter {
                 const capabilities = await this.request(`works/${part(id)}/chat-capabilities`);
                 if (epoch !== this.epoch)
                     return;
-                this.chatCapabilities.set(id, capabilities.contractVersion === 4 ? 4 : capabilities.contractVersion === 3 ? 3 : capabilities.contractVersion === 2 ? 2 : capabilities.contractVersion === 1 ? 1 : 0);
+                this.chatCapabilities.set(id, capabilities.contractVersion === 5 ? 5 : capabilities.contractVersion === 4 ? 4 : capabilities.contractVersion === 3 ? 3 : capabilities.contractVersion === 2 ? 2 : capabilities.contractVersion === 1 ? 1 : 0);
                 this.cancelAndSendCapabilities.set(id, capabilities.cancelAndSendContractVersion === 1 ? 1 : 0);
                 if (this.visibleWorkId === id && this.visibleChat)
                     void this.loadActiveRun(id, true);
@@ -2321,7 +2322,7 @@ export class DesktopAdapter {
             const value = await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0) >= 1 ? 'chat-models' : 'models'}`);
             if (value.availability === 'unavailable')
                 throw failure('MODEL_LIST_UNAVAILABLE', 'd.error.modelsUnconfirmed');
-            if (!Array.isArray(value.models) || !value.defaultModel && value.contractVersion !== 2 && value.contractVersion !== 3 && value.contractVersion !== 4)
+            if (!Array.isArray(value.models) || !value.defaultModel && value.contractVersion !== 2 && value.contractVersion !== 3 && value.contractVersion !== 4 && value.contractVersion !== 5)
                 throw failure('INVALID_RESPONSE', 'd.error.modelListIncomplete');
             if (epoch !== this.epoch)
                 return;
@@ -2405,12 +2406,39 @@ export class DesktopAdapter {
         if (sessionId)
             void this.saveModel(id, sessionId).catch(() => undefined);
     }
+    getThinkingOptions(id, sessionId) {
+        const catalog = this.models.get(id), state = this.modelSelection(id, sessionId);
+        const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+        const saved = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+        const retained = saved?.modelPreference?.modelRef === state.ref && saved.modelPreference.availability === 'available' && saved.thinkingProfile
+            ? { level: saved.thinkingLevel ?? null, profile: saved.thinkingProfile } : undefined;
+        return thinkingOptions(model, this.chatCapabilities.get(id) ?? 0, retained);
+    }
+    selectThinkingLevel(id, sessionId, level) {
+        const state = this.modelSelection(id, sessionId);
+        const option = this.getThinkingOptions(id, sessionId).find(choice => choice.level === level);
+        if (!option)
+            throw failure('THINKING_LEVEL_UNSUPPORTED', 'd.error.chooseThinking');
+        if (state.phase === 'unknown')
+            throw failure('MODEL_NOT_CONFIRMED', 'd.error.checkOriginalSettings');
+        const catalog = this.models.get(id);
+        const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+        const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+        const declaredProfile = state.profile && model?.compatibleThinkingProfiles?.some(mapping => mapping.profile === state.profile && level !== null && mapping.levels.includes(level));
+        const savedProfile = session?.modelPreference?.modelRef === state.ref && session.modelPreference.availability === 'available' && session.thinkingLevel === level && session.thinkingProfile === state.profile;
+        const supported = state.profile ? declaredProfile || savedProfile : level === null ? model?.thinkingAvailability === 'unknown' : model?.thinkingLevels?.includes(level);
+        const available = (!session?.chatAvailability || session.chatAvailability === 'available') && session?.modelPreference?.availability !== 'unavailable';
+        const pending = this.pairSaves.has(`${id}:${sessionId}`);
+        if (state.thinking === level && !state.needsThinkingConfirmation && supported && (available || pending) && (state.phase === 'clean' || pending || !sessionId))
+            return;
+        this.selectThinking(id, sessionId, level, state.thinking === level && declaredProfile ? state.profile : option.profile);
+    }
     selectThinking(id, sessionId, thinking, profile) {
         const state = this.modelSelection(id, sessionId);
         if (state.phase === 'unknown')
             throw failure('MODEL_NOT_CONFIRMED', 'd.error.checkOriginalSettings');
         const catalog = this.models.get(id), model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
-        if ((this.chatCapabilities.get(id) ?? 0) < 1 || !(profile ? (this.chatCapabilities.get(id) ?? 0) >= 4 && thinking !== null && model?.compatibleThinkingProfiles?.some(p => p.profile === profile && p.levels.includes(thinking)) : thinking === null ? model?.thinkingAvailability === 'unknown' : model?.thinkingLevels?.includes(thinking)))
+        if ((this.chatCapabilities.get(id) ?? 0) < 1 || !(profile ? (this.chatCapabilities.get(id) ?? 0) >= 4 && thinking !== null && ((this.chatCapabilities.get(id) ?? 0) >= 5 || model?.thinkingAvailability === 'unknown') && model?.compatibleThinkingProfiles?.some(p => p.profile === profile && p.levels.includes(thinking)) : thinking === null ? model?.thinkingAvailability === 'unknown' : model?.thinkingLevels?.includes(thinking)))
             throw failure('THINKING_LEVEL_UNSUPPORTED', 'd.error.chooseThinking');
         state.thinking = thinking;
         state.profile = profile;

@@ -34,7 +34,8 @@ async function fixture(run:(f:{store:WorkStore;manager:RunManager;daemon:AgentDa
  const models:RunModelResolver={
   async list(){throw new Error("unused");},async credential(){return "synthetic";},
   async resolve(ref){await state.wait;if(!state.available)throw new RunModelError("MODEL_UNAVAILABLE","Fixture model unavailable");return {modelRef:ref,label:"Fixture",provider:state.compatible?"openai":"fixture",model:ref??"default",...(state.compatible?{api:"openai-responses" as const}:{}),executionBindingId:state.binding};},
-  async thinking(){return state.compatible?{thinkingLevels:[],defaultThinkingLevel:null,thinkingAvailability:"unknown" as const}:{thinkingLevels:["off","high"],defaultThinkingLevel:"off"};},
+  async thinking(){if(state.compatible)throw new Error("SDK metadata is unavailable");
+  return{thinkingLevels:["off","high"],defaultThinkingLevel:"off"};},
   async images(){return "supported";},
  };
  const executor=new Controlled(),manager=new RunManager(store,daemon,executor,undefined,models,prompt=>{if(prompt==="/missing")throw new RunModelError("SLASH_COMMAND_UNKNOWN","Missing command");});

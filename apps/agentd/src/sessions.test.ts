@@ -7,6 +7,7 @@ import { appendAssistantMessage, appendUserMessage } from "@piwork/pi-adapter";
 import { WorkStore } from "@piwork/work-store";
 import { AgentSessionService } from "./sessions.js";
 import { AgentRunModels } from "./run-models.js";
+import type { RunModelResolver } from "./run-models.js";
 
 test("real SDK Session create/list/read/continue survives daemon service replacement", async () => {
   const root = await mkdtemp(join(tmpdir(), "piwork-agentd-session-"));
@@ -109,6 +110,35 @@ test("Session model preference is persistent, context-neutral and absent in a ne
     store.close(); store = WorkStore.open(path); sessions = new AgentSessionService("work-a", store, workspace, join(root, "sessions"), "context-a");
     assert.equal(sessions.list().find((r) => r.sessionId === session.sessionId)?.modelPreferenceJson, changed.modelPreferenceJson);
   } finally { store.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("new known-model compatibility settings survive reopen without consulting SDK levels", async () => {
+  const root=await mkdtemp(join(tmpdir(),'piwork-known-compatible-session-'));
+  const workspace=join(root,'workspace');
+  await mkdir(workspace);
+  const path=join(root,'work.sqlite');
+  let store=WorkStore.open(path);
+  const model={modelRef:null,label:'Known Off',provider:'openai',model:'gpt-4.1-mini',api:'openai-responses' as const};
+  const models:RunModelResolver={async list(){throw new Error('unused');},async credential(){return'synthetic-key';},async resolve(ref){return{...model,modelRef:ref,...(ref==='messages-model'?{provider:'anthropic',api:'anthropic-messages' as const}:{})};},async thinking(){throw new Error('SDK lookup must not gate compatible requests');}};
+  try {
+    let sessions=new AgentSessionService('work-known',store,workspace,join(root,'sessions'));
+    const session=sessions.create();
+    const saved=await sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'max',thinkingProfile:'responses-effort-v1'},models);
+    assert.equal((await sessions.chatOptions(session.sessionId,models)).availability,'available');
+    await assert.rejects(sessions.setChatOptions(session.sessionId,{modelRef:'messages-model',thinkingLevel:'max',thinkingProfile:'responses-effort-v1'},models),/Thinking level/);
+    assert.equal(store.getSession('work-known',session.sessionId)!.modelPreferenceJson,saved.modelPreferenceJson);
+    await sessions.setChatOptions(session.sessionId,{modelRef:'same-protocol-model',thinkingLevel:'xhigh',thinkingProfile:'responses-effort-v1'},models);
+    store.close();
+    store=WorkStore.open(path);
+    sessions=new AgentSessionService('work-known',store,workspace,join(root,'sessions'));
+    const restored=await sessions.chatOptions(session.sessionId,models);
+    assert.equal(restored.thinkingProfile,'responses-effort-v1');
+    assert.equal(restored.thinkingLevel,'xhigh');
+    assert.equal(restored.availability,'available');
+    await assert.rejects(sessions.setChatOptions(session.sessionId,{modelRef:null,thinkingLevel:'off'},models),/updated chat settings/);
+    assert.equal(sessions.create().modelPreferenceJson,undefined);
+  }finally{store.close();
+  await rm(root,{recursive:true,force:true});}
 });
 
 test("legacy custom model selection does not claim a confirmed Off capability", async () => {

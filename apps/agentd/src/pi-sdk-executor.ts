@@ -114,7 +114,7 @@ export class PiSdkRunExecutor implements RunExecutor {
         if (context.actualModel && (session.model?.id !== context.actualModel.model || session.model.provider !== context.actualModel.provider || session.model.baseUrl !== model.baseUrl || session.thinkingLevel !== (context.actualModel.thinkingLevel ?? "off"))) throw new Error("accepted model and Thinking settings could not be applied");
       };
       assertAcceptedOptions();
-      if (isDeepSeekAnthropicEndpoint(model) && runtime.getModel("deepseek", model.id)) {
+      if (!context.actualModel?.thinkingProfile && isDeepSeekAnthropicEndpoint(model) && runtime.getModel("deepseek", model.id)) {
         const transform = session.agent.onPayload;
         session.agent.onPayload = async (payload, requestModel) => {
           assertAcceptedOptions();

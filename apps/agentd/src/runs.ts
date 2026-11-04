@@ -7,7 +7,7 @@ import { BRAIN_LIMITS } from "@piwork/contracts";
 import { RunModelError, type RunModelResolver } from "./run-models.js";
 import { CHAT_IMAGE_PROFILE, ChatImageError, chatInputDigest, validateChatImages, type ChatImageInput } from "@piwork/contracts";
 import { ModelProviderError } from "./model-provider-errors.js";
-import { thinkingApi, validThinkingSelection } from "./thinking-profiles.js";
+import { thinkingApi, validThinkingSelection, thinkingLevelsForSelection } from "./thinking-profiles.js";
 
 export interface RunExecutionContext {
   readonly images?: readonly ChatImageInput[];
@@ -180,15 +180,15 @@ export class RunManager {
       if (availability !== "supported") throw new ChatImageError(availability === "unknown" ? "IMAGE_MODEL_UNCONFIRMED" : "IMAGE_MODEL_UNSUPPORTED", "This model cannot confirm image input. Choose an image-capable model or a new text-only Session.");
     }
     let thinkingLevel = preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel;
+    const profile = selector.kind === "session-preference" ? preference?.thinkingProfile : undefined;
     let levels: readonly ThinkingLevel[] = ["off"];
-    try { if (this.models.thinking) levels = (await this.models.thinking(actualModel)).thinkingLevels; }
+    try { levels = await thinkingLevelsForSelection(this.models, actualModel, profile); }
     catch (error) {
       // Requests predating chat settings keep their legacy custom-model behavior.
       if (input.inputMode !== undefined || preference?.thinkingLevel !== undefined || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
     }
     if(!preference && !levels.length) thinkingLevel=null;
-    const profile = selector.kind === "session-preference" ? preference?.thinkingProfile : undefined;
-    if (!validThinkingSelection(thinkingApi(actualModel), levels, thinkingLevel, profile, !!profile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
+    if (!validThinkingSelection(thinkingApi(actualModel), levels, thinkingLevel, profile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Confirm a Thinking level supported by the selected model before sending.");
     return { selector, actualModel: { ...actualModel, thinkingLevel, ...(profile ? {thinkingProfile:profile} : {}) } };
   }
 
@@ -234,9 +234,9 @@ export class RunManager {
           if (current[key] !== prepared.actualModel[key]) throw new RunModelError("MODEL_UNAVAILABLE", "The selected model changed before the message could be submitted.");
         }
         if (this.models.thinking) {
-          const levels = (await this.models.thinking(current)).thinkingLevels;
+          const levels = await thinkingLevelsForSelection(this.models, current, prepared.actualModel.thinkingProfile);
           const thinking = prepared.actualModel.thinkingLevel;
-          if (!validThinkingSelection(thinkingApi(current), levels, thinking === undefined ? "off" : thinking, prepared.actualModel.thinkingProfile, !!prepared.actualModel.thinkingProfile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "The accepted Thinking setting is no longer available.");
+          if (!validThinkingSelection(thinkingApi(current), levels, thinking === undefined ? "off" : thinking, prepared.actualModel.thinkingProfile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "The accepted Thinking setting is no longer available.");
         }
       }
       assertRuntime();

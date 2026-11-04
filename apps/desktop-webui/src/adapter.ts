@@ -1,4 +1,5 @@
 import { RunFeedbackObservations } from './chat-run-feedback.js';
+import { thinkingOptions } from './thinking-options.js';
 import { randomUUID, sha256Hex } from './browser-crypto.js';
 import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import { LocalizedMessage, t } from './locale.js';
@@ -319,7 +320,7 @@ export class DesktopAdapter {
   private requestCancellations = new Map<string, { phase: 'pending' | 'accepted' | 'unknown'; error: string }>();
   models = new Map<string, { loading: boolean; confirmed: boolean; error: string; models: RunModel[]; defaultModel?: RunModel; defaultUnavailableReason?:string; unavailableModels?:Array<{label:string;reason:string;recovery:string}>; checkedAt?: string }>();
   modelSelections = new Map<string, { phase: 'clean' | 'dirty' | 'saving' | 'unknown'; ref: string | null; thinking: string|null; profile?: string; needsThinkingConfirmation?: boolean; error: string; revision: number; confirmedRevision?: number }>();
-  chatCapabilities = new Map<string, 0|1|2|3|4>();
+  chatCapabilities = new Map<string, 0|1|2|3|4|5>();
   cancelAndSendCapabilities = new Map<string, 0|1>();
   activeRuns = new Map<string, { confirmed: boolean; loading: boolean; visibleLoading?: boolean; run: Run|null; error: string }>();
   private runFeedbackObservations = new RunFeedbackObservations();
@@ -1473,11 +1474,15 @@ export class DesktopAdapter {
   async loadModels(id: string) {
     const epoch=this.epoch,state={loading:true,confirmed:false,error:'',models:[] as RunModel[],...this.models.get(id)};state.loading=true;this.models.set(id,state);this.emit();
     try {
-      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);if(epoch!==this.epoch)return;this.chatCapabilities.set(id,capabilities.contractVersion===4?4:capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
+      try {const capabilities=await this.request(`works/${part(id)}/chat-capabilities`);
+      if(epoch!==this.epoch)return;
+      this.chatCapabilities.set(id,capabilities.contractVersion===5?5:capabilities.contractVersion===4?4:capabilities.contractVersion===3?3:capabilities.contractVersion===2?2:capabilities.contractVersion===1?1:0);
+      this.cancelAndSendCapabilities.set(id,capabilities.cancelAndSendContractVersion===1?1:0);
+      if(this.visibleWorkId===id && this.visibleChat)void this.loadActiveRun(id,true);}
       catch(error) {if((error as DesktopError).code==='CONNECTION_CHANGED')throw error;if(epoch!==this.epoch)return;this.chatCapabilities.set(id,0);if(!this.cancelAndSendCapabilities.has(id))this.cancelAndSendCapabilities.set(id,0);}
       const value=await this.request(`works/${part(id)}/${(this.chatCapabilities.get(id) ?? 0)>=1?'chat-models':'models'}`);
       if(value.availability==='unavailable')throw failure('MODEL_LIST_UNAVAILABLE','d.error.modelsUnconfirmed');
-      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3 && value.contractVersion!==4)throw failure('INVALID_RESPONSE','d.error.modelListIncomplete');
+      if(!Array.isArray(value.models) || !value.defaultModel && value.contractVersion!==2 && value.contractVersion!==3 && value.contractVersion!==4 && value.contractVersion!==5)throw failure('INVALID_RESPONSE','d.error.modelListIncomplete');
       if(epoch!==this.epoch)return;Object.assign(state,{confirmed:true,models:value.models,defaultModel:value.defaultModel ?? undefined,defaultUnavailableReason:value.defaultUnavailableReason,unavailableModels:value.unavailableModels,checkedAt:value.checkedAt,error:''});await this.loadCommands(id);
       const draft=this.modelSelections.get(`${id}:`);if(draft&&!draft.revision&&state.defaultModel)draft.thinking=state.defaultModel.defaultThinkingLevel===undefined?'off':state.defaultModel.defaultThinkingLevel;
       const selected=this.chatSelection?.startsWith(`${id}:`)?this.chatSelection.slice(id.length+1):'';if(selected)await this.readSessionOptions(id,selected);
@@ -1489,10 +1494,34 @@ export class DesktopAdapter {
       if(state.thinking!==null){if(!sessionId && !state.revision)state.thinking=null;else {state.needsThinkingConfirmation=true;state.error=localizedText('d.error.thinkingUnconfirmed');if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();return;}}
     }else if(model?.thinkingLevels && (state.thinking===null || !model.thinkingLevels.includes(state.thinking))){state.thinking=model.defaultThinkingLevel ?? 'off';state.error=localizedText('d.error.thinkingAdjusted');}else state.error='';
     if(state.phase!=='saving')state.phase='dirty';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);}
+  getThinkingOptions(id: string, sessionId: string) {
+    const catalog = this.models.get(id), state = this.modelSelection(id, sessionId);
+    const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+    const saved = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+    const retained = saved?.modelPreference?.modelRef === state.ref && saved.modelPreference.availability === 'available' && saved.thinkingProfile
+      ? { level: saved.thinkingLevel ?? null, profile: saved.thinkingProfile } : undefined;
+    return thinkingOptions(model, this.chatCapabilities.get(id) ?? 0, retained);
+  }
+  selectThinkingLevel(id: string, sessionId: string, level: string | null) {
+    const state = this.modelSelection(id, sessionId);
+    const option = this.getThinkingOptions(id, sessionId).find(choice => choice.level === level);
+    if (!option) throw failure('THINKING_LEVEL_UNSUPPORTED', 'd.error.chooseThinking');
+    if (state.phase === 'unknown') throw failure('MODEL_NOT_CONFIRMED', 'd.error.checkOriginalSettings');
+    const catalog = this.models.get(id);
+    const model = state.ref === null ? catalog?.defaultModel : catalog?.models.find(m => m.modelRef === state.ref);
+    const session = this.getWork(id)?.sessions.find(s => s.id === sessionId);
+    const declaredProfile = state.profile && model?.compatibleThinkingProfiles?.some(mapping => mapping.profile === state.profile && level !== null && mapping.levels.includes(level));
+    const savedProfile = session?.modelPreference?.modelRef === state.ref && session.modelPreference.availability === 'available' && session.thinkingLevel === level && session.thinkingProfile === state.profile;
+    const supported = state.profile ? declaredProfile || savedProfile : level === null ? model?.thinkingAvailability === 'unknown' : model?.thinkingLevels?.includes(level);
+    const available = (!session?.chatAvailability || session.chatAvailability === 'available') && session?.modelPreference?.availability !== 'unavailable';
+    const pending = this.pairSaves.has(`${id}:${sessionId}`);
+    if (state.thinking === level && !state.needsThinkingConfirmation && supported && (available || pending) && (state.phase === 'clean' || pending || !sessionId)) return;
+    this.selectThinking(id, sessionId, level, state.thinking === level && declaredProfile ? state.profile : option.profile);
+  }
   selectThinking(id:string,sessionId:string,thinking:string|null,profile?:string) {
     const state=this.modelSelection(id,sessionId);if(state.phase==='unknown')throw failure('MODEL_NOT_CONFIRMED','d.error.checkOriginalSettings');
     const catalog=this.models.get(id),model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
-    if((this.chatCapabilities.get(id) ?? 0)<1 || !(profile ? (this.chatCapabilities.get(id) ?? 0)>=4 && thinking!==null && model?.compatibleThinkingProfiles?.some(p=>p.profile===profile && p.levels.includes(thinking)) : thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw failure('THINKING_LEVEL_UNSUPPORTED','d.error.chooseThinking');
+    if((this.chatCapabilities.get(id) ?? 0)<1 || !(profile ? (this.chatCapabilities.get(id) ?? 0)>=4 && thinking!==null && ((this.chatCapabilities.get(id) ?? 0)>=5 || model?.thinkingAvailability==='unknown') && model?.compatibleThinkingProfiles?.some(p=>p.profile===profile && p.levels.includes(thinking)) : thinking===null ? model?.thinkingAvailability==='unknown' : model?.thinkingLevels?.includes(thinking)))throw failure('THINKING_LEVEL_UNSUPPORTED','d.error.chooseThinking');
     state.thinking=thinking;state.profile=profile;state.needsThinkingConfirmation=false;if(state.phase!=='saving')state.phase='dirty';state.error='';state.revision++;this.emit();if(sessionId)void this.saveModel(id,sessionId).catch(()=>undefined);
   }
   private confirmSessionModel(id:string,session:Session,raw:Data,version=this.sessionVersions.get(id)||0) {

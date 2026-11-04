@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@piwork/pi-adapter";
-import { CHAT_CONTROLS_CONTRACT_VERSION, THINKING_LEVELS, normalizeModelBaseUrl, publicRunModel, type ChatModel, type ChatModelList, type ThinkingLevel, type RunModelList, type RunModelSnapshot } from "@piwork/contracts";
+import { THINKING_LEVELS, normalizeModelBaseUrl, publicRunModel, type ChatModel, type ChatModelList, type ThinkingLevel, type RunModelList, type RunModelSnapshot } from "@piwork/contracts";
 import type { AgentRuntimeConfig } from "./application.js";
 import type { WorkPrivateClient } from "./work-private-client.js";
 import { resolveProductionModel } from "./pi-sdk-executor.js";
@@ -91,14 +91,18 @@ export class AgentRunModels implements RunModelResolver {
       const candidates = this.control ? await this.control.models() : { models: [], defaultModel: await this.resolve(null), checkedAt: new Date().toISOString() };
       if(!("defaultUnavailable" in candidates && candidates.defaultUnavailable)) this.assertDefault(candidates.defaultModel);
       const describe = async (model: RunModelSnapshot): Promise<ChatModel> => {
-        const capabilities = await this.thinking(model);
+        await this.assertSupported(model);
+        const profiles = compatibleThinkingProfiles(thinkingApi(model));
+        const capabilities = await this.thinking(model).catch(error => {
+          if (!profiles.length || !(error instanceof RunModelError) || error.modelErrorCode !== "MODEL_NOT_SUPPORTED") throw error;
+          return { thinkingLevels: [], defaultThinkingLevel: null, thinkingAvailability: "unknown" as const };
+        });
         let label = model.label;
         if (model.provider !== 'piwork-deterministic' && (label === model.model || /^Runtime(?: model)? revision\b/i.test(label))) {
           const runtime = await ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
           label = resolveProductionModel(runtime, { provider:model.provider,id:model.model,...(model.baseUrl?{baseUrl:model.baseUrl}:{}), ...(model.api?{api:model.api}:{}), ...(model.capabilities?{capabilities:model.capabilities}:{}) }).name;
         }
-        const profiles = (CHAT_CONTROLS_CONTRACT_VERSION as number) >= 4 && capabilities.defaultThinkingLevel === null ? compatibleThinkingProfiles(thinkingApi(model)) : [];
-        return capabilities.defaultThinkingLevel===null ? {...publicRunModel(model),label,thinkingAvailability:"unknown",thinkingLevels:[],defaultThinkingLevel:null,...(profiles.length ? {compatibleThinkingProfiles:profiles} : {})} : {...publicRunModel(model),label,thinkingLevels:capabilities.thinkingLevels,defaultThinkingLevel:capabilities.defaultThinkingLevel};
+        return capabilities.defaultThinkingLevel===null ? {...publicRunModel(model),label,thinkingAvailability:"unknown",thinkingLevels:[],defaultThinkingLevel:null,...(profiles.length ? {compatibleThinkingProfiles:profiles} : {})} : {...publicRunModel(model),label,thinkingLevels:capabilities.thinkingLevels,defaultThinkingLevel:capabilities.defaultThinkingLevel,...(profiles.length ? {compatibleThinkingProfiles:profiles} : {})};
       };
       const models: ChatModel[] = [];
       const unavailableModels: NonNullable<Extract<ChatModelList, { contractVersion: 2 }>["unavailableModels"]> = [];
@@ -107,7 +111,7 @@ export class AgentRunModels implements RunModelResolver {
         return { ...publicRunModel(model), reason, recovery: capabilityRecovery(reason) };
       };
       for (const model of candidates.models) {
-        try { await this.assertSupported(model); models.push(await describe(model)); } catch (error) { unavailableModels.push(unavailable(model, error)); }
+        try { models.push(await describe(model)); } catch (error) { unavailableModels.push(unavailable(model, error)); }
       }
       let defaultModel: ChatModel|null=null;
       let defaultUnavailableReason = candidates.models.length === 0
@@ -116,9 +120,9 @@ export class AgentRunModels implements RunModelResolver {
       if(!("defaultUnavailable" in candidates && candidates.defaultUnavailable)) {
         try{defaultModel=await describe(candidates.defaultModel);}catch (error) { defaultUnavailableReason=unavailable(candidates.defaultModel,error).recovery; }
       }
-      if(defaultModel && !unavailableModels.length && defaultModel.defaultThinkingLevel!==null && models.every(m=>m.defaultThinkingLevel!==null)) return {contractVersion:1,models:models as Extract<ChatModelList,{contractVersion:1}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:1}>['defaultModel'],checkedAt:candidates.checkedAt,availability:"available"};
       const compatibility = [...models, ...(defaultModel ? [defaultModel] : [])].some(m => "compatibleThinkingProfiles" in m);
-      if (compatibility) return {contractVersion:4,models:models as Extract<ChatModelList,{contractVersion:4}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:4}>['defaultModel'],...(!defaultModel?{defaultUnavailableReason}:{}),...(unavailableModels.length?{unavailableModels}:{}),checkedAt:candidates.checkedAt,availability:"available"};
+      if (compatibility) return {contractVersion:5,models:models as Extract<ChatModelList,{contractVersion:5}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:5}>['defaultModel'],...(!defaultModel?{defaultUnavailableReason}:{}),...(unavailableModels.length?{unavailableModels}:{}),checkedAt:candidates.checkedAt,availability:"available"};
+      if(defaultModel && !unavailableModels.length && defaultModel.defaultThinkingLevel!==null && models.every(m=>m.defaultThinkingLevel!==null)) return {contractVersion:1,models:models as Extract<ChatModelList,{contractVersion:1}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:1}>['defaultModel'],checkedAt:candidates.checkedAt,availability:"available"};
       return {contractVersion:3,models:models as Extract<ChatModelList,{contractVersion:3}>['models'],defaultModel:defaultModel as Extract<ChatModelList,{contractVersion:3}>['defaultModel'],...(!defaultModel?{defaultUnavailableReason}:{}),...(unavailableModels.length?{unavailableModels}:{}),checkedAt:candidates.checkedAt,availability:"available"};
     } catch { throw new RunModelError("MODEL_LIST_UNAVAILABLE", "Available chat models could not be loaded. Retry when the Work is ready."); }
   }

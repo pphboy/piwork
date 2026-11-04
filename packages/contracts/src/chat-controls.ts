@@ -3,7 +3,7 @@ import { IdentifierSchema, ResourceIdSchema, TimestampSchema } from "./harness.j
 import { AgentRunSourceSchema, RunModelDescriptionSchema } from "./work-feedback.js";
 import { ChatImageDescriptorSchema } from "./chat-images.js";
 
-export const CHAT_CONTROLS_CONTRACT_VERSION = 4;
+export const CHAT_CONTROLS_CONTRACT_VERSION = 5;
 export const COMPATIBLE_THINKING_CONTRACT_VERSION = 4;
 export const CANCEL_AND_SEND_CONTRACT_VERSION = 1;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -14,7 +14,7 @@ export const ThinkingLevelSchema = Type.Union([
   Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"),
 ]);
 export const ChatInputModeSchema = Type.Union([Type.Literal("text"), Type.Literal("command")]);
-export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4)]), cancelAndSendContractVersion: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1)])) }, strict);
+export const ChatCapabilitiesSchema = Type.Object({ contractVersion: Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3), Type.Literal(4), Type.Literal(5)]), cancelAndSendContractVersion: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1)])) }, strict);
 export const ThinkingSettingSchema = Type.Union([ThinkingLevelSchema,Type.Null()]);
 export const ThinkingProfileSchema = Type.Union([
   Type.Literal("responses-effort-v1"), Type.Literal("messages-adaptive-v1"), Type.Literal("messages-budget-v1"),
@@ -40,7 +40,13 @@ const ChatModelV4Schema = Type.Union([KnownChatModelSchema, Type.Object({
   thinkingLevels: Type.Array(ThinkingLevelSchema, { maxItems: 0 }), defaultThinkingLevel: Type.Null(),
   compatibleThinkingProfiles: Type.Array(CompatibleThinkingProfileSchema, { minItems: 1, maxItems: 2 }),
 }, strict)]);
-export const ChatModelSchema = Type.Union([ChatModelV3Schema, ChatModelV4Schema]);
+const ChatModelV5Schema = Type.Union([
+  Type.Object({ ...KnownChatModelSchema.properties,
+    compatibleThinkingProfiles: Type.Array(CompatibleThinkingProfileSchema, { minItems: 1, maxItems: 2 }),
+  }, strict),
+  ChatModelV4Schema,
+]);
+export const ChatModelSchema = Type.Union([ChatModelV3Schema, ChatModelV4Schema, ChatModelV5Schema]);
 const ChatModelListV1Schema = Type.Object({
   contractVersion: Type.Literal(1), models: Type.Array(KnownChatModelSchema, { maxItems: 256 }),
   defaultModel: KnownChatModelSchema, checkedAt: TimestampSchema,
@@ -60,6 +66,9 @@ export const ChatModelListSchema = Type.Union([ChatModelListV1Schema, Type.Objec
  unavailableModels:Type.Optional(Type.Array(Type.Object({...RunModelDescriptionSchema.properties,reason:Type.Union([Type.Literal("capabilities-unconfirmed"),Type.Literal("sdk-unsupported")]),recovery:Type.String({minLength:1,maxLength:256})},strict),{maxItems:256})),checkedAt:TimestampSchema,availability:Type.Union([Type.Literal("available"),Type.Literal("unavailable")]),
 },strict), Type.Object({
  contractVersion:Type.Literal(4),models:Type.Array(ChatModelV4Schema,{maxItems:256}),defaultModel:Type.Union([ChatModelV4Schema,Type.Null()]),defaultUnavailableReason:Type.Optional(Type.String({maxLength:256})),
+ unavailableModels:Type.Optional(Type.Array(Type.Object({...RunModelDescriptionSchema.properties,reason:Type.Union([Type.Literal("capabilities-unconfirmed"),Type.Literal("sdk-unsupported")]),recovery:Type.String({minLength:1,maxLength:256})},strict),{maxItems:256})),checkedAt:TimestampSchema,availability:Type.Union([Type.Literal("available"),Type.Literal("unavailable")]),
+}, strict), Type.Object({
+ contractVersion:Type.Literal(5),models:Type.Array(ChatModelV5Schema,{maxItems:256}),defaultModel:Type.Union([ChatModelV5Schema,Type.Null()]),defaultUnavailableReason:Type.Optional(Type.String({maxLength:256})),
  unavailableModels:Type.Optional(Type.Array(Type.Object({...RunModelDescriptionSchema.properties,reason:Type.Union([Type.Literal("capabilities-unconfirmed"),Type.Literal("sdk-unsupported")]),recovery:Type.String({minLength:1,maxLength:256})},strict),{maxItems:256})),checkedAt:TimestampSchema,availability:Type.Union([Type.Literal("available"),Type.Literal("unavailable")]),
 }, strict)]);
 export const SlashCommandSchema = Type.Object({

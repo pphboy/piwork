@@ -139,7 +139,7 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 		t.Fatal("Core Session HTTP route failed", status, session)
 	}
 	status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil)
-	if status != 200 || capabilities["contractVersion"] != float64(3) && capabilities["contractVersion"] != float64(4) {
+	if status != 200 || capabilities["contractVersion"] != float64(3) && capabilities["contractVersion"] != float64(4) && capabilities["contractVersion"] != float64(5) {
 		t.Fatal("optional chat capabilities", status, capabilities)
 	}
 	if capabilities["contractVersion"] == float64(3) {

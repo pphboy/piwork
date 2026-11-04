@@ -11,7 +11,7 @@ import { WorkStore, type SessionRecord } from "@piwork/work-store";
 import type { RunModelResolver } from "./run-models.js";
 import { RunModelError } from "./run-models.js";
 import { publicRunModel, type RunModelSnapshot, type SessionChatOptions, type SetSessionChatOptions } from "@piwork/contracts";
-import { thinkingApi, validThinkingSelection } from "./thinking-profiles.js";
+import { thinkingApi, validThinkingSelection, thinkingLevelsForSelection } from "./thinking-profiles.js";
 
 export class AgentSessionService {
   constructor(
@@ -71,9 +71,8 @@ export class AgentSessionService {
     if (previous?.thinkingProfile && options.thinkingProfile === undefined) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Use updated chat settings to change this compatible Thinking selection.");
     const profile = options.thinkingProfile ?? undefined;
     const model = await models.resolve(modelRef);
-    const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off" as const];
-    const retain = !!profile && previous?.thinkingProfile === profile && previous.modelRef === modelRef && previous.model === model.model && previous.api === model.api && previous.executionBindingId === model.executionBindingId;
-    if (!validThinkingSelection(thinkingApi(model), levels, thinkingLevel, profile, retain)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
+    const levels = await thinkingLevelsForSelection(models, model, profile);
+    if (!validThinkingSelection(thinkingApi(model), levels, thinkingLevel, profile)) throw new RunModelError("THINKING_LEVEL_UNSUPPORTED", "Choose a Thinking level supported by this model.");
     this.requireRecord(sessionId);
     return this.store.setSessionModelPreference(this.workId, sessionId, JSON.stringify({ ...model, thinkingLevel, ...(profile ? {thinkingProfile:profile} : {}), availability: "available" }), this.now().toISOString());
   }
@@ -86,9 +85,9 @@ export class AgentSessionService {
     let available = saved?.availability !== "unavailable";
     try {
       model = await models.resolve(modelRef);
-      const levels = models.thinking ? (await models.thinking(model)).thinkingLevels : ["off" as const];
+      const levels = await thinkingLevelsForSelection(models, model, saved?.thinkingProfile);
       if(!saved && !levels.length) thinkingLevel=null;
-      available = available && validThinkingSelection(thinkingApi(model), levels, thinkingLevel, saved?.thinkingProfile, true);
+      available = available && validThinkingSelection(thinkingApi(model), levels, thinkingLevel, saved?.thinkingProfile);
     } catch (error) {
       if (!saved) throw error;
       model = saved; available = false;
