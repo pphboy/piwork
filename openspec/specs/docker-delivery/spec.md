@@ -118,7 +118,7 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 
 根 README 顶部 SHALL 包含最新 GitHub Release（包括 Preview）、Apache-2.0、Stars 和 Linux 服务端四类徽章，使用真实仓库信息、准确替代文本及有效点击目标。版本徽章 SHALL 能展示仅有预发行版本的项目，不能以只查正式版的入口错误显示无版本；Linux 徽章 SHALL 清楚表示服务端部署平台，不将浏览器或实验性客户端能力表述为 Windows Core 支持。徽章图片不可用时，产品说明与导航 SHALL 仍可阅读和使用。本要求不创建 Git tag、不修改仓库 Topics，也不展示没有实际来源的 CI 状态或支持承诺。
 
-根 README 链接的详细 Quick Start SHALL 默认展示统一服务端的一条完整逻辑 Docker run 命令，随后直接打开服务器普通 IP 地址、创建管理员、正常登录、配置模型/runtime 并进入工作台。Agent 镜像是随版本交付的默认值，教程和页面不包含手填、选择或高级覆盖步骤。默认不要求任何业务 env、CLI 容器、Console、客户端代理、安装压缩包、源码构建或域名配置；主站及有界 Service 入口需要的网络放行在同一入口说明。空安装直接创建管理员，不要求终端链接或额外浏览器 Access；启动输出和静态例子不含有效秘密。
+根 README 链接的官网 Quick Start SHALL 只引导已发布桌面一键启动版：下载对应 Windows/Linux GUI 包、启动 Piwork、完成首次管理员与模型设置、进入 Work。平台选择仅区分同一种启动路径的资源，不在默认路径提供 Docker、Compose、CLI 或源码构建选项。版本、系统要求与教程 SHALL 对应实际发布制品，不把桌面启动器版本等同于内含 Core 版本。双语部署手册及官网安装页 SHALL 继续提供 Linux 统一服务端的一条完整 Docker run 命令，随后打开服务器 IP 完成网页引导；Agent 镜像随版本自动使用，无需业务 env、手填镜像或额外授权链接。
 
 详细使用材料 SHALL 明确 IP 模式首版依赖脚本读写 Cookie 的应用可能不兼容，脚本自行写入 Cookie 不保证跨 Service 隔离；响应 Cookie 在服务端分区。该限制不新增 DNS/客户端代理步骤，也不阻塞默认网页初始化，不以“完整工作台”宣称所有网页应用透明兼容。
 
@@ -139,8 +139,8 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 - **THEN** 准确替代文本、项目说明及文档链接仍可用，不影响取得安装入口
 
 #### Scenario: 首次使用者完成一次对话
-- **WHEN** 用户从任一语言 README 进入详细 Quick Start 并使用受支持 Linux Docker
-- **THEN** 仅启动一个入口并通过服务器 IP 在浏览器完成创建管理员、普通登录、配置和对话；无需取得设置链接、本地浏览器授权或 export 管理员/模型变量
+- **WHEN** 用户从任一语言 README 进入官网 Quick Start
+- **THEN** 沿下载、启动、首次设置、打开 Work 的单一路径操作，系统要求和按钮与已发布 GUI 一致；Linux 服务端部署仍可通过既有部署手册深链取得
 
 #### Scenario: 查看原生 CLI 替代路径
 - **WHEN** 用户从项目文档导航选择原生 Linux 应用、Linux 原生 CLI、跨平台浏览器或可选 Compose
@@ -168,7 +168,7 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 
 统一服务端 Compose SHALL 单独启动同一程序，默认无需业务 env，保持 Docker socket、数据路径、host 网络、ControlPlane 17891、Core 17871 及内部 Agent 回连条件、应用 liveness 和 60 秒关闭规则。examples/single-host SHALL 只定义 Core 服务，不包含 CLI profile、服务、状态卷或 exchange；客户端说明使用 Linux 宿主原生 CLI，启退不创建/重建/停止 Core。
 
-双语根 README SHALL 同步维护项目展示和有效文档导航，不携带当前镜像命令或重复详细教程。双语部署手册、Compose/模板、单机说明、发行默认值/清单及官网的 Quick Start、首页、安装、First Work、源码导航和当前下载材料 SHALL 继续同步维护以普通地址直接创建/登录的完整运行说明，不要求设置链接或 Desktop Access，并提供可执行的一致性检查。检查使用合成值，不输出真实秘密；连续同步候选时不得残留前一个当前引用。历史发行下载保留原版本身份，不覆盖为未公开的新候选。
+双语根 README SHALL 同步维护项目展示和有效文档导航，不携带当前镜像命令或重复详细教程。双语部署手册、Compose/模板、单机说明、发行默认值/清单及官网的服务端安装、源码安装和固定版本下载资源 SHALL 继续同步维护并提供可执行的一致性检查。官网首页、桌面下载、Quick Start、第一个 Work、指南概览和规格导航由官网维护；服务端同步 SHALL 保持这些文件及主题组件、截图、下载数据逐字节不变。检查使用合成值，不输出真实秘密；连续同步候选时服务端当前引用不得残留前一个版本，历史下载保留原发布身份。
 
 材料同步 SHALL 在没有根 README 安装块、原生启动块和 Architecture 章节的情况下正常完成，并保持根 README 内容不变；官网使用说明生成 SHALL 不将根 README 当作教程来源。统一原生 Linux 入口 SHALL 同时在既有双语部署手册和生成的官网材料中有效，不能生成空内容或字面量 undefined。
 
@@ -188,7 +188,7 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 
 #### Scenario: 连续同步两个候选版本
 - **WHEN** 当前材料依次更新为候选 A/B
-- **THEN** 所有详细当前入口统一指向 B，根 README 保持简短介绍和导航，历史版本下载及真实发布身份不被回填或覆盖
+- **THEN** 服务端当前入口统一指向 B，官网编辑页面及桌面下载保持不变，根 README 保持简短介绍和导航，历史版本下载及真实发布身份不被回填或覆盖
 
 #### Scenario: 同步后 README 保持精简
 - **WHEN** 在根 README 没有旧安装标记、原生启动标记及 Architecture 章节的隔离副本中同步材料，并重复同步相同输入
@@ -196,7 +196,7 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 
 #### Scenario: 官网不再读取根 README 教程
 - **WHEN** 根 README 已精简，维护者在隔离目录生成两种语言的官网材料
-- **THEN** 官网仍包含完整默认安装和原生 Linux 入口，未丢失启动/数据/普通登录/关闭说明，没有 undefined，命令与部署手册一致
+- **THEN** 官网服务端安装和源码安装仍包含完整 Docker 与原生 Linux 入口，没有 undefined，命令与部署手册一致；首页及桌面一键启动页面不受影响
 
 #### Scenario: 用户选择 Compose Demo
 - **WHEN** 用户选择当前统一服务端 Compose 或单机示例
@@ -221,6 +221,10 @@ README.md/README.zh-CN.md SHALL 保持顶部互链、章节、产品含义、平
 #### Scenario: 端口或发布身份漂移
 - **WHEN** 当前候选手册、探针、单机原生 CLI、模板或官网生成材料仍使用旧端口池/合并入口，或新说明指向不支持的已发布镜像
 - **THEN** 检查失败并定位不一致，不改写旧 release 的 commit/digest 来伪造一致性
+
+#### Scenario: 保留官网独立设计和桌面下载
+- **WHEN** 同步候选 A、B 或已发布版本到有双语首页、桌面下载、Quick Start、第一个 Work、指南概览和规格导航的官网
+- **THEN** 所有官网编辑页面、主题及截图保持原字节，只有服务端资料和所属版本资源更新；检查器不要求在首页或 Quick Start 中出现 Docker 命令或 Compose 下载
 
 ### Requirement: 使用 Docker 命令制作可审阅的发行候选
 
