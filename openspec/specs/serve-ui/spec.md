@@ -136,6 +136,8 @@ UI 自有文字 SHALL 在简体中文和英文间随用户选择显示；用户�
 - **WHEN** 管理员编辑Runtime/Default Work/模型或展开详情，显式刷新或后台健康读取随后返回
 - **THEN** 正文及交互节点保持，不整页闪白或重置选择；只更新有效状态，未保存草稿、焦点、展开和滚动保持，旧数据与新确认可区分
 
+普通临时动作结果 SHALL 使用 UIL-NOTICE-001 的单一浮动通知，不插入推动表单/列表的Alert；字段错误、首次读取失败、连接/准入原因和未知恢复保留所属无框内容与入口。Admin Header 的 Workbench 为直接真实链接，Desktop Administration 只在全局账号菜单提供；不改变权限校验。
+
 ### Requirement: 管理员手动动作与文件预检有明确等待反馈
 
 **Identifier:** SUI-005
@@ -144,7 +146,7 @@ Serve SHALL 沿用 UIL-008/009 及 UIL-PENDING-001，在有效异步动作开始
 
 选择 Skill 目录、Package 目录/ZIP、AGENTS 文件后，浏览器本地读取/预检 SHALL 显示 Checking selected files，未完成不能提交本次未确认选择；取消选择保持原输入，预检失败保留旧选择，替换/关闭后的晚结果不能恢复旧文件。已有登录、保存、上传和 Package Operation 反馈 SHALL 保持真实；上传、验证、接受、后台准备与发布分别表达。
 
-检查成功即使值未改变 SHALL 有新的确认时间或简短已确认说明。十秒以上未取得响应显示仍在等待及已等待时间，不虚构超时失败。明确失败、结果未知、旧缓存和成功空数据 SHALL 区分；错误不得使用成功措辞/图标。身份/路由变更后旧请求不覆盖当前页面，密码/key 处理仍遵守既有规则。快速动作不人为延迟，普通导航和复制不要求额外 toast。
+检查成功即使值未改变 SHALL 有新的确认时间或简短已确认说明。十秒以上未取得响应按真实任务类别表达等待；关键初始会话/准入读取到达既有预算则转为未确认与安全恢复，长期已接受任务不被按时长虚构为失败。明确失败、结果未知、旧缓存和成功空数据 SHALL 区分；错误不得使用成功措辞/图标。身份/路由变更后旧请求不覆盖当前页面，密码/key 处理仍遵守既有规则。快速动作不人为延迟，普通导航和复制不要求额外 toast。
 
 请求的成功、失败及最终清理回调 SHALL 均受发起时的身份与视图归属约束；离开后返回同一路由也属于新的视图。旧请求不得清理新页面的敏感输入、改变新草稿或释放新动作的提交锁。
 
@@ -176,7 +178,7 @@ Serve SHALL 沿用 UIL-008/009 及 UIL-PENDING-001，在有效异步动作开始
 
 Serve SHALL 在收到可靠的账号创建、启用/禁用、密码重置、Skill 添加/更新、Skill/Package 启用/禁用/移除、Runtime/Defaults 保存确认后，立即保存并显示目标与已确认结果。后续 Users、catalog、defaults、readiness 查询 SHALL 单独显示 Refreshing 和取得时间，不能阻塞成功反馈、撤销原确认或重新执行修改。
 
-刷新失败 SHALL 显示“修改已确认；当前列表/状态未确认”及对应只读 Retry refresh，保留安全的旧数据并标记为最后已知。反馈 SHALL 位于仍存在的页面/结果容器，不能只写入已关闭弹层。更新自身凭据/状态导致撤销仍按 SUI-USR-002 返回登录，不能被普通刷新成功覆盖。响应未知继续使用既有只读核对或稳定 package key 恢复，不能据此显示确定成功。
+刷新失败 SHALL 显示“修改已确认；当前列表/状态未确认”及对应只读 Retry refresh，保留安全的旧数据并标记为最后已知。结果通知 SHALL 由仍有效身份/任务所属的统一宿主呈现，原页面保留状态及只读恢复；不能只写入已关闭弹层，不新增推移布局的结果Alert。更新自身凭据/状态导致撤销仍按 SUI-USR-002 返回登录，不能被普通刷新成功覆盖。响应未知继续使用既有只读核对或稳定 package key 恢复，不能据此显示确定成功。
 
 Runtime 保存后的 API Key 清理 SHALL 仅作用于该次提交的原输入上下文。用户离开 Runtime 后重新进入并输入的新 Key 与非敏感草稿不得被旧保存请求或后续 readiness 查询的晚回调清空；原提交 Key 仍按既有敏感输入规则清理，不从后端回填，不进入动作状态、日志或验收截图。
 
@@ -277,3 +279,27 @@ Core 健康读取 SHALL 有界完成；会话已验证后发生的健康读取�
 #### Scenario: 可达性接口收到非读取请求
 - **WHEN** 有效管理员对 `/console/api/availability` 发送 GET 以外的方法
 - **THEN** 请求按既有 Origin/CSRF 规则接受检查后返回 405，且不向 Core 发起状态变更。
+
+### Requirement: Serve 全部对象与独立表单保持真实状态语义
+
+**Identifier:** SUI-V13-STATE-001
+
+Serve SHALL 按来源矩阵 S01–S12 及实际登录/会话/初始壳覆盖 Overview、用户、Default Work、Skills、Packages、模型列表/配置/测试、Runtime、按ID查Operation、About、托管Quick setup与准备的全部可观察状态；原型未含完整登录/独立表单或稀有错误不是延期理由。首读/确认空/失败/旧数据刷新及未知写入各自可辨；相同对象读请求协调去重，迟到结果不替换新路由/草稿、不清理新Key、不解除新动作锁。
+
+保存确认、显式Test、准备与readiness SHALL 相互独立。模型Test不保存/启停资源，其未运行/成功/失败不成为Save、Enable或选择模型的通用前置门槛；编辑后旧测试结果标为过期。Runtime/Defaults保存返回配置/确认而非通用Operation，不为其捏造Package任务。Quick setup的Ready仍要求当前status与preparation均ready、全部六组件ready且无当前读取错误；未知/失败停止误导动效。Package未知受理只在既有同actor/source/稳定key协议允许时显式Resume，Check/普通通知不自动重放。
+
+#### Scenario: 模型测试与保存分离
+- **WHEN** 管理员未测试、测试失败或测试请求尚在途而保存合法模型配置
+- **THEN** 不因测试结果自动禁止保存；测试不触发保存，编辑后旧测试不回写新输入或重新打开已关闭窗口
+
+#### Scenario: Runtime 保存而readiness失败
+- **WHEN** Runtime保存已确认，随后readiness读取失败
+- **THEN** 保留保存结果，另示未确认状态和只读恢复，不制造Operation或重复保存，也不清理用户后来输入的新Key
+
+#### Scenario: Quick setup部分就绪
+- **WHEN** 保存已完成但六个准备组件中仍有pending/failed/unknown或当前读取错误
+- **THEN** 不宣称整体Ready或自动开放完成主动作；确认条件全部满足后才沿既有有效意图完成
+
+#### Scenario: 登录与包恢复边界
+- **WHEN** 登录/退出结果未知，或Package提交受理未知
+- **THEN** 前者按会话协议核对且不自动重提；后者仅保留既有明确幂等Resume范围，不以通用未知处理破坏或扩大该协议

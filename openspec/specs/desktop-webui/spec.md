@@ -592,7 +592,7 @@ Export SHALL 按 DUL-009 清楚呈现停止（需要时）、生成、传输校�
 
 下载 SHALL 复用原 snapshot，流式传输、核验长度/hash，失败不能显示保存完成；过期明确提示用户重新发起 Export，不静默创建快照。SHALL 提供按 snapshot ID 找回下载。浏览器下载动作仅能确认发起时显示 Download started，不宣称实际落盘完成；敏感包提醒在下载前可见。临时空间不足必须可见且不删除 Core 已生成快照。
 
-从 Work 进入导出 SHALL 始终保留显式“导出当前内容”的新尝试入口，不能被已有成功快照遮蔽；新尝试使用自己的提交身份。旧快照下载 SHALL 与新导出分开标识，显示可靠取得的 ID、状态、大小与过期信息；无可靠生成时间时不伪造时间，不称为当前最新内容。按 snapshot ID 或某个导出 Operation 打开时 SHALL 精确使用原 snapshot，不能再按 Work 随意选另一份；新导出后续下载只能使用本次 acceptance 对应的 snapshot。
+从 Work 进入导出 SHALL 始终保留显式“导出当前内容”的新尝试入口，不能被已有成功快照遮蔽；新尝试使用自己的提交身份。旧快照下载 SHALL 在所属 Work 的独立恢复上下文与新导出分开标识，显示可靠取得的 ID、状态、大小与过期信息，不将旧快照列表塞回导出进度 Details；无可靠生成时间时不伪造时间，不称为当前最新内容。按 snapshot ID 或某个导出 Operation 打开时 SHALL 精确使用原 snapshot，不能再按 Work 随意选另一份；新导出后续下载只能使用本次 acceptance 对应的 snapshot。
 
 一次交付意图 SHALL 绑定发起时有效 Core、用户、本地授权、Work 及原操作/快照/传输，页面内导航或收起面板不取消该意图。同一意图在未被用户手动暂停、snapshot 成功并经 CLI 完整验证且原 transfer ready 后最多自动发起一次浏览器内容下载；重复状态、晚 POST 与只读恢复不得重复触发。浏览器可能拦截或由用户取消保存，界面 SHALL 保留同一已验证 transfer 的显式 Save file / Download again，不重新打包。
 
@@ -620,7 +620,7 @@ Export SHALL 按 DUL-009 清楚呈现停止（需要时）、生成、传输校�
 
 #### Scenario: 停止态一次导出并发起下载
 - **WHEN** 用户在已确认 stopped Work 显式导出当前内容，原 Operation/snapshot 成功且 CLI transfer 完整验证 ready
-- **THEN** 同一进度上下文衔接生成和校验后发起一次浏览器下载，没有必经 View package/再次 Download；保留实际阶段、原 ID、隐私提醒和手动保存入口
+- **THEN** 同一进度上下文衔接生成和校验后发起一次浏览器下载，没有必经 View package/再次 Download；保留实际阶段、隐私提醒和手动保存入口；原 ID 在内部保留并可于所属独立恢复上下文核对，不显示在仅进度 Details
 
 #### Scenario: 停止并导出的失败不越过前置条件
 - **WHEN** 用户确认 Stop and export 后停止失败、未知或 Work 尚未确认停止
@@ -649,6 +649,10 @@ Export SHALL 按 DUL-009 清楚呈现停止（需要时）、生成、传输校�
 #### Scenario: 手动暂停门控后续导出交付
 - **WHEN** 用户 Pause 原导出观察后原 snapshot/transfer 的晚结果变为 ready，随后先 Check 再 Resume
 - **THEN** Pause 和 Check 期间只记录/核对原事实，不发新的阶段 POST/content；明确 Resume 核对后才沿仍有效的原授权意图继续，已提交或已消费阶段不重复
+
+#### Scenario: 进度 Details 不承载技术诊断
+- **WHEN** 用户从当前导出打开Details或再次打开已收起进度
+- **THEN** 显示同一非模态进度、真实阶段与必要控制，不显示技术ID/旧快照/诊断卡；私有包提醒仍在交付前可见，原身份仍可在独立所属恢复上下文核对
 
 ### Requirement: 已知操作恢复不形成隐式任务队列
 
@@ -1046,9 +1050,9 @@ Work 当前事实 SHALL 以既有 Core 查询为依据；新的已接受目标�
 
 Desktop SHALL 按 DUL-003、007 将反馈放在所属按钮、表单、列表行或功能模块，并将提交协调与可见反馈的保留规则分开。Open Work、切换模块、目录导航及普通读取成功后 SHALL 使用实际内容作为完成反馈，不生成或保留 `Work · 路径 · Checked/Confirmed · 原始 ISO 时间` 通用状态条，不跨目录堆积成功记录。正常背景读取 SHALL 不生成 toast 或反复播报成功。
 
-实际请求尚在等待时 SHALL 在原上下文以骨架、就地等待或控件状态显示动作和目标、可访问的状态及 busy 语义，超过十秒仍未确认时如实说明仍在等待。Files/Chat普通读取（包括显式刷新且结果未变化）SHALL 在原控件结束等待并恢复普通状态，不增加成功条或toast；其他已有显式Check的简短确认 SHALL 保留在所属检查入口附近，不新增通用 Checked/Confirmed 条；普通成功提示至多显示三秒，不形成累计历史。同步写入可靠确认可显示 Saved 等简短结果；持久生命周期进展以 Work 状态及原 Operation 详情承接，技术 ID 和取得时间仍可按需查看。
+实际请求尚在等待时 SHALL 在原上下文以骨架、就地等待或控件状态显示动作和目标、可访问的状态及 busy 语义，超过十秒仍未确认时按真实请求类别处理：长期任务如实说明等待，关键初读到达原有预算则转为未确认及安全恢复，不无限动画。Files/Chat普通读取（包括显式刷新且结果未变化）SHALL 在原控件结束等待并恢复普通状态，不增加成功条或toast；其他已有显式Check可在原固定状态位保留新的确认时间/短确认，不插入Alert或通用Checked/Confirmed条；需要显式通知的动作结果按UIL-NOTICE-001呈现，正常读取仍不额外toast；普通成功提示至多显示三秒，不形成累计历史。同步写入可靠确认可显示 Saved 等简短结果；持久生命周期进展以 Work 状态及原 Operation 详情承接，技术 ID 和取得时间仍可按需查看。
 
-失败、观察中断、未知修改及写入已确认但刷新失败 SHALL 有对象、可理解原因和安全下一步，不随成功提示到期被清除。提示消失不得释放未知锁、取消执行或丢失原 Operation。模块已有同一错误/进度时 SHALL 合并呈现，不再插入重复通用条；可恢复的错误在对应重查成功后清除。反馈更新不得移动或重载当前 Service iframe、覆盖编辑草稿，360px 及键盘操作仍可达。
+临时结果反馈 SHALL 使用 UIL-NOTICE-001 单宿主而非额外插入 Alert。失败、观察中断、未知修改及写入已确认但刷新失败 SHALL 有对象、可理解原因和安全下一步，不随成功提示到期被清除。提示消失不得释放未知锁、取消执行或丢失原 Operation。模块已有同一错误/进度时 SHALL 合并呈现，不再插入重复通用条；可恢复的错误在对应重查成功后清除。反馈更新不得移动或重载当前 Service iframe、覆盖编辑草稿，360px 及键盘操作仍可达。
 
 Work 列表、Work、Services、Files、Settings、Session、详情和深链接首屏 SHALL 按同一规则呈现；进入路径本身不要求用户先点击检查。已有内容更新 SHALL 保留可读内容和取得时间，首次读取无数据时显示真实骨架，成功空集合才进入空态。后台读取不得插入通用 pending 条；需要影响准入的真实降级或不可达 SHALL 仍在所属模块持续呈现。
 轻量状态、工具栏和选择反馈 SHALL 不让用户正在连续操作的命中目标无故移动；Files 从零选中到有选中及清空选择时，列表起点和对应行的选择目标位置保持稳定。同一服务的临时状态观察失败按 DWUI-002 保留实际视口，不能用整体替换状态页达到提示错误的目的。
@@ -1094,7 +1098,7 @@ Modal footer SHALL 按DUL-007统一同类按钮几何与角色，正文按钮、
 
 #### Scenario: Chat普通读取与执行状态分离
 - **WHEN** 会话列表或历史背景读取、首次读取、失败重试，或activeRun首次检查
-- **THEN** 原历史、草稿和阅读位置保持，普通读取无时间戳/通用状态行；初次结构骨架，错误一次局部呈现与重试；activeRun真实loading在发送控制中性表示、发送仍按未确认锁定，失败/闲置未确认保留Check status，真实Run/断连/unknown提交不被隐藏
+- **THEN** 原历史、草稿和阅读位置保持，普通读取无时间戳/通用状态行；初次结构骨架，错误只呈现一次主要说明并保留局部恢复入口（通知不替代首读/准入的持久无框原因）；activeRun真实loading在发送控制中性表示、发送仍按未确认锁定，失败/闲置未确认保留Check status，真实Run/断连/unknown提交不被隐藏
 
 #### Scenario: 合法多入口与Desktop图标
 - **WHEN** 用户切换服务、在详情选择多入口，或打开Desktop页面
@@ -1944,7 +1948,7 @@ Desktop SHALL 根据已确认 Service 状态显示造成 Work Degraded 的服务
 
 Desktop SHALL 在 Work 列表行和 Work 面板、Service 详情及管理区域、Settings 的 Apply 和 Package 区域、Import 与 Export 流程中，为对应任务呈现动作、目标、实际进度、失败或观察中断原因、只读 Check status 及原 Operation 详情。已可靠接受与执行终态 SHALL 分开；Work、Service 实际可用性、配置生效和浏览器落盘 SHALL 各依据其自身确认结果，不能由 Operation acceptance 或 succeeded 代替。
 
-同一任务在所属上下文中已有等价进度或错误时 SHALL 合并为一处主要反馈，不额外叠加通用状态条。原 Operation 和 snapshot 技术 ID SHALL 可在该任务的次级详情中读取、复制，默认折叠；已知多个原任务 SHALL 能逐一查看各自结果，历史顺序或旧成功不得覆盖当前控制目标。关联恢复 SHALL 核实原 Core/账号、Work、任务类型和可确认的 Service 身份；缺少或无法确认归属时 SHALL 说明未确认，不将任务归到猜测的对象。
+同一任务在所属上下文中已有等价进度或错误时 SHALL 合并为一处主要反馈，不额外叠加通用状态条。原 Operation 和 snapshot 技术 ID SHALL 可在该任务所属对象的次级诊断中读取、复制，默认折叠；Export Details 及所有既定仅进度 drawer 不承载技术ID/旧快照/诊断卡，这些内容转到同Work独立恢复上下文；已知多个原任务 SHALL 能逐一查看各自结果，历史顺序或旧成功不得覆盖当前控制目标。关联恢复 SHALL 核实原 Core/账号、Work、任务类型和可确认的 Service 身份；缺少或无法确认归属时 SHALL 说明未确认，不将任务归到猜测的对象。
 
 原 ID 查询 SHALL 在相关任务上下文中可达；Export SHALL 仍能按 snapshot ID 找回该 Work 的原快照并核验归属，不另建全局 Operation 列表、搜索页面或操作中心。操作详情、手动查询、重新登录及页面重载恢复 SHALL 只观察已知原对象，不因查看、关闭或重查自动提交业务操作。相关 Work 或 Service 读取失败 SHALL 与已确认的 Operation 终态分别呈现，并继续按既有同步和有界重试规则收敛。
 
@@ -1968,7 +1972,7 @@ Work 和 Service 的普通操作 SHALL 在原对象单一状态位表达提交�
 - **THEN** 两个原结果各自可查，当前目标与按钮由确认的较新事实决定；旧 Start 结果不能使 Work 再显示可运行，也不能清除 Stop 的同步义务
 
 #### Scenario: 原快照按 ID 找回
-- **WHEN** 用户从 Work 的 Export 上下文按 snapshot ID 找回先前的快照
+- **WHEN** 用户从 Work 的独立导出恢复上下文按 snapshot ID 找回先前的快照
 - **THEN** 仅在原 Work 和权限匹配时显示该快照的状态、期限和原下载动作，不按列表顺序改选其他快照，不产生新的 Export
 
 #### Scenario: 操作完成但对象读取失败
@@ -2352,3 +2356,27 @@ Agent 所属 Run 真实 accepted/running 时 SHALL 在原回复位置表达进�
 #### Scenario: 多工具与失败
 - **WHEN** 同一轮中有多个工具，部分失败、部分仍运行，或跨历史页取得同一工具的开始和结果
 - **THEN** 摘要保持数量与失败可辨，调用按身份合并一次，完成不被开始覆盖，失败结果无需展开也可发现
+
+### Requirement: Desktop 全部状态来源按实际业务契约验收
+
+**Identifier:** DWUI-V13-STATE-001
+
+Desktop SHALL 对来源矩阵 D01–D23 的全部实际可观察状态交付一致反馈与安全恢复，不以原型代表状态替代业务覆盖。范围包括连接/会话、Works、生命周期及创建、Service目录/入口/控制/日志、文件浏览/预览/写入/上传、Save与Apply、Skills/Packages、会话/历史/Run/工具、模型/Thinking、图像、Requests、Import/Export/log export、原ID恢复及About/偏好。已确认事实、正在提交、已接受任务、真实对象可用性和观察错误分别表达；不扩展当前API能力或虚构Operation/百分比。
+
+文件写入与批量结果 SHALL 保留每路径账本和未知目标锁，只重试明确失败且合法的目标；源/目标及覆盖同意变化使旧结果失效。Import 完成 SHALL 显示 Stopped/Not started 并等待用户显式Start。Run取消请求不等于已取消，未知提交不得自动重发prompt。模型与Thinking沿既有单一汇总与成对自动保存语义，不照搬原型里不符合当前能力的常驻选择器。Requests的等待结果/等待Apply不等于模型一直执行；历史、取消、Run和Operation身份分别核对。
+
+#### Scenario: 文件部分成功与未知
+- **WHEN** 批量复制/移动/删除一部分成功、一部分失败或未知
+- **THEN** 各路径真实结果可查，未知目标仍锁定；用户仅可显式重试已确认失败且仍合法的子集，不重复成功项
+
+#### Scenario: 导入完成不启动
+- **WHEN** 包检查/上传/接受后原Import确认发布成功
+- **THEN** 显示真实最终Work与Stopped状态，检查完成或上传100%不提前显示成功；只有用户Start才运行
+
+#### Scenario: 会话取消与未知提交
+- **WHEN** Cancel run尚未确认或发送响应丢失，用户切换后返回
+- **THEN** 保留原Session、草稿、Run/提交身份与安全核对，状态不伪称取消/完成，不自动重发
+
+#### Scenario: 模型与请求状态独立
+- **WHEN** Thinking能力变化或Request等待结果/Apply
+- **THEN** 当前有效能力、模型设置确认和请求状态分别呈现，既有焦点/草稿保持，不把Request等待显示为Run一直运行
