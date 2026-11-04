@@ -2,6 +2,38 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.18",
+      "component": "core",
+      "title": "Piwork 0.0.18 Preview",
+      "publishedAt": "2026-11-04",
+      "sections": [
+        {
+          "title": "Model connectivity and protocol Thinking",
+          "items": [
+            "Test Anthropic Messages and OpenAI Responses connections with a minimal Reply OK request, safe response handling and endpoint-scoped anonymous session context.",
+            "Offer protocol Thinking compatibility for SDK-known, unknown and Off-only models while retaining saved profile mappings and the actual model capability facts.",
+            "Negotiate chat contract v5 across Core and Agent without dropping compatible settings or silently reducing requested levels."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.18",
+      "component": "desktop",
+      "title": "Piwork 0.0.18 Preview",
+      "publishedAt": "2026-11-04",
+      "sections": [
+        {
+          "title": "Consistent Thinking choices and task feedback",
+          "items": [
+            "Show one option per Thinking level in independent compact Model and Thinking pickers, preserving valid saved mappings and repairing unavailable settings on explicit confirmation.",
+            "Keep waiting, results and recovery attached to their task across the workbench and administration, with shared floating notices and stable controls.",
+            "Preserve drafts, focus, original operations and Service views through settings changes, import/export progress and bilingual feedback."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.17",
       "component": "core",
       "title": "Piwork 0.0.17 Preview",
