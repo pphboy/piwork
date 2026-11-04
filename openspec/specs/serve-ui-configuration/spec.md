@@ -16,7 +16,7 @@ Overview SHALL 按当前可确认事实提供一个主要任务动作：缺模�
 
 #### Scenario: 健康但未配置运行时
 - **WHEN** Core 健康且 readiness 为 RUNTIME_NOT_CONFIGURED
-- **THEN** 以英文说明 Core 可达但运行时未配置并提供配置入口，其余可用管理页仍能打开
+- **THEN** 以所选界面语言说明 Core 可达但运行时未配置并提供配置入口，其余可用管理页仍能打开
 
 #### Scenario: 丢失 Core 连接
 - **WHEN** 曾显示 ready 的页面刷新失败
@@ -40,7 +40,7 @@ Overview SHALL 按当前可确认事实提供一个主要任务动作：缺模�
 
 Choose model SHALL 列出已保存、启用且凭据可用的模型，包括自定义 ID；不以 SDK 目录、模板、Thinking 或 Test 结果过滤。停用、无 Key 或真实环境不兼容必须说明原因和恢复方向，不静默消失。空目录提供 Add model 入口；所有项不可用时展示相应原因，不能误称没有模型。已有选择不可用保留描述，不自动替换。进入模型管理再返回 SHALL 保留已确认模型与合法非敏感草稿，存在未保存编辑时先处理；引导和管理的模型字段、校验、Test 与敏感清理使用相同语义。
 
-保存成功 SHALL 以 Core persisted 配置为准。已保存但环境未 ready 用英文分别说明两个事实及真实状态；校验/保存前失败保留旧配置与非敏感草稿，不自动重复提交。变更只更新后续新 Work 默认，不暗示旧 Work 已切换。旧深链接 SHALL 映射到统一管理区，既有持久初始化模型对应关系保留，不要求重新输入 Key；不再从 env 初始化或更新模型。CoreSetup 的统一继续动作按 ONBOARD-002 推进，Admin 保留正常编辑/保存和 readiness 检查，不要求用户重复完成首次引导。
+保存成功 SHALL 以 Core persisted 配置为准。已保存但环境未 ready 用所选界面语言分别说明两个事实及真实状态；校验/保存前失败保留旧配置与非敏感草稿，不自动重复提交。变更只更新后续新 Work 默认，不暗示旧 Work 已切换。旧深链接 SHALL 映射到统一管理区，既有持久初始化模型对应关系保留，不要求重新输入 Key；不再从 env 初始化或更新模型。CoreSetup 的统一继续动作按 ONBOARD-002 推进，Admin 保留正常编辑/保存和 readiness 检查，不要求用户重复完成首次引导。
 
 统一应用 SHALL 从 Overview 提供 Admin 内的 Quick setup，路径和身份边界遵守 ONBOARD-002/004。Quick setup、完整 Runtime 与 AI models 管理 SHALL 读取同一持久模型和 Runtime，采用相同校验、显式 Test、敏感清理及未知结果读回规则，不因快速入口另建配置、强制 Test 或重新要求已有 Key。已配置安装可通过快速入口显式选模型并保存；原 `/admin/runtime` 与 `/admin/models` 及其旧深链接 SHALL 保留。高级独立 Console 保持现有管理能力，不依赖统一应用专用的首次创建流程。
 

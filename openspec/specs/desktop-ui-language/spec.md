@@ -169,7 +169,7 @@ Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时�
 
 **Identifier:** DUL-003
 
-Desktop SHALL 稳定使用 `Core`、`Work`、`Session`、`Run`、`Operation`、`Service`、`Workspace files` 等对象名称；UI 自有文案与无障碍名称 SHALL 用英文，用户内容和技术标识 SHALL 保留原文。界面 SHALL 区分空、加载、已保存、已接受、执行中、已就绪、降级、停止、失败、被新目标取代和结果未知。未知结果 SHALL 保留对象身份和最后已知时间、提供按原 ID 重新查询，不自动重提或声称完成。禁用动作 SHALL 说明原因和可执行下一步。尚无 CLI 能力的 Work 终端、Work 重命名及全局 Operation 列表 SHALL 不表现为可用入口。
+Desktop SHALL 稳定使用 `Core`、`Work`、`Session`、`Run`、`Operation`、`Service`、`Workspace files` 等对象名称；UI 自有文案与无障碍名称 SHALL 使用所选界面语言，用户内容和技术标识 SHALL 保留原文。界面 SHALL 区分空、加载、已保存、已接受、执行中、已就绪、降级、停止、失败、被新目标取代和结果未知。未知结果 SHALL 保留对象身份和最后已知时间、提供按原 ID 重新查询，不自动重提或声称完成。禁用动作 SHALL 说明原因和可执行下一步。尚无 CLI 能力的 Work 终端、Work 重命名及全局 Operation 列表 SHALL 不表现为可用入口。
 
 UI SHALL 区分 Work package（`.work`）与 Pi Package、Open Work 与 Start Work、Save changes 与 Apply changes、Save file 与配置保存、Cancel run 与 Stop Work。反馈 SHALL 先说明操作对象、已确认状态及下一步；技术 ID、端口、错误码 SHALL 可查看复制，但不替代上述信息。
 
@@ -189,7 +189,7 @@ UI SHALL 区分 Work package（`.work`）与 Pi Package、Open Work 与 Start Wo
 
 #### Scenario: Work 停止或 Core 不可达
 - **WHEN** Work 停止或 Core 失联
-- **THEN** 保留可取得的对象身份及最后已知状态；当前页面此前加载的历史标为旧内容，不承诺重新读取；受影响的 Service、文件与对话动作给出英文原因和恢复入口
+- **THEN** 保留可取得的对象身份及最后已知状态；当前页面此前加载的历史标为旧内容，不承诺重新读取；受影响的 Service、文件与对话动作给出所选界面语言的原因和恢复入口
 
 #### Scenario: 读取失败与空列表
 - **WHEN** Work、文件或能力列表分别返回空集合、读取错误或旧缓存
@@ -717,7 +717,7 @@ Files全部成功的非空路径批次 SHALL 使用短暂自动消退Toast，不
 
 **Identifier:** DUL-BRAIN-001
 
-Desktop SHALL 使用现有 Work、Service、Session、Run、Operation、Pi Package 对象和 English 产品标签，表达模型选择、处理记录、证据、候选 Saved / Not applied / Loaded 以及行为验证结果；实现中用于鉴权、代次、RPC、哈希和凭证的细节 SHALL 不成为普通用户的必经决策。业务证据与经验采纳 SHALL 有清晰结果与来源，Service 状态、包加载、请求完成之间不得互相代替。
+Desktop SHALL 使用现有 Work、Service、Session、Run、Operation、Pi Package 对象和所选界面语言的产品标签，表达模型选择、处理记录、证据、候选 Saved / Not applied / Loaded 以及行为验证结果；实现中用于鉴权、代次、RPC、哈希和凭证的细节 SHALL 不成为普通用户的必经决策。业务证据与经验采纳 SHALL 有清晰结果与来源，Service 状态、包加载、请求完成之间不得互相代替。
 
 目标场景 SHALL 是用户从 Work 模板创建个人工作站并让 Pi 开发和改进服务，例如 Todo、Kanban、日记或个人复盘。默认工作站示例 SHALL 采用 Python + NiceGUI + SQLite 基础环境证明该闭环；此默认选择不成为其他 Service 的平台强制技术栈，也不改变 Desktop 自身的实现框架。保留现有 UI 的 Apply 独立步骤、故障如实呈现与导入导出分步流程；不为示例增加新的顶层产品结构或依赖安装设置页。
 
@@ -737,11 +737,11 @@ Desktop SHALL 用所属内容区的骨架、就地状态或控件内等待表达
 
 Chat Box SHALL 以文本输入与 Send 为常态的主要内容，在输入框底栏提供一个合并 Model 与 Thinking 的轻量配置摘要入口；两项字段标签和独立选择器 SHALL 只在按需展开的 Response settings 面板内呈现。摘要 SHALL 展示真实模型名称和当前 Thinking，例如 Work model · Medium，按内容占宽且不均分、铺满底栏。摘要、Input options 与 Send 在宽度足够时 SHALL 同行、等高且垂直居中；长名称先在摘要内截断，完整名称可在面板中读取，窄屏必要时允许摘要整组换行，所有必要动作仍可达。摘要 SHALL 不以默认强调色、大块背景、技术 ID 或额外常驻说明争夺输入权重。
 
-Response settings SHALL 在同一面板中相邻呈现 Model 与 Thinking 的当前值，以现有英文文案、轻量按钮、菜单选中态和模态焦点规则完成编辑。打开或关闭面板 SHALL 不提交修改；明确选择不同值才自动保存完整设置对，不增加 Save model 或 Apply 主动作。摘要默认表达已确认设置，未确认的选择 SHALL 有明确的 Saving、Not saved 或 Unconfirmed 状态，尚无 Session 的选择 SHALL 说明用于新 Session，不将草稿设置表达为已保存。必要的失败、未知、Thinking 不可用原因及恢复入口 SHALL 在 Composer 附近持续可见，面板关闭不隐藏这些事实；正常已确认状态不增加永久成功条。
+Response settings SHALL 在同一面板中相邻呈现 Model 与 Thinking 的当前值，以所选界面语言的文案、轻量按钮、菜单选中态和模态焦点规则完成编辑。打开或关闭面板 SHALL 不提交修改；明确选择不同值才自动保存完整设置对，不增加 Save model 或 Apply 主动作。摘要默认表达已确认设置，未确认的选择 SHALL 有明确的 Saving、Not saved 或 Unconfirmed 状态，尚无 Session 的选择 SHALL 说明用于新 Session，不将草稿设置表达为已保存。必要的失败、未知、Thinking 不可用原因及恢复入口 SHALL 在 Composer 附近持续可见，面板关闭不隐藏这些事实；正常已确认状态不增加永久成功条。
 
 所有可输入的 Chat 容器 SHALL 共用上述层级和同一 Session 草稿。面板 SHALL 可通过键盘打开、选择与关闭，Esc 优先关闭面板并返回来源，不能同时退出 Focus chat；360px 下所有动作、状态、长名称和面板 SHALL 可达，页面无横向溢出。
 
-工具执行 SHALL 以默认折叠的 Activity 表达：单次调用可显示真实工具名和已取得的对象信息，多次调用摘要显示数量；进行中、已结束和失败数量可辨，失败摘要不能被折叠隐藏。主等待动效随正文或所属活动阶段出现一次，不新增 Agent 正在回复等独立文案行，成功不增加常驻 Run succeeded 行。展开内容先显示工具身份、实际状态与可取得结果，原始内容进一步按需查看；缺失参数不伪造、不额外读取私有数据，折叠不隐藏正文回复。用户展开、阅读位置和输入焦点不因过程更新丢失。界面标签与无障碍名称 SHALL 为英文并沿用 DUL-007 的视觉令牌，360px 下控件可换行、弹层可达且不产生整页横向滚动。
+工具执行 SHALL 以默认折叠的 Activity 表达：单次调用可显示真实工具名和已取得的对象信息，多次调用摘要显示数量；进行中、已结束和失败数量可辨，失败摘要不能被折叠隐藏。主等待动效随正文或所属活动阶段出现一次，不新增 Agent 正在回复等独立文案行，成功不增加常驻 Run succeeded 行。展开内容先显示工具身份、实际状态与可取得结果，原始内容进一步按需查看；缺失参数不伪造、不额外读取私有数据，折叠不隐藏正文回复。用户展开、阅读位置和输入焦点不因过程更新丢失。界面标签与无障碍名称 SHALL 使用所选界面语言并沿用 DUL-007 的视觉令牌，360px 下控件可换行、弹层可达且不产生整页横向滚动。
 
 #### Scenario: 打开已有内容并后台更新
 - **WHEN** 用户返回已读取的 Work 模块且后台正在更新
@@ -779,7 +779,7 @@ Response settings SHALL 在同一面板中相邻呈现 Model 与 Thinking 的当
 
 **Identifier:** DUL-WORKSPACE-002
 
-Focus、Restore layout、Exit focus、Chat 显隐和 Full screen SHALL 使用现有 Open/More 的轻量图标按钮角色，尺寸、间距、图标、hover、focus、disabled 与选中状态一致。按钮 SHALL 有准确英文 tooltip 与无障碍名称，开关有可访问选中语义；退出和恢复不放入溢出菜单，不以成排文本按钮另建交互语言。
+Focus、Restore layout、Exit focus、Chat 显隐和 Full screen SHALL 使用现有 Open/More 的轻量图标按钮角色，尺寸、间距、图标、hover、focus、disabled 与选中状态一致。按钮 SHALL 有所选界面语言的准确 tooltip 与无障碍名称，开关有可访问选中语义；退出和恢复不放入溢出菜单，不以成排文本按钮另建交互语言。
 
 Model/Thinking、slash 菜单、Activity 及状态反馈 SHALL 沿用现有同类组件、视觉令牌、字阶、边框、圆角、键盘与选中规则。默认内容以模型名称、当前设置和简短结果组织；技术 ID、修订和详细执行依据按需查看。低频 Service identity 设置及说明可进入次级入口，资源命令不附加身份的原因仍在相应入口可见；必要错误、未知和禁用原因不能只藏在 tooltip 或折叠详情。
 
@@ -889,7 +889,7 @@ Service 的安全诊断在可取得时 SHALL 保留并可查看错误码、失�
 
 **Identifier:** DUL-FILE-DELIVERY-001
 
-Assistant 文件引用 SHALL 作为进入同 Work Files 的导航入口，以文件名或短说明表达目标，按需提供英文 Open in Files 的可访问说明；不依靠 hover 才能发现主要动作。文件查看 SHALL 在既有 Files 主区域承载，保留路径、文件名、Back to files 和适用的 Download file/Download saved version；不为文件交付新增顶层附件中心、强制弹窗或第二套聊天会话。
+Assistant 文件引用 SHALL 作为进入同 Work Files 的导航入口，以文件名或短说明表达目标，按需提供与所选界面语言一致的 Open in Files 可访问说明；不依靠 hover 才能发现主要动作。文件查看 SHALL 在既有 Files 主区域承载，保留路径、文件名、Back to files 和适用的 Download file/Download saved version；不为文件交付新增顶层附件中心、强制弹窗或第二套聊天会话。
 
 图片 SHALL 作为只读预览呈现，文本继续使用既有编辑语义；其他文件的不可预览原因与下载入口 SHALL 明确。PDF 仅复用浏览器现成行为，不能为了文件预览要求用户安装查看器或等待转换。
 

@@ -24,7 +24,7 @@ Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、
 
 **Identifier:** SUI-PKG-002
 
-安装与更新表单 SHALL 支持 npm spec、Git spec、本地目录和本地 ZIP 四种互斥来源；npm/Git 以文本输入，目录/ZIP 由浏览器选择并上传内容，不发送客户端路径作为 Core 路径。切换来源 SHALL 清除不适用的选择并在放弃已选文件前确认。安装 SHALL 提供默认关闭的英文“Add to Default Work after installation”选项；更新 SHALL 显示不可编辑的目标 name、要求显式新来源，保持 enabled 和默认引用，不提供该选项。
+安装与更新表单 SHALL 支持 npm spec、Git spec、本地目录和本地 ZIP 四种互斥来源；npm/Git 以文本输入，目录/ZIP 由浏览器选择并上传内容，不发送客户端路径作为 Core 路径。切换来源 SHALL 清除不适用的选择并在放弃已选文件前确认。安装 SHALL 提供默认关闭且按所选界面语言显示的“Add to Default Work after installation”对应选项；更新 SHALL 显示不可编辑的目标 name、要求显式新来源，保持 enabled 和默认引用，不提供该选项。
 
 包身份 SHALL 由 Core 校验 package.json.name 决定，不能从目录或文件名猜测；目录模式要求根 package.json。ZIP 沿用根 manifest 或唯一外层目录规则，不能把 .work 文件当作 Pi package。目录选择只传浏览器提供的普通文件，不承诺空目录、执行位或符号链接；页面 SHALL 提示需要保留执行权限或链接时使用 ZIP。ZIP 上限 256 MiB、展开内容 1 GiB、单文件 64 MiB、100,000 条目、64 层和 manifest 1 MiB SHALL 按实际来源由客户端预检可知部分，Core 完整重验。不得提供私有源交互登录或把明文凭据拼入 npm/Git URL。
 
@@ -50,9 +50,9 @@ Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、
 
 本地来源 SHALL 依次显示浏览器上传进度、服务端校验/传送、提交接受和后台准备；上传成功不等于安装成功。每次新的安装/更新意图 SHALL 生成稳定幂等键；同一次提交在等待响应时禁用重复按钮。得到 acceptance 后 SHALL 显示并可复制 Operation ID，转到可刷新和直接访问的操作详情 URL，串行每 2 秒查询一次，非终态始终沿用同一 ID。显示 state、packagePhase、可用的包名、时间、result 及安全 stage/code/message，不显示原始脚本日志。
 
-观察失败 SHALL 保留 ID 和最后已知状态，标记连接失败并提供恢复查询，不提交新安装。关闭页面、会话到期或面板重启 SHALL 不取消 Core 已接受任务。收到明确 failed/superseded 后，用户可返回表单以新幂等键显式重试；重新选择本地内容后才可重新上传。接受响应丢失时 SHALL 提供英文“Resume this submission”，在当前页保存的同一 actor、source 和 key 下重放，不能自动换 key。本版不提供取消包任务或伪造整体百分比。
+观察失败 SHALL 保留 ID 和最后已知状态，标记连接失败并提供恢复查询，不提交新安装。关闭页面、会话到期或面板重启 SHALL 不取消 Core 已接受任务。收到明确 failed/superseded 后，用户可返回表单以新幂等键显式重试；重新选择本地内容后才可重新上传。接受响应丢失时 SHALL 提供所选界面语言的“Resume this submission”对应入口，在当前页保存的同一 actor、source 和 key 下重放，不能自动换 key。本版不提供取消包任务或伪造整体百分比。
 
-阶段展示 SHALL 根据真实 `packagePhase` 映射：`queued` 为 Accepted、`source` 为 Resolving、`prepare` 为 Preparing、`validate` 为 Validating、`publish` 为 Publishing、`succeeded` 为 Published。SHALL 保留可读取的原始阶段值，阶段条明确当前步骤；仅提交接受时可显示 Submission accepted，但不能捏造 Core 尚未报告的 packagePhase。终态以真实 state 为准，失败或被取代不能标记后续发布步骤成功；`cleanup-pending` 显示 Cleanup pending 及安全说明，不视为 Published。未知阶段 SHALL 显示英文未识别提示及原值，按真实 state 决定是否继续观察，不猜测完成比例或成功。
+阶段展示 SHALL 根据真实 `packagePhase` 映射并以所选界面语言呈现（以下为英文版本）：`queued` 为 Accepted、`source` 为 Resolving、`prepare` 为 Preparing、`validate` 为 Validating、`publish` 为 Publishing、`succeeded` 为 Published。SHALL 保留可读取的原始阶段值，阶段条明确当前步骤；仅提交接受时可显示 Submission accepted，但不能捏造 Core 尚未报告的 packagePhase。终态以真实 state 为准，失败或被取代不能标记后续发布步骤成功；`cleanup-pending` 显示 Cleanup pending 及安全说明，不视为 Published。未知阶段 SHALL 显示所选界面语言的未识别提示及原值，按真实 state 决定是否继续观察，不猜测完成比例或成功。
 
 #### Scenario: 响应丢失后恢复接受
 - **WHEN** Core 已接受但浏览器未收到 acceptance，当前页面仍保留原提交信息

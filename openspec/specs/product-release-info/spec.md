@@ -30,7 +30,7 @@ Desktop SHALL 从本机承载 Desktop 的 CLI 获取本机版本，并分别查�
 
 **Identifier:** PREL-002
 
-Desktop SHALL 在普通地址打开后的登录页和工作区提供英文 `About Piwork` 入口，未登录 Core 或 Core 不可达时仍可读取本机 Desktop 版本和内置日志。必要的普通浏览器会话自动建立，不要求浏览器 Access、启动链接或授权检查；远端身份按真实 Core 登录读取，不能由 About 伪造登录或泄漏平台凭据。
+Desktop SHALL 在普通地址打开后的登录页和工作区提供与所选界面语言对应的 `About Piwork` 入口，未登录 Core 或 Core 不可达时仍可读取本机 Desktop 版本和内置日志。必要的普通浏览器会话自动建立，不要求浏览器 Access、启动链接或授权检查；远端身份按真实 Core 登录读取，不能由 About 伪造登录或泄漏平台凭据。
 
 Console SHALL 在管理员会话内提供 `About Piwork`，显示其连接的 Core 信息；该入口 SHALL 遵循既有管理员会话、失效和恢复规则，不读取 Core 数据目录或 operator 凭证。两端 About SHALL 支持键盘打开、关闭/返回、可见焦点和 360px 窄屏；打开 About 不提交业务修改、不取消 Run/Operation，不清空草稿或重载当前 Service iframe。
 
@@ -50,7 +50,7 @@ Console SHALL 在管理员会话内提供 `About Piwork`，显示其连接的 Co
 
 **Identifier:** PREL-003
 
-Core 与 Desktop SHALL 随程序携带更新日志，并在 `About Piwork` 内通过英文 `Release notes` 查看。日志 SHALL 标明对应版本及其适用组件，按功能变化、修复和必要的兼容说明面向用户表达，正文安全按文本或受限结构呈现，不执行 HTML/脚本或自动加载外部资源。
+Core 与 Desktop SHALL 随程序携带更新日志，并在 `About Piwork` 内通过所选界面语言的 `Release notes` 入口查看。日志 SHALL 标明对应版本及其适用组件，按功能变化、修复和必要的兼容说明面向用户表达，正文安全按文本或受限结构呈现，不执行 HTML/脚本或自动加载外部资源。
 
 当前版本日志 SHALL 按精确运行版本匹配；开发版本、未知版本或没有匹配条目时 SHALL 明确显示当前版本未提供日志，不使用最近条目或最新版替代，不编造日期和变更。Desktop 与 Core 版本不同 SHALL 分别阅读各自日志。
 

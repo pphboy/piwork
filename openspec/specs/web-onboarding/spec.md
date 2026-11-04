@@ -100,7 +100,7 @@
 
 CoreSetup SHALL 以管理员创建、普通登录、模型、准备和工作台出口组织顺序任务，不设置浏览器 Access 或设置链接授权阶段，并清楚显示当前/完成/待处理阶段。创建管理员后 SHALL 沿原流程由用户手动正常登录；账号创建不替代登录。登录后 Quick setup SHALL 只展示模型和准备两步，已完成的账号创建不作为待办重现。模型与 Runtime 确认保存后 SHALL 切入准备或可用结果；显式重新配置遵守 ONBOARD-002，不把独立身份表单与配置任务常驻并列。
 
-准备步骤仅在真实依赖正在准备、等待活跃前置任务或服务端明确安排自动重试时 SHALL 使用 `Preparing Piwork…` 等明确的进行中文案，在主状态的固定槽显示 UIL-PENDING-001 的一组三点、当前准备对象及“请稍候，依赖准备完成后即可进入 Piwork；页面会自动更新”的英文说明。六项技术明细 SHALL 默认折叠并可按需查看；发生明确失败时相关原因、修复方向及查看该项的入口必须可见，不要求逐项寻找；折叠不减少检查，也不为六个明细叠加抢眼等待动画。明确失败、读取中断/未知、缺配置或需要用户操作时 SHALL 停止相应三点，显示真实静态状态和修复/只读恢复方向，不继续宣称仅需等待。组件状态 SHALL 区分等待前置依赖、正在准备、重试、明确失败和 Ready；原始错误码不能替代可理解的原因与下一步。首次资源准备可能需要下载这一事实可以说明，但没有真实数据时 MUST NOT 展示百分比、下载速度或预计完成时间，也不能只以旋转图标或变灰按钮表达等待。
+准备步骤仅在真实依赖正在准备、等待活跃前置任务或服务端明确安排自动重试时 SHALL 使用 `Preparing Piwork…` 等明确的进行中文案，在主状态的固定槽显示 UIL-PENDING-001 的一组三点、当前准备对象及所选界面语言的说明，其含义为“请稍候，依赖准备完成后即可进入 Piwork；页面会自动更新”。六项技术明细 SHALL 默认折叠并可按需查看；发生明确失败时相关原因、修复方向及查看该项的入口必须可见，不要求逐项寻找；折叠不减少检查，也不为六个明细叠加抢眼等待动画。明确失败、读取中断/未知、缺配置或需要用户操作时 SHALL 停止相应三点，显示真实静态状态和修复/只读恢复方向，不继续宣称仅需等待。组件状态 SHALL 区分等待前置依赖、正在准备、重试、明确失败和 Ready；原始错误码不能替代可理解的原因与下一步。首次资源准备可能需要下载这一事实可以说明，但没有真实数据时 MUST NOT 展示百分比、下载速度或预计完成时间，也不能只以旋转图标或变灰按钮表达等待。
 
 只有当前有效快照的 `status.ready` 和 `preparation.ready` 均为 true，且 docker、agent、packageHelper、defaultContext、fileHelper、snapshotHelper 六项均明确为 ready、没有当前读取失败时，准备页 SHALL 显示 `Piwork is ready`、完成准备步骤并启用完成区主要出口 `Open workbench`。仅基础 Work ready 而任何 helper 尚未完成时 SHALL 继续说明正在等待剩余依赖，完成出口保持不可激活且附近可读到原因；缺少准备状态不视为全部 Ready。就绪后 SHALL 保留手动进入，并仅在本次主动首设导航意图仍有效时单次自动进入工作台：意图由当前管理员在尚未配置 Runtime 的首设流程中直接选择 Save and continue 建立，且该次模型/Runtime 保存已确认，当前有效回读匹配原已确认配置，页面、身份和草稿未被后续操作替换。普通背景状态更新、已配置安装主动管理、直接打开已 Ready 页面及“保存后前往另一目的地” SHALL 不建立自动进入意图；用户最新明确目的地优先。刷新、关闭、回退、重新挂载、离开、身份切换、新编辑或新选择 SHALL 失效该内存意图，不跨恢复持久保存。该标记 SHALL 仅在现有 Quick setup 中复用 view/identity/readGeneration 及已确认配置归属，不引入全局导航框架或新的后端代次字段。读取中断或保存未知时不自动导航，已接受准备可按既有规则继续；再次进入只恢复持久步骤与手动出口。该完成条件只约束本准备页的完成出口，Admin 顶栏的 Workbench 全局导航、Core 基础 Work 准入、局部能力降级和已有安装的工作台访问规则保持。
 
@@ -210,7 +210,7 @@ CoreSetup SHALL 以管理员创建、普通登录、模型、准备和工作台�
 
 Create admin SHALL 展示有独立标签的 `Password` 和 `Confirm password`，均使用密码输入并允许粘贴、密码管理器和键盘操作。密码 SHALL 满足既有至少 12 字符及服务端合法性要求，确认密码 SHALL 与密码原文一致，不自动 trim、修改或补齐。确认框失焦或提交时 SHALL 校验一致性；初始未操作状态不得提前显示不匹配错误。任一密码变化后 SHALL 重新核对已触发的确认错误，不能沿用过期校验结果。
 
-不一致、缺失或长度无效时 SHALL 不发送创建请求，在相应字段附近显示英文修正提示；提交校验失败 SHALL 聚焦首个无效字段。有效提交只发送既有账号和一个密码字段，不向 API 增加确认密码或将其作为第二认证因素。重复点击/Enter SHALL 最多一个在途创建请求。密码及确认值不得进入 URL、Web Storage、日志或持久草稿；请求失败、成功或身份离开后的敏感清理沿用现有规则，账号可保留。普通 Sign in 和 operator/env bootstrap SHALL 保留既有输入契约。
+不一致、缺失或长度无效时 SHALL 不发送创建请求，在相应字段附近显示所选界面语言的修正提示；提交校验失败 SHALL 聚焦首个无效字段。有效提交只发送既有账号和一个密码字段，不向 API 增加确认密码或将其作为第二认证因素。重复点击/Enter SHALL 最多一个在途创建请求。密码及确认值不得进入 URL、Web Storage、日志或持久草稿；请求失败、成功或身份离开后的敏感清理沿用现有规则，账号可保留。普通 Sign in 和 operator/env bootstrap SHALL 保留既有输入契约。
 
 #### Scenario: 两次密码不一致
 - **WHEN** 安装者填写两个不同密码后使确认框失焦或尝试创建
@@ -232,7 +232,7 @@ Create admin SHALL 展示有独立标签的 `Password` 和 `Confirm password`，
 
 **Identifier:** ONBOARD-006
 
-Quick setup 的新增模型表单 SHALL 在 API Key 标签正上方提供一处始终可见的英文推荐与获取入口：`We recommend using the DeepSeek API directly.`，下一行显示 `Get your API key at platform.deepseek.com.`，其中 `platform.deepseek.com` SHALL 是指向 `https://platform.deepseek.com` 的真实链接。该指引 SHALL 同时适用于首次空配置和已有安装显式 Add model 的新增模式；选择已有模型、准备阶段及完整 AI models 通用表单不显示该局部指引。高级字段仍可编辑，推荐不得限制用户配置其他合法模型。
+Quick setup 的新增模型表单 SHALL 在 API Key 标签正上方提供一处始终可见的推荐与获取入口，按所选界面语言呈现；英文分别为 `We recommend using the DeepSeek API directly.` 和下一行 `Get your API key at platform.deepseek.com.`，其中 `platform.deepseek.com` SHALL 是指向 `https://platform.deepseek.com` 的真实链接。该指引 SHALL 同时适用于首次空配置和已有安装显式 Add model 的新增模式；选择已有模型、准备阶段及完整 AI models 通用表单不显示该局部指引。高级字段仍可编辑，推荐不得限制用户配置其他合法模型。
 
 说明 SHALL 采用与表单同宽的紧凑浅色提示块，具有细边框、圆角、推荐文字与次级说明的清晰层级；链接 SHALL 使用可辨的链接颜色、文字标识及外链标记，悬停与键盘焦点可见。360px 窄屏与宽屏下文字、域名 SHALL 自然换行，完整可读，无横向溢出、截断或遮挡输入。该内容属于静态帮助，不显示错误、成功、进行中状态或弹窗。
 
