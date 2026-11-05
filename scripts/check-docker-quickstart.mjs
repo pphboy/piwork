@@ -54,8 +54,8 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
     const navigation = [counterpart, manual, 'AGENTS.md', 'LICENSE', `https://pphboy.github.io/piwork/${prefix}`, `https://pphboy.github.io/piwork/${prefix}guide/quick-start.html`, ...['releases', 'issues', 'discussions'].map(path => `${repository}/${path}`)];
     check(navigation.every(link => links.has(link) && (/^https:/.test(link) || existsSync(join(base, link)))), `${name}: documentation navigation is missing or invalid`);
     check(/^<p align="center">\s*<img[^>]*width="160"[^>]*height="160"[^>]*>\s*<\/p>/m.test(text) && text.includes('src="apps/ui-shared/assets/piwork-logo.png"'), `${name}: centered Logo dimensions`);
-    check(['apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/assets/desktop-preview.png'].every(path => existsSync(join(base, path)))
-      && /!\[[^\]]+\]\(apps\/ui-shared\/assets\/desktop-preview\.png\)/.test(text)
+    check(['apps/ui-shared/assets/piwork-logo.png', 'apps/ui-shared/assets/desktop-service-chat.png'].every(path => existsSync(join(base, path)))
+      && /!\[[^\]]+\]\(apps\/ui-shared\/assets\/desktop-service-chat\.png\)/.test(text)
       && links.has('https://www.youtube.com/watch?v=ll1MS091gPU'), `${name}: product demo resources are missing`);
     check(['Work', 'Service', 'Harness'].every(concept => text.includes(`**${concept}**`)), `${name}: core concepts are missing`);
     check(!/^\s*(?:```|~~~)|<(?:details|pre)\b|<!--\s*(?:docker|native)-quickstart:|\bdocker (?:run|exec|logs)\b|\bnpm ci\b|\bmake (?:build|test)\b|\bPIWORK_[A-Z_]+\s*=/mi.test(text), `${name}: usage tutorials belong in the deployment guide`);

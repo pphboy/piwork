@@ -11,38 +11,61 @@
 [![GitHub stars](https://img.shields.io/github/stars/pphboy/piwork)](https://github.com/pphboy/piwork/stargazers)
 [![Server: Linux](https://img.shields.io/badge/server-Linux-blue)](deploy/docker/README.md)
 
-**Create. Evolve. Take it anywhere.**
+**Build, run, operate, and evolve apps with AI. Share the entire workspace.**
 
-Piwork is a portable AI workspace that brings conversations, files, and running applications together.
+AI can generate applications. But running them, integrating existing tools, making changes, and sharing the complete working environment still require extra effort.
 
-Each Work keeps its own environment and can move between Piwork installations as a `.work` file.
+**Piwork brings all of this into one portable AI workspace.**
 
-## Core concepts
+Start from an idea or bring an existing web application. Let AI build, operate, and modify applications inside a Work, where your apps, environment, files, data, conversations, and settings stay together.
 
-- **Work** — A workspace with its own conversations, files, configuration, and services.
-- **Service** — An application running inside a Work, managed by Core.
-- **Harness** — The agent runtime built on Pi Agent SDK, with Skills and Pi Packages.
+When you're ready, export the entire Work as a `.work` file. Move it to another Piwork installation and continue where you left off.
 
-## Demo
+![Piwork running a Service alongside Chat](apps/ui-shared/assets/desktop-service-chat.png)
 
-[![Watch the Piwork product demo](https://i.ytimg.com/vi/ll1MS091gPU/maxresdefault.jpg)](https://www.youtube.com/watch?v=ll1MS091gPU)
+Use a running application and work with AI side by side.
 
-[Watch the 70-second demo](https://www.youtube.com/watch?v=ll1MS091gPU): create a content studio, evolve it, and move the whole Work to another installation.
+## What can you do with Piwork?
 
-[Watch the English demo: Piwork: One AI Workspace, Five Real Demos](https://www.youtube.com/watch?v=GiSqWeTWNUc).
+- **Create with AI** — Describe what you want. Let AI build a working application, not just generate code.
+- **Bring existing applications** — Integrate compatible open-source web applications into your Work instead of rebuilding everything from scratch.
+- **Operate and evolve with AI** — Use applications, ask AI to work with them, add features, and modify existing functionality while keeping your work and context together.
+- **Share and continue** — Package applications, their environment, files, data, and conversation history into a portable `.work` file for others to import and continue using.
 
-![Piwork Desktop workbench](apps/ui-shared/assets/desktop-preview.png)
+## See it in action
 
-Conversations, Services, and files in one workbench.
+**From an idea to a running app, and from one computer to another.**
+
+[Watch the 70-second demo](https://www.youtube.com/watch?v=ll1MS091gPU) — Build a content studio, improve it with AI, and move the complete Work to another installation.
+
+[Watch five real examples](https://www.youtube.com/watch?v=GiSqWeTWNUc) — Explore what different AI workspaces can create.
+
+[Watch the demo on Bilibili](https://www.bilibili.com/video/BV1Uxx16VEYR).
+
+[Explore the demos](https://pphboy.github.io/piwork/demos/) — Browse real applications and download a Work to try.
+
+## How does it work?
+
+A **Work** is a self-contained AI workspace connecting three things:
+
+- **Harness** — The AI agent runtime, built on Pi Agent SDK and extensible through Skills and Pi Packages.
+- **Service** — An application that runs inside the workspace.
+- **Workspace** — Conversations, files, data, environment, and configuration that make your work reusable.
+
+Together, they let AI work with real applications, not just produce text or code.
+
+## Quick Start
+
+[Download the Piwork MicroVM GUI](https://pphboy.github.io/piwork/guide/downloads.html) for Windows or Linux to run Piwork locally. Choose the GUI version for your platform, then follow the [Quick Start guide](https://pphboy.github.io/piwork/guide/quick-start.html) to launch Piwork and configure your AI model.
+
+Piwork is currently a preview. MicroVM provides a local launcher for Windows and Linux; standalone Core and the native CLI support Linux amd64, and Windows and Linux browsers can access Core remotely.
 
 ## Documentation
 
 - [Website and guides](https://pphboy.github.io/piwork/)
-- [Quick Start](https://pphboy.github.io/piwork/guide/quick-start.html)
-- [Deployment guide](deploy/docker/README.md)
-- [Releases](https://github.com/pphboy/piwork/releases)
-
-Piwork is currently a preview. Core and the native CLI support Linux only; Windows and Linux browsers can access Core remotely.
+- [Server deployment guide](deploy/docker/README.md)
+- [Core releases](https://github.com/pphboy/piwork/releases)
+- [MicroVM GUI releases](https://github.com/pphboy/piwork-microvm/releases)
 
 ## Roadmap
 
@@ -56,6 +79,10 @@ See [AGENTS.md](AGENTS.md) for development conventions, source builds, and verif
 
 - [Report an issue](https://github.com/pphboy/piwork/issues)
 - [Join the discussion](https://github.com/pphboy/piwork/discussions)
+
+## Acknowledgments and Community
+
+Thanks to [LinuxDo](https://linux.do).
 
 ## License
 
