@@ -56,7 +56,25 @@ Together, they let AI work with real applications, not just produce text or code
 
 ## Quick Start
 
-[Download the Piwork MicroVM GUI](https://pphboy.github.io/piwork/guide/downloads.html) for Windows or Linux to run Piwork locally. Choose the GUI version for your platform, then follow the [Quick Start guide](https://pphboy.github.io/piwork/guide/quick-start.html) to launch Piwork and configure your AI model.
+Download and run the Piwork MicroVM GUI binary for your platform:
+
+**Linux amd64**
+
+```sh
+curl -fL https://github.com/pphboy/piwork-microvm/releases/download/v0.2.6/piwork-microvm-gui-v0.2.6-linux-amd64 -o piwork-microvm-gui &&
+  chmod +x piwork-microvm-gui &&
+  ./piwork-microvm-gui
+```
+
+**Windows 11 amd64 (PowerShell)**
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Invoke-WebRequest -Uri 'https://github.com/pphboy/piwork-microvm/releases/download/v0.2.6/piwork-microvm-gui-v0.2.6-windows-amd64.exe' -OutFile '.\piwork-microvm-gui.exe'
+Start-Process -FilePath '.\piwork-microvm-gui.exe'
+```
+
+Click **Start Piwork** in the launcher, then follow the [Quick Start guide](https://pphboy.github.io/piwork/guide/quick-start.html) to configure your AI model. See [Downloads](https://pphboy.github.io/piwork/guide/downloads.html) for virtualization requirements, desktop runtime dependencies, and checksums.
 
 Piwork is currently a preview. MicroVM provides a local launcher for Windows and Linux; standalone Core and the native CLI support Linux amd64, and Windows and Linux browsers can access Core remotely.
 

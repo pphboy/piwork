@@ -56,7 +56,25 @@ AI 可以生成应用。但要运行应用、集成现有工具、持续修改�
 
 ## 快速开始
 
-[下载 Piwork MicroVM GUI](https://pphboy.github.io/piwork/zh/guide/downloads.html)，在 Windows 或 Linux 本地运行 Piwork。选择对应平台的 GUI 版本，再按照[快速开始指南](https://pphboy.github.io/piwork/zh/guide/quick-start.html)启动 Piwork 并配置 AI 模型。
+下载并运行对应平台的 Piwork MicroVM GUI 二进制：
+
+**Linux amd64**
+
+```sh
+curl -fL https://github.com/pphboy/piwork-microvm/releases/download/v0.2.6/piwork-microvm-gui-v0.2.6-linux-amd64 -o piwork-microvm-gui &&
+  chmod +x piwork-microvm-gui &&
+  ./piwork-microvm-gui
+```
+
+**Windows 11 amd64（PowerShell）**
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Invoke-WebRequest -Uri 'https://github.com/pphboy/piwork-microvm/releases/download/v0.2.6/piwork-microvm-gui-v0.2.6-windows-amd64.exe' -OutFile '.\piwork-microvm-gui.exe'
+Start-Process -FilePath '.\piwork-microvm-gui.exe'
+```
+
+在启动器中点击 **Start Piwork**，再按照[快速开始指南](https://pphboy.github.io/piwork/zh/guide/quick-start.html)配置 AI 模型。虚拟化要求、桌面运行库依赖和校验文件见[下载页](https://pphboy.github.io/piwork/zh/guide/downloads.html)。
 
 Piwork 目前处于预览阶段。MicroVM 提供 Windows 和 Linux 本地启动器；独立 Core 与原生 CLI 支持 Linux amd64，Windows 与 Linux 浏览器均可远程访问 Core。
 
