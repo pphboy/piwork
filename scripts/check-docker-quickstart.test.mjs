@@ -150,6 +150,7 @@ test('semantic deployment drift fails with safe diagnostics', async t => {
     ['Core bind', base => docs.forEach(name => replace(base, name, '--volume /var/lib/piwork/quickstart/core:/var/lib/piwork/quickstart/core', '--volume /var/lib/piwork/quickstart/core:/wrong')), 'complete startup'],
     ['language mismatch', base => replace(base, 'deploy/docker/README.zh-CN.md', '--stop-timeout 60', '--stop-timeout 59'), 'paired browser'],
     ['tutorial returned', base => writeFileSync(join(base, 'README.md'), readFileSync(join(base, 'README.md'), 'utf8') + '\n```sh\ndocker run old:tag\n```\n'), 'usage tutorials'],
+    ['launcher script outside Quick Start', base => writeFileSync(join(base, 'README.zh-CN.md'), readFileSync(join(base, 'README.zh-CN.md'), 'utf8') + '\n```sh\n./piwork-microvm-gui\n```\n'), 'usage tutorials'],
     ['preview omitted', base => replace(base, 'README.md', '?include_prereleases', ''), 'release badge'],
     ['preview disabled', base => replace(base, 'README.md', '?include_prereleases', '?include_prereleases=false'), 'release badge'],
     ['wrong badge repository', base => replace(base, 'README.zh-CN.md', '/github/stars/pphboy/piwork', '/github/stars/example/other'), 'stars badge'],

@@ -58,7 +58,10 @@ export function checkQuickStart(base = projectRoot, { websiteRoot } = {}) {
       && /!\[[^\]]+\]\(apps\/ui-shared\/assets\/desktop-service-chat\.png\)/.test(text)
       && links.has('https://www.youtube.com/watch?v=ll1MS091gPU'), `${name}: product demo resources are missing`);
     check(['Work', 'Service', 'Harness'].every(concept => text.includes(`**${concept}**`)), `${name}: core concepts are missing`);
-    check(!/^\s*(?:```|~~~)|<(?:details|pre)\b|<!--\s*(?:docker|native)-quickstart:|\bdocker (?:run|exec|logs)\b|\bnpm ci\b|\bmake (?:build|test)\b|\bPIWORK_[A-Z_]+\s*=/mi.test(text), `${name}: usage tutorials belong in the deployment guide`);
+    const quickStartSection = text.match(/^## (?:Quick Start|快速开始)\r?\n[\s\S]*?(?=^## |(?![\s\S]))/m)?.[0] || '';
+    const outsideQuickStart = quickStartSection ? text.replace(quickStartSection, '') : text;
+    check(!/^\s*(?:```|~~~)/m.test(outsideQuickStart)
+      && !/<(?:details|pre)\b|<!--\s*(?:docker|native)-quickstart:|\bdocker (?:run|exec|logs)\b|\bnpm ci\b|\bmake (?:build|test)\b|\bPIWORK_[A-Z_]+\s*=/mi.test(text), `${name}: usage tutorials belong in the deployment guide`);
     const badges = [...text.matchAll(/\[!\[([^\]]+)\]\((https:\/\/img\.shields\.io\/[^\s)]+)\)\]\(([^\s)]+)\)/g)].map(match => ({ alt: match[1], image: new URL(match[2]), target: match[3], position: match.index }));
     check(badges.length === 4 && badges.every(badge => badge.position < text.indexOf('\n## ')), `${name}: four project badges must appear at the top`);
     const badgeMatches = (path, target, alt, query = () => true) => badges.some(badge => badge.image.origin === 'https://img.shields.io' && badge.image.pathname === path && badge.target === target && alt.test(badge.alt) && query(badge.image.searchParams));
