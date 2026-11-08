@@ -205,10 +205,10 @@ Core SHALL 在路由 Session/Run 或激活候选之前核验 daemon readiness：
 
 握手 SHALL 必需报告 packageContractVersion=1 及实际加载包的名称、内部制品身份和资源/工具来源；即使 packages=[] 也不能省略契约。Core SHALL 按 PKGA-005 验证 enabled 包集合完全匹配 captured context，并区别独立 Skills 与 package Skills。旧握手缺字段返回 AGENT_CONTEXT_INCOMPATIBLE；包成员/内容/工具错误返回 AGENT_CONTEXT_MISMATCH。
 
-Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1 和 history schema 与固定 Agent 的精确受支持声明一致（4、5、6 或 7）；即使没有选择脑包或 models 列表为空也不能省略当前契约。Apply 初始化只能验证资源，不得开启自动请求执行；正式 active 当前代次才开放准入。
+Go Core SHALL 同时验证当前 Run model contract=1、Work feedback contract=1 和 history schema 与固定 Agent 的精确受支持声明一致（4、5、6、7 或 8）；即使没有选择脑包或 models 列表为空也不能省略当前契约。Apply 初始化只能验证资源，不得开启自动请求执行；正式 active 当前代次才开放准入。
 
 
-本变更新 Agent 使用 history schema 7，Core 仍识别已知 schema 4/5/6 的固定旧 Agent，并根据镜像真实能力与受控升级结果核对版本；不把不匹配的 Agent 视为 ready。
+本变更新 Agent 使用 history schema 8，Core 仍识别已知 schema 4/5/6/7 的固定旧 Agent，并根据镜像真实能力与受控升级结果核对版本；不把不匹配的 Agent 视为 ready。
 
 #### Scenario: Verify the expected copied Skills
 - **WHEN** 当前 daemon 报告预期 context，且成功加载的 Skill 身份及工具与配置完全匹配
