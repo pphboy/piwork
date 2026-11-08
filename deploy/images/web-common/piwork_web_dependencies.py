@@ -1,4 +1,4 @@
-"""Application-local Python additions to the immutable NiceGUI environment."""
+"""Application-local Python additions to the immutable base environment."""
 from contextlib import contextmanager
 from email.parser import BytesParser
 import fcntl

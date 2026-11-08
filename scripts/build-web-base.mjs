@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const source = join(root, 'deploy/images/web-base');
+const common = join(root, 'deploy/images/web-common/piwork_web_dependencies.py');
 const sha = value => createHash('sha256').update(value).digest('hex');
 export function assertEnvironmentLocks(directory = source) {
   const canonical = name => name.toLowerCase().replace(/[-_.]+/g, '-');
@@ -21,7 +22,7 @@ export function assertEnvironmentLocks(directory = source) {
 export function inputHash(baseDirectory = source) {
   const paths = ['Dockerfile', '.dockerignore', 'environment.json', 'requirements.in', 'requirements.lock',
     ...readdirSync(join(baseDirectory, 'tools')).sort().filter(name => /\.(py|js)$/.test(name) || name === 'piwork-web').map(name => `tools/${name}`)];
-  return sha(Buffer.concat(paths.map(name => Buffer.concat([Buffer.from(name + '\0'), readFileSync(join(baseDirectory, name))]))));
+  return sha(Buffer.concat([...paths.map(name => Buffer.concat([Buffer.from(name + '\0'), readFileSync(join(baseDirectory, name))])), Buffer.from('web-common/piwork_web_dependencies.py\0'), readFileSync(common), readFileSync(join(root, 'deploy/images/.dockerignore'))]));
 }
 export function candidate() {
   assertEnvironmentLocks();
@@ -38,7 +39,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const metadata = candidate();
   execFileSync('docker', ['build', '--platform', metadata.platform, '-f', join(source, 'Dockerfile'),
     '--build-arg', `PIWORK_COMMIT=${metadata.commit}`, '--build-arg', `PIWORK_MODIFIED=${metadata.modified}`,
-    '--build-arg', `PIWORK_WEB_INPUT_HASH=${metadata.inputHash}`, '-t', metadata.reference, source],
+    '--build-arg', `PIWORK_WEB_INPUT_HASH=${metadata.inputHash}`, '-t', metadata.reference, join(root, 'deploy/images')],
     { cwd: root, stdio: 'inherit' });
   const image = JSON.parse(execFileSync('docker', ['image', 'inspect', metadata.reference], { encoding: 'utf8' }))[0];
   if (image.Config.User !== '10001:10001' || image.Config.Labels['io.piwork.web-base.input-sha256'] !== metadata.inputHash)

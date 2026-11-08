@@ -1,0 +1,17 @@
+*
+!web-base/
+!web-base/Dockerfile
+!web-base/environment.json
+!web-base/requirements.lock
+!web-base/tools/
+!web-base/tools/**
+!web-common/
+!web-common/**
+!fastapi-htmx-base/
+!fastapi-htmx-base/Dockerfile
+!fastapi-htmx-base/environment.json
+!fastapi-htmx-base/requirements.lock
+!fastapi-htmx-base/tools/
+!fastapi-htmx-base/tools/**
+!fastapi-htmx-base/vendor/
+!fastapi-htmx-base/vendor/**
