@@ -62,6 +62,18 @@ export const WORK_SCHEMA_OBJECTS = [
   },
   {
     "type": "index",
+    "name": "sqlite_autoindex_session_management_1",
+    "tbl_name": "session_management",
+    "sql": null
+  },
+  {
+    "type": "index",
+    "name": "sqlite_autoindex_session_management_operations_1",
+    "tbl_name": "session_management_operations",
+    "sql": null
+  },
+  {
+    "type": "index",
     "name": "sqlite_autoindex_sessions_1",
     "tbl_name": "sessions",
     "sql": null
@@ -158,6 +170,18 @@ export const WORK_SCHEMA_OBJECTS = [
   },
   {
     "type": "table",
+    "name": "session_management",
+    "tbl_name": "session_management",
+    "sql": "CREATE TABLE session_management (\n  work_id TEXT NOT NULL,\n  session_id TEXT NOT NULL,\n  title TEXT,\n  title_source TEXT NOT NULL DEFAULT 'default' CHECK(title_source IN ('default','manual','auto')),\n  title_revision INTEGER NOT NULL DEFAULT 0 CHECK(title_revision >= 0),\n  manual_lock INTEGER NOT NULL DEFAULT 0 CHECK(manual_lock IN (0,1)),\n  deleted_at TEXT,\n  auto_state TEXT NOT NULL DEFAULT 'eligible' CHECK(auto_state IN ('eligible','pending','completed','failed','unknown')),\n  auto_run_id TEXT REFERENCES runs(run_id),\n  auto_revision INTEGER CHECK(auto_revision IS NULL OR auto_revision >= 0),\n  auto_operation_key TEXT,\n  PRIMARY KEY(work_id, session_id),\n  FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n) STRICT"
+  },
+  {
+    "type": "table",
+    "name": "session_management_operations",
+    "tbl_name": "session_management_operations",
+    "sql": "CREATE TABLE session_management_operations (\n  work_id TEXT NOT NULL,\n  operation_key TEXT NOT NULL,\n  session_id TEXT NOT NULL,\n  operation_kind TEXT NOT NULL CHECK(operation_kind IN ('rename','delete','auto-name')),\n  operation_status TEXT NOT NULL DEFAULT 'accepted' CHECK(operation_status IN ('pending','accepted','failed','unknown')),\n  request_digest TEXT NOT NULL,\n  result_json TEXT NOT NULL,\n  created_at TEXT NOT NULL,\n  PRIMARY KEY(work_id, operation_key),\n  FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)\n) STRICT"
+  },
+  {
+    "type": "table",
     "name": "sessions",
     "tbl_name": "sessions",
     "sql": "CREATE TABLE sessions (\n      work_id TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      sdk_history_path TEXT NOT NULL UNIQUE,\n      created_at TEXT NOT NULL,\n      updated_at TEXT NOT NULL,\n      model_preference_json TEXT, source_json TEXT,\n      PRIMARY KEY(work_id, session_id)\n    ) STRICT"
@@ -179,5 +203,11 @@ export const WORK_SCHEMA_OBJECTS = [
     "name": "work_memory_binding",
     "tbl_name": "work_memory_binding",
     "sql": "CREATE TABLE work_memory_binding (\n  work_id TEXT PRIMARY KEY, store_id TEXT NOT NULL UNIQUE,\n  memory_schema_version INTEGER NOT NULL CHECK(memory_schema_version = 1)\n) STRICT"
+  },
+  {
+    "type": "trigger",
+    "name": "session_management_reject_deleted_run",
+    "tbl_name": "runs",
+    "sql": "CREATE TRIGGER session_management_reject_deleted_run\nBEFORE INSERT ON runs\nWHEN EXISTS (\n  SELECT 1 FROM session_management m\n  WHERE m.work_id=NEW.work_id AND m.session_id=NEW.session_id AND m.deleted_at IS NOT NULL\n)\nBEGIN\n  SELECT RAISE(ABORT, 'SESSION_DELETED');\nEND"
   }
 ] as const;

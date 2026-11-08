@@ -1,12 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
-import { WORK_SCHEMA_SQL } from "./brain-schema.js";
-import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
+import { WORK_SCHEMA_V7_SQL } from "./schema-v7.js";
+import { WORK_SCHEMA_V7_OBJECTS } from "./schema-v7-objects.js";
+import { WORK_SCHEMA_V8_SQL } from "./schema-v8.js";
+import { WORK_SCHEMA_V8_OBJECTS } from "./schema-v8-objects.js";
 import { LEGACY_SCHEMA_OBJECTS } from "./legacy-schema-objects.js";
 import { validateLegacyWorkDatabase, migrateWorkDatabase } from "./migrations.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
 
 export interface HistoryMigration {
-  readonly operationId: string; readonly workId: string; readonly fromSchema: 4 | 5 | 6; readonly toSchema: 7;
+  readonly operationId: string; readonly workId: string; readonly fromSchema: 4 | 5 | 6 | 7; readonly toSchema: 7 | 8;
   readonly storeId: string; readonly backupManifestDigest: string;
 }
 
@@ -14,7 +16,7 @@ export interface HistoryMigration {
 export function migrateExperience(database: DatabaseSync, authorization: HistoryMigration): void {
   validateLegacyWorkDatabase(database);
   const meta = database.prepare("SELECT * FROM memory.memory_meta WHERE singleton=1").get();
-  if (authorization.fromSchema !== 4 || authorization.toSchema !== 7 || !authorization.operationId
+  if (authorization.fromSchema !== 4 || ![7,8].includes(authorization.toSchema) || !authorization.operationId
     || !/^[a-f0-9]{64}$/.test(authorization.backupManifestDigest) || meta?.work_id !== authorization.workId
     || meta.store_id !== authorization.storeId || meta.schema_version !== 1
     || database.prepare("SELECT version FROM memory.memory_head WHERE singleton=1").get()?.version !== 0
@@ -27,7 +29,7 @@ export function migrateExperience(database: DatabaseSync, authorization: History
   const head = database.prepare("SELECT version,updated_at FROM brain_experience_heads WHERE work_id=?").get(authorization.workId);
   const oldHead = Number(head?.version ?? 0);
   const legacyTables = LEGACY_SCHEMA_OBJECTS.filter((v) => v.type === "table").map((v) => v.name);
-  const currentTables = WORK_SCHEMA_OBJECTS.filter((v) => v.type === "table" && v.name !== "schema_migrations" && v.name !== "work_memory_binding").map((v) => v.name);
+  const currentTables = (authorization.toSchema === 8 ? WORK_SCHEMA_V8_OBJECTS : WORK_SCHEMA_V7_OBJECTS).filter((v) => v.type === "table" && v.name !== "schema_migrations" && v.name !== "work_memory_binding").map((v) => v.name);
   // Trusted temporary copies avoid ALTER's schema-text drift and keep row copying inside SQLite.
   // No user SQL is executed; every identifier comes from the frozen schema catalog.
   database.exec("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE");
@@ -50,7 +52,7 @@ export function migrateExperience(database: DatabaseSync, authorization: History
     if (oldHead !== 0) database.prepare("UPDATE memory.memory_versions SET published_at=? WHERE version=?").run(head!.updated_at!, oldHead);
     database.prepare("UPDATE memory.memory_head SET version=?,updated_at=COALESCE(?,updated_at) WHERE singleton=1").run(oldHead, head?.updated_at ?? null);
     for (const table of legacyTables) database.exec(`DROP TABLE main.${table}`);
-    database.exec(WORK_SCHEMA_SQL);
+    database.exec(authorization.toSchema === 8 ? WORK_SCHEMA_V8_SQL : WORK_SCHEMA_V7_SQL);
     for (const table of currentTables) {
       if (!legacyTables.some(name => name === table)) continue;
       const columns = (database.prepare(`PRAGMA main.table_info(${table})`).all() as { name: string }[]).map((v) => v.name).filter(name=> (database.prepare(`PRAGMA temp.table_info(migration_${table})`).all() as {name:string}[]).some(v=>v.name===name)).join(",");
@@ -59,7 +61,7 @@ export function migrateExperience(database: DatabaseSync, authorization: History
     database.prepare("INSERT INTO main.work_memory_binding VALUES(?,?,1)").run(authorization.workId, authorization.storeId);
     database.prepare("INSERT INTO main.schema_migrations VALUES(?,?)").run(authorization.toSchema,new Date().toISOString());
     if (database.prepare("PRAGMA main.foreign_key_check").get() || database.prepare("PRAGMA memory.foreign_key_check").get()) throw new Error("WORK_HISTORY_INVALID");
-    migrateWorkDatabase(database);
+    migrateWorkDatabase(database, authorization.toSchema);
     database.exec("COMMIT");
   } catch (error) { if (database.isTransaction) database.exec("ROLLBACK"); throw error; }
   finally {

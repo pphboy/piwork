@@ -7,6 +7,7 @@ export * from "./work-feedback.js";
 export * from "./chat-controls.js";
 export * from "./chat-images.js";
 export * from "./session-history.js";
+export * from "./session-management.js";
 export * from "./product-info.js";
 export * from "./ai-model-management.js";
 export * from "./log-export.js";

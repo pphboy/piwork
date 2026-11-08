@@ -26,7 +26,10 @@ function legacy() {
  return{root,path,grant,prepare,close:()=>rmSync(root,{recursive:true,force:true})};
 }
 test("Core-authorized migration retains all adopted, effective, failed and staged versions without a second authority",()=>{
- const f=legacy();try{f.prepare();const store=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});try{
+  const f = legacy();
+  try {    f.prepare();
+    const store = WorkStore.open(f.path, { workId: work, targetVersion: 7, historyMigration: f.grant });
+    try {
   assert.equal(store.schemaVersion,7);assert.equal(store.memory.head(work),2);assert.equal(store.getRun("run")?.adoptedExperienceVersion,2);
   assert.equal(store.getRun("run")?.adoptedMemorySelection,null);
   assert.deepEqual(store.memory.snapshot(work,1).entries.map(e=>e.entryId),["rule"]);
@@ -36,18 +39,42 @@ test("Core-authorized migration retains all adopted, effective, failed and stage
  const memory=new DatabaseSync(join(f.root,"memory.sqlite"));try{
   assert.deepEqual(memory.prepare("SELECT candidate_version,status,created_at FROM memory_candidates ORDER BY candidate_version").all().map(r=>[r.candidate_version,r.status,r.created_at]),[[3,"failed",now],[4,"staged",now]]);
  }finally{memory.close();}
- const after=readFileSync(f.path);const reopened=WorkStore.open(f.path,{workId:work});reopened.close();assert.deepEqual(readFileSync(f.path),after);
+  const after = readFileSync(f.path);
+  const reopened = WorkStore.open(f.path, { workId: work, targetVersion: 7 });
+  reopened.close();
+  assert.deepEqual(readFileSync(f.path), after);
  }finally{f.close();}
+});
+
+test('schema 4 migrates directly to 8 with its Memory and Run evidence intact', () => {
+ const f=legacy();try{
+  f.prepare();
+  const historyMigration={...f.grant,toSchema:8 as const};
+  const store=WorkStore.open(f.path,{workId:work,targetVersion:8,historyMigration});
+  try {
+   assert.equal(store.schemaVersion,8);
+   assert.equal(store.memory.head(work),2);
+   assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);
+   assert.equal(store.memory.snapshot(work,2).entries[0]?.rule,'Rule rule');
+   assert.equal(store.getSession(work,'session')?.title,null);
+  } finally {store.close();}
+   const reopened = WorkStore.open(f.path, { workId: work, targetVersion: 8 });
+   reopened.close();
+ } finally {f.close();}
 });
 test("schema 4 can migrate through 5 to 6 and resume after the first stage",()=>{
  for(const resume of [false,true]) { const f=legacy();try {
   f.prepare();
-  if(resume){const stage=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});stage.close();}
+   if (resume) {
+     const stage = WorkStore.open(f.path, { workId: work, targetVersion: 7, historyMigration: f.grant });
+     stage.close();
+   }
   const grant={...f.grant,toSchema:7 as const};
-  const store=WorkStore.open(f.path,{workId:work,historyMigration:grant});
+  const store=WorkStore.open(f.path,{workId:work,targetVersion:7,historyMigration:grant});
   try {assert.equal(store.schemaVersion,7);assert.equal(store.memory.head(work),2);assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);}
   finally {store.close();}
-  const reopened=WorkStore.open(f.path,{workId:work,historyMigration:grant});reopened.close();
+   const reopened = WorkStore.open(f.path, { workId: work, targetVersion: 7, historyMigration: grant });
+   reopened.close();
  }finally{f.close();}}
 });
 test("unauthorized, wrong-owner and invalid-evidence legacy migration preserve original rows and format",()=>{
@@ -56,7 +83,7 @@ test("unauthorized, wrong-owner and invalid-evidence legacy migration preserve o
   if(scenario==="owner"){const db=new DatabaseSync(join(f.root,"memory.sqlite"));db.exec("UPDATE memory_meta SET store_id='unknown'");db.close();}
   if(scenario==="evidence"){const db=new DatabaseSync(f.path);db.exec("UPDATE agent_evidence SET verified=0 WHERE request_id='completed'");db.close();}
   const original=readFileSync(f.path);
-  assert.throws(()=>WorkStore.open(f.path,{workId:work,...(scenario!=="unauthorized"?{historyMigration:f.grant}:{})}));
+  assert.throws(()=>WorkStore.open(f.path,{workId:work,targetVersion:7,...(scenario!=="unauthorized"?{historyMigration:f.grant}:{})}));
   const db=new DatabaseSync(f.path);try{assert.equal(db.prepare("SELECT version FROM schema_migrations").get()?.version,4);assert.equal(db.prepare("SELECT COUNT(*) AS n FROM brain_experience_revisions").get()?.n,4);}finally{db.close();}
   assert.deepEqual(readFileSync(f.path),original);
  }finally{f.close();}}
@@ -65,7 +92,11 @@ test("unauthorized, wrong-owner and invalid-evidence legacy migration preserve o
 test("legacy empty cognition migrates to explicit version zero without inventing adopted entries",()=>{
  const f=legacy();try{
   const db=new DatabaseSync(f.path);db.exec("DELETE FROM brain_experience_heads; DELETE FROM brain_experience_revisions; UPDATE runs SET adopted_experience_version=0");db.close();f.prepare();
-  const store=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});try{assert.deepEqual(store.memory.snapshot(work),{version:0,entries:[]});assert.equal(store.getRun('run')?.adoptedMemorySelection,null);}finally{store.close();}
+   const store = WorkStore.open(f.path, { workId: work, targetVersion: 7, historyMigration: f.grant });
+   try {
+     assert.deepEqual(store.memory.snapshot(work), { version: 0, entries: [] });
+     assert.equal(store.getRun('run')?.adoptedMemorySelection, null);
+   } finally { store.close(); }
  }finally{f.close();}
 });
 
@@ -76,7 +107,9 @@ test("legacy preference classification requires its referenced full original ins
   const details={userPreferenceVerified:true,...(scenario!=='flag-only'?{promptDigest:scenario==='wrong-digest'?'other':'digest'}:{})};
   db.prepare("INSERT INTO agent_evidence(work_id,evidence_id,request_id,run_id,kind,object_ref,observed_at,summary,verified,details_json) VALUES(?,'pref-proof','completed','run','sdk','run',?,'Original instruction',1,?)").run(work,now,JSON.stringify(details));
   if(scenario!=='uncited')db.exec("UPDATE brain_experience_revisions SET evidence_ids_json='[\"proof-completed\",\"pref-proof\"]' WHERE status='effective'");
-  db.close();f.prepare();const store=WorkStore.open(f.path,{workId:work,historyMigration:f.grant});
+   db.close();
+   f.prepare();
+   const store = WorkStore.open(f.path, { workId: work, targetVersion: 7, historyMigration: f.grant });
   try{assert.equal((store.memory.snapshot(work).entries[0] as MemoryEntry).kind,scenario==='valid'?'preference':'experience');assert.equal(store.memory.head(work),2);assert.equal(store.getRun('run')?.adoptedExperienceVersion,2);}
   finally{store.close();}
  }finally{f.close();}}

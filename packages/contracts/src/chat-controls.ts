@@ -112,6 +112,12 @@ const modelPreference = Type.Object({
 export const ChatSessionViewSchema = Type.Object({
   workId: IdentifierSchema, sessionId: IdentifierSchema, createdAt: TimestampSchema, updatedAt: TimestampSchema,
   modelPreference: Type.Union([modelPreference, Type.Null()]), ...thinkingSelection, source: AgentRunSourceSchema,
+  title: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 120 }), Type.Null()])),
+  titleSource: Type.Optional(Type.Union([Type.Literal('default'), Type.Literal('manual'), Type.Literal('auto')])),
+  titleRevision: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+  autoNameState: Type.Optional(Type.Union([Type.Literal('eligible'), Type.Literal('pending'), Type.Literal('completed'), Type.Literal('failed'), Type.Literal('unknown')])),
+  manualTitleLock: Type.Optional(Type.Boolean()),
+  deletedAt: Type.Optional(Type.Union([TimestampSchema, Type.Null()])),
 }, { ...strict, not: invalidProfileLevel });
 export const ChatRunViewSchema = Type.Object({
   workId: IdentifierSchema, sessionId: IdentifierSchema, runId: IdentifierSchema, submissionKey: Type.String({ minLength: 1, maxLength: 256 }),

@@ -6,7 +6,8 @@ export function historySessionView(value: SessionRecord) {
     modelPreference:preference?{...publicRunModel(preference),availability:preference.availability ?? "available"}:null,
     thinkingLevel:preference?.thinkingLevel === undefined ? "off" : preference.thinkingLevel,
     ...(preference?.thinkingProfile ? {thinkingProfile:preference.thinkingProfile} : {}),
-    source:value.sourceJson?JSON.parse(value.sourceJson):{kind:"chat"} };
+    source:value.sourceJson?JSON.parse(value.sourceJson):{kind:"chat"},
+    ...(value.titleSource ? {title:value.title ?? null,titleSource:value.titleSource,titleRevision:value.titleRevision ?? 0,autoNameState:value.autoNameState ?? 'eligible',manualTitleLock:value.manualTitleLock ?? false,deletedAt:value.deletedAt ?? null} : {}) };
 }
 export function historyRunView(value: RunRecord, snapshot?: string, target?: {entryId:string;blockId?:string}): HistoryRunSummary {
   const states = {accepted:1,running:2,cancelling:3,succeeded:4,failed:5,cancelled:6,interrupted:7};

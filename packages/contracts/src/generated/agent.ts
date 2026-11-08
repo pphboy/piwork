@@ -196,6 +196,12 @@ export interface Session {
   thinkingLevel: string;
   thinkingUnrequested: boolean;
   thinkingProfile?: string | undefined;
+  title?: string | undefined;
+  titleRevision: bigint;
+  titleSource: string;
+  autoNameState: string;
+  manualTitleLock: boolean;
+  deletedAt?: string | undefined;
 }
 
 export interface CreateSessionRequest {
@@ -2148,6 +2154,12 @@ function createBaseSession(): Session {
     thinkingLevel: "",
     thinkingUnrequested: false,
     thinkingProfile: undefined,
+    title: undefined,
+    titleRevision: 0n,
+    titleSource: "",
+    autoNameState: "",
+    manualTitleLock: false,
+    deletedAt: undefined,
   };
 }
 
@@ -2182,6 +2194,27 @@ export const Session: MessageFns<Session> = {
     }
     if (message.thinkingProfile !== undefined) {
       writer.uint32(82).string(message.thinkingProfile);
+    }
+    if (message.title !== undefined) {
+      writer.uint32(90).string(message.title);
+    }
+    if (message.titleRevision !== 0n) {
+      if (BigInt.asUintN(64, message.titleRevision) !== message.titleRevision) {
+        throw new globalThis.Error("value provided for field message.titleRevision of type uint64 too large");
+      }
+      writer.uint32(96).uint64(message.titleRevision);
+    }
+    if (message.titleSource !== "") {
+      writer.uint32(106).string(message.titleSource);
+    }
+    if (message.autoNameState !== "") {
+      writer.uint32(114).string(message.autoNameState);
+    }
+    if (message.manualTitleLock !== false) {
+      writer.uint32(120).bool(message.manualTitleLock);
+    }
+    if (message.deletedAt !== undefined) {
+      writer.uint32(130).string(message.deletedAt);
     }
     return writer;
   },
@@ -2279,6 +2312,54 @@ export const Session: MessageFns<Session> = {
             message.thinkingProfile = reader.string();
             continue;
           }
+          case 11: {
+            if (tag !== 90) {
+              break;
+            }
+
+            message.title = reader.string();
+            continue;
+          }
+          case 12: {
+            if (tag !== 96) {
+              break;
+            }
+
+            message.titleRevision = reader.uint64() as bigint;
+            continue;
+          }
+          case 13: {
+            if (tag !== 106) {
+              break;
+            }
+
+            message.titleSource = reader.string();
+            continue;
+          }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.autoNameState = reader.string();
+            continue;
+          }
+          case 15: {
+            if (tag !== 120) {
+              break;
+            }
+
+            message.manualTitleLock = reader.bool();
+            continue;
+          }
+          case 16: {
+            if (tag !== 130) {
+              break;
+            }
+
+            message.deletedAt = reader.string();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -2343,6 +2424,32 @@ export const Session: MessageFns<Session> = {
         : isSet(object.thinking_profile)
         ? globalThis.String(object.thinking_profile)
         : undefined,
+      title: isSet(object.title) ? globalThis.String(object.title) : undefined,
+      titleRevision: isSet(object.titleRevision)
+        ? BigInt(object.titleRevision)
+        : isSet(object.title_revision)
+        ? BigInt(object.title_revision)
+        : 0n,
+      titleSource: isSet(object.titleSource)
+        ? globalThis.String(object.titleSource)
+        : isSet(object.title_source)
+        ? globalThis.String(object.title_source)
+        : "",
+      autoNameState: isSet(object.autoNameState)
+        ? globalThis.String(object.autoNameState)
+        : isSet(object.auto_name_state)
+        ? globalThis.String(object.auto_name_state)
+        : "",
+      manualTitleLock: isSet(object.manualTitleLock)
+        ? globalThis.Boolean(object.manualTitleLock)
+        : isSet(object.manual_title_lock)
+        ? globalThis.Boolean(object.manual_title_lock)
+        : false,
+      deletedAt: isSet(object.deletedAt)
+        ? globalThis.String(object.deletedAt)
+        : isSet(object.deleted_at)
+        ? globalThis.String(object.deleted_at)
+        : undefined,
     };
   },
 
@@ -2378,6 +2485,24 @@ export const Session: MessageFns<Session> = {
     if (message.thinkingProfile !== undefined) {
       obj.thinkingProfile = message.thinkingProfile;
     }
+    if (message.title !== undefined) {
+      obj.title = message.title;
+    }
+    if (message.titleRevision !== 0n) {
+      obj.titleRevision = message.titleRevision.toString();
+    }
+    if (message.titleSource !== "") {
+      obj.titleSource = message.titleSource;
+    }
+    if (message.autoNameState !== "") {
+      obj.autoNameState = message.autoNameState;
+    }
+    if (message.manualTitleLock !== false) {
+      obj.manualTitleLock = message.manualTitleLock;
+    }
+    if (message.deletedAt !== undefined) {
+      obj.deletedAt = message.deletedAt;
+    }
     return obj;
   },
 
@@ -2396,6 +2521,14 @@ export const Session: MessageFns<Session> = {
     message.thinkingLevel = object.thinkingLevel ?? "";
     message.thinkingUnrequested = object.thinkingUnrequested ?? false;
     message.thinkingProfile = object.thinkingProfile ?? undefined;
+    message.title = object.title ?? undefined;
+    message.titleRevision = (object.titleRevision !== undefined && object.titleRevision !== null)
+      ? BigInt(object.titleRevision)
+      : 0n;
+    message.titleSource = object.titleSource ?? "";
+    message.autoNameState = object.autoNameState ?? "";
+    message.manualTitleLock = object.manualTitleLock ?? false;
+    message.deletedAt = object.deletedAt ?? undefined;
     return message;
   },
 };
@@ -6289,6 +6422,66 @@ export const AgentServiceService = {
       Buffer.from(AgentContentResponse.encode(value).finish()),
     responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
   },
+  getSessionManagementCapabilities: {
+    path: "/piwork.agent.v1.AgentService/GetSessionManagementCapabilities" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  getSessionManagementState: {
+    path: "/piwork.agent.v1.AgentService/GetSessionManagementState" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  renameSession: {
+    path: "/piwork.agent.v1.AgentService/RenameSession" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  autoNameSession: {
+    path: "/piwork.agent.v1.AgentService/AutoNameSession" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  deleteSession: {
+    path: "/piwork.agent.v1.AgentService/DeleteSession" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
+  lookupSessionManagementOperation: {
+    path: "/piwork.agent.v1.AgentService/LookupSessionManagementOperation" as const,
+    requestStream: false as const,
+    responseStream: false as const,
+    requestSerialize: (value: AgentContentRequest): Buffer => Buffer.from(AgentContentRequest.encode(value).finish()),
+    requestDeserialize: (value: Buffer): AgentContentRequest => AgentContentRequest.decode(value),
+    responseSerialize: (value: AgentContentResponse): Buffer =>
+      Buffer.from(AgentContentResponse.encode(value).finish()),
+    responseDeserialize: (value: Buffer): AgentContentResponse => AgentContentResponse.decode(value),
+  },
   listAgentRequests: {
     path: "/piwork.agent.v1.AgentService/ListAgentRequests" as const,
     requestStream: false as const,
@@ -6375,6 +6568,12 @@ export interface AgentServiceServer extends UntypedServiceImplementation {
   getSessionChatOptions: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   setSessionChatOptions: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   lookupChatSubmission: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  getSessionManagementCapabilities: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  getSessionManagementState: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  renameSession: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  autoNameSession: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  deleteSession: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
+  lookupSessionManagementOperation: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   listAgentRequests: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   getAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
   cancelAgentRequest: handleUnaryCall<AgentContentRequest, AgentContentResponse>;
@@ -6709,6 +6908,96 @@ export interface AgentServiceClient extends Client {
     callback: (error: ServiceError | null, response: AgentContentResponse) => void,
   ): ClientUnaryCall;
   lookupChatSubmission(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementCapabilities(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementCapabilities(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementState(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementState(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  getSessionManagementState(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  renameSession(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  renameSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  renameSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  autoNameSession(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  autoNameSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  autoNameSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  deleteSession(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  deleteSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  deleteSession(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    options: Partial<CallOptions>,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupSessionManagementOperation(
+    request: AgentContentRequest,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupSessionManagementOperation(
+    request: AgentContentRequest,
+    metadata: Metadata,
+    callback: (error: ServiceError | null, response: AgentContentResponse) => void,
+  ): ClientUnaryCall;
+  lookupSessionManagementOperation(
     request: AgentContentRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,

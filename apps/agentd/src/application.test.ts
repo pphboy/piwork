@@ -3,6 +3,10 @@ import test from "node:test";
 import { status } from "@grpc/grpc-js";
 import { AgentApplication, assertAgentPeerIdentity, mcpTools, selectPackageTools, skillVisibility } from "./application.js";
 import { AgentDaemonControl } from "./daemon.js";
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { WorkStore } from '@piwork/work-store';
 import type { McpBridge } from "@piwork/pi-adapter";
 
 const expected = "core.g3.work-11111111-1111-4111-8111-111111111111.piwork";
@@ -110,6 +114,41 @@ test("Retry lookup RPC authenticates the original scope and never wakes or submi
   const stale={...auth,sslPeerCertificate:{...auth.sslPeerCertificate,subjectaltname:peerUri.replace("generation/3","generation/2")}};
   await assert.rejects(invoke(query,stale),(error:any)=>error.code===status.UNAUTHENTICATED);
   assert.equal(reads,1);
+});
+
+test('Session management RPCs bind the original Work, Session, revision and operation key', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'piwork-session-rpc-'));
+  const store = WorkStore.open(join(root, 'work.sqlite'), { workId: peerScope.workId, targetVersion: 8 });
+  const app = Object.create(AgentApplication.prototype) as any;
+  app.installationId = peerScope.installationId;
+  app.config = { ...peerScope, tls: { expectedClientCommonName: expected } };
+  app.store = store;
+  app.daemon = { readiness: () => ({ acceptingRuns: true }) };
+  const auth = { transportSecurityType: 'ssl', sslPeerCertificate: { subject: { CN: expected }, subjectaltname: peerUri } };
+  const invoke = (name: string, request: unknown) => new Promise<any>((resolve, reject) => app.handlers()[name]({ request, getAuthContext: () => auth }, (error: unknown, value: unknown) => error ? reject(error) : resolve(value)));
+  try {
+    store.createSession({ workId: peerScope.workId, sessionId: 'session-1', sdkHistoryPath: '/var/data/sessions/s.jsonl', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' });
+    const request = { workId: peerScope.workId, objectId: 'session-1', inputJson: JSON.stringify({ operationKey: 'rename-key', expectedRevision: 0, title: '阅读计划' }) };
+    const renamed = JSON.parse((await invoke('renameSession', request)).valueJson);
+    assert.equal(renamed.title, '阅读计划');
+    assert.equal(renamed.revision, 1);
+    await assert.rejects(invoke('renameSession', { ...request, workId: 'work-foreign' }), (error: any) => error.code === status.PERMISSION_DENIED);
+    await assert.rejects(invoke('renameSession', { ...request, inputJson: JSON.stringify({ operationKey: 'other-key', expectedRevision: 0, title: 'old revision' }) }), (error: any) => error.code === status.ABORTED);
+    const foreignTarget = JSON.parse((await invoke('lookupSessionManagementOperation', { workId: peerScope.workId, objectId: 'rename-key', inputJson: JSON.stringify({ sessionId: 'another-session' }) })).valueJson);
+    assert.equal(foreignTarget.status, 'not-found');
+    const original = JSON.parse((await invoke('lookupSessionManagementOperation', { workId: peerScope.workId, objectId: 'rename-key', inputJson: JSON.stringify({ sessionId: 'session-1' }) })).valueJson);
+    assert.equal(original.status, 'accepted');
+    assert.equal(original.state.title, '阅读计划');
+    const run = store.acceptRun({ workId: peerScope.workId, sessionId: 'session-1', submissionKey: 'run-key', requestDigest: 'digest', promptDigest: 'prompt', memoryEnabled: false }).run;
+    const deletion = { workId: peerScope.workId, objectId: 'session-1', inputJson: JSON.stringify({ operationKey: 'delete-key', expectedRevision: 1 }) };
+    await assert.rejects(invoke('deleteSession', deletion), (error: any) => error.code === status.RESOURCE_EXHAUSTED);
+    store.completeRun(run.runId, 'succeeded', 'done', null);
+    assert.ok(JSON.parse((await invoke('deleteSession', deletion)).valueJson).deletedAt);
+    assert.equal(store.listSessions(peerScope.workId).length, 0);
+  } finally {
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 

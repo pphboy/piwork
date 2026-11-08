@@ -666,10 +666,23 @@ test('UX lost creation uses its original key; not-found stays unknown and recove
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:3}};if(r.path.endsWith('/chat-models'))return{json:chatModels()};
   if(r.path.endsWith('/sessions')){if(r.method==='POST'){key=JSON.parse(r.body).idempotencyKey;return{abort:true};}return{json:{sessions:[]}};}
   if(r.path.includes('/sessions/submissions/'))return{json:found?{kind:'session',key,status:'accepted',session:{workId:'work-1',sessionId:'session-recovered',modelPreference:null,thinkingLevel:'off'}}:{kind:'session',key,status:'not-found'}};
+  if(r.path.endsWith('/sessions/session-recovered'))return{json:{session:{workId:'work-1',sessionId:'session-recovered'},messages:[],runs:[]}};
  });
- await button(page,'tab-Chat').click();await page.locator('#composer').fill('original draft');await expect(button(page,'send-message')).toBeEnabled();await chooseThinking(page,'high');await button(page,'send-message').click();await expect(button(page,'check-chat-submission')).toBeVisible();await button(page,'check-chat-submission').click();await expect(button(page,'send-message')).toBeDisabled();found=true;await button(page,'check-chat-submission').click();await expect.poll(()=>api(page,"return adapter.getWork('work-1').sessions.length")).toBe(1);
+  await button(page, 'tab-Chat').click();
+  await page.locator('#composer').fill('original draft');
+  await expect(button(page, 'send-message')).toBeEnabled();
+  await chooseThinking(page, 'high');
+  await button(page, 'send-message').click();
+  await expect(button(page, 'check-session-creation')).toBeVisible();
+  await button(page, 'check-session-creation').click();
+  await expect(button(page, 'send-message')).toBeDisabled();
+  found = true;
+  await button(page, 'check-session-creation').click();
+  await expect.poll(() => api(page, "return adapter.getWork('work-1').sessions.length")).toBe(1);
  await expect(page.locator('.response-thinking')).toHaveText('High');
  await expect(page.locator('#composer')).toHaveValue('original draft');
+ await expect(page.locator('#messages .chat-welcome')).toBeVisible();
+ assert.ok(requests.some(r=>r.method==='GET'&&r.path.endsWith('/sessions/session-recovered')));
  await expect(button(page,'send-message')).toBeDisabled();
  await expect(button(page,'save-model')).toBeVisible();
  assert.equal(requests.filter(r=>r.method==='PATCH').length,0);
@@ -820,7 +833,7 @@ test('UX revision Files and ordinary Chat remain distinct from Focus chat and pr
   await button(page,'focus-chat').click();await button(page,'exit-service-focus').click();
   await expect(page.locator('#service-select')).toHaveAttribute('data-service-id','service-b');
   assert.equal(await api(page,"return adapter.getWork('work-1').sessions.find(s=>s.id==='session-2').messages[0].text"),'Other saved conversation');
-  await expect(page.locator('.session-line')).toContainText('Session 2');
+  await expect(page.locator('.session-line')).toContainText('Other saved conversation');
 });
 
 test('UX revision Focus icons use their toolbar roles and Escape closes exactly one level', async t => {
@@ -2008,7 +2021,13 @@ test('explicit creation confirms an untouched SDK suggestion and lost acceptance
   });
   await button(page,'tab-Chat').click();await api(page,"await adapter.loadModels('work-1');adapter.modelSelection('work-1','');");
   await api(page,"try{await adapter.newSession('work-1');}catch{};");
-  if(lost){await api(page,"await adapter.recoverChatSubmission('work-1');");const state=await api(page,"return adapter.modelSelection('work-1','session-new');");assert.equal(state.thinking,'minimal');assert.equal(state.phase,'dirty');assert.equal(requests.filter(r=>r.method==='PATCH').length,0);}
+   if (lost) {
+     await api(page, "await adapter.recoverSessionCreation('work-1');");
+     const state = await api(page, "return adapter.modelSelection('work-1','session-new');");
+     assert.equal(state.thinking, 'minimal');
+     assert.equal(state.phase, 'dirty');
+     assert.equal(requests.filter(r => r.method === 'PATCH').length, 0);
+   }
   await api(page,"await adapter.saveModel('work-1','session-new');");assert.equal(saved,'minimal');assert.equal((await api(page,"return adapter.modelSelection('work-1','session-new');")).phase,'clean');
   assert.equal(requests.filter(r=>r.method==='POST'&&r.path==='works/work-1/sessions').length,1);assert.equal(requests.filter(r=>r.method==='PATCH').length,1);assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);
  });
@@ -4457,13 +4476,14 @@ for(const language of ['en','zh-CN'])test(`refresh chooses sendable user Session
   if(match)return{json:{session:{workId:'work-1',sessionId:match[1],modelPreference:{...chatModel,availability:'available'},thinkingLevel:'off',source:{kind:'chat'}},messages:[{role:'user',text:match[1]==='session-1'?'Old preserved history':'New conversation'}],runs:[]}};
  });
  if(language==='zh-CN'){await page.evaluate(()=>localStorage.setItem('piwork.ui-locale','zh-CN'));await page.reload();}
- await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+ await expect(page.locator('[data-action="sessions"]').last()).toContainText('New conversation');
  await page.locator('#composer').fill('unsent draft');await expect(button(page,'send-message')).toBeEnabled();
  await page.locator('[data-action="sessions"]').last().click();await page.locator('[data-action="select-session"][data-id="session-1"]').click();
  await expect(page.locator('.options-status').first()).toContainText(language==='en'?'environment or saved settings':'环境或已保存设置');
  await expect(page.locator('body')).toContainText('Old preserved history');await expect(button(page,'send-message')).toBeDisabled();
  await expect(page.locator('body')).not.toContainText(language==='en'?'Choose an available model.':'请选择可用模型。');
- await page.reload();await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+  await page.reload();
+  await expect(page.locator('[data-action="sessions"]').last()).toContainText('New conversation');
  assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
  assert.equal(requests.filter(r=>r.path.includes('/session-service/chat-options')).length,0);
 });

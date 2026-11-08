@@ -1,4 +1,6 @@
 import { resolveServiceViewTarget, type ServiceViewAttempt } from "./service-view-controls.js";
+import { sessionLabel } from './session-label.js';
+import { thinkingName } from './chat-model-labels.js';
 import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback, type BootstrapReadSource } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
@@ -62,6 +64,17 @@ const imageDraftErrors=new Map<string,{message:string}>();
 const textDraftRevisions=new Map<string,number>();
 let imageSelection=0;
 interface ImageSubmission {key:string;destinationKey:string;text:string;textRevision:number;images:DraftImage[];epoch:number;error?:{message:string}}
+interface SessionDeletionDraft { key:string; text:string; revision:number; images:DraftImage[] }
+const sessionDeletionDrafts = new WeakMap<object,SessionDeletionDraft>();
+interface SessionReplacement {
+  workId: string;
+  sessionId: string;
+  epoch: number;
+  route: string;
+  choice: number;
+  phase: 'deleting' | 'creating' | 'unknown' | 'failed';
+}
+let sessionReplacement: SessionReplacement | undefined;
 const pendingImageSubmissions=new Map<string,ImageSubmission>();
 const chatDraftSnapshots=new Map<string,ImageSubmission>();
 const imageObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){const el=entry.target as HTMLElement;imageObserver.unobserve(el);const w=adapter.getWork(el.dataset.work!),session=w?.sessions.find(s=>s.id===el.dataset.session),image=session?.messages.find(m=>m.runId===el.dataset.run && m.images?.some(i=>i.imageIndex===Number(el.dataset.index)))?.images?.find(i=>i.imageIndex===Number(el.dataset.index));if(w&&session&&image)adapter.loadHistoryImage(w.id,session.id,el.dataset.run!,image);}});
@@ -572,11 +585,13 @@ let servicePreparationScheduled = false;
 const fileSelections = new Map<string, number>();
 const viewKey = () => `${location.hash}:${view.modal}:${modalChoice}:${view.tab}:${view.path}:${view.service}:${view.port}:${sessionChoice}`;
 const actionLabels: Record<string, string> = {
+  'save-session-name': 'sessions.savingName', 'confirm-delete-session': 'sessions.deleting', 'auto-name-session': 'sessions.startingAutoName', 'check-session-operation': 'sessions.checkingOperation',
+  'check-session-capabilities': 'sessions.managementChecking',
   'retry-chat-submission':'chat.retryMessage',
   'sign-in': 'actions.signIn', 'sign-out': 'actions.signOut', 'confirm-switch-core': 'actions.switchingCore', 'check-connection': 'actions.checkingConnection', 'retry-known-operations': 'quick.checkStatus',
   'retry-works': 'actions.loadingWorks', 'create-work': 'actions.creatingWork', 'start-work': 'actions.startingWork', 'start-import-open': 'actions.startingImportedWork', 'check-work-progress': 'actions.checkingWorkProgress', 'check-service-progress': 'actions.checkingServiceProgress', 'confirm-stop': 'actions.stoppingWork', 'confirm-delete': 'actions.deletingWork',
   'retry-work-read': 'actions.loadingWork', 'open-work': 'actions.loadingWork', 'check-work': 'actions.checkingWork', settings: 'actions.readingSettings', 'tab-Services': 'actions.loadingServices', 'tab-Files': 'actions.readingWorkspace',
-  'retry-services': 'actions.readingServices', 'run-details': 'actions.readingRunDetails', 'active-run': 'actions.readingActiveRun', 'check-chat-submission': 'actions.checkingOriginalSubmission',
+  'retry-services': 'actions.readingServices', 'run-details': 'actions.readingRunDetails', 'active-run': 'actions.readingActiveRun', 'check-chat-submission': 'actions.checkingOriginalSubmission', 'check-session-creation': 'actions.checkingOriginalSubmission',
   'load-models': 'actions.readingModels', 'save-model': 'actions.savingSessionModel', 'check-session-model': 'actions.readingSessionModel', 'service-requests': 'actions.readingAgentRequests', 'check-active-run': 'actions.checkingActiveRun', 'pi-requests': 'actions.readingPiRequests', 'pi-request-detail': 'actions.readingPiRequest', 'cancel-pi-request': 'actions.cancellingPiRequest', 'retry-pi-request': 'actions.retryingPiRequest', 'next-pi-requests': 'actions.readingMorePiRequests', 'next-pi-evidence': 'actions.readingMoreEvidence',
   'load-earlier-history': 'actions.readingEarlierMessages', 'reload-history': 'actions.readingRecentMessages', 'retry-conversation': 'actions.readingConversation', 'sessions': 'actions.readingSessions', 'select-session': 'actions.readingSession', 'new-session': 'actions.creatingSession', 'send-message': 'actions.submittingMessage', 'cancel-run': 'actions.requestingCancellation', 'resume-run': 'actions.reconnectingRun',
   'service-details': 'actions.readingLogs', 'service-action': 'actions.submittingServiceControl', 'confirm-service-control': 'actions.submittingServiceControl', 'refresh-logs': 'actions.readingLogs', 'refresh-temporary-cleanups': 'merge.refreshCleanup', 'select-service': 'actions.loadingServices', 'open-controlled-service': 'actions.loadingServices', 'check-service-operation': 'actions.checkingServiceProgress',
@@ -604,7 +619,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'upload-input'].includes(action)) kind = 'files';
   else if (['save-config', 'dirty-config-save', 'apply-config', 'confirm-core-skills', 'confirm-install', 'confirm-remove-package'].includes(action)) kind = 'configuration';
   else if (action === 'service-action' || action === 'confirm-service-control') { if (action === 'service-action' && ['stop', 'remove'].includes(el.dataset.control || '')) return; kind = 'service'; }
-  else if (['new-session', 'send-message', 'retry-chat-submission', 'cancel-run','save-model','cancel-pi-request','retry-pi-request'].includes(action)) kind = 'agent';
+  else if (['new-session', 'send-message', 'retry-chat-submission', 'cancel-run','save-model','cancel-pi-request','retry-pi-request','save-session-name','confirm-delete-session','auto-name-session'].includes(action)) kind = 'agent';
   else if (['confirm-import', 'download-work', 'prepare-export', 'export'].includes(action)) kind = 'transfer';
   // Opening, filtering, and retrying observe the same Work/filter page.
   // Keep this key independent of the current Files selection or menu entry.
@@ -625,7 +640,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
   const serviceAction = ['service-details', 'service-action', 'confirm-service-control', 'refresh-logs', 'open-app', 'open-window', 'retry-service-entry', 'check-preview', 'select-service', 'open-controlled-service'].includes(action);
   const serviceId = el.dataset.serviceId || el.dataset.id || view.data.serviceId || view.service;
   const servicePort = action === 'select-service' ? w?.services.find(service => service.id === serviceId)?.ports[0] : Number(el.dataset.port) || view.port;
-  const fallbackResource = action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation','load-earlier-history','reload-history','check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action==='settings' ? w?.id : ['cancel-pi-request','retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
+  const fallbackResource = ['save-session-name','confirm-delete-session','auto-name-session','check-session-operation'].includes(action) ? `session:${JSON.stringify(el.dataset.session || view.data.sessionId || '')}` : action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation','load-earlier-history','reload-history','check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action==='settings' ? w?.id : ['cancel-pi-request','retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
   const logRead = serviceLogReadIdentity(action, w?.id, serviceId);
   const resource = logRead?.resource ?? fileActionResource(action, view.file, fallbackResource);
   const key = logRead?.key ?? `${kind}:${w?.id || 'local'}:${resource}:${action}`;
@@ -1389,6 +1404,7 @@ function openModal(name: string, data: Record<string, string> = {}) {
   view.modalError = "";
   view.modalNameError = null;
   view.formName = "";
+  if (name === 'session-rename') view.formName = data.name || '';
   view.formDestination = view.path;
   view.formOverwrite = false;
   fileAttempt = undefined; modalTransfers = [];
@@ -1399,6 +1415,11 @@ function openModal(name: string, data: Record<string, string> = {}) {
   if (overlayRole(name)==='menu') panel?.querySelector<HTMLElement>('[role=menuitem]:not([disabled])')?.focus({preventScroll:true});
   else if (overlayRole(name)==='drawer') panel?.querySelector<HTMLElement>('[data-action=close-modal]')?.focus({preventScroll:true});
   else if (name==='sessions') (panel?.querySelector<HTMLElement>('[role=option][aria-selected=true]') || panel?.querySelector<HTMLElement>('[role=option]') || panel?.querySelector<HTMLElement>('[data-action=new-session]:not([disabled])') || panel?.querySelector<HTMLElement>('[data-action=close-modal]'))?.focus();
+  else if (name === 'session-rename') {
+    const input = panel?.querySelector<HTMLInputElement>('#session-name');
+    input?.focus();
+    input?.select();
+  }
   // Reopening the import dialog (for example after signing in) must not leave
   // focus on the page behind it; a name field that is already focused wins.
   else if (name==='import' && panel && !panel.contains(document.activeElement))
@@ -1407,6 +1428,19 @@ function openModal(name: string, data: Record<string, string> = {}) {
 }
 function closeModal(restoreFocus = true) {
   if(!view.modal)return;
+  if (['session-rename','session-delete'].includes(view.modal) && Number(view.data.epoch) === adapter.identityEpoch && current()?.id === view.data.workId) {
+    const workId=view.data.workId,sessionId=view.data.sessionId;
+    modalChoice++;
+    view.modal = 'sessions';
+    view.data = { id: workId, sessionMenu: adapter.getWork(workId)?.sessions.some(s => s.id === sessionId) ? sessionId : '' };
+    view.modalError = '';
+    render();
+    if (restoreFocus) {
+      const trigger = root.querySelector<HTMLElement>(`#modal [data-action="toggle-session-menu"][data-session="${CSS.escape(sessionId)}"]`);
+      (trigger || root.querySelector<HTMLElement>('#modal [role=option][aria-selected=true]') || root.querySelector<HTMLElement>('#modal [data-action=new-session]'))?.focus({ preventScroll: true });
+    }
+    return;
+  }
   if (['dirty-file', 'dirty-settings'].includes(view.modal) && sourceGuardReturn) {
     const original = sourceGuardReturn; sourceGuardReturn = undefined; pendingNav = null;
     if (original.epoch === adapter.identityEpoch && original.route === location.hash) {
@@ -1770,9 +1804,17 @@ function resizeComposerEditor() {
   input.style.overflowY = geometry.overflow;
 }
 function agent(w: Work, focus: boolean) {
+  const replacement = sessionReplacement && sessionReplacement.workId === w.id
+    && sessionReplacement.epoch === adapter.identityEpoch
+    && sessionReplacement.route === location.hash
+    && sessionReplacement.choice === sessionChoice
+    && (!view.session || view.session === sessionReplacement.sessionId)
+    ? sessionReplacement : undefined;
   const session =
-    w.sessions.find((s) => s.id === view.session) || w.sessions.find(s=>s.source?.kind!=='service');
+    w.sessions.find((s) => s.id === view.session) || (replacement ? undefined : w.sessions.find(s=>s.source?.kind!=='service'));
   if(session){if(!view.session && view.drafts[draftKey(w,"")] && !view.drafts[draftKey(w,session.id)]){view.drafts[draftKey(w,session.id)]=view.drafts[draftKey(w,"")];textDraftRevisions.set(draftKey(w,session.id),textDraftRevisions.get(draftKey(w,"")) || 0);}const from=draftKey(w,""),to=draftKey(w,session.id);if(imageDrafts.get(from).length&&!imageDrafts.get(to).length&&imageDraftErrors.has(from)){imageDraftErrors.set(to,imageDraftErrors.get(from)!);imageDraftErrors.delete(from);}imageDrafts.move(from,to);view.session=session.id;}
+  const deletion=session && adapter.sessionManagement.operation(w.id,session.id);
+  const deleting=!!deletion && deletion.kind==='delete' && deletion.phase!=='failed';
   const supported=adapter.cancelAndSendCapabilities.get(w.id)===1,observed=adapter.activeRuns.get(w.id);
   const observedRun=supported ? observed?.run : w.run;
   const activeRun=observedRun && ["accepted","running","cancelling"].includes(observedRun.status) ? observedRun : null;
@@ -1796,7 +1838,9 @@ function agent(w: Work, focus: boolean) {
   const readingConversation=!!w.resourceLoading?.agent || !!session?.loading;
   const initialConversation=!session?.messages.length && !conversationError && (readingSessions || !!session && !session.checkedAt);
   const draftImages=imageDrafts.get(draftKey(w,session?.id || ""));const imageWaiting=draftImages.length>0 && (!w.resourceChecked?.agent || session?.loading && !session.checkedAt || draftImages.some(image=>image.reading));
-  const webDraft=!view.literalSlash && webCommands.includes(/^\/([^\s]+)/.exec(draft.trimStart())?.[1] || "");
+  const webCommand = !view.literalSlash ? /^\/([^\s]+)/.exec(draft.trimStart())?.[1] || '' : '';
+  const webDraft = webCommands.includes(webCommand);
+  const webSubmissionBlocked = webCommand === 'new' ? adapter.sessionCreations.has(w.id) : adapter.chatSubmissions.has(w.id);
   const stopAndSend=supported && active && !activeUnconfirmed && !webDraft;
   const stopPending=[...actions.records.values()].some(r=>r.work===w.id&&r.action==='cancel-run'&&r.pending);
   const stopControl=activeRun&&!activeUnconfirmed&&adapter.project(w).usable?btn(icon('stop',18),'cancel-run','icon-button quiet chat-stop',`data-run-id="${esc(activeRun.id)}" aria-label="${esc(t('execution.cancelRun'))}" title="${esc(t('execution.cancelRun'))}" ${stopPending||activeRun.cancellationRequested||activeRun.status==='cancelling'?'disabled aria-busy="true"':''}`):'';
@@ -1809,7 +1853,7 @@ function agent(w: Work, focus: boolean) {
   // A reply status belongs to the last message of its own Run. A Run with
   // no messages yet gets a standalone slot in the conversation.
   const replySlot = replyRun && session && !session.messages.some(message => message.runId === replyRun.id) ? replyStatusMarkup(w,session.id,replyRun) : '';
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${conversationError?readFailure(t('agent.conversationReadFailed'),conversationLimit?`${conversationError} ${conversationLimit}`:conversationError,'retry-conversation',readingConversation):''}${session ? conversationHistoryControls(w,session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages,replyRun)}${replySlot}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer${composerExpanded ? ' expanded' : ''}">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<div class="composer-text-wrap"><textarea id="composer" data-draft-key="${esc(composerKey)}" rows="2" placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea>${btn(icon(composerExpanded ? "composer-collapse" : "composer-expand",18),"toggle-composer-editor","icon-button quiet composer-expand",`title="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-label="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-expanded="${composerExpanded}" aria-controls="composer"`)}</div>${composerExpanded ? `<div class="composer-expand-hint"><span>${t('chat.composerLines', { count: draft.split("\n").length })}</span><span>${t('chat.editorHint')}</span></div>` : ''}<div class="composer-bottom"><div class="composer-options">${btn(icon("composer-attachment",18),"add-chat-images","icon-button quiet",`title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}"`)}${modelComposer(w,session?.id || "")}</div><div class="composer-actions">${btn(icon("more",16),"chat-input-options","icon-button quiet chat-input-options",`title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || imageWaiting || !webDraft && (!draft.trim()&&!draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && !!adapter.chatSubmissions.get(w.id) ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption${draft.trimStart().startsWith("/") ? ' slash-mode' : ''}" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?t('chat.commandMode'):t('chat.sendAsText'),"toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon("spark", 17)} <b>Agent</b>${view.layout !== "workspace" ? `<small title="${esc(w.name)}">${esc(w.name)}</small>` : ""}</span><div>${btn(readingConversation && !initialConversation ? pendingDots() : icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="session-line"><button id="session-current-trigger" data-action="sessions" ${readingSessions && !session ? `aria-label="${esc(t('agent.loadingConversationsAria'))}" aria-busy="true"` : ''}>${readingSessions && !session ? esc(t('agent.loadingConversations')) : esc(sessionDisplayName(w,session))}${icon("down", 12)}</button></div><div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${conversationError?readFailure(t('agent.conversationReadFailed'),conversationLimit?`${conversationError} ${conversationLimit}`:conversationError,'retry-conversation',readingConversation):''}${session ? conversationHistoryControls(w,session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages,replyRun)}${replySlot}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${replacement?.phase==='failed'?feedback(t('sessions.replacementFailed'),'warning',btn(t('sessions.newCompact'),'new-session','small')):''}${deleting?feedback(t('sessions.deleteChecking'),"warning"):""}${session?.legacy ? feedback(t('chat.legacyContext'), "warning", btn(t('chat.newSession'), "new-session", "small")) : ""}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer${composerExpanded ? ' expanded' : ''}">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<div class="composer-text-wrap"><textarea id="composer" data-draft-key="${esc(composerKey)}" rows="2" ${deleting ? 'readonly aria-readonly="true"' : ''} placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${esc(draft)}</textarea>${btn(icon(composerExpanded ? "composer-collapse" : "composer-expand",18),"toggle-composer-editor","icon-button quiet composer-expand",`title="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-label="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-expanded="${composerExpanded}" aria-controls="composer"`)}</div>${composerExpanded ? `<div class="composer-expand-hint"><span>${t('chat.composerLines', { count: draft.split("\n").length })}</span><span>${t('chat.editorHint')}</span></div>` : ''}<div class="composer-bottom"><div class="composer-options">${btn(icon("composer-attachment",18),"add-chat-images","icon-button quiet",`title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}" ${deleting ? 'disabled' : ''}`)}${modelComposer(w,session?.id || "")}</div><div class="composer-actions">${btn(icon("more",16),"chat-input-options","icon-button quiet chat-input-options",`title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || deleting || imageWaiting || !webDraft && (!draft.trim()&&!draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && webSubmissionBlocked ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption${draft.trimStart().startsWith("/") ? ' slash-mode' : ''}" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?t('chat.commandMode'):t('chat.sendAsText'),"toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
 }
 function modelComposer(w: Work, sessionId: string) {
   const { name, thinking, state, initialLoading } = chatSettings(w, sessionId);
@@ -1826,7 +1870,7 @@ function modelComposer(w: Work, sessionId: string) {
 }
 function sessionDisplayName(w: Work, session?: Work['sessions'][number]): string {
   if (!session) return w.resourceErrors?.agent ? t('chat.sessionsUnavailable') : !w.resourceChecked?.agent ? t('agent.loadingConversations') : t('chat.noSessionYet');
-  return session.title === `Session ${session.id}` ? t('chat.sessionNumber', { index: w.sessions.indexOf(session)+1 }) : session.title; // i18n-exempt: generated server session title, compared not displayed
+  return sessionLabel(session, w.sessions.findIndex(item => item.id === session.id));
 }
 function modelDisplayName(model?: { label?:string;model?:string } | null): string {
   if (!model) return t('model.unavailable');
@@ -1836,7 +1880,6 @@ function capturedDefaultName(model: {label?:string;model?:string}):string {
   const label=modelDisplayName(model);
   return model.model && label!==model.model ? `${label} (${model.model})` : label;
 }
-function thinkingName(level:string|null):string { if(level===null)return t('thinking.normal'); if(!level)return t('thinking.unavailable'); const keys:Record<string,string>={off:'thinking.off',minimal:'thinking.minimal',low:'thinking.low',medium:'thinking.medium',high:'thinking.high',xhigh:'thinking.xhigh',max:'thinking.max'}; return keys[level]?t(keys[level]!):level[0]!.toUpperCase()+level.slice(1); }
 function chatSettings(w: Work, sessionId: string) {
   const catalog=adapter.models.get(w.id),state=adapter.modelSelection(w.id,sessionId),session=w.sessions.find(s=>s.id===sessionId);
   const model=state.ref===null?catalog?.defaultModel:catalog?.models.find(m=>m.modelRef===state.ref);
@@ -1906,9 +1949,9 @@ function confirmPendingChatCommand() {
   const state=adapter.modelSelection(command.workId,command.sessionId || '');
   if(!state.needsThinkingConfirmation && (state.phase==='clean' || !command.sessionId && state.phase==='dirty') && state.ref===command.pair.ref && state.thinking===command.pair.thinking && state.profile===command.pair.profile) consumeWebSelection(command.kind);
 }
-function submissionMarkup(w:Work) {
- const intent=adapter.chatSubmissions.get(w.id);
- return intent?.kind==='session'?feedback(`${esc(intent.error || (intent.cancelRunId ? t('chat.stoppingPreviousRun') : t('chat.waitingAcceptance')))}<details class="chat-submission-details"><summary>${t('chat.submissionDetails')}</summary><p>${t('chat.submissionOriginalKey', { kind: esc(intent.kind) })} <code>${esc(intent.key)}</code></p></details>`,'warning',btn(t('chat.checkOriginalSubmission'),'check-chat-submission','small')):'';
+function submissionMarkup(w: Work) {
+  const intent = adapter.sessionCreations.get(w.id);
+  return intent ?feedback(`${esc(intent.error || t('chat.waitingAcceptance'))}<details class="chat-submission-details"><summary>${t('chat.submissionDetails')}</summary><p>${t('chat.submissionOriginalKey', { kind: esc(intent.kind) })} <code>${esc(intent.key)}</code></p></details>`,'warning',btn(t('chat.checkOriginalSubmission'),'check-session-creation','small')):'';
 }
 function layoutButton(symbol: string, label: string, action: string, extra = '') {
   return btn(icon(symbol, 16), action, 'icon-button quiet', `title="${esc(label)}" aria-label="${esc(label)}" ${extra}`);
@@ -2353,6 +2396,17 @@ function positionOverlay(dialog: HTMLDialogElement) {
   const placed=overlayPlacement(rect,dialog.getBoundingClientRect(),{width:innerWidth,height:innerHeight});
   dialog.style.left=`${placed.left}px`;dialog.style.top=`${placed.top}px`;dialog.style.maxHeight=`${placed.maxHeight}px`;
 }
+function positionSessionRowMenu(dialog: HTMLDialogElement) {
+  if (view.modal !== 'sessions' || !view.data.sessionMenu) return;
+  const trigger=dialog.querySelector<HTMLElement>(`[data-action="toggle-session-menu"][data-session="${CSS.escape(view.data.sessionMenu)}"]`);
+  const menu=dialog.querySelector<HTMLElement>('.session-row-menu');
+  if (!trigger?.getClientRects().length || !menu) return;
+  const placed=overlayPlacement(trigger.getBoundingClientRect(),menu.getBoundingClientRect(),{width:innerWidth,height:innerHeight});
+  menu.style.left = `${placed.left}px`;
+  menu.style.top = `${placed.top}px`;
+  menu.style.maxHeight = `${placed.maxHeight}px`;
+  menu.style.visibility = 'visible';
+}
 function syncDialogPresentation(dialog: HTMLDialogElement, nonmodal: boolean) {
   if (dialog.open && dialog.matches(':modal') === nonmodal) dialog.close();
   if (!dialog.open) { if (nonmodal) dialog.show(); else dialog.showModal(); }
@@ -2515,10 +2569,47 @@ function modalMarkup() {
       body = `<p>${t('deleteWork.body')}</p><p>${t('deleteWork.differs')}</p><label class="check-row"><input id="delete-confirm" type="checkbox" ${view.deleteConfirmed ? "checked" : ""}>${t('deleteWork.ack')}</label>`;
       footer = `${cancel()}${btn(t('workMenu.delete'), "confirm-delete", "danger-solid", `data-id="${target?.id}" ${view.deleteConfirmed ? "" : "disabled"}`)}`;
       break;
-    case "sessions":
+    case "sessions": {
       title = t('agent.sessions');
-      body = `<p class="session-picker-context">${t('sessions.context', { name: `<strong>${esc(target?.name)}</strong>` })}</p><div class="session-picker-actions">${btn(`${icon("plus",16)} ${t('chat.newSession')}`, "new-session")}</div><div class="session-list" role="listbox" aria-label="${esc(t('agent.sessions'))}" aria-busy="${!!target?.resourceLoading?.agent}">${target?.sessions.map((s) => `<button role="option" aria-selected="${s.id === view.session}" data-action="select-session" data-id="${esc(s.id)}" class="${s.id === view.session ? "selected" : ""}"><span class="session-choice-main">${icon("chat", 17)}<span class="session-choice-copy"><span class="session-choice-title">${esc(sessionDisplayName(target!,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : ""}</span></span>${s.id === view.session ? `<span class="session-choice-check" aria-hidden="true">${icon("check", 16)}</span>` : ""}</button>`).join("") || (target?.resourceLoading?.agent ? readPlaceholder(t('agent.loadingConversations')) : target?.resourceErrors?.agent ? "" : `<p>${t('sessions.none')}</p>`)}</div>${target?.resourceErrors?.agent?readFailure(t('sessions.readFailed'),target.resourceErrors.agent,"retry-conversation",!!target.resourceLoading?.agent):""}<p class="session-picker-note">${t('sessions.note')}</p>`;
+      const capability=target ? adapter.sessionManagement?.capabilities.get(target.id) : undefined;
+      const capable=!!capability?.confirmed && capability.supported;
+      const capabilityNote=capability?.error?t('sessions.managementReadFailed'):capability?.confirmed&&!capability.supported?t('sessions.managementUnavailable'):!capability?.confirmed?t('sessions.managementChecking'):'';
+      const rows=target?.sessions.map(s=>{
+        const selected=s.id===view.session, menu=view.data.sessionMenu===s.id;
+        const operation=adapter.sessionManagement?.operation(target.id,s.id);
+        const locked=!!operation && operation.phase!=='failed';
+        const observed=adapter.activeRuns?.get(target.id)?.run;
+        const busy=[target.run,observed].some(run=>run?.sessionId===s.id && ['accepted','running','cancelling'].includes(run.status));
+        const controls=menu?`<div class="session-row-menu" role="menu" aria-label="${esc(t('sessions.manage',{name:sessionDisplayName(target,s)}))}">${
+          locked ? `<p class="session-menu-hint" role="status">${t(operation?.phase==='pending'?'sessions.operationPending':'sessions.operationUnknown')}</p>${btn(t('sessions.checkOperation'),'check-session-operation','quiet',`role="menuitem" data-session="${esc(s.id)}"`)}` :
+          btn(`${icon('edit',15)} ${t('sessions.rename')}`,'rename-session','quiet',`role="menuitem" data-session="${esc(s.id)}"`)+
+          btn(`${icon('spark',15)} ${t('sessions.autoName')}`,'auto-name-session','quiet',`role="menuitem" data-session="${esc(s.id)}" ${s.autoNameState==='pending'?'disabled':''}`)+
+          btn(`${icon('trash',15)} ${t('sessions.delete')}`,'delete-session','quiet danger',`role="menuitem" data-session="${esc(s.id)}" ${busy?`disabled title="${esc(t('sessions.deleteBusy'))}"`:''}`)+
+          (busy?`<p class="session-menu-hint">${t('sessions.deleteBusy')}</p>`:'')+
+          (operation?.phase==='failed' || s.autoNameState==='failed'?`<p class="session-menu-hint" role="status">${t('sessions.operationFailed')}</p>`:'')
+        }</div>`:'';
+        return `<div class="session-choice-row${selected?' selected':''}" role="presentation"><button role="option" aria-selected="${selected}" data-action="select-session" data-id="${esc(s.id)}" class="session-choice ${selected?'selected':''}"><span class="session-choice-main">${icon("chat", 17)}<span class="session-choice-copy"><span class="session-choice-title">${esc(sessionDisplayName(target,s))}</span>${target.run?.sessionId === s.id ? badge(target.run.status) : ""}${s.autoNameState==='pending'?`<small role="status">${t('sessions.naming')}</small>`:''}</span></span>${selected?`<span class="session-choice-check" aria-hidden="true">${icon("check", 16)}</span>`:''}</button>${btn(icon('more',16),'toggle-session-menu','icon-button quiet session-more',`data-session="${esc(s.id)}" aria-label="${esc(t('sessions.manage',{name:sessionDisplayName(target,s)}))}" aria-haspopup="menu" aria-expanded="${menu}" ${!capable?'disabled':''}`)}${controls}</div>`;
+      }).join('');
+      body = `<p class="session-picker-context">${t('sessions.context', { name: `<strong>${esc(target?.name)}</strong>` })}</p><div class="session-list" role="listbox" aria-label="${esc(t('agent.sessions'))}" aria-busy="${!!target?.resourceLoading?.agent}">${rows || (target?.resourceLoading?.agent ? readPlaceholder(t('agent.loadingConversations')) : target?.resourceErrors?.agent ? "" : `<p>${t('sessions.none')}</p>`)}</div>${target?.resourceErrors?.agent?readFailure(t('sessions.readFailed'),target.resourceErrors.agent,"retry-conversation",!!target.resourceLoading?.agent):""}${capabilityNote?`<p class="session-capability-note" role="status">${esc(capabilityNote)}${capability?.error?` ${btn(t('common.retry'),'check-session-capabilities','quiet small')}`:''}</p>`:''}<p class="session-picker-note">${t('sessions.note')}</p>`;
       break;
+    }
+    case 'session-rename': {
+      const session=target?.sessions.find(s=>s.id===view.data.sessionId),operation=target&&adapter.sessionManagement.operation(target.id,view.data.sessionId);
+      const locked=!!operation && operation.phase!=='failed';
+      title=t('sessions.renameTitle');
+      body=`<p>${t('sessions.renameHelp')}</p><label class="field">${t('sessions.nameLabel')}<input id="session-name" maxlength="120" value="${esc(view.formName)}" aria-label="${esc(t('sessions.nameLabel'))}" ${locked?'disabled':''}></label>${locked?feedback(t(operation?.phase==='unknown'?'sessions.operationUnknown':'sessions.operationPending'),'warning',btn(t('sessions.checkOperation'),'check-session-operation','small',`data-session="${esc(view.data.sessionId)}"`)):''}`;
+      footer=`${cancel()}${btn(t('sessions.saveName'),'save-session-name','primary',`data-session="${esc(view.data.sessionId)}" ${!session || locked || !view.formName.trim()?'disabled':''}`)}`;
+      break;
+    }
+    case 'session-delete': {
+      const session=target?.sessions.find(s=>s.id===view.data.sessionId),operation=target&&adapter.sessionManagement.operation(target.id,view.data.sessionId);
+      const locked=!!operation && operation.phase!=='failed';
+      title=t('sessions.deleteTitle');
+      const draft=target && ((view.drafts[draftKey(target,view.data.sessionId)] || '').trim() || imageDrafts.get(draftKey(target,view.data.sessionId)).length);
+      body=`<p>${t('sessions.deleteBody',{name:`<strong>${esc(session ? sessionDisplayName(target!,session) : view.data.sessionId)}</strong>`})}</p><p>${t('sessions.deleteDetails')}</p>${draft?`<p>${t('sessions.deleteDraft')}</p>`:''}${locked?feedback(t(operation?.phase==='unknown'?'sessions.operationUnknown':'sessions.operationPending'),'warning',btn(t('sessions.checkOperation'),'check-session-operation','small',`data-session="${esc(view.data.sessionId)}"`)):''}`;
+      footer=`${cancel()}${btn(t('sessions.delete'),'confirm-delete-session','danger-solid',`data-session="${esc(view.data.sessionId)}" ${!session || locked?'disabled':''}`)}`;
+      break;
+    }
     case "agent-menu":
       title = t('agent.options');
       body = `<div class="menu-list">${btn(`${icon("clock")} ${t('agent.sessions')}`, "sessions")}${btn(`${icon("plus")} ${t('chat.newSession')}`, "new-session")}${btn(`${icon("note")} ${t('work.piRequestsAria')}`, "pi-requests")}${view.layout==='chat-only'?btn(`${icon("arrow")} ${t('focus.restoreLayout')}`, "restore-layout"):btn(`${icon("focus")} ${t('focus.focusChat')}`, "focus-chat")}${browserFullscreenAction()}</div>`;
@@ -2810,7 +2901,7 @@ function modalMarkup() {
     return `<dialog id="modal" tabindex="-1" aria-modal="false" aria-labelledby="modal-title" class="modal anchored-overlay chat-response-settings compact-response-picker ${view.data.expanded === 'thinking' ? 'thinking-options' : 'model-options'}"><div id="modal-title" class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
   }
   const submissionError=view.modal==='chat-submission'?target?.sessions.find(s=>s.id===view.data.sessionId)?.messages.find(m=>m.submission?.key===view.data.submissionKey)?.submission?.error:undefined;
-  return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${view.modal==='sessions'?'session-picker':''} ${['chat-submission','chat-history-status'].includes(view.modal)?'chat-submission-popover':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError!==submissionError && view.modal!=="new-work" && !(view.modal==='sessions' && view.modalError===target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+  return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${view.modal==='sessions'?'session-picker':''} ${['chat-submission','chat-history-status'].includes(view.modal)?'chat-submission-popover':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${view.modal === "sessions" ? btn(`${icon("plus",14)} ${t('sessions.newCompact')}`, "new-session", "session-new-compact", `aria-label="${esc(t('chat.newSession'))}"`) : ""}${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError!==submissionError && view.modal!=="new-work" && !(view.modal==='sessions' && view.modalError===target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op: Operation) {
   const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
@@ -3066,13 +3157,62 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     if (results.some(result => result.status !== 'succeeded')) { view.modalError = t('fileResults.someNotConfirmed'); render(); return false; }
     return true;
   };
+  const retireSessionDelete = (work: Work, sessionId: string, operation?: object) => {
+    const snapshot=operation ? sessionDeletionDrafts.get(operation) : undefined;
+    if(snapshot){
+      if ((textDraftRevisions.get(snapshot.key) || 0) === snapshot.revision && (view.drafts[snapshot.key] || '') === snapshot.text) {
+        delete view.drafts[snapshot.key];
+        textDraftRevisions.delete(snapshot.key);
+      }
+      imageDrafts.consume(snapshot.key, snapshot.images);
+      sessionDeletionDrafts.delete(operation!);
+    }
+    const replacement = sessionReplacement;
+    if (!replacement || replacement.workId !== work.id || replacement.sessionId !== sessionId) return;
+    if (replacement.epoch !== adapter.identityEpoch || replacement.route !== location.hash
+      || replacement.choice !== sessionChoice || current()?.id !== work.id || view.session !== sessionId) {
+      if (sessionReplacement === replacement) sessionReplacement = undefined;
+      return;
+    }
+    view.session = '';
+    replacement.choice = ++sessionChoice;
+    replacement.phase = 'creating';
+    const sameSelection = () => sessionReplacement === replacement && replacement.epoch === adapter.identityEpoch
+      && replacement.route === location.hash && replacement.choice === sessionChoice
+      && current()?.id === work.id && !view.session;
+    void adapter.newSession(work.id).then(created => {
+      if (!sameSelection()) return;
+      view.session = created;
+      sessionReplacement = undefined;
+      render();
+      void adapter.loadSession(work.id, created).catch(() => undefined);
+    }).catch(() => {
+      if (!sameSelection()) return;
+      replacement.phase = adapter.sessionCreations.has(work.id) ? 'unknown' : 'failed';
+      render();
+    });
+  };
   const w = targetWork(el);
   const currentWork = current();
   const createOriginalSession = () => {
     const pending = adapter.newSession(currentWork!.id);
-    const intent = adapter.chatSubmissions.get(currentWork!.id);
+    const intent = adapter.sessionCreations.get(currentWork!.id);
     if (record && intent?.kind === 'session') record.businessId = `submission:${intent.key}`;
     return pending;
+  };
+  const readCreatedSession = (sessionId: string) => {
+    if (!currentWork) return;
+    // Activate the selection before starting a paged read: render's activation
+    // retires reads from the previously selected Session.
+    render();
+    void adapter.loadSession(currentWork.id, sessionId).catch(() => undefined);
+  };
+  const createAndSelectSession = async () => {
+    const sessionId = await stay(createOriginalSession());
+    view.session = sessionId;
+    if (sessionReplacement?.workId === currentWork?.id) sessionReplacement = undefined;
+    readCreatedSession(sessionId);
+    return sessionId;
   };
   const s = currentWork ? activeService(currentWork) : undefined;
   if (currentWork && !adapter.project(currentWork).usable && ['new-session', 'retry-chat-submission', 'send-message', 'apply-config', 'service-action', 'confirm-service-control', 'save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'cancel-pi-request', 'retry-pi-request'].includes(action)) throw new Error(t('fileResults.notReadyRuntime'));
@@ -3170,21 +3310,35 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'choose-command':fillCommand(el.dataset.command!);break;
     case 'load-commands':if(currentWork)await adapter.loadCommands(currentWork.id);break;
     case 'toggle-slash-mode':view.literalSlash=!view.literalSlash;render();break;
+    case 'check-session-creation':
     case 'check-chat-submission': {
       if(!currentWork)break;
       const epoch=adapter.identityEpoch;
-      const intent = adapter.chatSubmissions.get(currentWork.id);
+      const originalChoice=sessionChoice, originalRoute=location.hash;
+      const creating = action === 'check-session-creation';
+      const intent = (creating ? adapter.sessionCreations : adapter.chatSubmissions).get(currentWork.id);
       const original: OriginalChatSubmission | undefined = intent && { work: currentWork.id, key: intent.key, kind: intent.kind, sessionId: intent.sessionId };
       // Acceptance can remove the icon and its anchored popover before the read
       // resolves. Commit the original draft/lock readback before view guards.
-      await stay(adapter.recoverChatSubmission(currentWork.id).then(result=>{
+      const recovery = creating ? adapter.recoverSessionCreation(currentWork.id) : adapter.recoverChatSubmission(currentWork.id);
+      await stay(recovery.then(result=>{
         if(!result||epoch!==adapter.identityEpoch)return result;
         if (result.kind === 'run') {
           retainAcceptedChatRun(currentWork.id, result.run.sessionId, result.run.runId, epoch);
           const submitted = pendingImageSubmissions.get(currentWork.id);
           if (submitted && submitted.epoch === epoch) consumeImageSubmission(currentWork.id, submitted);
         }
-        if(result.kind==='session'){const original=view.drafts[draftKey(currentWork)]||'';view.session=result.session.sessionId;if(original&&!view.drafts[draftKey(currentWork)])view.drafts[draftKey(currentWork)]=original;}
+        if (result.kind === 'session' && result.session.deletedAt) {
+          if (sessionReplacement?.workId === currentWork.id && originalChoice === sessionChoice && originalRoute === location.hash) {
+            sessionReplacement.phase = 'failed';
+          }
+          toast(new LocalizedMessage('sessions.deletedBeforeRecovery'), 'warning');
+        }
+        else if (result.kind === 'session' && originalChoice === sessionChoice && originalRoute === location.hash && current()?.id === currentWork.id) {
+          view.session = result.session.sessionId;
+          sessionReplacement = undefined;
+          readCreatedSession(view.session);
+        }
         for (const old of actions.records.values()) {
           if (!original || !actions.current(old) || !acceptedChatSubmissionOwns(old, original, result)) continue;
           const notice = actionNotice(old, noticeIdentity(), () => actions.message(old));
@@ -3271,7 +3425,80 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       openModal(action, { id: w?.id || "" });
       break;
     case 'sessions':
-      openModal('sessions', {id:w?.id || ''});if(currentWork)await stay(adapter.loadSessions(currentWork.id)); break;
+      openModal('sessions', { id: w?.id || '' });
+      if (currentWork) {
+        void adapter.sessionManagement.loadCapabilities(currentWork.id);
+        await stay(adapter.loadSessions(currentWork.id));
+      } break;
+    case 'check-session-capabilities':
+      if(currentWork)await adapter.sessionManagement.loadCapabilities(currentWork.id);
+      break;
+    case 'toggle-session-menu': {
+      if(!currentWork || view.modal!=='sessions')break;
+      const sessionId=el.dataset.session || '';
+      if(!currentWork.sessions.some(s=>s.id===sessionId))break;
+      view.data.sessionMenu = view.data.sessionMenu === sessionId ? '' : sessionId;
+      render();
+      if(view.data.sessionMenu)root.querySelector<HTMLElement>('#modal .session-row-menu [role=menuitem]:not([disabled])')?.focus({preventScroll:true});
+      break;
+    }
+    case 'rename-session':
+    case 'delete-session': {
+      if(!currentWork)break;
+      const sessionId=el.dataset.session || '',session=currentWork.sessions.find(s=>s.id===sessionId);
+      if(!session)break;
+      openModal(action==='rename-session'?'session-rename':'session-delete',{workId:currentWork.id,sessionId,epoch:String(adapter.identityEpoch),name:sessionDisplayName(currentWork,session)});
+      break;
+    }
+    case 'save-session-name':
+    case 'confirm-delete-session':
+    case 'auto-name-session': {
+      if(!currentWork)break;
+      const work=currentWork,sessionId=el.dataset.session || view.data.sessionId || '',epoch=adapter.identityEpoch;
+      if(!work.sessions.some(s=>s.id===sessionId))break;
+      const kind=action==='save-session-name'?'rename':action==='confirm-delete-session'?'delete':'auto-name';
+      const originalModal=view.modal;
+      const replacement = kind === 'delete' && view.session === sessionId
+        ? { workId: work.id, sessionId, epoch, route: location.hash, choice: sessionChoice, phase: 'deleting' as const }
+        : undefined;
+      if (replacement) sessionReplacement = replacement;
+      const draftKeyForSession=draftKey(work,sessionId);
+      const draft:SessionDeletionDraft={key:draftKeyForSession,text:view.drafts[draftKeyForSession] || '',revision:textDraftRevisions.get(draftKeyForSession) || 0,images:imageDrafts.capture(draftKeyForSession)};
+      const pending=adapter.sessionManagement.start(work.id,sessionId,kind,kind==='rename'?view.formName:undefined);
+      const operation=adapter.sessionManagement.operation(work.id,sessionId);
+      if(operation && kind==='delete')sessionDeletionDrafts.set(operation,draft);
+      if(record && operation)record.businessId=`session-operation:${operation.key}`;
+      let result;
+      try { result = await pending; }
+      catch (error) {
+        if (replacement && sessionReplacement === replacement && (!operation || operation.phase === 'failed')) sessionReplacement = undefined;
+        throw error;
+      }
+      if(epoch!==adapter.identityEpoch)return;
+      if(kind==='delete' && result?.deletedAt)retireSessionDelete(work,sessionId,operation);
+      if(record && kind==='auto-name' && adapter.sessionManagement.operation(work.id,sessionId)?.phase==='pending')actions.confirm(record,new LocalizedMessage('sessions.operationPending'));
+      if(view.modal===originalModal && current()?.id===work.id && (view.data.sessionId===sessionId || view.data.sessionMenu===sessionId)){
+        if (originalModal === 'session-rename' || originalModal === 'session-delete') closeModal();
+        else render();
+      }
+      break;
+    }
+    case 'check-session-operation': {
+      if(!currentWork)break;
+      const work=currentWork,sessionId=el.dataset.session || view.data.sessionId || '',epoch=adapter.identityEpoch;
+      const operation = adapter.sessionManagement.operation(work.id, sessionId);
+      if (!operation) break;
+      const result=await adapter.sessionManagement.check(work.id,sessionId);
+      if(epoch!==adapter.identityEpoch)return;
+      const remaining=adapter.sessionManagement.operation(work.id,sessionId);
+      if(result && (!remaining || remaining.phase==='failed')) {
+        for(const old of actions.records.values())if(actions.current(old) && old.work===work.id && old.businessId===`session-operation:${operation.key}`)actions.review(old);
+        if(operation.kind==='delete' && result.deletedAt)retireSessionDelete(work,sessionId,operation);
+        if (['session-rename', 'session-delete'].includes(view.modal) && view.data.sessionId === sessionId && !remaining) closeModal();
+        else render();
+      }
+      break;
+    }
     case "switch-core":
       void adapter.loadPreferences();
       openModal("switch-core");
@@ -3553,6 +3780,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       break;
     case "select-session":
       sessionChoice++;
+      if (sessionReplacement?.workId === currentWork?.id) sessionReplacement = undefined;
       view.session=el.dataset.id!;consumeWebSelection('resume');closeModal();render();
       if (currentWork) await stay(adapter.loadSession(currentWork.id, view.session));
       closeModal();
@@ -3560,7 +3788,16 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "new-session":
       if (currentWork) {
         sessionChoice++;
-        view.session = await stay(createOriginalSession());
+        const replacement = sessionReplacement?.workId === currentWork.id ? sessionReplacement : undefined;
+        if (replacement) {
+          replacement.choice = sessionChoice;
+          replacement.phase = 'creating';
+        }
+        try { view.session = await createAndSelectSession(); }
+        catch (error) {
+          if (replacement && sessionReplacement === replacement) replacement.phase = adapter.sessionCreations.has(currentWork.id) ? 'unknown' : 'failed';
+          throw error;
+        }
         if (record) { record.businessId=view.session;
           actions.confirm(record, new LocalizedMessage('action.sessionCreated'));
         }
@@ -3571,7 +3808,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "suggest-message":
     case "suggest-files":
       if (currentWork) {
-        if (!view.session) view.session = await stay(createOriginalSession());
+        if (!view.session) view.session = await createAndSelectSession();
         textDraftRevisions.set(draftKey(currentWork),(textDraftRevisions.get(draftKey(currentWork)) || 0)+1);
         view.drafts[draftKey(currentWork)] =
           action === "suggest-message"
@@ -3666,7 +3903,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
           const match=/^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(text.trim());const name=match?.[1] || '';
           if(webCommands.includes(name)){
             if(match?.[2]?.trim())throw new Error(t('chat.commandNoArgs'));
-            if(name==='new'){view.session=await stay(createOriginalSession());}
+            if(name==='new'){view.session=await createAndSelectSession();}
             else if(name==='resume'){pendingWebCommand={key:originalKey,text,kind:'resume'};openModal('sessions');await stay(adapter.loadSessions(currentWork.id));return;}
             else if(name==='model'||name==='thinking'){pendingWebCommand={key:originalKey,text,kind:name};openChatPicker(name);return;}
             else if(name==='settings'){pendingWebCommand={key:originalKey,text,kind:name};await handleAction('settings',el);return;}
@@ -3677,7 +3914,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
           if(!directory?.confirmed || directory.error || !directory.items.some(command=>command.command===`/${name}`))throw new Error(t('chat.unknownCommand'));
         }
         if (!view.session) {
-          view.session = await stay(createOriginalSession());
+          view.session = await createAndSelectSession();
           render();
           await stay(adapter.saveModel(currentWork.id, view.session));
         }
@@ -4678,7 +4915,14 @@ function render() {
     });
     }
     const body = dialog.querySelector<HTMLElement>(".modal-body");
-    if (body) body.scrollTop = modalScroll;
+    if (body) {
+      body.scrollTop = modalScroll;
+      if (!body.dataset.sessionMenuScrollBound) {
+        body.dataset.sessionMenuScrollBound = 'true';
+        body.addEventListener('scroll', () => positionSessionRowMenu(dialog));
+      }
+    }
+    positionSessionRowMenu(dialog);
   }
   const noticeParent = dialog?.matches(':modal') ? dialog : document.body;
   if (noticeHost.element.parentElement !== noticeParent) noticeParent.append(noticeHost.element);
@@ -4916,6 +5160,12 @@ root.addEventListener("input", (e) => {
       view.createName = value;
       clearNameFieldError();
       break;
+    case 'session-name': {
+      view.formName=value;
+      const save=root.querySelector<HTMLButtonElement>('[data-action="save-session-name"]');
+      if(save)save.disabled=!value.trim();
+      break;
+    }
     case "create-image":
       view.createImage = value;
       break;
@@ -5157,6 +5407,32 @@ root.addEventListener("compositionend", () => {
 });
 root.addEventListener("keydown", (e) => {
   const dialog = root.querySelector<HTMLDialogElement>("#modal");
+  const sessionMenu=(e.target as HTMLElement).closest<HTMLElement>('.session-row-menu');
+  if(dialog?.open && sessionMenu) {
+    if (e.key === 'Escape' && !e.isComposing && !composition) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = view.data.sessionMenu;
+      view.data.sessionMenu = '';
+      render();
+      root.querySelector<HTMLElement>(`[data-action="toggle-session-menu"][data-session="${CSS.escape(id || '')}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      const items = [...sessionMenu.querySelectorAll<HTMLElement>('[role=menuitem]:not([disabled])')], index = items.indexOf(document.activeElement as HTMLElement), next = menuDestination(e.key, index, items.length);
+      if (next >= 0) {
+        e.preventDefault();
+        items[next]?.focus();
+      } return;
+    }
+  }
+  if(dialog?.open && view.modal==='session-rename' && (e.target as HTMLElement).id==='session-name' && e.key==='Enter') {
+    if (!e.isComposing && !composition && e.keyCode !== 229) {
+      e.preventDefault();
+      dialog.querySelector<HTMLButtonElement>('[data-action="save-session-name"]:not([disabled])')?.click();
+    }
+    return;
+  }
   if (dialog?.open && (e.target as HTMLElement).id === 'form-name' && e.key === 'Enter' &&
       (view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename')) {
     e.preventDefault();
@@ -5294,6 +5570,7 @@ function handleRouteNavigation() {
     return;
   }
   if (lastRoute === location.hash) return;
+  sessionReplacement = undefined;
   lastRoute = location.hash; view.modal = ""; modalChoice++;
   void loadRoute().catch(error => toast(() => describeError(error), 'error'));
   render();

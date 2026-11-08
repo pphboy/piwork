@@ -1,4 +1,7 @@
-import { WORK_SCHEMA_SQL } from "./brain-schema.js";
+import { WORK_SCHEMA_V7_SQL } from "./schema-v7.js";
+import { WORK_SCHEMA_V8_SQL } from "./schema-v8.js";
+import { WORK_SCHEMA_V8_OBJECTS } from "./schema-v8-objects.js";
+import { parseManagedSessionState, validSessionTimestamp } from "./session-management.js";
 import { constants, openSync, closeSync, fstatSync, readSync, writeSync, fsyncSync, mkdtempSync, rmSync, fchmodSync, fchownSync, renameSync, unlinkSync, chownSync } from "node:fs";
 import { join, isAbsolute, normalize } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -9,7 +12,7 @@ import { PREVIOUS_SCHEMA_SQL } from "./previous-schema.js";
 import { WORK_SCHEMA_V5_OBJECTS } from "./schema-v5-objects.js";
 import { WORK_SCHEMA_V5_SQL } from "./schema-v5.js";
 import { PREVIOUS_SCHEMA_OBJECTS } from "./previous-schema-objects.js";
-import { WORK_SCHEMA_OBJECTS } from "./schema-objects.js";
+import { WORK_SCHEMA_V7_OBJECTS } from "./schema-v7-objects.js";
 import { randomUUID } from "node:crypto";
 import { MEMORY_TABLES } from "./snapshot-memory.js";
 import { validateBrainHistory } from "./snapshot-brain.js";
@@ -24,9 +27,10 @@ const BASE_TABLES = ["schema_migrations", "sessions", "runs", "run_events", "sub
 const TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "brain_experience_revisions", "brain_experience_heads"] as const;
 const CURRENT_TABLES = [...BASE_TABLES, "service_events", "agent_requests", "agent_request_runs", "agent_evidence", "work_memory_binding"] as const;
 const V6_TABLES = [...CURRENT_TABLES, "run_output_chunks"] as const;
-type Table = typeof TABLES[number] | typeof V6_TABLES[number];
-type HistoryVersion = 4 | 5 | 6 | 7;
-const tables = (version: HistoryVersion): readonly Table[] => version === 4 ? TABLES : version === 5 ? CURRENT_TABLES : V6_TABLES;
+const V8_TABLES = [...V6_TABLES, "session_management", "session_management_operations"] as const;
+type Table = typeof TABLES[number] | typeof V8_TABLES[number];
+type HistoryVersion = 4 | 5 | 6 | 7 | 8;
+const tables = (version: HistoryVersion): readonly Table[] => version === 4 ? TABLES : version === 5 ? CURRENT_TABLES : version === 8 ? V8_TABLES : V6_TABLES;
 type Row = Record<string, SQLInputValue>;
 const FILES = ["work.sqlite", "work.sqlite-wal", "work.sqlite-shm"] as const;
 const MAX_ROWS = 1_000_000, MAX_ROW_BYTES = 64 * 1024 ** 2;
@@ -128,7 +132,8 @@ export class WorkHistorySnapshot {
       database.exec("PRAGMA trusted_schema = OFF; PRAGMA query_only = ON; PRAGMA busy_timeout = 1000");
       const actual = schema(database);
       const versionValue = database.prepare("SELECT version FROM schema_migrations").get()?.version;
-      const version: 4 | 5 | 6 | 7 = sameSchema(actual, WORK_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue===7 ? 7
+      const version: HistoryVersion = sameSchema(actual, WORK_SCHEMA_V8_OBJECTS as unknown as SchemaRow[]) && versionValue===8 ? 8
+        : sameSchema(actual, WORK_SCHEMA_V7_OBJECTS as unknown as SchemaRow[]) && versionValue===7 ? 7
         : sameSchema(actual, WORK_SCHEMA_V5_OBJECTS as unknown as SchemaRow[]) && versionValue===5 ? 5
         : sameSchema(actual, PREVIOUS_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue===6 ? 6
         : sameSchema(actual, LEGACY_SCHEMA_OBJECTS as unknown as SchemaRow[]) && versionValue === 4 ? 4 : (() => { throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED"); })();
@@ -171,7 +176,7 @@ export class WorkHistorySnapshot {
       target.exec("PRAGMA trusted_schema = OFF; PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL");
       if (this.schemaVersion === 4) target.exec(LEGACY_SCHEMA_SQL);
       else {
-        target.exec(this.schemaVersion === 7 ? WORK_SCHEMA_SQL : this.schemaVersion === 6 ? PREVIOUS_SCHEMA_SQL : WORK_SCHEMA_V5_SQL);
+        target.exec(this.schemaVersion === 8 ? WORK_SCHEMA_V8_SQL : this.schemaVersion === 7 ? WORK_SCHEMA_V7_SQL : this.schemaVersion === 6 ? PREVIOUS_SCHEMA_SQL : WORK_SCHEMA_V5_SQL);
         target.prepare("ATTACH DATABASE ? AS memory").run(join(temporaryDirectory, "memory.sqlite"));
         target.exec("PRAGMA memory.journal_mode=DELETE; PRAGMA memory.synchronous=FULL");
         initializeMemoryDatabase(target);
@@ -292,11 +297,37 @@ function validateRows(database: DatabaseSync, privateRoot: number, scope: WorkHi
         if (!nonempty(row.submission_key) || !nonempty(row.request_digest)) invalid();
       } else if (table === "session_idempotency") {
         if (!nonempty(row.idempotency_key)) invalid();
+      } else if (table === "session_management") {
+        if (!nonempty(row.session_id) || !integer(row.title_revision) || ![0, 1].includes(Number(row.manual_lock))
+          || !['default', 'manual', 'auto'].includes(String(row.title_source))
+          || !['eligible', 'pending', 'completed', 'failed', 'unknown'].includes(String(row.auto_state))
+          || (row.title_source === 'default' ? row.title !== null : !nonempty(row.title) || Buffer.byteLength(row.title) > 480 || Array.from(row.title).length > 120 || Number(row.title_revision) < 1)
+          || (row.title_source === 'manual' && row.manual_lock !== 1)
+          || (row.deleted_at !== null && !validSessionTimestamp(row.deleted_at))
+          || (row.deleted_at !== null && Number(row.title_revision) < 1)
+          || (row.auto_revision !== null && !integer(row.auto_revision))
+          || (row.auto_state === 'pending' && (!nonempty(row.auto_run_id) || row.auto_revision === null || !nonempty(row.auto_operation_key)))) invalid();
+      } else if (table === "session_management_operations") {
+        if (!nonempty(row.session_id) || !nonempty(row.operation_key) || Buffer.byteLength(row.operation_key) > 256
+          || !['rename', 'delete', 'auto-name'].includes(String(row.operation_kind))
+          || !['pending', 'accepted', 'failed', 'unknown'].includes(String(row.operation_status))
+          || (row.operation_kind !== 'auto-name' && row.operation_status !== 'accepted')
+          || typeof row.request_digest !== 'string' || !/^[a-f0-9]{64}$/.test(row.request_digest)
+          || typeof row.result_json !== 'string') invalid();
+        try {
+          const result = parseManagedSessionState(row.result_json);
+          if (row.operation_kind === 'delete' ? !result.deletedAt : row.operation_kind === 'rename' ? !!result.deletedAt || result.titleSource !== 'manual'
+            : row.operation_status === 'accepted' ? !!result.deletedAt || result.titleSource !== 'auto' || result.autoState !== 'completed'
+            : row.operation_status === 'pending' ? !!result.deletedAt || result.autoState !== 'pending'
+            : row.operation_status === 'unknown' ? result.autoState !== 'unknown' : !['failed', 'unknown'].includes(result.autoState)) invalid();
+        }
+        catch { invalid(); }
       } else if (table === "work_activity" && !inspection) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_BUSY");
     }
     counts.set(table, tableCount);
   }
   if (counts.get("schema_migrations") !== 1) throw new WorkHistoryValidationError("SNAPSHOT_HISTORY_UNSUPPORTED");
+  if (version >= 8 && database.prepare(`SELECT 1 FROM session_management m JOIN runs r ON r.run_id=m.auto_run_id WHERE r.work_id!=m.work_id OR r.session_id!=m.session_id LIMIT 1`).get()) invalid();
   if (database.prepare(`SELECT 1 FROM submit_idempotency i JOIN runs r ON r.run_id = i.run_id WHERE i.work_id != r.work_id OR i.submission_key != r.submission_key LIMIT 1`).get()) invalid();
   if (database.prepare(`SELECT 1 FROM runs r LEFT JOIN run_events e ON e.run_id = r.run_id GROUP BY r.run_id
     HAVING COUNT(e.sequence) != r.latest_sequence - r.earliest_available_sequence + 1

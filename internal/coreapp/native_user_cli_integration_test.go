@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	userclient "piwork/internal/client"
 	"piwork/internal/contracts"
@@ -27,7 +28,10 @@ func TestNativeUserCLIWorkAndConversationThroughGoCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, source, _, _ := runtime.Caller(0)
-	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-cli")
+	binary := os.Getenv("PIWORK_TEST_CLI_BINARY")
+	if binary == "" {
+		binary = filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-cli")
+	}
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("make build-go is required for the native CLI process gate", err)
 	}
@@ -233,6 +237,34 @@ func TestNativeUserCLIExportsInspectsAndImportsWorkThroughGoCore(t *testing.T) {
 	a, base, authorization, workID, ctx := nativeApplyFixture(t)
 	f := brainAcceptance{t: t, a: a, base: base, auth: authorization, work: workID, path: "/api/v1/works/" + workID, ctx: ctx}
 	f.chat("Synthetic conversation preserved by import", "snapshot-conversation")
+	sessionPath := f.path + "/sessions/" + f.session
+	var naming map[string]any
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		code, value := packageHTTPCall(t, base, sessionPath+"/management", "GET", authorization, nil)
+		if code != 200 {
+			t.Fatal("source Session management", code, value)
+		}
+		naming = value
+		if value["autoState"] == "completed" || value["autoState"] == "failed" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if naming == nil || naming["autoState"] == "eligible" || naming["autoState"] == "pending" {
+		t.Fatal("source naming did not settle", naming)
+	}
+	if code, value := packageHTTPCall(t, base, sessionPath+"/name", "PATCH", authorization, map[string]any{"operationKey": "export-rename", "expectedRevision": naming["revision"], "title": "Exported title"}); code != 200 {
+		t.Fatal("source rename", code, value)
+	}
+	code, deleted := packageHTTPCall(t, base, f.path+"/sessions", "POST", authorization, map[string]any{"idempotencyKey": "export-deleted-session"})
+	if code != 201 {
+		t.Fatal("source deleted Session", code, deleted)
+	}
+	deletedID := deleted["sessionId"].(string)
+	if code, value := packageHTTPCall(t, base, f.path+"/sessions/"+deletedID+"/delete", "POST", authorization, map[string]any{"operationKey": "export-delete", "expectedRevision": 0}); code != 200 {
+		t.Fatal("source deletion", code, value)
+	}
 	checkpointProgram := `import {DatabaseSync} from 'node:sqlite';import {createHash} from 'node:crypto';const d=new DatabaseSync('/var/data/work.sqlite');const rows=d.prepare('SELECT run_id,sequence,part,kind,payload_json FROM run_output_chunks ORDER BY run_id,sequence,part').all();console.log(JSON.stringify({count:rows.length,digest:createHash('sha256').update(JSON.stringify(rows)).digest('hex')}));d.close();`
 	checkpointBefore := strings.TrimSpace(f.agentEval(checkpointProgram))
 	var checkpointSummary struct {
@@ -257,7 +289,10 @@ func TestNativeUserCLIExportsInspectsAndImportsWorkThroughGoCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, source, _, _ := runtime.Caller(0)
-	binary := filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-cli")
+	binary := os.Getenv("PIWORK_TEST_CLI_BINARY")
+	if binary == "" {
+		binary = filepath.Join(filepath.Dir(source), "..", "..", "dist", "go", "piwork-cli")
+	}
 	if _, err := os.Stat(binary); err != nil {
 		t.Fatal("make build-go is required for CLI package acceptance", err)
 	}
@@ -298,6 +333,12 @@ func TestNativeUserCLIExportsInspectsAndImportsWorkThroughGoCore(t *testing.T) {
 	}
 	if show := call(credential, "work", "show", importID); show["id"] != importID {
 		t.Fatal("imported Work cannot be read through CLI", show)
+	}
+	if code, value := packageHTTPCall(t, base, "/api/v1/works/"+importID+"/sessions/"+f.session+"/management", "GET", authorization, nil); code != 200 || value["title"] != "Exported title" || value["titleSource"] != "manual" {
+		t.Fatal("imported title", code, value)
+	}
+	if code, value := packageHTTPCall(t, base, "/api/v1/works/"+importID+"/sessions/"+deletedID+"/management-operations/export-delete", "GET", authorization, nil); code != 200 || value["status"] != "accepted" {
+		t.Fatal("imported deletion receipt", code, value)
 	}
 	importedFixture := brainAcceptance{t: t, a: a, base: base, auth: authorization, work: importID, path: "/api/v1/works/" + importID, ctx: ctx}
 	if after := strings.TrimSpace(importedFixture.agentEval(checkpointProgram)); after != checkpointBefore {

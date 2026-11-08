@@ -558,7 +558,7 @@ New Work SHALL 默认只要求名称并使用默认配置，Advanced SHALL 覆�
 
 **Identifier:** DUL-012
 
-原型 SHALL 展示当前 Work 的 Session 列表、新建、读取/切换和对话提交，以及 accepted/running/cancelling/succeeded/failed/cancelled/interrupted。Session 标题 SHALL 来自已加载首消息摘要或创建时间/ID，不假定现有接口支持持久 title/改名。一个 Work 的活跃 Run 限制 SHALL 在其他 Session 中有 busy 说明并保留草稿，不能暗示隐藏队列。
+原型 SHALL 展示当前 Work 的 Session 列表、新建、读取/切换和对话提交，以及 accepted/running/cancelling/succeeded/failed/cancelled/interrupted。Session 标题 SHALL 优先显示已确认持久标题；无标题或旧 Agent 时使用已加载首消息摘要；没有摘要时按当前列表位置显示 Session 1、Session 2 等编号。一个 Work 的活跃 Run 限制 SHALL 在其他 Session 中有 busy 说明并保留草稿，不能暗示隐藏队列。
 
 Chat 输入区 SHALL 提供独立的 Cancel run 图标动作，不以非空草稿、合法新消息或 Stop and send 能力作为可取消已确认 Run 的前提；新消息发送仍遵守原准入。独立停止与 Stop and send 的图形、提示和可访问名称 SHALL 清楚区分，二者分别绑定取消和原子交接。Cancel run SHALL 是明确请求，取消中保留状态直至终态；切换、关闭或断线不等于取消。观察恢复 SHALL 使用原 Run ID/游标，过期读结果/历史，未知不得自动重发 prompt。旧 context 导致 Session 不可用 SHALL 给原因和 New session，不能自动迁移或承诺仍可继续。stopped Work SHALL 不被承诺可以加载 Session/Run；之前加载的消息可标注为旧内容。
 
@@ -977,3 +977,25 @@ Desktop 的 Administration（中文“管理”）SHALL 仅在有权的全局账
 #### Scenario: 语言与菜单作用域互不替代
 - **WHEN** 用户切换语言或从行菜单切到已打开Work菜单
 - **THEN** 语言入口按双语契约保留，菜单只更新所选语言和正确scope，不复制Admin/Requests到错误层级
+
+### Requirement: Session 列表提供紧凑管理入口
+
+**Identifier:** DUL-SESSION-MANAGE-001
+
+Session 选择器 SHALL 在标题右侧提供紧凑 New，并在每行提供独立于选择动作的菜单，包含 Rename、Auto name、Delete。名称、选中、命名等待及目标 Run 状态 SHALL 可区分；长名称可辨且不撑破窗口。Rename 预填当前名称并支持 Enter 保存和 Esc 取消，输入法组合不提交；删除确认 SHALL 表明逻辑移除和保留范围，活跃目标的 Delete 不可用并解释原因。列表滚动、键盘焦点、失败反馈和原目标归属 SHALL 在操作前后保持可理解。
+
+#### Scenario: 操作非当前行
+- **WHEN** 用户打开非当前 Session 的菜单并取消 Rename 或 Delete
+- **THEN** 不切换当前会话、不提交修改，焦点返回原操作上下文
+
+#### Scenario: 长列表和长标题
+- **WHEN** 用户滚动列表至长标题行并通过键盘打开菜单
+- **THEN** 列表保留位置、焦点可见，标题和确认说明不溢出视口
+
+#### Scenario: 命名等待与执行中并存
+- **WHEN** 同一 Session 正在执行且标题生成中
+- **THEN** 两种状态均可辨，Delete 保持不可用且不隐式停止执行
+
+#### Scenario: 无持久标题的稳定回退
+- **WHEN** Session 没有持久标题，或列表顺序发生变化
+- **THEN** 使用已加载首条用户消息摘要；没有可用摘要时按当前列表位置显示 Session 1、Session 2 等编号；列表变化后允许重排，真实身份不变，也不为标题额外读取历史

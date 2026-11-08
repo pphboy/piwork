@@ -180,7 +180,7 @@ Stop确认的影响范围 SHALL 以明确非交互说明呈现，不能把装饰
 
 **Identifier:** DWUI-004
 
-Desktop SHALL 提供 Session 创建、列表、读取与切换，提交消息、文本/工具事件、Run 详情和显式取消，落实 DUL-012。标题使用真实首消息摘要或创建时间/ID。一个 Work 活跃 Run 的限制 SHALL 在其他 Session 提交前后都明确反馈，保留草稿且不建立隐藏队列。取消以当前 Run ID 为目标，取消中不预告终态。
+Desktop SHALL 提供 Session 创建、列表、读取与切换，提交消息、文本/工具事件、Run 详情和显式取消，落实 DUL-012。标题优先使用已确认持久标题；旧 Agent 或无持久标题时使用已加载首消息摘要；没有摘要时按当前列表位置显示 Session 1、Session 2 等编号。一个 Work 活跃 Run 的限制 SHALL 在其他 Session 提交前后都明确反馈，保留草稿且不建立隐藏队列。取消以当前 Run ID 为目标，取消中不预告终态。
 
 断线恢复 SHALL 按原 Run ID 和事件游标查询/观察，重复事件去重；游标过期 SHALL 查询结果和 Session 历史，不重发 prompt。旧 context 不兼容 SHALL 提供 New session 并保留草稿，不自动迁移。停止 Work 不新取历史，页面已有内容标为旧内容。所有观察 SHALL 在切换身份、对象或页面卸载时释放本地连接，不取消远端执行。
 
@@ -2406,3 +2406,49 @@ Desktop SHALL 对来源矩阵 D01–D23 的全部实际可观察状态交付一�
 #### Scenario: 模型与请求状态独立
 - **WHEN** Thinking能力变化或Request等待结果/Apply
 - **THEN** 当前有效能力、模型设置确认和请求状态分别呈现，既有焦点/草稿保持，不把Request等待显示为Run一直运行
+
+### Requirement: Session 创建与管理状态可恢复
+
+**Identifier:** DWUI-SESSION-MANAGE-001
+
+Desktop SHALL 在创建或原提交核对确认后读取该 Session 的有界历史；可靠空历史 SHALL 展示可输入的空会话，读取失败 SHALL 保留已创建身份并提供只读重试。创建结果未知 SHALL 使用原提交键核对，不自动再次创建。切换身份、Work 或用户明确选择其他 Session 后，迟到响应 SHALL NOT 抢占选择或消费其他草稿。
+
+Desktop SHALL 在当前 Work 会话列表标题右侧提供紧凑 New，在每行提供独立 Rename、Auto name、Delete；Rename 手动名称的优先级及自动命名行为遵循 CONV-SESSION-TITLE-001。删除 SHALL 先说明逻辑移除与历史、证据、文件和 Memory 保留范围并请求确认；目标活跃时禁用并说明需停止或等待，服务端仍须核验。取消不提交；未知结果先核对。删除当前会话后的新建遵循 DWUI-SESSION-REPLACEMENT-001。
+
+#### Scenario: 新建空会话
+- **WHEN** New Session 已确认创建且空历史读取成功
+- **THEN** 骨架退出，显示可输入的空会话，且只创建一次
+
+#### Scenario: 创建成功但历史读取失败
+- **WHEN** 新 Session 已创建而历史读取失败
+- **THEN** 显示原 Session 与读取失败及重试入口，重试只读取，不再次创建
+
+#### Scenario: 修改和删除会话
+- **WHEN** 用户在非当前行操作 Rename 或确认 Delete
+- **THEN** 操作绑定该行而非当前 Session，成功或取消后能在列表内核对正确目标
+
+#### Scenario: 迟到结果与用户选择
+- **WHEN** 新建或读取仍在进行时用户切换其他 Session
+- **THEN** 迟到响应不得抢回选择或清空目标草稿
+
+### Requirement: 删除当前 Session 后创建新 Session
+
+**Identifier:** DWUI-SESSION-REPLACEMENT-001
+
+确认删除当前会话后，Desktop SHALL 发起一次独立的新 Session 创建并选择其可靠受理结果，不切换到已有会话，且不受消息提交状态阻塞；删除非当前会话不创建新 Session。新建失败 SHALL 保留已确认删除及空上下文并提供显式重试；创建结果未知 SHALL 使用原提交键只读核对，不盲目再次创建。删除或创建期间用户切换身份、Work 或会话后，迟到结果 SHALL NOT 抢占新的选择。
+
+#### Scenario: 删除当前会话后新建会话
+- **WHEN** 用户确认删除当前 Session，且删除可靠成功
+- **THEN** 发起一次新 Session 创建，受理后选择新会话并读取其空历史，不切换到现有会话
+
+#### Scenario: 删除后创建失败或结果未知
+- **WHEN** 删除已确认，但新建失败或结果未知
+- **THEN** 保留删除成功事实，不选择其他已有会话；明确失败可显式重试，未知结果按原创建键只读核对
+
+#### Scenario: 删除非当前会话或创建期间切换
+- **WHEN** 删除非当前会话，或删除后创建期间用户选择其他会话、Work 或身份
+- **THEN** 前者不创建新会话；后者的迟到结果不得覆盖用户的新选择
+
+#### Scenario: Session 创建与消息提交各自恢复
+- **WHEN** 用户新建 Session，或删除当前会话后创建替换会话
+- **THEN** Session 创建有独立的原键和状态，不覆盖消息提交；仅本次创建失败或结果未知时展示其重试或核对入口

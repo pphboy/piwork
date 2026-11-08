@@ -88,7 +88,10 @@ func (s *Snapshot) Rebuild(ctx context.Context, targetDirectory, targetWorkID st
 	if s.SchemaVersion >= 5 {
 		definition = schemaV5SQL
 		if s.SchemaVersion == 7 {
-			definition = currentSchemaSQL
+			definition = schemaV7SQL
+		}
+		if s.SchemaVersion == 8 {
+			definition = schemaV8SQL
 		}
 	}
 	if s.SchemaVersion == 6 {

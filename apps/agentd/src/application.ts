@@ -50,17 +50,22 @@ import {
   ChatInputModeSchema,
   LookupChatSubmissionSchema,
   SetSessionChatOptionsSchema,
+  RenameSessionInputSchema,
+  DeleteSessionInputSchema,
+  AutoNameSessionInputSchema,
+  SessionManagementOperationQuerySchema,
   type SlashCommand,
   RetryAgentRequestSchema,
   AgentRequestRetryQuerySchema,
   publicRunModel,
   type RunModelSnapshot,
 } from "@piwork/contracts";
-import { FeedbackError, WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
+import { FeedbackError, SessionManagementError, WorkStore, type RunEventRecord, type RunRecord, type SessionRecord } from "@piwork/work-store";
 import { AgentDaemonControl } from "./daemon.js";
 import { initializeChildAgentDirectory, initializeDefaultChildAgentModel, PiSdkRunExecutor } from "./pi-sdk-executor.js";
 import { RunManager, CancelAndSendError } from "./runs.js";
 import { AgentSessionService } from "./sessions.js";
+import { SessionNamingCoordinator } from './session-naming.js';
 import { SessionHistoryReader } from "./session-history.js";
 import { historyRunView } from "./history-projection.js";
 import { historyCapabilities, historyJSON, HistoryError, HISTORY_RESPONSE_PROFILE, HISTORY_LIMITS, type ReadSessionPageRequest, type SessionHistoryPage } from "@piwork/contracts";
@@ -163,6 +168,7 @@ export class AgentApplication {
   private closed = false;
   private readonly installationId: string;
   private readonly history: SessionHistoryReader;
+  private readonly sessionNaming: SessionNamingCoordinator;
 
   private constructor(
     readonly config: AgentRuntimeConfig,
@@ -178,6 +184,7 @@ export class AgentApplication {
     private readonly feedbackServer?: ServiceFeedbackServer,
     private readonly brainFlow?: BrainFlow,
     private readonly brainLoop?: BrainLoop,
+    private readonly titleExecutor?: PiSdkRunExecutor,
   ) {
     this.history = new SessionHistoryReader(config.workId,store);
     const authority = new X509Certificate(readBoundedRegularFile(config.tls.caCertificatePath));
@@ -186,6 +193,12 @@ export class AgentApplication {
       throw new Error("agent installation authority is invalid");
     }
     this.installationId = commonName.slice("piwork-installation-".length);
+    if (!titleExecutor) throw new Error('Session title executor unavailable');
+    this.sessionNaming = new SessionNamingCoordinator(config.workId, store, this.history, titleExecutor);
+    if (!config.initializationOnly && store.schemaVersion >= 8) {
+      this.sessionNaming.recover();
+      runs.onSettled(run => this.sessionNaming.onSettled(run));
+    }
   }
 
   static async create(configPath: string): Promise<AgentApplication> {
@@ -196,7 +209,7 @@ export class AgentApplication {
     if (!config.deterministic) { await initializeChildAgentDirectory(); await initializeDefaultChildAgentModel(config.model); }
     mkdirSync(config.dataDirectory, { recursive: true, mode: 0o700 });
     if(config.historyMigration && (config.initializationOnly!==true || config.historyMigration.workId!==config.workId
-      || config.historyMigration.operationId!==config.correlationId || !([4,5,6].includes(config.historyMigration.fromSchema) && config.historyMigration.toSchema===7))) {
+      || config.historyMigration.operationId!==config.correlationId || !([4,5,6,7].includes(config.historyMigration.fromSchema) && config.historyMigration.toSchema===8))) {
       throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
     }
     if (config.historyMigration) {
@@ -205,7 +218,7 @@ export class AgentApplication {
       try { await authority.authorizeHistoryMigration(config.historyMigration); }
       finally { authority.close(); }
     }
-    const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"), { workId: config.workId,
+    const store = WorkStore.open(join(config.dataDirectory, "work.sqlite"), { workId: config.workId, targetVersion: 8,
       ...(config.historyMigration?{historyMigration:config.historyMigration}:{}) });
     let mcp: McpBridge | undefined;
     let control: WorkPrivateClient | undefined;
@@ -272,14 +285,15 @@ export class AgentApplication {
         version: activeBrain.artifact.version, contextId: loaded.contextIdentity, root: join("/run/piwork/packages", activeBrain.nameKey) } : undefined, control);
       let runs: RunManager;
       brainFlow = new BrainFlow(store, interactions, new Set(resolvedTools), (runId) => { runs.cancel(runId); }, candidates);
-      runs = new RunManager(store, daemon, brainFlow.wrap(new PiSdkRunExecutor(
+      const titleExecutor = new PiSdkRunExecutor(
         sessions,
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
         { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
           customToolsFactory: (run) => [...mcpTools(mcp!, loaded.toolPolicy, { run, generation: config.generation, instanceId: config.instanceId, control, attempted: temporaryAttempts }).map((tool) => tool.definition), ...serviceViewTools(viewToolNames, run)],
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
-      )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined, sessionId => sessions.hasImageContext(sessionId));
+      );
+      runs = new RunManager(store, daemon, brainFlow.wrap(titleExecutor), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined, sessionId => sessions.hasImageContext(sessionId));
       runs.onSettled((run) => {
         if (temporaryAttempts.delete(run.runId) && control) void control.closeTemporaryRunLease(run.runId).catch(() => undefined);
       });
@@ -305,7 +319,7 @@ export class AgentApplication {
           const ready = daemon.readiness();
           return { available: ready.acceptingRuns && BRAIN_TOOL_NAMES.every((n) => ready.resolvedTools.includes(`package:piwork-brain:${n}`)), initializing: config.initializationOnly === true };
         });
-      return new AgentApplication(config, store, daemon, sessions, runs, mcp, models, loaded.commands, control, bindings, feedbackServer, brainFlow, brainLoop);
+      return new AgentApplication(config, store, daemon, sessions, runs, mcp, models, loaded.commands, control, bindings, feedbackServer, brainFlow, brainLoop, titleExecutor);
     } catch (error) {
       if (error instanceof RequiredSkillError) {
         for (const status of error.statuses) emitAgentDiagnostic({
@@ -357,6 +371,7 @@ export class AgentApplication {
     await this.brainLoop?.close();
     await this.feedbackServer?.close();
     await this.runs.drain(5_000);
+    await this.sessionNaming.close();
     await this.brainFlow?.close();
     await closeMcpWithDeadline(() => this.mcp.close());
     await new Promise<void>((resolve) => this.server.tryShutdown(() => resolve()));
@@ -414,6 +429,48 @@ export class AgentApplication {
           : { ...identity, status: "accepted", run: input.responseProfile ? historyRunView(value as RunRecord) : publicRunLookup(value as RunRecord) }
           : { ...identity, status: "not-found" };
         return { valueJson: JSON.stringify(result) };
+      }),
+      getSessionManagementCapabilities: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId);
+        return { valueJson: JSON.stringify({ contractVersion: this.store.schemaVersion >= 8 ? 1 : 0 }) };
+      }),
+      getSessionManagementState: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId);
+        if (this.store.schemaVersion < 8) throw Object.assign(new Error('Session management unavailable'), { code: status.UNIMPLEMENTED });
+        return { valueJson: JSON.stringify({ workId: request.workId, sessionId: request.objectId, ...this.store.sessionManagement.read(request.workId, request.objectId) }) };
+      }),
+      renameSession: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns();
+        if (this.store.schemaVersion < 8) throw Object.assign(new Error('Session management unavailable'), { code: status.UNIMPLEMENTED });
+        const input = parseContent(request);
+        if (!Check(RenameSessionInputSchema, input)) throw Object.assign(new Error('Invalid Session rename'), { code: status.INVALID_ARGUMENT });
+        const value = this.store.sessionManagement.rename(request.workId, request.objectId, input.expectedRevision, input.title, input.operationKey);
+        return { valueJson: JSON.stringify({ workId: request.workId, sessionId: request.objectId, ...value }) };
+      }),
+      autoNameSession: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns();
+        if (this.store.schemaVersion < 8) throw Object.assign(new Error('Session management unavailable'), { code: status.UNIMPLEMENTED });
+        const input = parseContent(request);
+        if (!Check(AutoNameSessionInputSchema, input)) throw Object.assign(new Error('Invalid Auto name request'), { code: status.INVALID_ARGUMENT });
+        const result = this.sessionNaming.startExplicit(request.objectId, input.expectedRevision, input.operationKey);
+        return { valueJson: JSON.stringify({ operationKey: input.operationKey, status: result.status, kind: 'auto-name', state: { workId: request.workId, sessionId: request.objectId, ...result.state } }) };
+      }),
+      deleteSession: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId); this.assertAcceptingRuns();
+        if (this.store.schemaVersion < 8) throw Object.assign(new Error('Session management unavailable'), { code: status.UNIMPLEMENTED });
+        const input = parseContent(request);
+        if (!Check(DeleteSessionInputSchema, input)) throw Object.assign(new Error('Invalid Session deletion'), { code: status.INVALID_ARGUMENT });
+        const value = this.store.sessionManagement.delete(request.workId, request.objectId, input.expectedRevision, input.operationKey);
+        return { valueJson: JSON.stringify({ workId: request.workId, sessionId: request.objectId, ...value }) };
+      }),
+      lookupSessionManagementOperation: unary((request: AgentContentRequest): AgentContentResponse => {
+        this.verifyWork(request.workId);
+        if (this.store.schemaVersion < 8) throw Object.assign(new Error('Session management unavailable'), { code: status.UNIMPLEMENTED });
+        if (!request.objectId || Buffer.byteLength(request.objectId) > 256 || request.objectId.includes('\0')) throw Object.assign(new Error('Invalid operation key'), { code: status.INVALID_ARGUMENT });
+        const input = parseContent(request);
+        if (!Check(SessionManagementOperationQuerySchema, input)) throw Object.assign(new Error('Invalid Session operation query'), { code: status.INVALID_ARGUMENT });
+        const result = this.store.sessionManagement.lookup(request.workId, request.objectId);
+        return { valueJson: JSON.stringify(result && result.sessionId === input.sessionId ? { operationKey: request.objectId, status: result.status, kind: result.kind, state: { workId: request.workId, sessionId: result.sessionId, ...result.state } } : { operationKey: request.objectId, status: 'not-found' }) };
       }),
       setSessionModel: unary(async (request: AgentContentRequest): Promise<Session> => {
         this.verifyWork(request.workId); this.assertAcceptingRuns();
@@ -518,7 +575,10 @@ export class AgentApplication {
         this.verifyWork(request.workId);
         if(request.imageProfile && request.imageProfile!==CHAT_IMAGE_PROFILE) throw Object.assign(new Error("Unsupported image profile"),{code:status.INVALID_ARGUMENT});
         const value = request.imageProfile ? this.sessions.imageHistory(request.sessionId) : this.sessions.read(request.sessionId);
-        const record = this.sessions.list().find((item) => item.sessionId === request.sessionId)!;
+        // A logically deleted Session is omitted from normal lists, but its
+        // retained history can still back an authorized original receipt.
+        const record = this.store.getSession(request.workId, request.sessionId);
+        if (!record) throw Object.assign(new Error('Session not found'), { code: status.NOT_FOUND });
         const runs = this.store.listSessionRuns(request.workId, request.sessionId);
         const owners = new Map<string, Set<string>>();
         for (const run of runs) for (const event of this.store.readEvents(run.runId, Math.max(0,run.earliestAvailableSequence-1))) {
@@ -838,7 +898,9 @@ function sessionMessage(value: SessionRecord): Session {
   const preference = value.modelPreferenceJson ? JSON.parse(value.modelPreferenceJson) as RunModelSnapshot & { availability?: string } : undefined;
   return { workId: value.workId, sessionId: value.sessionId, sdkHistoryPath: value.sdkHistoryPath, createdAt: value.createdAt, updatedAt: value.updatedAt,
     modelPreferenceJson: preference ? JSON.stringify({ ...publicRunModel(preference), availability: preference.availability ?? "available" }) : "",
-    sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off", thinkingProfile: preference?.thinkingProfile ?? "" };
+    sourceJson: value.sourceJson ?? "", thinkingUnrequested: preference?.thinkingLevel === null, thinkingLevel: preference?.thinkingLevel ?? "off", thinkingProfile: preference?.thinkingProfile ?? "",
+    ...(value.title ? { title: value.title } : {}), titleRevision: BigInt(value.titleRevision ?? 0), titleSource: value.titleSource ?? '', autoNameState: value.autoNameState ?? '', manualTitleLock: value.manualTitleLock ?? false,
+    ...(value.deletedAt ? { deletedAt: value.deletedAt } : {}) };
 }
 
 function runMessage(value: RunRecord, profile?:string): Run {
@@ -870,7 +932,8 @@ function publicSessionLookup(value: SessionRecord) {
   const session = sessionMessage(value);
   return { workId: session.workId, sessionId: session.sessionId, createdAt: session.createdAt, updatedAt: session.updatedAt,
     modelPreference: session.modelPreferenceJson ? JSON.parse(session.modelPreferenceJson) : null, thinkingLevel: session.thinkingUnrequested ? null : session.thinkingLevel, ...(session.thinkingProfile ? {thinkingProfile:session.thinkingProfile} : {}),
-    source: session.sourceJson ? JSON.parse(session.sourceJson) : { kind: "chat" } };
+    source: session.sourceJson ? JSON.parse(session.sourceJson) : { kind: "chat" },
+    ...(value.titleSource ? {title:value.title ?? null,titleSource:value.titleSource,titleRevision:value.titleRevision ?? 0,autoNameState:value.autoNameState ?? 'eligible',manualTitleLock:value.manualTitleLock ?? false,deletedAt:value.deletedAt ?? null} : {}) };
 }
 
 function publicRunLookup(value: RunRecord) {
@@ -915,6 +978,12 @@ export function* historyEventMessages(value:RunEventRecord,run:RunRecord,profile
 }
 
 function grpcError(error: unknown): Error & { code: number } {
+  if (error instanceof SessionManagementError) {
+    const code = error.code === 'SESSION_NOT_FOUND' || error.code === 'SESSION_DELETED' ? status.NOT_FOUND
+      : error.code === 'SESSION_BUSY' ? status.RESOURCE_EXHAUSTED
+      : error.code === 'SESSION_REVISION_CONFLICT' || error.code === 'SESSION_OPERATION_CONFLICT' ? status.ABORTED : status.INVALID_ARGUMENT;
+    return Object.assign(new Error(error.code === 'SESSION_BUSY' ? 'WORK_BUSY: Session has unfinished work' : error.code), { code });
+  }
   if(error instanceof HistoryError)return Object.assign(new Error(`${error.historyCode}: ${error.message}`),{code:error.historyCode==="HISTORY_CURSOR_EXPIRED"?status.OUT_OF_RANGE:error.historyCode==="INVALID_HISTORY_CURSOR"?status.INVALID_ARGUMENT:status.FAILED_PRECONDITION});
   if (error instanceof CancelAndSendError) return Object.assign(new Error(`${error.cancellationCode}: ${error.message}`), { code: error.cancellationCode === "INVALID_REQUEST" ? status.INVALID_ARGUMENT : status.FAILED_PRECONDITION });
   if(error instanceof ChatImageError) return Object.assign(new Error(`${error.code}: ${error.message}`),{code:error.code==="IMAGE_LIMIT_EXCEEDED"?status.RESOURCE_EXHAUSTED:status.FAILED_PRECONDITION});

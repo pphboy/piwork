@@ -116,3 +116,44 @@ CREATE TABLE run_output_chunks (
   payload_json TEXT NOT NULL,
   PRIMARY KEY(run_id, sequence, part)
 ) STRICT;
+
+-- Session management metadata is retained after logical deletion because
+-- existing Run, Request and Memory evidence continue to refer to the Session.
+CREATE TABLE session_management (
+  work_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  title TEXT,
+  title_source TEXT NOT NULL DEFAULT 'default' CHECK(title_source IN ('default','manual','auto')),
+  title_revision INTEGER NOT NULL DEFAULT 0 CHECK(title_revision >= 0),
+  manual_lock INTEGER NOT NULL DEFAULT 0 CHECK(manual_lock IN (0,1)),
+  deleted_at TEXT,
+  auto_state TEXT NOT NULL DEFAULT 'eligible' CHECK(auto_state IN ('eligible','pending','completed','failed','unknown')),
+  auto_run_id TEXT REFERENCES runs(run_id),
+  auto_revision INTEGER CHECK(auto_revision IS NULL OR auto_revision >= 0),
+  auto_operation_key TEXT,
+  PRIMARY KEY(work_id, session_id),
+  FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)
+) STRICT;
+
+CREATE TABLE session_management_operations (
+  work_id TEXT NOT NULL,
+  operation_key TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  operation_kind TEXT NOT NULL CHECK(operation_kind IN ('rename','delete','auto-name')),
+  operation_status TEXT NOT NULL DEFAULT 'accepted' CHECK(operation_status IN ('pending','accepted','failed','unknown')),
+  request_digest TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(work_id, operation_key),
+  FOREIGN KEY(work_id, session_id) REFERENCES sessions(work_id, session_id)
+) STRICT;
+
+CREATE TRIGGER session_management_reject_deleted_run
+BEFORE INSERT ON runs
+WHEN EXISTS (
+  SELECT 1 FROM session_management m
+  WHERE m.work_id=NEW.work_id AND m.session_id=NEW.session_id AND m.deleted_at IS NOT NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'SESSION_DELETED');
+END;

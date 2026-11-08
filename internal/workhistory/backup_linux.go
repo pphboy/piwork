@@ -152,11 +152,11 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 		if manifest.OperationID != request.OperationID || manifest.WorkID != request.WorkID || manifest.BackupKey != request.BackupKey {
 			return BackupResult{}, ErrInvalid
 		}
-		if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 {
+		if manifest.SourceSchema == 5 || manifest.SourceSchema == 6 || manifest.SourceSchema == 7 {
 			if manifest.Version == 2 && verifyExistingMemory(root, manifest) != nil {
 				return BackupResult{}, ErrInvalid
 			}
-			if request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 7 {
+			if request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 8 {
 				return BackupResult{}, ErrInvalid
 			}
 			if err := verifyBackupFiles(ctx, spool, manifest); err != nil {
@@ -196,8 +196,8 @@ func CheckpointHistory(ctx context.Context, privateDirectory, spoolDirectory str
 	}
 	version := snapshot.SchemaVersion
 	snapshot.Close()
-	if version >= 5 && version <= 7 {
-		if request.TargetSchema > version && request.TargetSchema <= 7 {
+	if version >= 5 && version <= 8 {
+		if request.TargetSchema > version && request.TargetSchema <= 8 {
 			return checkpointMemoryHistory(ctx, root, spool, request, version)
 		}
 		return BackupResult{version, "", "not-required"}, nil

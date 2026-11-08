@@ -390,13 +390,13 @@ func TestStoredCapabilitiesRequireCompleteValidatedFacts(t *testing.T) {
 		t.Fatal("missing executable accepted")
 	}
 	modified = capability
-	for _, schema := range []int64{4, 5, 6, 7} {
+	for _, schema := range []int64{4, 5, 6, 7, 8} {
 		modified.WorkHistorySchema = schema
 		if !validStoredCapabilities(modified, capability.Identity, "agent") {
 			t.Fatal("supported history version rejected", schema)
 		}
 	}
-	modified.WorkHistorySchema = 8
+	modified.WorkHistorySchema = 9
 	if validStoredCapabilities(modified, capability.Identity, "agent") {
 		t.Fatal("unknown history version accepted")
 	}

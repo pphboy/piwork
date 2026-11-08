@@ -13,21 +13,32 @@ const NOW = "2026-09-20T00:00:00Z";
 test('schema 5 upgrades to 7 only with a scoped migration grant',async()=>{
  const fixture=await createFixture();
  try {
-  let store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());store.close();makeSchema5(fixture.databasePath);
+   let store = WorkStore.open(fixture.databasePath, { targetVersion: 7, workId: 'work-1' });
+   store.createSession(session());
+   store.close();
+   makeSchema5(fixture.databasePath);
   const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:7 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
-  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1'}),/MIGRATION_REQUIRED/);
-  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:{...grant,workId:'foreign'}}),/MIGRATION_REQUIRED/);
-  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,7);store.close();
-  store=WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant});assert.equal(store.schemaVersion,7);store.close();
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{targetVersion:7,workId:'work-1'}),/MIGRATION_REQUIRED/);
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{targetVersion:7,workId:'work-1',historyMigration:{...grant,workId:'foreign'}}),/MIGRATION_REQUIRED/);
+   store = WorkStore.open(fixture.databasePath, { targetVersion: 7, workId: 'work-1', historyMigration: grant });
+   assert.equal(store.schemaVersion, 7);
+   store.close();
+   store = WorkStore.open(fixture.databasePath, { targetVersion: 7, workId: 'work-1', historyMigration: grant });
+   assert.equal(store.schemaVersion, 7);
+   store.close();
  } finally {await fixture.cleanup();}
 });
 
 test('schema 7 upgrade refuses active Runs without changing history',async()=>{
  const fixture=await createFixture();
  try {
-  const store=WorkStore.open(fixture.databasePath,{workId:'work-1'});store.createSession(session());const run=store.acceptRun(submit({submissionKey:'active-upgrade'})).run;store.close();makeSchema5(fixture.databasePath);
+   const store = WorkStore.open(fixture.databasePath, { targetVersion: 7, workId: 'work-1' });
+   store.createSession(session());
+   const run = store.acceptRun(submit({ submissionKey: 'active-upgrade' })).run;
+   store.close();
+   makeSchema5(fixture.databasePath);
   const grant={operationId:'operation-test',workId:'work-1',fromSchema:5 as const,toSchema:7 as const,storeId:'backup-test',backupManifestDigest:'a'.repeat(64)};
-  assert.throws(()=>WorkStore.open(fixture.databasePath,{workId:'work-1',historyMigration:grant}),/WORK_HISTORY_BUSY/);
+  assert.throws(()=>WorkStore.open(fixture.databasePath,{targetVersion:7,workId:'work-1',historyMigration:grant}),/WORK_HISTORY_BUSY/);
   const unchanged=new DatabaseSync(fixture.databasePath,{readOnly:true});assert.equal(unchanged.prepare('SELECT version FROM schema_migrations').get()?.version,5);assert.equal(unchanged.prepare('SELECT state FROM runs WHERE run_id=?').get(run.runId)?.state,'accepted');unchanged.close();
  } finally {await fixture.cleanup();}
 });

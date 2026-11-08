@@ -31,7 +31,14 @@ test("runtime, TS full history and Go-shared fixtures agree on preference and pu
   else assert.throws(()=>WorkHistorySnapshot.open(source,scope),scenario.name);
   assert.deepEqual(fingerprint(source),before,`${scenario.name}: static validation changed input`);
   const runtime=join(root,'runtime');cpSync(source,runtime,{recursive:true});const runtimeBefore=fingerprint(runtime);const historyMigration={operationId:'operation-fixture-1234',workId,fromSchema:5 as const,toSchema:7 as const,storeId:'backup-fixture-1234',backupManifestDigest:'a'.repeat(64)};
-  if(scenario.accepted){const store=WorkStore.open(join(runtime,'work.sqlite'),{workId,historyMigration});store.memory.snapshot(workId);store.close();}
-  else {assert.throws(()=>WorkStore.open(join(runtime,'work.sqlite'),{workId,historyMigration}),scenario.name);assert.deepEqual(fingerprint(runtime),runtimeBefore,scenario.name);}
+   if (scenario.accepted) {
+     const store = WorkStore.open(join(runtime, 'work.sqlite'), { workId, targetVersion: 7, historyMigration });
+     store.memory.snapshot(workId);
+     store.close();
+   }
+   else {
+     assert.throws(() => WorkStore.open(join(runtime, 'work.sqlite'), { workId, targetVersion: 7, historyMigration }), scenario.name);
+     assert.deepEqual(fingerprint(runtime), runtimeBefore, scenario.name);
+   }
  }finally{rmSync(root,{recursive:true,force:true});}}
 });

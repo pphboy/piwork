@@ -42,6 +42,12 @@ const (
 	AgentService_GetSessionChatOptions_FullMethodName             = "/piwork.agent.v1.AgentService/GetSessionChatOptions"
 	AgentService_SetSessionChatOptions_FullMethodName             = "/piwork.agent.v1.AgentService/SetSessionChatOptions"
 	AgentService_LookupChatSubmission_FullMethodName              = "/piwork.agent.v1.AgentService/LookupChatSubmission"
+	AgentService_GetSessionManagementCapabilities_FullMethodName  = "/piwork.agent.v1.AgentService/GetSessionManagementCapabilities"
+	AgentService_GetSessionManagementState_FullMethodName         = "/piwork.agent.v1.AgentService/GetSessionManagementState"
+	AgentService_RenameSession_FullMethodName                     = "/piwork.agent.v1.AgentService/RenameSession"
+	AgentService_AutoNameSession_FullMethodName                   = "/piwork.agent.v1.AgentService/AutoNameSession"
+	AgentService_DeleteSession_FullMethodName                     = "/piwork.agent.v1.AgentService/DeleteSession"
+	AgentService_LookupSessionManagementOperation_FullMethodName  = "/piwork.agent.v1.AgentService/LookupSessionManagementOperation"
 	AgentService_ListAgentRequests_FullMethodName                 = "/piwork.agent.v1.AgentService/ListAgentRequests"
 	AgentService_GetAgentRequest_FullMethodName                   = "/piwork.agent.v1.AgentService/GetAgentRequest"
 	AgentService_CancelAgentRequest_FullMethodName                = "/piwork.agent.v1.AgentService/CancelAgentRequest"
@@ -77,6 +83,12 @@ type AgentServiceClient interface {
 	GetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	SetSessionChatOptions(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	LookupChatSubmission(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	GetSessionManagementCapabilities(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	GetSessionManagementState(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	RenameSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	AutoNameSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	DeleteSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
+	LookupSessionManagementOperation(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	GetAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
 	CancelAgentRequest(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error)
@@ -332,6 +344,66 @@ func (c *agentServiceClient) LookupChatSubmission(ctx context.Context, in *Agent
 	return out, nil
 }
 
+func (c *agentServiceClient) GetSessionManagementCapabilities(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetSessionManagementCapabilities_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) GetSessionManagementState(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_GetSessionManagementState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) RenameSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_RenameSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) AutoNameSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_AutoNameSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) DeleteSession(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_DeleteSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentServiceClient) LookupSessionManagementOperation(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AgentContentResponse)
+	err := c.cc.Invoke(ctx, AgentService_LookupSessionManagementOperation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentServiceClient) ListAgentRequests(ctx context.Context, in *AgentContentRequest, opts ...grpc.CallOption) (*AgentContentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AgentContentResponse)
@@ -419,6 +491,12 @@ type AgentServiceServer interface {
 	GetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	SetSessionChatOptions(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	LookupChatSubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	GetSessionManagementCapabilities(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	GetSessionManagementState(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	RenameSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	AutoNameSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	DeleteSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
+	LookupSessionManagementOperation(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	GetAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
 	CancelAgentRequest(context.Context, *AgentContentRequest) (*AgentContentResponse, error)
@@ -503,6 +581,24 @@ func (UnimplementedAgentServiceServer) SetSessionChatOptions(context.Context, *A
 }
 func (UnimplementedAgentServiceServer) LookupChatSubmission(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupChatSubmission not implemented")
+}
+func (UnimplementedAgentServiceServer) GetSessionManagementCapabilities(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSessionManagementCapabilities not implemented")
+}
+func (UnimplementedAgentServiceServer) GetSessionManagementState(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSessionManagementState not implemented")
+}
+func (UnimplementedAgentServiceServer) RenameSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RenameSession not implemented")
+}
+func (UnimplementedAgentServiceServer) AutoNameSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AutoNameSession not implemented")
+}
+func (UnimplementedAgentServiceServer) DeleteSession(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteSession not implemented")
+}
+func (UnimplementedAgentServiceServer) LookupSessionManagementOperation(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LookupSessionManagementOperation not implemented")
 }
 func (UnimplementedAgentServiceServer) ListAgentRequests(context.Context, *AgentContentRequest) (*AgentContentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListAgentRequests not implemented")
@@ -950,6 +1046,114 @@ func _AgentService_LookupChatSubmission_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_GetSessionManagementCapabilities_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetSessionManagementCapabilities(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetSessionManagementCapabilities_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetSessionManagementCapabilities(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_GetSessionManagementState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).GetSessionManagementState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_GetSessionManagementState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).GetSessionManagementState(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_RenameSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).RenameSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_RenameSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).RenameSession(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_AutoNameSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).AutoNameSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_AutoNameSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).AutoNameSession(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_DeleteSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).DeleteSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_DeleteSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).DeleteSession(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentService_LookupSessionManagementOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AgentContentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServiceServer).LookupSessionManagementOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentService_LookupSessionManagementOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServiceServer).LookupSessionManagementOperation(ctx, req.(*AgentContentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentService_ListAgentRequests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AgentContentRequest)
 	if err := dec(in); err != nil {
@@ -1152,6 +1356,30 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupChatSubmission",
 			Handler:    _AgentService_LookupChatSubmission_Handler,
+		},
+		{
+			MethodName: "GetSessionManagementCapabilities",
+			Handler:    _AgentService_GetSessionManagementCapabilities_Handler,
+		},
+		{
+			MethodName: "GetSessionManagementState",
+			Handler:    _AgentService_GetSessionManagementState_Handler,
+		},
+		{
+			MethodName: "RenameSession",
+			Handler:    _AgentService_RenameSession_Handler,
+		},
+		{
+			MethodName: "AutoNameSession",
+			Handler:    _AgentService_AutoNameSession_Handler,
+		},
+		{
+			MethodName: "DeleteSession",
+			Handler:    _AgentService_DeleteSession_Handler,
+		},
+		{
+			MethodName: "LookupSessionManagementOperation",
+			Handler:    _AgentService_LookupSessionManagementOperation_Handler,
 		},
 		{
 			MethodName: "ListAgentRequests",

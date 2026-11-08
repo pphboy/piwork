@@ -99,6 +99,10 @@ export interface Message {
 }
 export interface RunModel { modelRef: string | null; label: string; provider: string; model: string; thinkingLevels?: string[]; defaultThinkingLevel?: string | null; thinkingAvailability?: "unknown"; compatibleThinkingProfiles?: Array<{profile:string;levels:string[];budgets?:Record<string,number>}> }
 export interface Session {
+  titleRevision?: number;
+  titleSource?: 'default' | 'manual' | 'auto';
+  manualTitleLock?: boolean;
+  autoNameState?: 'eligible' | 'pending' | 'completed' | 'failed' | 'unknown';
   chatAvailability?: "available" | "unavailable" | "unconfirmed";
   history?: { loading: boolean; error: string; cursor: string | null; snapshot: string; hasMore: boolean; expired?: boolean };
   imageProfile?: boolean;

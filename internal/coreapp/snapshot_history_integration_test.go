@@ -84,6 +84,34 @@ func TestNativeSnapshotHistoryRebuildContinuesRealTSSDKSession(t *testing.T) {
 		return runID
 	}
 	sourceRun := run(source, "snapshot-source-run")
+	sourceSessionPath := "/api/v1/works/" + source + "/sessions/" + sessionID
+	var naming map[string]any
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		code, value := packageHTTPCall(t, base, sourceSessionPath+"/management", "GET", auth, nil)
+		if code != 200 {
+			t.Fatal("source Session state", code, value)
+		}
+		naming = value
+		if value["autoState"] == "completed" || value["autoState"] == "failed" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if naming == nil || naming["autoState"] == "pending" || naming["autoState"] == "eligible" {
+		t.Fatal("automatic naming did not settle", naming)
+	}
+	if code, value := packageHTTPCall(t, base, sourceSessionPath+"/name", "PATCH", auth, map[string]any{"operationKey": "history-rename", "expectedRevision": naming["revision"], "title": "Preserved title"}); code != 200 {
+		t.Fatal("source rename", code, value)
+	}
+	code, deleted := packageHTTPCall(t, base, "/api/v1/works/"+source+"/sessions", "POST", auth, map[string]any{"idempotencyKey": "history-deleted-session"})
+	if code != 201 {
+		t.Fatal("deleted fixture Session", code, deleted)
+	}
+	deletedID := deleted["sessionId"].(string)
+	if code, value := packageHTTPCall(t, base, "/api/v1/works/"+source+"/sessions/"+deletedID+"/delete", "POST", auth, map[string]any{"operationKey": "history-delete", "expectedRevision": 0}); code != 200 {
+		t.Fatal("source deletion", code, value)
+	}
 	sourceWork, err := a.Store.Work(ctx, source, false)
 	if err != nil || sourceWork.ActiveContextID == nil {
 		t.Fatal(err)
@@ -162,7 +190,7 @@ func TestNativeSnapshotHistoryRebuildContinuesRealTSSDKSession(t *testing.T) {
 		HistoryPresent         bool
 		Sessions, Runs, Events int64
 	}
-	if err := json.Unmarshal(helperRun(source, sourceVolume, "work-private", "verify-history", ""), &summary); err != nil || !summary.HistoryPresent || summary.Sessions != 1 || summary.Runs != 1 {
+	if err := json.Unmarshal(helperRun(source, sourceVolume, "work-private", "verify-history", ""), &summary); err != nil || !summary.HistoryPresent || summary.Sessions != 2 || summary.Runs != 1 {
 		t.Fatal(summary, err)
 	}
 	var captured struct{ Tree string }
@@ -190,6 +218,12 @@ func TestNativeSnapshotHistoryRebuildContinuesRealTSSDKSession(t *testing.T) {
 	writeRequest()
 	helperRun(target, targetVolume, "work-private", "restore-history", "")
 	control(target, "start")
+	if code, value := packageHTTPCall(t, base, "/api/v1/works/"+target+"/sessions/"+sessionID+"/management", "GET", auth, nil); code != 200 || value["title"] != "Preserved title" || value["titleSource"] != "manual" {
+		t.Fatal("imported Session title", code, value)
+	}
+	if code, value := packageHTTPCall(t, base, "/api/v1/works/"+target+"/sessions/"+deletedID+"/management-operations/history-delete", "GET", auth, nil); code != 200 || value["status"] != "accepted" {
+		t.Fatal("imported deletion receipt", code, value)
+	}
 	status, restored := packageHTTPCall(t, base, "/api/v1/works/"+target+"/runs/"+sourceRun, "GET", auth, nil)
 	if status != 200 || restored["workId"] != target || restored["state"] != float64(4) {
 		t.Fatal("mapped history not visible to actual Agent", status, restored)
