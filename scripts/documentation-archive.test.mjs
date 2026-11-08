@@ -14,7 +14,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 test('navigation, inventory, frozen input and staging survive physical removal of active change directories', async t => {
   const base = mkdtempSync(join(tmpdir(), 'piwork-docs-archive-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
-  for (const directory of ['openspec', 'deploy', 'examples', 'apps/ui-shared/assets', '.agents/skills/piwork-code-maintenance']) cpSync(join(root, directory), join(base, directory), { recursive: true });
+  for (const directory of ['openspec', 'deploy', 'examples', 'apps/ui-shared/assets', 'internal/coreassets/piwork-brain', '.agents/skills/piwork-code-maintenance']) cpSync(join(root, directory), join(base, directory), { recursive: true });
   for (const file of ['README.md', 'README.zh-CN.md', 'AGENTS.md', 'LICENSE']) copyFileSync(join(root, file), join(base, file));
   // The test also runs in an already archived checkout. Normalize only its copy.
   for (const [ownerChange, artifactPath] of [['remove-docs-dir', 'evidence/migration-map.json'], ['go-core-cli-migration', 'verification-matrix.md']]) {
@@ -27,7 +27,7 @@ test('navigation, inventory, frozen input and staging survive physical removal o
   for (const file of ['check-go-acceptance.mjs', 'update-go-acceptance-index.mjs', 'resolve-change-artifact.mjs']) copyFileSync(join(root, 'scripts', file), join(base, 'scripts', file));
   const git = args => execFileSync('git', ['-C', base, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
   git(['init', '--quiet']);
-  git(['add', 'README.md', 'README.zh-CN.md', 'LICENSE', 'AGENTS.md', '.agents/skills/piwork-code-maintenance', 'deploy', 'examples', 'apps', 'openspec/specs']);
+  git(['add', 'README.md', 'README.zh-CN.md', 'LICENSE', 'AGENTS.md', '.agents/skills/piwork-code-maintenance', 'deploy', 'examples', 'apps', 'internal/coreassets/piwork-brain', 'openspec/specs']);
   git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--quiet', '-m', 'synthetic documentation snapshot']);
   const commit = git(['rev-parse', 'HEAD']).toString().trim();
   const original = readFileSync(join(base, 'openspec/changes/remove-docs-dir/evidence/migration-map.json'));
