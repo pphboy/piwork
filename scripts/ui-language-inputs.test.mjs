@@ -50,6 +50,7 @@ function fixture() {
     'apps/ui-shared/boot.js': 'fixture boot\n',
     'apps/ui-shared/boot-watchdog.js': 'fixture watchdog\n',
     'apps/ui-shared/prepare-boot.mjs': 'fixture boot builder\n',
+    'apps/ui-shared/startup-shell.js': 'fixture startup presentation\n',
     'apps/ui-shared/read-deadline.js': 'fixture read deadline\n',
     'apps/ui-shared/tokens.css': 'fixture tokens\n',
     'apps/ui-shared/controls.css': 'fixture controls\n',
@@ -80,7 +81,7 @@ test('输入 hash 是稳定的 sha256', () => {
 
 test('共享启动和读取实现变化会影响两端构建身份', () => {
   withFixture((base) => {
-    for (const name of ['boot-watchdog.js', 'prepare-boot.mjs', 'read-deadline.js']) {
+    for (const name of ['boot-watchdog.js', 'prepare-boot.mjs', 'read-deadline.js', 'startup-shell.js']) {
       const desktop = desktopInputHash(base);
       const consoleHash = consoleInputHash(base);
       write(base, `apps/ui-shared/${name}`, `changed ${name}\n`);

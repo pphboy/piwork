@@ -389,7 +389,7 @@ export const appStrings = {
 
     'read.loadingTitle': 'Loading current Core data…',
     'read.timeout': 'The read timed out. The current state has not been confirmed.',
-    'startup.opening': 'Opening administrator workspace…',
+    'startup.opening': 'Opening Piwork…',
     'startup.unconfirmed': 'The administrator session could not be confirmed. Retry the read or return home.',
     'startup.home': 'Home',
     'read.loadingDetail': 'Current data will appear here.',
@@ -1084,7 +1084,7 @@ export const appStrings = {
 
     'read.loadingTitle': '正在加载当前 Core 数据…',
     'read.timeout': '读取超时，当前状态尚未确认。',
-    'startup.opening': '正在打开管理界面…',
+    'startup.opening': '正在打开 Piwork…',
     'startup.unconfirmed': '尚未确认管理员会话。请重试读取或返回首页。',
     'startup.home': '返回首页',
     'read.loadingDetail': '当前数据将在此显示。',

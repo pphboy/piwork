@@ -6,6 +6,7 @@ import { readWithDeadline, ReadTimeout } from './read-deadline.js';
 import {esc,Field,Input,OwnedFeedback,icon} from './components.js';
 import {modelErrors} from './model-form.js';
 import {pendingDots} from './pending.js';
+import {startupShell} from './startup-shell.js';
 import {t,onLocaleChange,chooseLocale,languageChoices,applyDocumentTitle,LocalizedMessage,messageText,type Feedback as FeedbackText} from './locale.js';
 type Data=Record<string,any>;
 type Stage='loading'|'administrator'|'login'|'waiting'|'error';
@@ -81,12 +82,18 @@ function credentialForm() {
   return `<form id="credentials" class="form-grid" novalidate>${Field('account',t('onboarding.form.account'),Input('account',account,'autocomplete="username" required maxlength="128"'))}${Field('password',t('onboarding.form.password'),Input('password','',`type="password" autocomplete="${creating?'new-password':'current-password'}" required`),creating?t('onboarding.form.passwordHelpCreate'):t('onboarding.form.passwordHelpLogin'))}${creating?Field('confirm-password',t('onboarding.form.confirmPassword'),Input('confirm-password','','type="password" autocomplete="new-password" required'),t('onboarding.form.confirmHelp')):''}<div class="form-actions"><button class="btn primary" type="submit">${creating?t('onboarding.form.createAdmin'):t('onboarding.form.signIn')}<span class="pending-slot" data-credential-pending>${icon('arrow',16)}</span></button><span id="credential-recovery"></span></div></form>`;
 }
 function render(){
- const title=stage==='administrator'?t('onboarding.title.createAdmin'):stage==='login'?t('onboarding.title.login'):stage==='waiting'?(snapshot.status?.ready?t('onboarding.title.ready'):t('onboarding.title.pending')):stage==='error'?t('onboarding.title.error'):t('onboarding.title.loading');
+ if(stage==='loading'||stage==='error') {
+  root.innerHTML=startupShell({logoUrl:'/setup/piwork-logo.png',message:t('startup.opening'),
+   pending:stage==='loading'||reading,error:stage==='error'?messageText(notice)||t('onboarding.error.body'):'',
+   retry:{label:t('onboarding.readState'),action:'refresh'},home:{label:t('startup.home'),href:'/'}});
+  applyDocumentTitle(t('onboarding.docTitle'));
+  updateLocks();
+  return;
+ }
+ const title=stage==='administrator'?t('onboarding.title.createAdmin'):stage==='login'?t('onboarding.title.login'):stage==='waiting'?(snapshot.status?.ready?t('onboarding.title.ready'):t('onboarding.title.pending')):t('onboarding.title.loading');
  let content='';
- if(stage==='loading')content='<section class="console-read-skeleton" aria-busy="true"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section>';
  if(stage==='administrator'||stage==='login')content=credentialForm();
  if(stage==='waiting')content=`<p>${snapshot.status?.ready?t('onboarding.waiting.ready'):t('onboarding.waiting.pending')}</p><div class="form-actions"><a class="btn primary" href="/">${t('onboarding.openWorkbench')}${icon('arrow',16)}</a>${button(t('onboarding.refreshState'),'refresh')}</div>`;
- if(stage==='error')content=`<p>${t('onboarding.error.body')}</p>${button(t('onboarding.readState'),'refresh',true)}`;
  root.innerHTML=`<header class="setup-topbar"><a href="/" class="setup-brand" aria-label="${esc(t('onboarding.brandAria'))}"><img src="/setup/piwork-logo.png" width="32" height="32" alt=""><span>Piwork</span></a><span class="product-label">CoreSetup</span><nav aria-label="${esc(t('onboarding.navAria'))}">${languageMenu()}<span data-session-navigation data-authenticated="${authenticated}">${sessionNavigation()}</span></nav></header><main class="setup-main setup-narrow"><div class="setup-heading"><p class="eyebrow">${stage==='login'?t('onboarding.eyebrow.welcome'):t('onboarding.eyebrow.setup')}</p><h1>${title}</h1></div><div id="setup-notice" aria-live="polite"></div><div id="setup-status" class="setup-status" aria-live="polite"></div>${content}</main>`;
  applyDocumentTitle(t('onboarding.docTitle'));
  updateNotice();updateLocks();
@@ -101,7 +108,7 @@ function tell(text: FeedbackText, error = false, task = 'credential') {
   notice = text;
   noticeError = error;
   notices.setIdentity(String(identity));
-  if (text) {
+  if (text && !(task === 'read' && (stage === 'loading' || stage === 'error'))) {
     const owner = noticeOwner(task);
     const noticeMessage = onboardingNoticeMessage(text, { task, credential: credentialUnknown });
     const recovery = { label: () => t('onboarding.readState'), run: () => {
@@ -116,6 +123,8 @@ function tell(text: FeedbackText, error = false, task = 'credential') {
   updateNotice();
 }
 function updateLocks(){
+ const startup=root.querySelector('.startup-screen');
+ if(startup)startup.setAttribute('aria-busy',String(stage==='loading'||reading));
  const navigation=root.querySelector<HTMLElement>('[data-session-navigation]');
  if(navigation&&navigation.dataset.authenticated!==String(authenticated)){navigation.dataset.authenticated=String(authenticated);navigation.innerHTML=sessionNavigation();}
  const phase=writing?'write':reading?'read':'';

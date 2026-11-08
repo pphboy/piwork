@@ -135,7 +135,7 @@ test('unconfirmed session uses a neutral startup shell until its real state arri
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   try {
     await fixture(t, async r => { if (r.path === 'session') await gate; }, true, true, async page => {
-      await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+      await expect(page.locator('.startup-screen')).toContainText('Opening Piwork');
       await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toHaveCount(0);
       await expect(page.getByRole('heading', { name: 'Works', exact: true })).toHaveCount(0);
       release();
@@ -429,6 +429,40 @@ test('DWUI-004 image-only drafts in another Session or Work trigger native befor
   await expect(page.locator('#composer')).toHaveValue(''); await expect(page.locator('.chat-image-draft')).toHaveCount(0);
   await expectNoPersistence(); await cleanReload(); await expect(page.locator('.chat-image-draft')).toHaveCount(0);
   assert.deepEqual(requests.filter(r => !['GET', 'HEAD', 'PROPFIND'].includes(r.method)).map(r => `${r.method} ${r.path}`), ['PUT connection', 'POST login']);
+});
+
+for (const width of [1920, 360]) test(`Work Header keeps its check label visible during a pending read at ${width}px`, async t => {
+  const gate = deferred();
+  t.after(async () => gate.resolve());
+  let armed = false;
+  const raw = { id: 'work-1', name: 'Recovery Work', observedState: 'unknown', desiredState: 'running' };
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works') return { json: { works: [raw] } };
+    if (r.path === 'works/work-1') {
+      if (armed) await gate.promise;
+      return { json: raw };
+    }
+  }, false, false);
+  await page.setViewportSize({ width, height: 900 });
+  const control = page.locator('.work-header [data-action="check-work"]').first();
+  await expect(control).toBeVisible();
+  const before = await control.boundingBox();
+  armed = true;
+  await control.click();
+  await expect(control).toHaveAttribute('aria-busy', 'true');
+  await expect(control).toBeDisabled();
+  await expect(control.locator('.action-pending-label')).toContainText('Check status');
+  assert.equal(await control.locator('.action-pending-label').evaluate(node => getComputedStyle(node).opacity), '1');
+  await expect(control.locator('.pending-dots')).toBeHidden();
+  assert.deepEqual(await control.boundingBox(), before);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await mkdir('dist/work-header-warn', { recursive: true });
+  await page.screenshot({ path: `dist/work-header-warn/check-pending-${width}.png` });
+  const reads = requests.filter(r => r.path === 'works/work-1').length;
+  await control.evaluate(node => (node as HTMLButtonElement).click());
+  assert.equal(requests.filter(r => r.path === 'works/work-1').length, reads);
+  gate.resolve();
+  await expect(control).toBeEnabled();
 });
 
 for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) test(`D02/D03 ${action}: first paint, duplicate prevention and acceptance before readback`, async t => {
@@ -1229,6 +1263,9 @@ test('DWUI-016/017 Create and Stop during preparation converge in list and detai
   await expect(page.locator('.work-header-status')).toHaveAttribute('aria-label', 'Observed: Stop accepted');
   await expect(page.locator('.work-header-status')).toHaveAttribute('title', 'Observed: Stop accepted');
   await expect(page.locator('.work-header-status .object-control-state')).toContainText('Stop Work');
+  await expect(page.locator('.work-header-status .object-control-state .pending-dots')).toHaveCount(1);
+  await expect(page.locator('.work-header-status .object-control-state .pending-dots')).toBeHidden();
+  await expect(page.locator('.work-header-status .object-control-state')).toHaveAttribute('aria-busy', 'true');
   assert.equal(await button(page, 'start-work').count(), 0);
   observed = 'stopping';
   await api(page, "await adapter.refreshWorkStatus('work-1')");

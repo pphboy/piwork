@@ -49,7 +49,7 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
     : { headless: true, channel: 'chromium' });
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   try {
-    await t.test('both initial shells retain one labelled static skeleton before application code', async () => {
+    await t.test('both initial shells retain one labelled brand before application code', async () => {
       // Hold entry modules without an error event: aborting them correctly invokes
       // the real boot-failure UI, which belongs to the separate boot failure tests.
       const entryModules = /\/(?:desktop\/)?browser\/(?:boot|app)\.js$/;
@@ -67,14 +67,13 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
           });
           await shell.route('**/style.css', route => route.continue({ url: `${base}/${app}/style.css` }));
           await shell.goto(`${base}/${app}/index.html`, { waitUntil: 'commit' });
-          await expect(shell.locator('.boot-skeleton')).toHaveCount(1);
-          await expect(shell.locator('.boot-skeleton > .skeleton-fill')).toHaveCount(3);
-          await expect(shell.locator('.boot-skeleton')).toHaveAttribute('aria-hidden', 'true');
-          await expect(shell.locator('.pending-dots')).toHaveCount(0);
-          await expect(shell.locator('.app-loading')).toHaveAttribute('role', 'status');
-          await expect(shell.locator('.app-loading')).toHaveAttribute('aria-busy', 'true');
+          await expect(shell.locator('.startup-logo')).toHaveCount(1);
+          await expect(shell.locator('[data-boot-recovery]')).toBeHidden();
+          await expect(shell.locator('.pending-dots')).toHaveCount(1);
+          await expect(shell.locator('.startup-screen')).toHaveAttribute('role', 'status');
+          await expect(shell.locator('.startup-screen')).toHaveAttribute('aria-busy', 'true');
           await expect(shell.locator('[data-boot-loading]')).toHaveText('Opening Piwork…');
-          assert.equal(await shell.locator('.app-loading').evaluate(node => getComputedStyle(node).position), 'static');
+          assert.equal(await shell.locator('.startup-screen').evaluate(node => getComputedStyle(node).position), 'static');
         } finally {
           await shell.close();
           release();

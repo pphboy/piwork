@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const roots = ['apps/ui-shared', 'apps/desktop-webui/src', 'apps/console-webui/src'];
-const flatShared = new Set(['i18n.js', 'boot.js', 'read-deadline.js', 'browser-crypto.js', 'notices.js', 'feedback-primitives.js']);
+const flatShared = new Set(['i18n.js', 'boot.js', 'read-deadline.js', 'browser-crypto.js', 'notices.js', 'feedback-primitives.js', 'startup-shell.js']);
 const entry = /^apps\/(?:desktop|console)-webui\/src\/(?:app|main|setup)\.ts$/;
 
 export function importSpecifiers(source) {

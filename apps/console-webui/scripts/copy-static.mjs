@@ -18,6 +18,6 @@ cpSync(new URL("../../../apps/ui-shared/boot.js", import.meta.url), new URL("../
 cpSync(new URL("../../../apps/ui-shared/read-deadline.js", import.meta.url), new URL("../dist/browser/read-deadline.js", import.meta.url));
 cpSync(new URL("../src/i18n", import.meta.url), new URL("../dist/browser/i18n", import.meta.url), { recursive: true });
 
-for (const file of ["notices.js", "feedback-primitives.js"]) {
+for (const file of ["notices.js", "feedback-primitives.js", "startup-shell.js"]) {
   cpSync(new URL(`../../ui-shared/${file}`, import.meta.url), new URL(`../dist/browser/${file}`, import.meta.url));
 }

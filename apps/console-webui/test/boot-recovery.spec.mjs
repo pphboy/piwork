@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const consolePublic = fileURLToPath(new URL('../dist/public/', import.meta.url));
@@ -19,17 +19,23 @@ test.beforeAll(async () => {
       const dir = path === '/desktop' ? desktopPublic : consolePublic;
       const name = path === '/setup' || path === '/login' ? 'setup.html' : 'index.html';
       const hash = (await readFile(dir + 'boot-csp.txt', 'utf8')).trim();
-      res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': `default-src 'none'; script-src 'self' 'sha256-${hash}'; style-src 'self'; connect-src 'self'; form-action 'self'` });
+      res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': `default-src 'none'; script-src 'self' 'sha256-${hash}'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` });
       const html = await readFile(dir + name, 'utf8');
       res.end(html.replace('<!-- PIWORK_BOOT_RECOVERY -->', `<input type="hidden" name="__piwork_boot_retry" value="${Buffer.from(req.url).toString('base64url')}">`));
     } else if (path.endsWith('/app.js') || path.endsWith('/onboarding.js')) {
       res.writeHead(200, { 'content-type': 'text/javascript' });
       res.end(`import './work-navigation.js'; document.body.dataset.appReady = 'yes'; document.dispatchEvent(new Event('piwork:boot-ready'));`);
-    } else if (path.endsWith('/work-navigation.js') || path.endsWith('/boot.js') || path.endsWith('/i18n.js')) {
+    } else if (path.endsWith('/work-navigation.js')) {
       res.writeHead(200, { 'content-type': 'text/javascript' }); res.end('export {};');
+    } else if (path.endsWith('/boot.js') || path.endsWith('/i18n.js')) {
+      res.writeHead(200, { 'content-type': 'text/javascript' });
+      res.end(await readFile(consolePublic + '../browser/' + path.split('/').pop()));
     } else if (path.endsWith('/style.css')) {
       res.writeHead(200, { 'content-type': 'text/css' });
       res.end(await readFile(consolePublic + 'style.css', 'utf8'));
+    } else if (path.endsWith('/piwork-logo.png')) {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      res.end(await readFile(consolePublic + 'piwork-logo.png'));
     } else { res.writeHead(404); res.end(); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -80,7 +86,7 @@ test('the watchdog detects a module that never hands over and uses the saved lan
     return route.fulfill({ contentType: 'text/javascript', body: 'export {};' });
   });
   await page.goto(base + '/setup');
-  await expect(page.locator('[data-boot-loading]')).toContainText('页面加载未完成');
+  await expect(page.locator('[data-boot-error]')).toContainText('页面加载未完成');
   await expect(page.locator('[data-boot-recovery]')).toBeVisible();
   expect(entries).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -91,7 +97,7 @@ test('persistent module failure exhausts the budget and manual retry does not re
   await page.route('**/work-navigation.js', route => { reads++; return route.abort('connectionrefused'); });
   await page.goto(base + '/desktop?view=example#target');
   await expect.poll(() => reads, { timeout: 8000 }).toBe(3);
-  await expect(page.locator('[data-boot-loading]')).toContainText('interrupted');
+  await expect(page.locator('[data-boot-error]')).toContainText('interrupted');
   await expect(page.locator('[data-boot-recovery]')).toBeVisible();
   await page.waitForTimeout(1200);
   expect(reads).toBe(3);
@@ -107,7 +113,7 @@ test('storage denial stops automatic reloads and retains bilingual recovery', as
   let reads = 0;
   await page.route('**/work-navigation.js', route => { reads++; return route.abort('connectionrefused'); });
   await page.goto(base + '/setup');
-  await expect(page.locator('[data-boot-loading]')).toContainText('interrupted');
+  await expect(page.locator('[data-boot-error]')).toContainText('interrupted');
   await page.waitForTimeout(1200);
   expect(reads).toBe(1);
   await expect(page.locator('[data-boot-recovery]')).toBeVisible();
@@ -162,7 +168,7 @@ test('manual recovery cancels a scheduled automatic retry before it fires', asyn
 });
 
 for (const path of ['/admin', '/setup', '/login']) {
-  test(`${path} shows the real cold-boot skeleton while the entry asset is pending`, async ({ page }) => {
+  test(`${path} shows the centered brand before handoff while the entry asset is pending`, async ({ page }) => {
     let release;
     const gate = new Promise(resolve => { release = resolve; });
     await page.route(/\/(?:app|onboarding)\.js$/, async route => {
@@ -171,13 +177,81 @@ for (const path of ['/admin', '/setup', '/login']) {
     });
     try {
       await page.goto(base + path, { waitUntil: 'commit' });
-      await expect(page.locator('.boot-skeleton')).toBeVisible();
-      await expect(page.locator('.boot-skeleton .skeleton-fill')).toHaveCount(3);
+      await expect(page.locator('.startup-screen')).toBeVisible();
+      await expect(page.locator('.startup-logo')).toBeVisible();
+      await expect(page.locator('[data-boot-recovery]')).toBeHidden();
+      await expect(page.locator('[data-boot-home]')).toBeHidden();
       await expect(page.locator('[data-boot-loading]')).toBeVisible();
-      await expect(page.locator('.pending-dots')).toHaveCount(0);
+      await expect(page.locator('.pending-dots')).toHaveCount(1);
     } finally {
       release();
     }
     await expect(page.locator('body')).toHaveAttribute('data-app-ready', 'yes');
+  });
+}
+
+const startupEvidence = new URL('../../../dist/startup-loading/', import.meta.url);
+for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }, { width: 360, height: 800 }]) {
+  for (const locale of ['en', 'zh-CN']) {
+    test(`brand is centered and recovery keeps its anchor at ${viewport.width}px in ${locale}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport, locale, reducedMotion: 'reduce' });
+      const page = await context.newPage();
+      await page.addInitScript(locale => {
+        localStorage.setItem('piwork.ui-locale', locale);
+        sessionStorage.setItem('piwork:boot:setup', '2');
+      }, locale);
+      // Complete parsing without handing ownership to the application. This
+      // keeps fonts.ready usable for screenshots while the watchdog still owns startup.
+      await page.route('**/onboarding.js', route => route.fulfill({ contentType: 'text/javascript', body: 'export {};' }));
+      try {
+        await page.goto(base + '/setup');
+        await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'true');
+        await expect(page.locator('[data-boot-loading]')).toHaveText(locale === 'en' ? 'Opening Piwork…' : '正在打开 Piwork…');
+        await expect(page.locator('[data-boot-recovery]')).toBeHidden();
+        const geometry = await page.locator('.startup-brand').boundingBox();
+        expect(Math.abs(geometry.x + geometry.width / 2 - viewport.width / 2)).toBeLessThan(1);
+        expect(Math.abs(geometry.y + geometry.height / 2 - viewport.height / 2)).toBeLessThan(3);
+        expect(await page.locator('.pending-dots > i').first().evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+        await mkdir(startupEvidence, { recursive: true });
+        await page.screenshot({ path: new URL(`setup-${locale}-${viewport.width}-pending.png`, startupEvidence).pathname });
+        await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'Synthetic startup failure' })));
+        await expect(page.locator('[data-boot-recovery]')).toBeVisible();
+        await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'false');
+        expect(await page.locator('.startup-brand').boundingBox()).toEqual(geometry);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.keyboard.press('Tab');
+        await expect(page.locator('[data-boot-recovery]')).toBeFocused();
+        await page.screenshot({ path: new URL(`setup-${locale}-${viewport.width}-unconfirmed.png`, startupEvidence).pathname });
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+test('a blocked watchdog keeps native recovery reachable while a missing logo does not trigger reload', async ({ page }) => {
+  await page.route(base + '/setup', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, headers: { ...response.headers(),
+      'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self'" } });
+  });
+  await page.route('**/piwork-logo.png', route => route.abort());
+  await page.goto(base + '/setup');
+  await expect(page.locator('[data-boot-recovery]')).toBeVisible();
+  await expect(page.locator('[data-boot-error]')).toBeVisible();
+  expect(await page.locator('.startup-logo').evaluate(node => node.width)).toBe(48);
+  await expect(page.locator('html')).not.toHaveAttribute('data-boot-state');
+});
+
+for (const path of ['/desktop', '/admin', '/setup']) {
+  test(`${path} missing logo does not trigger the active watchdog`, async ({ page }) => {
+    let documents = 0;
+    page.on('request', request => { if (request.isNavigationRequest()) documents++; });
+    await page.route('**/piwork-logo.png', route => route.abort('failed'));
+    await page.goto(base + path);
+    await expect(page.locator('body')).toHaveAttribute('data-app-ready', 'yes');
+    await expect(page.locator('html')).not.toHaveAttribute('data-boot-state', 'failed');
+    await page.waitForTimeout(1200);
+    expect(documents).toBe(1);
   });
 }

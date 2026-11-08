@@ -2,6 +2,7 @@ import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
 import { pendingDots } from './pending.js';
+import { startupShell } from './startup-shell.js';
 import { composerEditorGeometry, composerMatchesConsumedDraft } from './composer-layout.js';
 import { sharedIcon } from './feedback-primitives.js';
 import { NoticeStore, createNoticeHost } from './notices.js';
@@ -1100,6 +1101,7 @@ function currentFileReadFeedback() {
     }, String(epoch), recovery);
 }
 function syncNotices() {
+    const startupOwnsSession = startupSessionVisible();
     if (notices.identity !== noticeIdentity())
         readNoticeOwners.clear();
     notices.setIdentity(noticeIdentity());
@@ -1327,9 +1329,9 @@ function syncNotices() {
             void adapter.checkSignInOutcome().catch(() => { });
         },
     });
-    if (adapter.signInUnknown)
+    if (adapter.signInUnknown || startupOwnsSession)
         notices.resolve(session.owner);
-    for (const projection of [preference, ...(adapter.signInUnknown ? [] : [session]), signIn]) {
+    for (const projection of [preference, ...(adapter.signInUnknown || startupOwnsSession ? [] : [session]), signIn]) {
         if (projection.recovered)
             notices.resolve(projection.owner);
         if (projection.event)
@@ -1699,6 +1701,10 @@ function connection() {
     const check = adapter.connectionCheck, label = check.waiting ? t('conn.stillChecking') : t('conn.checking');
     return `<button class="connection" data-action="connection" ${check.checking ? `aria-busy="true" title="${esc(label)}"` : ''}><span class="pending-icon-slot micro" aria-hidden="true">${check.checking ? pendingDots() : coreStarting() ? '<i class="core-starting-spinner" aria-hidden="true"></i>' : `<i class="${["core-offline", "env-not-ready"].includes(s) || adapter.state.sessionState === "unavailable" ? "warn" : ""}"></i>`}</span>${esc(adapter.state.core.name)}<span>·</span>${adapter.state.sessionState === "unavailable" ? t('conn.unavailable') : check.error ? t('common.notConfirmed') : s === "core-offline" ? t('conn.unreachable') : coreRecovering() ? t('conn.starting') : s === "env-not-ready" && !adapter.status?.readiness?.available ? t('common.notConfirmed') : coreRuntimeUnavailable() ? t('conn.runtimeUnavailable') : s === "env-not-ready" ? t('conn.runtimeNotReady') : check.checkedAt ? t('conn.connected') : t('conn.notChecked')}${icon("down", 12)}${check.checking ? `<span class="sr-only" role="status">${esc(label)}</span>` : ''}</button>`;
 }
+function startupSessionVisible() {
+    return !adapter.state.signedIn && adapter.state.sessionState !== 'ready' &&
+        !adapter.signInUnknown && adapter.state.scenario !== 'cli-closed';
+}
 function signIn() {
     applyDocumentTitle(t('doc.connect'));
     const loading = adapter.state.sessionState === 'loading';
@@ -1775,7 +1781,7 @@ function workRouteFeedback(w) {
         return '';
     const slow = pending.some(record => Date.now() - record.started >= 10000);
     const label = slow ? t('work.stillReading') : t('work.reading');
-    return `<span class="work-read-feedback" role="status" aria-busy="true" aria-label="${esc(label)}">${pendingDots()}${slow ? `<small>${esc(label)}</small>` : ''}</span>`;
+    return `<span class="work-read-feedback sr-only" role="status" aria-busy="true" aria-label="${esc(label)}"></span>`;
 }
 function workHeader(w, standalone = false, navigation = '') {
     const model = workHeaderModel({ id: w.id, name: w.name, status: adapter.project(w).label, standalone });
@@ -5644,8 +5650,11 @@ function render() {
     let html = "";
     if (adapter.state.scenario === "cli-closed")
         html = `${topbar()}<main class="auth-main">${empty("terminal", adapter.hosted ? t('standalone.serverClosed') : t('standalone.desktopClosed'), adapter.hosted ? t('standalone.serverClosedBody') : t('standalone.desktopClosedBody'), "")}</main>`;
-    else if (!adapter.state.signedIn && adapter.state.sessionState === 'loading' && !adapter.state.sessionError)
-        html = `<main class="app-loading" role="status" aria-busy="true">${pendingDots()}<span>${t('startup.opening')}</span></main>`;
+    else if (startupSessionVisible())
+        html = startupShell({ logoUrl: '/desktop/piwork-logo.png', message: t('startup.opening'),
+            pending: adapter.state.sessionState === 'loading', error: adapter.state.sessionError,
+            retry: { label: t('auth.retry'), action: 'retry-session' },
+            home: { label: t('work.backToWorks'), href: '/' } });
     else if (!adapter.state.signedIn)
         html = signIn();
     else if (gate.blocked)

@@ -349,6 +349,7 @@ func TestSetupSharedAssetsArePublicAndTyped(t *testing.T) {
 		"/setup/browser/i18n/shared.js":         "text/javascript",
 		"/setup/browser/i18n/setup.js":          "text/javascript",
 		"/setup/browser/i18n/app.js":            "text/javascript",
+		"/setup/browser/startup-shell.js":       "text/javascript",
 		"/setup/piwork-logo.png":                "image/png", "/setup/style.css": "text/css",
 	} {
 		response, err := client.Get(origin + path)
@@ -451,6 +452,18 @@ func TestEntryWatchdogHashesMatchRealHTMLResponses(t *testing.T) {
 		if !strings.Contains(string(html), `<form method="get" data-boot-recovery-form>`) || !strings.Contains(string(html), `name="__piwork_boot_retry" value="`+encoded+`"`) {
 			t.Fatalf("%s: native recovery form lost its public request target", path)
 		}
+		logo := regexp.MustCompile(`class="startup-logo" src="([^"]+)"`).FindSubmatch(html)
+		if len(logo) != 2 || !bytes.HasPrefix(logo[1], []byte("/")) {
+			t.Fatalf("%s: startup logo path missing or invalid", path)
+		}
+		image, err := client.Get(origin + string(logo[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		image.Body.Close()
+		if image.StatusCode != http.StatusOK || !strings.HasPrefix(image.Header.Get("Content-Type"), "image/png") {
+			t.Fatalf("%s: startup logo %q returned %d (%s)", path, logo[1], image.StatusCode, image.Header.Get("Content-Type"))
+		}
 		copy := *client
 		copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		pathname := strings.SplitN(path, "?", 2)[0]
@@ -467,6 +480,14 @@ func TestEntryWatchdogHashesMatchRealHTMLResponses(t *testing.T) {
 	check("/login?view=one%20two&tag=a&tag=b")
 	if _, err := core.Identity.Bootstrap(context.Background(), "admin", "synthetic-password"); err != nil {
 		t.Fatal(err)
+	}
+	unauthorized, err := client.Get(origin + "/admin/piwork-logo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthorized.Body.Close()
+	if unauthorized.StatusCode != http.StatusSeeOther {
+		t.Fatalf("anonymous admin logo request bypassed authentication: %d", unauthorized.StatusCode)
 	}
 	signIn(t, client, origin, "admin")
 	check("/?view=one%20two&tag=a&tag=b")

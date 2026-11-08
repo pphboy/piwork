@@ -72,6 +72,17 @@ test('multiline clauses and side effects keep real dependencies; flat shared cop
   assert(errors.some(error => error.startsWith('Shared-to-feature')));
 });
 
+test('flat startup presentation keeps shared dependency and cycle checks effective', t => {
+  const { root, write } = fixture(t);
+  write('apps/console-webui/src/consumer.ts', "import './startup-shell.js';");
+  write('apps/ui-shared/startup-shell.js', 'export const startupShell = () => "";');
+  assert.deepEqual(checkWebuiBoundaries(root), []);
+  write('apps/ui-shared/startup-shell.js', "import '../console-webui/src/consumer.js';");
+  const errors = checkWebuiBoundaries(root);
+  assert(errors.some(error => error.startsWith('Shared-to-feature')));
+  assert(errors.some(error => error.startsWith('Dependency cycle:')));
+});
+
 test('template expressions expose literal dependencies but template data and nonliteral targets do not', () => {
   const source = 'const view = `import("./data.js") ${await import("./app.js")} ${require("./module.js")}`;';
   assert.deepEqual(importSpecifiers(source), ['./app.js', './module.js']);

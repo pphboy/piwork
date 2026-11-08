@@ -100,6 +100,7 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		html := strings.Replace(string(content), "<head>", `<head><meta name="piwork-mode" content="hosted">`, 1)
 		html = strings.ReplaceAll(html, `href="/style.css"`, `href="/admin/style.css"`)
 		html = strings.ReplaceAll(html, `src="/browser/`, `src="/admin/browser/`)
+		html = strings.ReplaceAll(html, `src="/piwork-logo.png"`, `src="/admin/piwork-logo.png"`)
 		content = bootrecovery.HTML([]byte(html), r)
 		w.Header().Set("Content-Security-Policy", bootcsp.Policy(w.Header().Get("Content-Security-Policy"), consoleassets.FS))
 	}

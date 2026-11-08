@@ -335,7 +335,7 @@ func (s *Server) serveSetupAsset(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/setup", "/login":
 	case "/setup/browser/onboarding.js", "/setup/browser/onboarding-feedback.js", "/setup/browser/components.js", "/setup/browser/model-form.js", "/setup/browser/pending.js",
-		"/setup/browser/notices.js", "/setup/browser/feedback-policy.js", "/setup/browser/feedback-primitives.js",
+		"/setup/browser/notices.js", "/setup/browser/feedback-policy.js", "/setup/browser/feedback-primitives.js", "/setup/browser/startup-shell.js",
 		// Language runtime and catalogs loaded by the setup entry, boot script and
 		// onboarding modules. Each path is listed exactly; there is no directory prefix.
 		"/setup/browser/i18n.js", "/setup/browser/boot.js", "/setup/browser/locale.js", "/setup/browser/read-deadline.js",

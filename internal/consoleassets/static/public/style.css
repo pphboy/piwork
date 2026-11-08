@@ -221,7 +221,82 @@ button {
   white-space: nowrap;
   border: 0;
 }
-.app-loading { display:flex; align-items:center; gap:8px; min-height:96px; padding:24px; color:var(--muted); }
+.startup-screen {
+  min-height: 100dvh;
+  padding: max(24px, calc(50dvh - 60px)) 24px 32px;
+  color: var(--muted);
+  text-align: center;
+}
+.startup-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  margin: 0 auto;
+}
+.startup-logo {
+  display: block;
+  width: 48px;
+  height: 48px;
+  flex: none;
+}
+.startup-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 21px;
+  font-weight: 400;
+}
+.startup-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+}
+.startup-screen[aria-busy="false"] .startup-indicator {
+  visibility: hidden;
+}
+.startup-recovery {
+  max-width: 420px;
+  margin: 24px auto 0;
+  overflow-wrap: anywhere;
+}
+.startup-recovery p {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.startup-actions, [data-boot-recovery-form] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+[data-boot-state="loading"] [data-static-startup] .startup-recovery {
+  display: none;
+}
+[data-static-startup] .pending-dots > i {
+  animation: none;
+}
+[data-boot-state="loading"] [data-static-startup] .pending-dots > i,
+[data-boot-state="failed"] [data-static-startup][aria-busy="true"] .pending-dots > i {
+  animation: pending-dot-fade 1.2s ease-in-out infinite;
+}
+[data-static-startup] .pending-dots > i:nth-child(2) {
+  animation-delay: .2s;
+}
+[data-static-startup] .pending-dots > i:nth-child(3) {
+  animation-delay: .4s;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-static-startup] .pending-dots > i {
+    animation: none !important;
+  }
+}
+.startup-screen[aria-busy="false"] .pending-dots > i {
+  animation: none;
+}
 .pending-status { display:inline-flex; align-items:center; gap:6px; max-width:100%; }
 .pending-wait-message { color:var(--muted); font-size:11px; }
 .action-status > .pending-dots { order:-1; margin-top:2px; }
@@ -374,29 +449,6 @@ dialog, dialog::backdrop { animation:none; transition:none; }
     width: auto;
     max-height: 28vh;
   }
-}
-
-/* The cold HTML shell has no confirmed data; retain watchdog recovery text. */
-.boot-skeleton {
-  display: grid;
-  gap: 12px;
-  width: min(420px, calc(100vw - 48px));
-  padding: 24px 0;
-}
-.boot-skeleton > .skeleton-fill {
-  display: block;
-  height: 14px;
-  border-radius: 4px;
-}
-.boot-skeleton > .skeleton-fill:first-child {
-  width: 55%;
-  height: 24px;
-}
-.boot-skeleton > .skeleton-fill:last-child {
-  width: 75%;
-}
-[data-boot-state="failed"] .boot-skeleton {
-  display: none;
 }
 
 /* A modal-owned notice floats in measured body space, never over its header/footer controls. */

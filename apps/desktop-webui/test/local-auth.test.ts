@@ -38,10 +38,52 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
 for (const hosted of [false, true]) test(`deep link uses neutral startup before ${hosted ? 'hosted' : 'native'} identity is confirmed`, async t => {
   const gate = pending(); t.after(async () => gate.resolve());
   const { page } = await fixture(t, async r => { if (r.path === 'session') { await gate.promise; return { json: signedIn() }; } }, '', hosted, false, '#/work/missing-work');
-  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+  await expect(page.locator('.startup-screen')).toContainText('Opening Piwork');
   await expect(page.locator('[data-action="account"]')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Works', exact: true })).toHaveCount(0);
   gate.resolve(); await expect(button(page, 'retry-work-read')).toBeVisible();
+});
+for (const hosted of [false, true]) test(`branded ${hosted ? 'hosted' : 'native'} handoff retains geometry until the real session resolves`, async t => {
+  const page = await browser.newPage({ viewport: { width: hosted ? 360 : 1920, height: hosted ? 800 : 1080 } });
+  const entry = pending();
+  const session = pending();
+  const requests: string[] = [];
+  t.after(async () => {
+    entry.resolve();
+    session.resolve();
+    await page.close();
+  });
+  await page.route('**/_desktop/api/**', async route => {
+    const path = new URL(route.request().url()).pathname.slice('/_desktop/api/'.length);
+    requests.push(route.request().method());
+    if (path === 'session') await session.promise;
+    const value = path === 'session' ? signedIn() : path === 'status'
+      ? { health: { available: true }, readiness: { available: true, value: { ready: true } } }
+      : path === 'works' ? { works: [] } : path === 'known-operations' ? { operations: [] } : {};
+    await route.fulfill({ json: value });
+  });
+  await page.route('**/desktop/browser/app.js', async route => {
+    await entry.promise;
+    await route.continue();
+  });
+  if (hosted) await page.route(base + '/', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: (await response.text()).replace('<head>', '<head><meta name="piwork-mode" content="hosted">') });
+  });
+  await page.goto(base + '/', { waitUntil: 'commit' });
+  await expect(page.locator('[data-static-startup]')).toBeVisible();
+  const cold = await page.locator('.startup-brand').boundingBox();
+  entry.resolve();
+  await expect(page.locator('[data-static-startup]')).toHaveCount(0);
+  await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'true');
+  assert.deepEqual(await page.locator('.startup-brand').boundingBox(), cold);
+  await expect(page.locator('.startup-recovery button')).toHaveCount(0);
+  await mkdir(new URL('../../../../dist/startup-loading/', import.meta.url), { recursive: true });
+  await page.screenshot({ path: new URL(`../../../../dist/startup-loading/desktop-${hosted ? 'hosted' : 'native'}-handoff.png`, import.meta.url).pathname });
+  session.resolve();
+  await expect(page.locator('.works-page')).toBeVisible();
+  await expect(page.locator('.startup-screen')).toHaveCount(0);
+  assert(requests.every(method => method === 'GET'));
 });
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]`).last();
@@ -49,7 +91,7 @@ const button = (page: Page, action: string) => page.locator(`[data-action="${act
 test('local auth: checking is visible and valid Cookie discards an old ticket without bootstrap', async t => {
   const gate = pending(); t.after(async () => gate.resolve());
   const { page, records } = await fixture(t, async r => { if (r.path === 'session') { await gate.promise; return { json: signedIn() }; } }, 'used-or-expired');
-  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+  await expect(page.locator('.startup-screen')).toContainText('Opening Piwork');
   assert.equal(await page.locator('[data-action="account"]').count(), 0);
   assert.equal(new URL(page.url()).hash, ''); gate.resolve();
   await expect(page.getByRole('heading', { name: 'Make room for your next idea' })).toBeVisible();
@@ -69,12 +111,33 @@ for (const ticket of ['', 'expired', 'replayed', 'prior-process']) test(`ordinar
 test('local auth: initial network failure does not exchange ticket; manual check and deduplicated reads recover', async t => {
   let online = false; const gate = pending(); t.after(async () => gate.resolve());
   const { page, records } = await fixture(t, async r => { if (r.path === 'session') { if (!online) return { abort: true }; await gate.promise; return { json: signedOut() }; } }, 'ticket');
-  await expect(page.getByRole('heading', { name: 'Desktop connection unavailable' })).toBeVisible();
+  await expect(page.locator('.startup-error')).toBeVisible();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
   online = true;
   const checked = api(page, 'await Promise.all([adapter.checkSession(), adapter.checkSession()])');
   await expect.poll(() => records.filter(r => r.path === 'session').length).toBe(2); gate.resolve(); await checked;
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
   assert.equal(records.filter(r => r.path === 'bootstrap').length, 0);
+});
+test('startup keeps one error and one wait through a failed explicit session retry', async t => {
+  const gate = pending();
+  t.after(async () => gate.resolve());
+  let reads = 0;
+  const { page, records } = await fixture(t, async r => {
+    if (r.path !== 'session') return;
+    if (++reads === 2) await gate.promise;
+    return { abort: true };
+  }, '', false, true);
+  await expect(page.locator('.startup-error')).toBeVisible();
+  await button(page, 'retry-session').click();
+  await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.locator('.pending-dots:visible')).toHaveCount(1);
+  gate.resolve();
+  await expect(page.locator('.startup-error')).toBeVisible();
+  await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
+  await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'false');
+  assert.equal(await page.locator('.startup-indicator i').first().evaluate(node => getComputedStyle(node).animationName), 'none');
+  assert(records.every(record => record.method === 'GET'));
 });
 for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hosted' : 'native'} initialization offers a fresh readonly retry after ten seconds`, async t => {
   const gate = pending(); t.after(async () => gate.resolve()); let reads = 0;
@@ -83,7 +146,7 @@ for (const hosted of [false, true]) test(`ordinary session: hung ${hosted ? 'hos
     if (++reads === 1) { await gate.promise; return { json: signedIn(1, 'obsolete-owner') }; }
     return { json: signedIn(2, 'current-owner') };
   }, '', hosted, true);
-  await expect(page.locator('.app-loading')).toContainText('Opening Piwork');
+  await expect(page.locator('.startup-screen')).toContainText('Opening Piwork');
   await expect(button(page, 'retry-session')).toHaveCount(0);
   await page.clock.fastForward(10000);
   await expect(page.locator('body')).toContainText('The read timed out. The current state has not been confirmed.');
@@ -139,7 +202,7 @@ test('ordinary session: creation verifies the automatic Cookie without an exchan
 test('ordinary session: a lost read can retry without replaying a write',async t=>{
   let reads=0;
   const {page,records}=await fixture(t,r=>r.path==='session'?++reads===1?{abort:true}:{json:signedOut()}:undefined);
-  await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+  await expect(page.locator('.startup-error')).toBeVisible();
   await button(page,'retry-session').click();
   await expect(page.getByRole('heading',{name:'Connect to your Core'})).toBeVisible();
   assert.equal(records.filter(r=>r.method!=='GET').length,0);
@@ -174,7 +237,7 @@ test('a lost sign-in response is read back and never submitted automatically aga
 test('ordinary session: blocked Cookies and capacity show connection diagnostics without Access',async t=>{
   for(const capacity of [false,true]) {
     const {page,records}=await fixture(t,r=>r.path==='session'?capacity?{status:503,json:{code:'LOCAL_SESSION_CAPACITY'}}:{json:{...signedOut(),sessionCreated:true}}:undefined);
-    await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+    await expect(page.locator('.startup-error')).toBeVisible();
     await expect(page.locator('body')).toContainText(capacity?'128 active browser sessions':'did not retain its session Cookie');
     await expect(page.locator('body')).not.toContainText('Browser access required');
     await expect(button(page,'reset-browser-access')).toHaveCount(0);
@@ -345,7 +408,7 @@ test('local auth: initialization losing its identity epoch leaves an explicit re
   const reopen = api(page, 'await adapter.initialize()');
   await expect.poll(() => held).toBe(true);
   await api(page, 'adapter.clearIdentity()'); gate.resolve(); await reopen;
-  await expect(page.getByRole('heading', { name: 'Desktop connection unavailable' })).toBeVisible();
+  await expect(page.locator('.startup-error')).toBeVisible();
   await expect(button(page, 'retry-session')).toBeEnabled();
   await button(page, 'retry-session').click();
   await expect(page.getByRole('heading', { name: 'Connect to your Core' })).toBeVisible();
@@ -376,7 +439,7 @@ for (const offline of [false, true]) test(`local auth: current business 401 read
 test('ordinary session: connection retry is keyboard accessible without narrow overflow',async t=>{
   let online=false;
   const {page}=await fixture(t,r=>r.path==='session'?online?{json:signedOut()}:{abort:true}:undefined);
-  await expect(page.getByRole('heading',{name:'Desktop connection unavailable'})).toBeVisible();
+  await expect(page.locator('.startup-error')).toBeVisible();
   await page.setViewportSize({width:390,height:850});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   online=true;await button(page,'retry-session').focus();await page.keyboard.press('Enter');

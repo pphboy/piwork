@@ -109,8 +109,8 @@ test('administrator session timeout exposes retry and discards the stale read', 
   await mockConsole(page);
   await shortenReadDeadline(page, '/console/api/session');
   await page.goto(base + '/login');
-  await expect(page.locator('[data-startup-status]')).toContainText('could not be confirmed');
-  await page.locator('[data-startup-retry]').click();
+  await expect(page.locator('.startup-error')).toContainText('could not be confirmed');
+  await page.locator('[data-action="startup-retry"]').click();
   await expect(page.locator('#login-form')).toBeVisible();
   await page.locator('#account').fill('new account');
   await page.evaluate(() => window.finishOldRead());
@@ -144,7 +144,7 @@ test('setup stops automatic read recovery after two retries and keeps manual nav
   await page.waitForTimeout(1200);
   expect(reads).toBe(3);
   await expect(page.locator('[data-action="refresh"]')).toBeEnabled();
-  await expect(page.getByRole('link', { name: 'Piwork workbench' })).toHaveAttribute('href', '/');
+  await expect(page.locator('.startup-recovery a')).toHaveAttribute('href', '/');
 });
 
 test('lost login response stays locked until a readback confirms the session', async ({ page }) => {
@@ -256,6 +256,56 @@ async function mockConsole(page, { authenticated = false } = {}) {
       body: JSON.stringify({ status: { ready: true }, preparation: { ready: true, components: {} } }),
     }),
   );
+}
+
+for (const entryPath of ['/admin', '/setup', '/login']) {
+  test(`${entryPath} keeps the brand between static HTML and initial reads, then exposes the real page`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    if (entryPath === '/admin') await mockConsole(page, { authenticated: true });
+    else await mockSetup(page);
+    if (entryPath === '/login') await page.route(base + '/login', async route => route.fulfill({
+      contentType: 'text/html', body: await readFile(join(distRoot, 'public', 'setup.html'), 'utf8'),
+    }));
+    let releaseEntry, releaseRead, releasePage;
+    const entry = new Promise(resolve => { releaseEntry = resolve; });
+    const read = new Promise(resolve => { releaseRead = resolve; });
+    const data = new Promise(resolve => { releasePage = resolve; });
+    const module = entryPath === '/admin' ? '**/browser/app.js' : '**/setup/browser/onboarding.js';
+    const initialRead = entryPath === '/admin' ? '**/console/api/session' : '**/_web/api/state';
+    await page.route(module, async route => {
+      await entry;
+      await route.continue();
+    });
+    await page.route(initialRead, async route => {
+      await read;
+      await route.fallback();
+    });
+    if (entryPath === '/admin') await page.route('**/console/api/admin/status', async route => {
+      await data;
+      await route.fallback();
+    });
+    try {
+      await page.goto(base + entryPath, { waitUntil: 'commit' });
+      await expect(page.locator('[data-static-startup]')).toBeVisible();
+      const cold = await page.locator('.startup-brand').boundingBox();
+      releaseEntry();
+      await expect(page.locator('[data-static-startup]')).toHaveCount(0);
+      await expect(page.locator('.startup-screen')).toHaveAttribute('aria-busy', 'true');
+      expect(await page.locator('.startup-brand').boundingBox()).toEqual(cold);
+      await expect(page.locator('.startup-recovery button')).toHaveCount(0);
+      releaseRead();
+      if (entryPath === '/admin') {
+        await expect(page.locator('.topbar')).toBeVisible();
+        await expect(page.locator('.console-read-skeleton')).toBeVisible();
+        releasePage();
+      } else await expect(page.locator('#credentials')).toBeVisible();
+      await expect(page.locator('.startup-screen')).toHaveCount(0);
+    } finally {
+      releaseEntry();
+      releaseRead();
+      releasePage();
+    }
+  });
 }
 
 /** Mock setup 引导页读取的状态与会话接口，并记录所有写请求。 */

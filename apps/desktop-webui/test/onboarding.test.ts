@@ -559,7 +559,11 @@ test('network errors preserve setup and expired login clears model secrets',asyn
   const page=await browser.newPage();await page.clock.install();await loginSetup(page,server);await fillModel(page);
   await page.evaluate(async()=>{const s=await(await fetch('/_web/api/session')).json();await fetch('/_web/api/logout',{method:'POST',headers:{'Content-Type':'application/json','X-Piwork-Csrf':s.csrfToken},body:'{}'});});
   await page.route('**/_web/api/onboarding',route=>route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({code:'AUTH_REQUIRED'})}));await readSetupAutomatically(page);await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();await expect(page.locator('input[type=password]')).toHaveCount(1);await expect(page.getByLabel('Password',{exact:true})).toHaveValue('');
-  await page.unroute('**/_web/api/onboarding');await page.route('**/_web/api/state',route=>route.abort('failed'));await page.reload();await expect(page.getByRole('heading',{name:'Could not read Core state'})).toBeVisible();await expect(page.getByRole('heading',{name:'Open your setup link'})).toHaveCount(0);
+  await page.unroute('**/_web/api/onboarding');
+  await page.route('**/_web/api/state',route=>route.abort('failed'));
+  await page.reload();
+  await expect(page.locator('.startup-error')).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Open your setup link'})).toHaveCount(0);
   await page.unroute('**/_web/api/state');
   await page.locator('#setup-app').getByRole('button',{name:'Read current state',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Sign in to Piwork'})).toBeVisible();
@@ -603,8 +607,18 @@ test('setup, Admin and hosted Desktop retain shared control states and wrap at 3
   for(const width of [1440,360]){await page.setViewportSize({width,height:1000});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:join(evidence,`admin-runtime-${width}.png`),fullPage:true});}
   await page.goto(server.origin+'/admin/models');await page.getByRole('link',{name:'Long model name '.repeat(16).trim(),exact:true}).click();const danger=page.getByRole('button',{name:'Delete model',exact:true});await expect(danger).toBeVisible();assert.equal((await appearance(danger)).height,40);const dangerStyle=await appearance(danger);assert.equal(dangerStyle.color,'rgb(180, 35, 50)');await danger.hover();assert.notEqual((await appearance(danger)).background,dangerStyle.background);
   await page.goto(server.origin+'/');await expect(page.locator('.core-startup-page')).toBeVisible();const desktop=page.getByRole('button',{name:'Check again',exact:true});assert.equal((await appearance(desktop)).height,normal.height);await page.screenshot({path:join(evidence,'desktop-360.png'),fullPage:true});
-  // A connection failure in the hosted Desktop renders the real Sign in link.
-  await page.route('**/_desktop/api/session',route=>route.abort('failed'));await page.reload();const signIn=page.getByRole('link',{name:'Sign in',exact:true});await expect(signIn).toBeVisible();await expect(signIn).toHaveAttribute('href','/login');const linkStyle=await appearance(signIn);assert.equal(linkStyle.height,normal.height);assert.equal(linkStyle.padding,normal.padding);await signIn.focus();assert.equal((await appearance(signIn)).outline,'solid');await page.screenshot({path:join(evidence,'desktop-connect-360.png'),fullPage:true});
+  // An unconfirmed session has startup recovery; it cannot yet claim signed-out.
+  await page.route('**/_desktop/api/session',route=>route.abort('failed'));
+  await page.reload();
+  const retry=page.locator('.startup-recovery [data-action="retry-session"]');
+  await expect(retry).toBeVisible();
+  await expect(page.locator('.startup-recovery a')).toHaveAttribute('href','/');
+  const retryStyle=await appearance(retry);
+  assert.equal(retryStyle.height,normal.height);
+  assert.equal(retryStyle.padding,normal.padding);
+  await retry.focus();
+  assert.equal((await appearance(retry)).outline,'solid');
+  await page.screenshot({path:join(evidence,'desktop-connect-360.png'),fullPage:true});
  } finally {await browser.close();await server.stop();}
 });
 

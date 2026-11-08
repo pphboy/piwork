@@ -248,7 +248,13 @@ for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-
 }
 
 test('cached Work header owns route reading and ten-second feedback without replacing its content',()=>{
- const {c,work}=fixture();c.actions.records.set('route',{key:'route:work-a:1',work:'work-a',view:c.location.hash,pending:true,started:Date.now()});let html=c.workHeader(work);assert.match(html,/work-read-feedback.*aria-busy="true"/);assert.match(html,/Reading Work/);assert.match(html,/<h1[^>]*>A<\/h1>/);
+ const {c,work}=fixture();
+ c.actions.records.set('route',{key:'route:work-a:1',work:'work-a',view:c.location.hash,pending:true,started:Date.now()});
+ const html=c.workHeader(work);
+ assert.match(html,/work-read-feedback sr-only.*aria-busy="true"/);
+ assert.match(html,/Reading Work/);
+ assert.doesNotMatch(html,/work-read-feedback[^>]*>\s*<span class="pending-dots"/);
+ assert.match(html,/<h1[^>]*>A<\/h1>/);
  c.actions.records.get('route').started-=11000;assert.match(c.workHeader(work),/Still reading Work/);c.actions.records.get('route').view='#/work/other';assert.doesNotMatch(c.workHeader(work),/work-read-feedback/);c.actions.records.get('route').view=c.location.hash;c.actions.records.get('route').pending=false;assert.doesNotMatch(c.workHeader(work),/work-read-feedback/);
 });
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { before, after } from 'node:test';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { chromium, expect, type Page, type Route } from '@playwright/test';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>;
@@ -9,8 +9,11 @@ let base = '';
 let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<boolean>) | undefined;
 const server = createServer(async (request, response) => {
   if (nativeDownloadHandler && await nativeDownloadHandler(request, response)) return;
-  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : 'index.html');
-  try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
+  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : request.url === '/desktop/piwork-logo.png' ? 'piwork-logo.png' : 'index.html');
+  try {
+    response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.png') ? 'image/png' : 'text/html');
+    response.end(await readFile(new URL(path, import.meta.url)));
+  }
   catch { response.writeHead(404); response.end(); }
 });
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
@@ -223,6 +226,65 @@ test('Final 7.1 a late initial Work read does not replace an explicit Files area
   await expect(page.getByRole('menu', { name: 'File actions' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Upload files' })).toBeFocused();
   await page.keyboard.press('Escape'); await expect(page.locator('#file-add-trigger')).toBeFocused();
+  assert.equal(businessWrites(requests).length, 0);
+});
+
+for (const width of [1920, 360]) for (const area of ['Service', 'Files', 'Chat', 'Settings']) {
+  test(`Work header stays fixed during a delayed route read in ${area} at ${width}px`, async t => {
+    const gate = deferred(t);
+    const { page, requests } = await fixture(t, async r => {
+      if (r.path.endsWith('/configuration')) await gate.promise;
+      return filesFixture(r) ?? appFixture(r);
+    }, false, false);
+    await page.setViewportSize({ width, height: 900 });
+    if (area === 'Files' || area === 'Chat') await button(page, `tab-${area}`).click();
+    if (area === 'Settings') await openWorkSettings(page);
+    const status = page.locator('.work-read-feedback');
+    await expect(status).toHaveCount(1);
+    await expect(status).toHaveClass(/sr-only/);
+    await expect(status).toHaveAttribute('aria-busy', 'true');
+    await expect(status.locator('.pending-dots')).toHaveCount(0);
+    const header = page.locator('.work-header');
+    await expect(header.locator('.pending-dots:visible')).toHaveCount(0);
+    const selectors = ['h1', '.work-header-status', '[data-action="work-menu"]'];
+    const before = await Promise.all(selectors.map(selector => header.locator(selector).boundingBox()));
+    assert(before.every(Boolean));
+    if (area === 'Service') {
+      const output = new URL('../../../../dist/work-header-preview/', import.meta.url);
+      await mkdir(output, { recursive: true });
+      await page.screenshot({ path: new URL(`work-header-${width}-pending.png`, output).pathname });
+    }
+    gate.release();
+    await expect(status).toHaveCount(0);
+    const after = await Promise.all(selectors.map(selector => header.locator(selector).boundingBox()));
+    assert.deepEqual(after, before);
+    assert.equal(businessWrites(requests).length, 0);
+  });
+}
+
+test('Work header hides Core-check dots without losing busy status or moving controls', async t => {
+  const gate = deferred(t);
+  let armed = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (armed && r.path === 'status') await gate.promise;
+    return filesFixture(r) ?? appFixture(r);
+  });
+  const header = page.locator('.work-header');
+  const selectors = ['h1', '.work-header-status', '.core-check-slot', '[data-action="work-menu"]'];
+  const before = await Promise.all(selectors.map(selector => header.locator(selector).boundingBox()));
+  armed = true;
+  const checking = api(page, 'await adapter.checkConnection()');
+  const slot = header.locator('.core-check-slot');
+  await expect(slot).toHaveAttribute('aria-busy', 'true');
+  await expect(slot).toHaveAttribute('aria-label', /.+/);
+  await expect(slot.locator('.pending-dots')).toHaveCount(1);
+  await expect(slot.locator('.pending-dots')).toBeHidden();
+  await expect(header.locator('.pending-dots:visible')).toHaveCount(0);
+  assert.deepEqual(await Promise.all(selectors.map(selector => header.locator(selector).boundingBox())), before);
+  gate.release();
+  await checking;
+  await expect(slot).toHaveAttribute('aria-hidden', 'true');
+  assert.deepEqual(await Promise.all(selectors.map(selector => header.locator(selector).boundingBox())), before);
   assert.equal(businessWrites(requests).length, 0);
 });
 

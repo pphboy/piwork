@@ -27,7 +27,7 @@
 
   function showFailure(retrying) {
     document.documentElement.dataset.bootState = 'failed';
-    var loading = document.querySelector('[data-boot-loading]');
+    var loading = document.querySelector('[data-boot-error]');
     if (!loading) {
       // Parsing may not yet have reached the body when an asset fails.
       setTimeout(function () { if (!owned) showFailure(retrying); }, 100);
@@ -36,7 +36,7 @@
     loading.textContent = chinese()
       ? (retrying ? '页面加载未完成，正在重试…' : '页面加载未完成，请重试或返回首页。')
       : (retrying ? 'Page loading was interrupted. Retrying…' : 'Page loading was interrupted. Retry or return home.');
-    var status = loading.closest('[aria-busy]');
+    var status = loading.closest('[data-static-startup]');
     if (status) status.setAttribute('aria-busy', retrying ? 'true' : 'false');
   }
 
@@ -125,4 +125,10 @@
     }
   });
   watchdog = setTimeout(function () { fail(false); }, 10000);
+  document.documentElement.dataset.bootState = 'loading';
+  document.addEventListener('readystatechange', function () {
+    if (owned || failed) return;
+    var status = document.querySelector('[data-static-startup]');
+    if (status) status.setAttribute('aria-busy', 'true');
+  });
 }());

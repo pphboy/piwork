@@ -28,7 +28,7 @@
 
   function showFailure(retrying) {
     document.documentElement.dataset.bootState = 'failed';
-    var loading = document.querySelector('[data-boot-loading]');
+    var loading = document.querySelector('[data-boot-error]');
     if (!loading) {
       // Parsing may not yet have reached the body when an asset fails.
       setTimeout(function () { if (!owned) showFailure(retrying); }, 100);
@@ -37,7 +37,7 @@
     loading.textContent = chinese()
       ? (retrying ? '页面加载未完成，正在重试…' : '页面加载未完成，请重试或返回首页。')
       : (retrying ? 'Page loading was interrupted. Retrying…' : 'Page loading was interrupted. Retry or return home.');
-    var status = loading.closest('[aria-busy]');
+    var status = loading.closest('[data-static-startup]');
     if (status) status.setAttribute('aria-busy', retrying ? 'true' : 'false');
   }
 
@@ -126,5 +126,18 @@
     }
   });
   watchdog = setTimeout(function () { fail(false); }, 10000);
+  document.documentElement.dataset.bootState = 'loading';
+  document.addEventListener('readystatechange', function () {
+    if (owned || failed) return;
+    var status = document.querySelector('[data-static-startup]');
+    if (status) status.setAttribute('aria-busy', 'true');
+  });
 }());
-</script><link rel="icon" type="image/png" href="/desktop/piwork-logo.png"><link rel="stylesheet" href="/style.css"><script type="module" src="/desktop/browser/boot.js"></script><script type="module" src="/desktop/browser/app.js"></script></head><body data-boot-page="desktop"><div id="app" aria-live="polite"><div class="app-loading" role="status" aria-busy="true"><div class="boot-skeleton" aria-hidden="true"><i class="skeleton-fill"></i><i class="skeleton-fill"></i><i class="skeleton-fill"></i></div><span data-boot-loading>Opening Piwork…</span><form method="get" data-boot-recovery-form><!-- PIWORK_BOOT_RECOVERY --><button type="submit" class="button quiet" data-boot-recovery>重新加载 / Reload</button> <a href="/" data-boot-home>返回首页 / Home</a></form></div></div></body></html>
+</script><link rel="icon" type="image/png" href="/desktop/piwork-logo.png"><link rel="stylesheet" href="/style.css"><script type="module" src="/desktop/browser/boot.js"></script><script type="module" src="/desktop/browser/app.js"></script></head><body data-boot-page="desktop"><div id="app" aria-live="polite"><main class="startup-screen" data-static-startup role="status" aria-busy="false">
+    <div class="startup-brand">
+      <img class="startup-logo" src="/desktop/piwork-logo.png" alt="" width="48" height="48">
+      <p class="startup-message" data-boot-loading>Opening Piwork…</p>
+      <div class="startup-indicator"><span class="pending-dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+    </div>
+    <div class="startup-recovery"><p data-boot-error>页面加载尚未完成，可重新加载或返回首页。 / Page loading is incomplete. Reload or return home.</p><form method="get" data-boot-recovery-form><!-- PIWORK_BOOT_RECOVERY --><button type="submit" class="button btn secondary startup-retry" data-boot-recovery>重新加载 / Reload</button><a href="/" data-boot-home>返回首页 / Home</a></form></div>
+  </main></div></body></html>

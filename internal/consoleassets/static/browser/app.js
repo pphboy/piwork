@@ -8,6 +8,7 @@ import { resultNotice, readFailureNotice, pageReadNoticeOwners } from './feedbac
 import { createLanguagePicker } from './i18n.js';
 import { readWithDeadline } from './read-deadline.js';
 import { pendingDots } from './pending.js';
+import { startupShell } from './startup-shell.js';
 import { mountQuickSetup } from './quick-setup.js';
 import { randomUUID } from './browser-crypto.js';
 import { packagePhaseView, packageSteps } from './package-phase.js';
@@ -59,6 +60,10 @@ const moduleTitle = (value, fallback) => {
     return entry ? t(entry[0]) : fallback;
 };
 onLocaleChange(() => {
+    if (app.querySelector('.startup-screen')) {
+        startupStatus(app.querySelector('.startup-error') ? t('startup.unconfirmed') : '');
+        return;
+    }
     const password = document.querySelector('#login-form #password')?.value;
     if (feedbackRenderer && feedback === renderedFeedback)
         feedback = renderedFeedback = feedbackRenderer();
@@ -3051,15 +3056,14 @@ pageURL = location.pathname + location.search;
 let startupSequence = 0, availabilitySequence = 0;
 let availabilityNoticeOwner = null;
 let startupTimer, availabilityTimer;
-function startupStatus(message) {
-    const node = app.querySelector('[data-startup-status]');
-    if (node) {
-        node.textContent = message;
-        node.classList.toggle('sr-only', message === t('startup.opening'));
-    }
-    const skeleton = app.querySelector('[data-startup-skeleton]');
-    if (skeleton)
-        skeleton.hidden = message !== t('startup.opening');
+function consoleStartup(error = '') {
+    return startupShell({ logoUrl: hosted ? '/admin/piwork-logo.png' : '/piwork-logo.png', message: t('startup.opening'),
+        error, pending: !error, retry: { label: t('common.retry'), action: 'startup-retry' },
+        home: { label: t('startup.home'), href: '/' } });
+}
+function startupStatus(error = '') {
+    if (app.querySelector('.startup-screen'))
+        app.innerHTML = consoleStartup(error);
 }
 function availabilityNotice(message) {
     const identity = String(adapter.identityEpoch), generation = availabilitySequence, origin = path;
@@ -3127,7 +3131,7 @@ async function startConsole(automatic = false, attempt = 0) {
         startupSequence++;
         clearTimeout(startupTimer);
         adapter.cancelReads(['session']);
-        startupStatus(t('startup.opening'));
+        startupStatus();
     }
     const sequence = startupSequence, origin = location.pathname + location.search;
     const valid = () => sequence === startupSequence && origin === location.pathname + location.search;
@@ -3146,8 +3150,8 @@ async function startConsole(automatic = false, attempt = 0) {
                 void startConsole(true, attempt + 1); }, attempt === 0 ? 1000 : 3000);
     }
 }
-app.innerHTML = `<main class="main task-main"><p role="status" class="sr-only" data-startup-status>${esc(t('startup.opening'))}</p><section data-startup-skeleton class="console-read-skeleton" aria-busy="true" aria-label="${esc(t('startup.opening'))}"><div class="console-read-skeleton-heading skeleton-fill" aria-hidden="true"></div><div class="console-read-skeleton-panel"><div class="skeleton-fill" aria-hidden="true"></div><div class="skeleton-fill" aria-hidden="true"></div></div></section><button type="button" class="btn secondary" data-startup-retry>${esc(t('common.retry'))}</button> <a href="/">${esc(t('startup.home'))}</a></main>`;
-app.addEventListener('click', event => { if (event.target.closest('[data-startup-retry]'))
+app.innerHTML = consoleStartup();
+app.addEventListener('click', event => { if (event.target.closest('[data-action="startup-retry"]'))
     void startConsole(); });
 document.dispatchEvent(new Event('piwork:boot-ready'));
 void startConsole();

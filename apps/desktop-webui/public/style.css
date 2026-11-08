@@ -3535,7 +3535,6 @@ a.button.primary { color:var(--on-accent,#fff); }
 /* A read-only refresh stays focusable while its existing action lock rejects repeats. */
 .file-refresh[aria-disabled="true"] { cursor: not-allowed; opacity: 0.48; }
 
-.work-read-feedback { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); }
 
 .history-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-block: 8px; }
 /* A real history limit is explained where the history operation lives, not as a
@@ -3705,6 +3704,16 @@ a.button.primary { color:var(--on-accent,#fff); }
   font-size: 14px;
 }
 /* The original observed/task status shares one allocation before and during a read/write. */
+.work-header .pending-dots {
+  visibility: hidden;
+  animation: none;
+}
+.work-header .pending-dots > i {
+  animation: none;
+}
+.work-header .action-pending-label {
+  opacity: 1;
+}
 .work-header-status {
   display: flex;
   align-items: center;
