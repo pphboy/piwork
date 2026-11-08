@@ -357,6 +357,11 @@ type ArtifactReference struct {
 	Digest    Field[Digest] `json:"digest,omitzero"`
 }
 
+type AutoNameSessionInput struct {
+	OperationKey     string       `json:"operationKey"`
+	ExpectedRevision WorkByteSize `json:"expectedRevision"`
+}
+
 type BrainBehaviorChecks []struct {
 	Name    string `json:"name"`
 	Passed  bool   `json:"passed"`
@@ -450,14 +455,20 @@ type ChatRunView struct {
 }
 
 type ChatSessionView struct {
-	WorkId          Identifier             `json:"workId"`
-	SessionId       Identifier             `json:"sessionId"`
-	CreatedAt       Timestamp              `json:"createdAt"`
-	UpdatedAt       Timestamp              `json:"updatedAt"`
-	ModelPreference json.RawMessage        `json:"modelPreference"`
-	ThinkingLevel   ThinkingSetting        `json:"thinkingLevel"`
-	ThinkingProfile Field[ThinkingProfile] `json:"thinkingProfile,omitzero"`
-	Source          AgentRunSource         `json:"source"`
+	WorkId          Identifier                  `json:"workId"`
+	SessionId       Identifier                  `json:"sessionId"`
+	CreatedAt       Timestamp                   `json:"createdAt"`
+	UpdatedAt       Timestamp                   `json:"updatedAt"`
+	ModelPreference json.RawMessage             `json:"modelPreference"`
+	ThinkingLevel   ThinkingSetting             `json:"thinkingLevel"`
+	ThinkingProfile Field[ThinkingProfile]      `json:"thinkingProfile,omitzero"`
+	Source          AgentRunSource              `json:"source"`
+	Title           Field[json.RawMessage]      `json:"title,omitzero"`
+	TitleSource     Field[SessionTitleSource]   `json:"titleSource,omitzero"`
+	TitleRevision   Field[WorkByteSize]         `json:"titleRevision,omitzero"`
+	AutoNameState   Field[SessionAutoNameState] `json:"autoNameState,omitzero"`
+	ManualTitleLock Field[bool]                 `json:"manualTitleLock,omitzero"`
+	DeletedAt       Field[json.RawMessage]      `json:"deletedAt,omitzero"`
 }
 
 type ChatSubmissionKey string
@@ -500,6 +511,11 @@ type CreateUserRequest struct {
 	Account  Identifier      `json:"account"`
 	Password string          `json:"password"`
 	Role     Field[UserRole] `json:"role,omitzero"`
+}
+
+type DeleteSessionInput struct {
+	OperationKey     string       `json:"operationKey"`
+	ExpectedRevision WorkByteSize `json:"expectedRevision"`
 }
 
 type DiagnosticCode string
@@ -1326,6 +1342,12 @@ type ReleaseNotes struct {
 	} `json:"sections"`
 }
 
+type RenameSessionInput struct {
+	OperationKey     string       `json:"operationKey"`
+	ExpectedRevision WorkByteSize `json:"expectedRevision"`
+	Title            string       `json:"title"`
+}
+
 type ResetUserPasswordRequest struct {
 	Password string `json:"password"`
 }
@@ -1582,6 +1604,8 @@ type ServiceQueryResult struct {
 	}] `json:"checks,omitzero"`
 }
 
+type SessionAutoNameState string
+
 type SessionChatOptions struct {
 	SessionId       Identifier             `json:"sessionId"`
 	ModelRef        json.RawMessage        `json:"modelRef"`
@@ -1593,6 +1617,29 @@ type SessionChatOptions struct {
 }
 
 type SessionContentBlock = json.RawMessage
+
+type SessionManagementCapabilities struct {
+	ContractVersion float64 `json:"contractVersion"`
+}
+
+type SessionManagementLookup = json.RawMessage
+
+type SessionManagementOperationQuery struct {
+	SessionId Identifier `json:"sessionId"`
+}
+
+type SessionManagementState struct {
+	WorkId      Identifier           `json:"workId"`
+	SessionId   Identifier           `json:"sessionId"`
+	Title       json.RawMessage      `json:"title"`
+	TitleSource SessionTitleSource   `json:"titleSource"`
+	Revision    WorkByteSize         `json:"revision"`
+	ManualLock  bool                 `json:"manualLock"`
+	DeletedAt   json.RawMessage      `json:"deletedAt"`
+	AutoState   SessionAutoNameState `json:"autoState"`
+}
+
+type SessionTitleSource string
 
 type SetSessionChatOptions struct {
 	ModelRef        json.RawMessage        `json:"modelRef"`

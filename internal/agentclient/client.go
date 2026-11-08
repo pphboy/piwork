@@ -121,10 +121,10 @@ func VerifyReadiness(scope internaltls.Scope, contextID string, initializationOn
 }
 
 func VerifyObservation(scope internaltls.Scope, contextID string, response *agentv1.ReadinessResponse) error {
-	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7) {
+	if response != nil && (response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7 && response.GetWorkHistorySchemaVersion() != 8) {
 		return ErrContextIncompatible
 	}
-	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7 || response.GetContextIdentity() != contextID {
+	if contextID == "" || response == nil || response.GetWorkId() != scope.WorkID || response.GetGeneration() != uint64(scope.Generation) || response.GetInstanceId() != scope.InstanceID || response.GetProtocolVersion() != "v2" || response.GetContextContractVersion() != 1 || response.GetPackageContractVersion() != 1 || response.GetRunModelContractVersion() != 1 || response.GetWorkFeedbackContractVersion() != 1 || response.GetWorkHistorySchemaVersion() != 4 && response.GetWorkHistorySchemaVersion() != 5 && response.GetWorkHistorySchemaVersion() != 6 && response.GetWorkHistorySchemaVersion() != 7 && response.GetWorkHistorySchemaVersion() != 8 || response.GetContextIdentity() != contextID {
 		return ErrReadiness
 	}
 	return nil
@@ -384,6 +384,26 @@ func publicJSON(raw, schema string) bool {
 	return err == nil && contracts.Validate(schema, value) == nil
 }
 func validSessionMetadata(session *agentv1.Session) bool {
+	if session != nil {
+		source, auto := session.GetTitleSource(), session.GetAutoNameState()
+		if source == "" {
+			if session.Title != nil || session.DeletedAt != nil || session.GetTitleRevision() != 0 || auto != "" || session.GetManualTitleLock() {
+				return false
+			}
+		} else if (source != "default" && source != "manual" && source != "auto") ||
+			(auto != "eligible" && auto != "pending" && auto != "completed" && auto != "failed" && auto != "unknown") ||
+			session.GetTitleRevision() > uint64(contracts.MaxSafeInteger) ||
+			(source == "default" && session.Title != nil) ||
+			(source != "default" && (session.Title == nil || session.GetTitle() == "" || len(session.GetTitle()) > 480 || utf8.RuneCountInString(session.GetTitle()) > 120 || strings.ContainsRune(session.GetTitle(), 0) || session.GetTitleRevision() == 0)) ||
+			(source == "manual" && !session.GetManualTitleLock()) {
+			return false
+		}
+		if session.DeletedAt != nil {
+			if _, err := time.Parse(time.RFC3339Nano, session.GetDeletedAt()); err != nil || session.GetTitleRevision() == 0 {
+				return false
+			}
+		}
+	}
 	if session != nil && session.GetThinkingProfile() != "" && (session.GetThinkingUnrequested() || contracts.Validate("ThinkingProfileSchema", session.GetThinkingProfile()) != nil) {
 		return false
 	}

@@ -25,7 +25,7 @@ import (
 
 func conversationPath(r *http.Request) (workID, resource, item, action string, matched bool) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) < 5 || len(parts) > 10 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" && parts[4] != "chat-image-capabilities" && parts[4] != "history-capabilities" {
+	if len(parts) < 5 || len(parts) > 10 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "works" || parts[4] != "sessions" && parts[4] != "runs" && parts[4] != "models" && parts[4] != "agent-requests" && parts[4] != "evidence" && parts[4] != "chat-capabilities" && parts[4] != "chat-models" && parts[4] != "commands" && parts[4] != "chat-image-capabilities" && parts[4] != "history-capabilities" && parts[4] != "session-management-capabilities" {
 		return "", "", "", "", false
 	}
 	for i := 3; i < len(parts); i++ {
@@ -38,6 +38,9 @@ func conversationPath(r *http.Request) (workID, resource, item, action string, m
 	workID, resource = parts[3], parts[4]
 	if len(parts) == 10 && resource == "sessions" && parts[6] == "runs" && parts[8] == "images" {
 		return workID, "session-images", parts[5], parts[7], true
+	}
+	if len(parts) == 8 && resource == "sessions" && parts[6] == "management-operations" {
+		return workID, "session-management-operations", parts[5], parts[7], true
 	}
 	if len(parts) > 7 {
 		return "", "", "", "", false
@@ -58,6 +61,7 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	}
 	valid := (resource == "chat-image-capabilities" && item == "" || resource == "session-images") && r.Method == "GET" || chatControlRoute(r.Method, resource, item, action) || feedbackRoute(r.Method, resource, item, action) || resource == "models" && item == "" && action == "" && r.Method == "GET" || resource == "sessions" && item != "" && action == "model" && r.Method == "PATCH" || action == "" && (resource == "sessions" && (r.Method == "GET" || r.Method == "POST" && item == "") || resource == "runs" && (r.Method == "POST" && item == "" || r.Method == "GET" && item != "")) || resource == "runs" && item != "" && r.Method == "POST" && action == "cancel" || resource == "runs" && item != "" && r.Method == "GET" && action == "events"
 	valid = valid || historyRoute(r.Method, resource, item, action)
+	valid = valid || sessionManagementRoute(r.Method, resource, item, action)
 	if !valid {
 		return false, nil
 	}
@@ -93,6 +97,9 @@ func (a *Application) conversation(w http.ResponseWriter, r *http.Request, actor
 	r = r.WithContext(routeRequest)
 	if historyRoute(r.Method, resource, item, action) {
 		return true, serveHistoryHTTP(w, r, agent, resource, item)
+	}
+	if sessionManagementRoute(r.Method, resource, item, action) {
+		return true, a.sessionManagementHTTP(w, r, agent, workID, resource, item, action)
 	}
 	r, agent, err = conversationProfile(r, agent, resource, item)
 	if err != nil {
@@ -444,6 +451,14 @@ func sessionView(session *agentv1.Session) any {
 		return nil
 	}
 	view := map[string]any{"thinkingLevel": thinkingFact(session.GetThinkingLevel(), session.GetThinkingUnrequested()), "workId": session.GetWorkId(), "sessionId": session.GetSessionId(), "sdkHistoryPath": session.GetSdkHistoryPath(), "createdAt": session.GetCreatedAt(), "updatedAt": session.GetUpdatedAt()}
+	if session.GetTitleSource() != "" {
+		view["title"] = session.Title
+		view["titleSource"] = session.GetTitleSource()
+		view["titleRevision"] = session.GetTitleRevision()
+		view["autoNameState"] = session.GetAutoNameState()
+		view["manualTitleLock"] = session.GetManualTitleLock()
+		view["deletedAt"] = session.DeletedAt
+	}
 	if session.GetThinkingProfile() != "" {
 		view["thinkingProfile"] = session.GetThinkingProfile()
 	}

@@ -466,7 +466,7 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 		}
 		return desktopControl{}, false, nil
 	}
-	if (parts[2] == "models" || parts[2] == "chat-image-capabilities" || parts[2] == "chat-capabilities" || parts[2] == "chat-models" || parts[2] == "commands") && len(parts) == 3 && method == http.MethodGet {
+	if (parts[2] == "models" || parts[2] == "chat-image-capabilities" || parts[2] == "chat-capabilities" || parts[2] == "chat-models" || parts[2] == "commands" || parts[2] == "session-management-capabilities") && len(parts) == 3 && method == http.MethodGet {
 		return create(method, base+"/"+parts[2], nil, 200)
 	}
 	if parts[2] == "agent-requests" || parts[2] == "evidence" {
@@ -549,6 +549,43 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 	}
 	if parts[2] == "sessions" {
 		path := base + "/sessions"
+		if len(parts) == 6 && parts[4] == "management-operations" && method == http.MethodGet {
+			sessionID, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			key, err := url.PathUnescape(parts[5])
+			if err != nil || contracts.Validate("ChatSubmissionKeySchema", key) != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/"+sessionID+"/management-operations/"+url.PathEscape(key), nil, 200)
+		}
+		if len(parts) == 5 && (parts[4] == "management" && method == http.MethodGet || parts[4] == "name" && method == http.MethodPatch || (parts[4] == "delete" || parts[4] == "auto-name") && method == http.MethodPost) {
+			sessionID, err := identifier(parts[3])
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			if method == http.MethodGet {
+				return create(method, path+"/"+sessionID+"/management", nil, 200)
+			}
+			fields, schema := []string{"operationKey", "expectedRevision"}, "DeleteSessionInputSchema"
+			if parts[4] == "auto-name" {
+				schema = "AutoNameSessionInputSchema"
+			}
+			if method == http.MethodPatch {
+				fields, schema = append(fields, "title"), "RenameSessionInputSchema"
+			}
+			input, err := desktopControlInput(r, fields...)
+			if err != nil {
+				return desktopControl{}, true, err
+			}
+			raw, _ := json.Marshal(input)
+			value, err := contracts.ParseJSON(strings.NewReader(string(raw)), 4096)
+			if err != nil || contracts.Validate(schema, value) != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/"+sessionID+"/"+parts[4], input, 200)
+		}
 		if len(parts) == 5 && parts[4] == "chat-options" && (method == http.MethodGet || method == http.MethodPatch) {
 			sessionID, err := identifier(parts[3])
 			if err != nil {

@@ -19,6 +19,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
@@ -320,7 +321,7 @@ func validateSchema(ctx context.Context, db *sql.DB) error {
 		return ErrInvalid
 	}
 	normalizeSchema(actual)
-	for index, raw := range [][]byte{schemaObjects, schemaV5Objects, previousSchemaObjects, currentSchemaObjects} {
+	for index, raw := range [][]byte{schemaObjects, schemaV5Objects, previousSchemaObjects, schemaV7Objects, schemaV8Objects} {
 		var expected []schemaObject
 		if json.Unmarshal(raw, &expected) != nil {
 			return ErrUnsupported
@@ -481,6 +482,12 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 			}
 		}
 	}
+	if historyVersion(ctx, db) >= 8 {
+		var value int
+		if err := db.QueryRowContext(ctx, `SELECT 1 FROM session_management m JOIN runs r ON r.run_id=m.auto_run_id WHERE r.work_id!=m.work_id OR r.session_id!=m.session_id LIMIT 1`).Scan(&value); !errors.Is(err, sql.ErrNoRows) {
+			return Summary{}, ErrInvalid
+		}
+	}
 	if historyVersion(ctx, db) >= 5 {
 		if err := validateMemoryHistory(ctx, db, scope); err != nil {
 			return Summary{}, err
@@ -494,7 +501,7 @@ func validateRows(ctx context.Context, db *sql.DB, root int, scope Scope) (Summa
 func validateRow(table string, row map[string]any, root int, scope Scope) error {
 	switch table {
 	case "schema_migrations":
-		if row["version"] != int64(4) && row["version"] != int64(5) && row["version"] != int64(6) && row["version"] != int64(7) {
+		if row["version"] != int64(4) && row["version"] != int64(5) && row["version"] != int64(6) && row["version"] != int64(7) && row["version"] != int64(8) {
 			return ErrUnsupported
 		}
 	case "sessions":
@@ -512,6 +519,60 @@ func validateRow(table string, row map[string]any, root int, scope Scope) error 
 				return ErrInvalid
 			}
 			file.Close()
+		}
+	case "session_management":
+		title, titleOK := row["title"].(string)
+		source, sourceOK := row["title_source"].(string)
+		auto, autoOK := row["auto_state"].(string)
+		if !nonempty(row["session_id"]) || !sourceOK || !autoOK || !integer(row["title_revision"], 0) || !integer(row["manual_lock"], 0) || row["manual_lock"].(int64) > 1 ||
+			(source != "default" && source != "manual" && source != "auto") ||
+			(auto != "eligible" && auto != "pending" && auto != "completed" && auto != "failed" && auto != "unknown") ||
+			(source == "default" && row["title"] != nil) || (source != "default" && (!titleOK || title == "" || len(title) > 480 || utf8.RuneCountInString(title) > 120 || strings.ContainsRune(title, 0) || row["title_revision"].(int64) < 1)) ||
+			(source == "manual" && row["manual_lock"] != int64(1)) || (row["deleted_at"] != nil && (!timestamp(row["deleted_at"]) || row["title_revision"].(int64) < 1)) ||
+			(row["auto_revision"] != nil && !integer(row["auto_revision"], 0)) || (auto == "pending" && (!nonempty(row["auto_run_id"]) || row["auto_revision"] == nil || !nonempty(row["auto_operation_key"]))) {
+			return ErrInvalid
+		}
+	case "session_management_operations":
+		key, keyOK := row["operation_key"].(string)
+		digest, digestOK := row["request_digest"].(string)
+		kind, kindOK := row["operation_kind"].(string)
+		operationStatus, statusOK := row["operation_status"].(string)
+		result, resultOK := row["result_json"].(string)
+		var parsed map[string]json.RawMessage
+		var receipt struct {
+			Title       *string `json:"title"`
+			TitleSource string  `json:"titleSource"`
+			Revision    int64   `json:"revision"`
+			ManualLock  bool    `json:"manualLock"`
+			DeletedAt   *string `json:"deletedAt"`
+			AutoState   string  `json:"autoState"`
+		}
+		if !nonempty(row["session_id"]) || !keyOK || !nonempty(key) || len(key) > 256 || !digestOK || len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" ||
+			!kindOK || (kind != "rename" && kind != "delete" && kind != "auto-name") || !statusOK ||
+			(operationStatus != "pending" && operationStatus != "accepted" && operationStatus != "failed" && operationStatus != "unknown") || (kind != "auto-name" && operationStatus != "accepted") ||
+			!resultOK || json.Unmarshal([]byte(result), &parsed) != nil || len(parsed) != 6 || json.Unmarshal([]byte(result), &receipt) != nil {
+			return ErrInvalid
+		}
+		for _, field := range []string{"title", "titleSource", "revision", "manualLock", "deletedAt", "autoState"} {
+			if _, ok := parsed[field]; !ok {
+				return ErrInvalid
+			}
+		}
+		if string(parsed["manualLock"]) != "true" && string(parsed["manualLock"]) != "false" {
+			return ErrInvalid
+		}
+		if (receipt.TitleSource != "default" && receipt.TitleSource != "manual" && receipt.TitleSource != "auto") ||
+			(receipt.TitleSource == "default" && receipt.Title != nil) ||
+			(receipt.TitleSource != "default" && (receipt.Title == nil || *receipt.Title == "" || len(*receipt.Title) > 480 || utf8.RuneCountInString(*receipt.Title) > 120 || strings.ContainsRune(*receipt.Title, 0) || receipt.Revision < 1)) ||
+			(receipt.TitleSource == "manual" && !receipt.ManualLock) || receipt.Revision < 0 || receipt.Revision > contracts.MaxSafeInteger ||
+			(receipt.DeletedAt != nil && (!timestamp(*receipt.DeletedAt) || receipt.Revision < 1)) ||
+			(receipt.AutoState != "eligible" && receipt.AutoState != "pending" && receipt.AutoState != "completed" && receipt.AutoState != "failed" && receipt.AutoState != "unknown") ||
+			(kind == "delete" && receipt.DeletedAt == nil) || (kind == "rename" && (receipt.DeletedAt != nil || receipt.TitleSource != "manual")) ||
+			(kind == "auto-name" && operationStatus == "accepted" && (receipt.DeletedAt != nil || receipt.TitleSource != "auto" || receipt.AutoState != "completed")) ||
+			(kind == "auto-name" && operationStatus == "pending" && (receipt.DeletedAt != nil || receipt.AutoState != "pending")) ||
+			(kind == "auto-name" && operationStatus == "unknown" && receipt.AutoState != "unknown") ||
+			(kind == "auto-name" && operationStatus == "failed" && receipt.AutoState != "failed" && receipt.AutoState != "unknown") {
+			return ErrInvalid
 		}
 	case "runs":
 		switch row["state"] {

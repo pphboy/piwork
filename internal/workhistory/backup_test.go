@@ -310,6 +310,50 @@ func TestSchemaSixToSevenBackupRestoresBothDatabases(t *testing.T) {
 	}
 }
 
+func TestSchemaSevenToEightBackupRestoresBothDatabases(t *testing.T) {
+	private, scope := memoryFixture(t)
+	db, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(schemaV6SQL[strings.Index(schemaV6SQL, "CREATE TABLE run_output_chunks"):] + "; ALTER TABLE sessions DROP COLUMN active_context_identity; UPDATE schema_migrations SET version=7"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	request := BackupRequest{OperationID: "operation-1111111111111111", WorkID: scope.SourceWorkID, BackupKey: "backup-1111111111111111", ContextIDs: []string{"context-memory-source"}, TargetSchema: 8}
+	spool := t.TempDir()
+	before := fingerprint(t, private)
+	saved, err := CheckpointHistory(context.Background(), private, spool, request)
+	if err != nil || saved.SchemaVersion != 7 || saved.State != "saved" {
+		t.Fatal(saved, err)
+	}
+	if again, err := CheckpointHistory(context.Background(), private, spool, request); err != nil || again != saved {
+		t.Fatal(again, err)
+	}
+	db, err = database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(schemaV8SQL[strings.Index(schemaV8SQL, "-- Session management metadata"):] + "; UPDATE schema_migrations SET version=8"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("ATTACH DATABASE ? AS memory", filepath.Join(private, "memory.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("UPDATE memory.memory_head SET version=0"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	request.ExpectedManifestDigest = saved.ManifestDigest
+	restored, err := RestoreHistoryBackup(context.Background(), private, spool, request)
+	if err != nil || restored.SchemaVersion != 7 || restored.State != "restored" {
+		t.Fatal(restored, err)
+	}
+	if after := fingerprint(t, private); !reflect.DeepEqual(before, after) {
+		t.Fatal("schema 7 backup failed to restore both databases", before, after)
+	}
+}
+
 func TestHistoryBackupRejectsWrongDigestAndUnknownMemoryOwnership(t *testing.T) {
 	for _, scenario := range []string{"digest", "inode", "link", "memory-exists"} {
 		t.Run(scenario, func(t *testing.T) {

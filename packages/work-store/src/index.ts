@@ -15,4 +15,5 @@ export {
 export * from "./snapshot.js";
 export * from "./feedback.js";
 export * from "./memory.js";
+export * from "./session-management.js";
 export type { HistoryMigration } from "./memory-migration.js";

@@ -20,6 +20,18 @@ var currentSchemaSQL string
 //go:embed schema-objects.json
 var currentSchemaObjects []byte
 
+//go:embed schema-v7.sql
+var schemaV7SQL string
+
+//go:embed schema-v7-objects.json
+var schemaV7Objects []byte
+
+//go:embed schema-v8.sql
+var schemaV8SQL string
+
+//go:embed schema-v8-objects.json
+var schemaV8Objects []byte
+
 //go:embed schema-v6.sql
 var previousSchemaSQL string
 
@@ -58,6 +70,9 @@ func historyTables(version int64) []string {
 	result = append(result, "work_memory_binding")
 	if version >= 6 {
 		result = append(result, "run_output_chunks")
+	}
+	if version >= 8 {
+		result = append(result, "session_management", "session_management_operations")
 	}
 	return result
 }

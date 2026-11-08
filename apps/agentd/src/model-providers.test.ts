@@ -4,13 +4,58 @@ import { createServer } from "node:http";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@piwork/pi-adapter";
 import { AgentRunModels } from "./run-models.js";
-import { resolveProductionModel } from "./pi-sdk-executor.js";
+import { PiSdkRunExecutor, resolveProductionModel } from "./pi-sdk-executor.js";
+import type { AgentSessionService } from './sessions.js';
 import type { ModelApi, RunModelSnapshot } from "@piwork/contracts";
 import { mkdtemp,readFile,rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { refreshManagedChildAgentModel } from './pi-sdk-executor.js';
 import type { RunModelResolver } from './run-models.js';
+
+test('Session title generation uses the captured model with bounded text and no tools', async () => {
+  let body: Record<string, any> | undefined;
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    body = JSON.parse(Buffer.concat(chunks).toString());
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    const emit = (type: string, payload: unknown) => response.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+    const item = { id: 'synthetic-item', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: '阅读进度', annotations: [] }] };
+    emit('response.created', { type: 'response.created', response: { id: 'synthetic-response', status: 'in_progress', model: body!.model, output: [] } });
+    emit('response.output_item.added', { type: 'response.output_item.added', output_index: 0, item: { ...item, status: 'in_progress', content: [] } });
+    emit('response.content_part.added', { type: 'response.content_part.added', output_index: 0, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } });
+    emit('response.output_text.delta', { type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: '阅读进度' });
+    emit('response.output_item.done', { type: 'response.output_item.done', output_index: 0, item });
+    emit('response.completed', { type: 'response.completed', response: { id: 'synthetic-response', status: 'completed', model: body!.model, output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } } });
+    response.end();
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const snapshot: RunModelSnapshot = { modelRef: 'model-title-12345678', label: 'Captured model', provider: 'openai', model: 'managed-alias', api: 'openai-responses', baseUrl: `http://127.0.0.1:${address.port}/v1`, capabilities: { kind: 'sdk', provider: 'openai', model: 'gpt-5.1' } };
+  let credentials = 0;
+  const models: RunModelResolver = {
+    async list() { throw new Error('unused'); }, async resolve() { throw new Error('unused'); }, async credential(value) {
+      credentials++;
+      assert.deepEqual(value, snapshot);
+      return 'synthetic-key';
+    }
+  };
+  const executor = new PiSdkRunExecutor({} as AgentSessionService, '/unused', { provider: 'openai', id: 'unused', deterministic: false }, { resourceLoaderFactory: async () => { throw new Error('no resource loader for titles'); }, resolvedTools: [], models });
+  try {
+    const title = await executor.generateSessionTitle(snapshot, 'x'.repeat(3000) + 'PRIVATE_USER_SUFFIX', 'y'.repeat(3000) + 'PRIVATE_REPLY_SUFFIX', new AbortController().signal);
+    assert.equal(title, '阅读进度');
+    assert.equal(credentials, 1);
+    assert.equal(body?.model, 'managed-alias');
+    assert.ok(!body?.tools || body.tools.length === 0);
+    assert.doesNotMatch(JSON.stringify(body), /PRIVATE_USER_SUFFIX|PRIVATE_REPLY_SUFFIX|synthetic-key/);
+    const aborted = new AbortController();
+    aborted.abort();
+    await assert.rejects(executor.generateSessionTitle(snapshot, 'question', 'answer', aborted.signal));
+    assert.equal(credentials, 1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
 
 test("managed models preserve SDK Thinking and reject unknown or mismatched capabilities", async () => {
   for(const [provider,id,api] of [["openai","gpt-5.1","openai-responses"],["anthropic","claude-sonnet-4-5","anthropic-messages"]] as const){

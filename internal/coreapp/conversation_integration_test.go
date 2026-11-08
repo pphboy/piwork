@@ -58,10 +58,11 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if err := initial.Close(); err != nil {
 		t.Fatal(err)
 	}
-	a, base, _ := appFixture(t, Options{AgentGRPCListen: "0.0.0.0:0", DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}, Initialization: Initialization{
+	options := Options{AgentGRPCListen: "0.0.0.0:0", DataDirectory: dataDir, DockerOptions: dockerengine.SelectionOptions{DockerHost: host, DockerConfig: t.TempDir()}, Initialization: Initialization{
 		Administrator: &struct{ Account, Password string }{"admin", "development-fixture-pass"},
 		Runtime:       &RuntimeInput{AgentImage: imageRef, Provider: "piwork-deterministic", Model: "fixture-v1", Credential: "acceptance-only"},
-	}})
+	}}
+	a, base, _ := appFixture(t, options)
 	if a.Status().State != "READY" || a.workRuntime == nil {
 		t.Fatal("Go Core runtime did not initialize", a.Status())
 	}
@@ -120,6 +121,12 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	}
 	started, err := a.startCapturedWork(ctx, workID, 1, instanceID)
 	if err != nil {
+		identity := dockerengine.ContainerIdentity{WorkID: workID, Kind: "agent", LogicalID: "agentd"}
+		if view, inspectErr := a.dockerRuntime.InspectContainer(ctx, identity); inspectErr == nil && view != nil {
+			if logs, logErr := a.dockerRuntime.Logs(ctx, identity, 30, view.ID); logErr == nil {
+				t.Log("Agent startup logs:", logs.Text)
+			}
+		}
 		t.Fatal("Go Core could not start captured Work:", err)
 	}
 	defer started.Client.Close()
@@ -137,6 +144,35 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	status, session := httpCall(t, base, path+"/sessions", "POST", authorization, map[string]any{"idempotencyKey": "http-session-1"})
 	if status != 201 || session["sessionId"] == nil {
 		t.Fatal("Core Session HTTP route failed", status, session)
+	}
+	// Exercise real Core-to-Agent management with an independent Session so the
+	// conversation below continues to verify normal Run and history behavior.
+	if code, value := httpCall(t, base, path+"/session-management-capabilities", "GET", authorization, nil); code != 200 || value["contractVersion"] != float64(1) {
+		t.Fatal("Session management capability", code, value)
+	}
+	if code, value := httpCall(t, base, path+"/sessions/"+session["sessionId"].(string)+"/management", "GET", authorization, nil); code != 200 || value["revision"] != float64(0) {
+		t.Fatal("new Session management state", code, value)
+	}
+	manageCode, managed := httpCall(t, base, path+"/sessions", "POST", authorization, map[string]any{"idempotencyKey": "http-managed-session"})
+	if manageCode != 201 {
+		t.Fatal("management Session creation", manageCode, managed)
+	}
+	managedID := managed["sessionId"].(string)
+	managementPath := path + "/sessions/" + managedID
+	if code, value := httpCall(t, base, managementPath+"/name", "PATCH", authorization, map[string]any{"operationKey": "integration-rename", "expectedRevision": 0, "title": "Named Session"}); code != 200 || value["title"] != "Named Session" || value["revision"] != float64(1) {
+		t.Fatal("rename managed Session", code, value)
+	}
+	if code, value := httpCall(t, base, managementPath+"/management-operations/integration-rename", "GET", authorization, nil); code != 200 || value["status"] != "accepted" {
+		t.Fatal("lookup original rename", code, value)
+	}
+	if code, value := httpCall(t, base, managementPath+"/delete", "POST", authorization, map[string]any{"operationKey": "integration-delete", "expectedRevision": 1}); code != 200 || value["deletedAt"] == nil {
+		t.Fatal("delete managed Session", code, value)
+	}
+	if code, value := httpCall(t, base, managementPath+"/management-operations/integration-delete", "GET", authorization, nil); code != 200 || value["status"] != "accepted" {
+		t.Fatal("lookup original deletion", code, value)
+	}
+	if code, value := httpCall(t, base, path+"/sessions/submissions/http-managed-session", "GET", authorization, nil); code != 200 || value["session"].(map[string]any)["deletedAt"] == nil {
+		t.Fatal("deleted Session creation receipt lost deletion", code, value)
 	}
 	status, capabilities := httpCall(t, base, path+"/chat-capabilities", "GET", authorization, nil)
 	if status != 200 || capabilities["contractVersion"] != float64(3) && capabilities["contractVersion"] != float64(4) && capabilities["contractVersion"] != float64(5) {
@@ -215,6 +251,53 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 	if err := scanner.Err(); err != nil || !sawText || !sawTerminal {
 		t.Fatal("Core Run stream lost TS Agent events", err, sawText, sawTerminal)
 	}
+	// The first successful chat is named asynchronously using its captured model.
+	var named map[string]any
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		code, value := httpCall(t, base, path+"/sessions/"+session["sessionId"].(string)+"/management", "GET", authorization, nil)
+		if code != 200 {
+			t.Fatal("automatic naming state", code, value)
+		}
+		named = value
+		if value["autoState"] == "completed" || value["autoState"] == "failed" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if named["autoState"] != "completed" || named["titleSource"] != "auto" || named["title"] == nil {
+		identity := dockerengine.ContainerIdentity{WorkID: workID, Kind: "agent", LogicalID: "agentd"}
+		if view, inspectErr := a.dockerRuntime.InspectContainer(ctx, identity); inspectErr == nil && view != nil {
+			if logs, logErr := a.dockerRuntime.Logs(ctx, identity, 30, view.ID); logErr == nil {
+				t.Log("Agent naming logs:", logs.Text)
+			}
+		}
+		t.Fatal("first chat automatic naming failed", named)
+	}
+	currentPath := path + "/sessions/" + session["sessionId"].(string)
+	if code, value := httpCall(t, base, currentPath+"/name", "PATCH", authorization, map[string]any{"operationKey": "integration-manual-after-auto", "expectedRevision": named["revision"], "title": "Manual override"}); code != 200 || value["title"] != "Manual override" {
+		t.Fatal("manual override after automatic naming", code, value)
+	}
+	if code, value := httpCall(t, base, currentPath+"/auto-name", "POST", authorization, map[string]any{"operationKey": "integration-explicit-auto", "expectedRevision": float64(2)}); code != 200 || value["status"] != "pending" && value["status"] != "accepted" {
+		t.Fatal("explicit automatic naming", code, value)
+	}
+	deadline = time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		code, value := httpCall(t, base, currentPath+"/management-operations/integration-explicit-auto", "GET", authorization, nil)
+		if code != 200 {
+			t.Fatal("explicit naming lookup", code, value)
+		}
+		if value["status"] == "accepted" {
+			break
+		}
+		if value["status"] != "pending" {
+			t.Fatal("explicit naming did not succeed", value)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if code, value := httpCall(t, base, currentPath+"/management", "GET", authorization, nil); code != 200 || value["revision"] != float64(3) || value["titleSource"] != "auto" {
+		t.Fatal("explicit naming was not published", code, value)
+	}
 	resumeRequest, _ := http.NewRequestWithContext(ctx, "GET", base+path+"/runs/"+runID+"/events?after="+strconv.FormatUint(firstSequence, 10), nil)
 	resumeRequest.Header.Set("Authorization", authorization)
 	resumeResponse, err := (&http.Client{Timeout: 5 * time.Second}).Do(resumeRequest)
@@ -256,6 +339,9 @@ func TestGoCoreHTTPToRealTSAgentConversation(t *testing.T) {
 		t.Fatal("deterministic cancellable Run was not accepted", status, waiting)
 	}
 	waitID := waiting["run"].(map[string]any)["runId"].(string)
+	if code, value := httpCall(t, base, currentPath+"/delete", "POST", authorization, map[string]any{"operationKey": "integration-busy-delete", "expectedRevision": 3}); code != 409 || value["code"] != "WORK_BUSY" {
+		t.Fatal("active Session deletion was not rejected", code, value)
+	}
 	if secondStatus, second := httpCall(t, base, path+"/runs", "POST", authorization, map[string]any{"sessionId": session["sessionId"], "submissionKey": "http-run-while-busy", "prompt": "hello"}); secondStatus != 409 || second["code"] != "WORK_BUSY" {
 		t.Fatal("second active Run was accepted", secondStatus, second)
 	}

@@ -8,6 +8,7 @@ import { modelManagementSchemas } from "../packages/contracts/dist/ai-model-mana
 import * as chatSchemas from "../packages/contracts/dist/chat-controls.js";
 import * as imageSchemas from "../packages/contracts/dist/chat-images.js";
 import * as historySchemas from "../packages/contracts/dist/session-history.js";
+import * as sessionManagementSchemas from "../packages/contracts/dist/session-management.js";
 import * as onboardingSchemas from "../packages/contracts/dist/web-onboarding.js";
 import * as productSchemas from "../packages/contracts/dist/product-info.js";
 import * as logExportSchemas from "../packages/contracts/dist/log-export.js";
@@ -25,6 +26,7 @@ Object.assign(schemas, Object.fromEntries(Object.entries(onboardingSchemas).filt
 Object.assign(schemas, Object.fromEntries(Object.entries(chatSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(imageSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(historySchemas).filter(([name])=>name.endsWith("Schema"))));
+Object.assign(schemas, Object.fromEntries(Object.entries(sessionManagementSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(productSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(logExportSchemas).filter(([name])=>name.endsWith("Schema"))));
 schemas.SubmitRunInputSchema = SubmitRunInputSchema;
@@ -32,12 +34,12 @@ schemas.AgentRequestRetryQuerySchema = AgentRequestRetryQuerySchema;
 schemas.AgentRequestRetrySubmissionSchema = AgentRequestRetrySubmissionSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.api = schemas.ModelApiSchema;
 schemas.AgentRuntimeConfigSchema.properties.model.properties.capabilities = schemas.ModelCapabilitiesSchema;
-// Schema 7 removes Session environment binding; known archived formats retain exact readers.
+// Known archived history formats retain exact readers and controlled upgrades.
 const historyMigration = schemas.WorkHistoryMigrationSchema;
-historyMigration.properties.fromSchema = { anyOf: [4,5,6].map(value=>({type:"number",const:value})) };
-historyMigration.properties.toSchema = {anyOf:[5,6,7].map(value=>({type:"number",const:value}))};
+historyMigration.properties.fromSchema = { anyOf: [4,5,6,7].map(value=>({type:"number",const:value})) };
+historyMigration.properties.toSchema = {anyOf:[5,6,7,8].map(value=>({type:"number",const:value}))};
 schemas.AgentRuntimeConfigSchema.properties.historyMigration = historyMigration;
-schemas.PortableWorkSpecSchema.properties.compatibility.properties.workHistorySchema = { anyOf: [4,5,6,7].map(value => ({type:"number",const:value})) };
+schemas.PortableWorkSpecSchema.properties.compatibility.properties.workHistorySchema = { anyOf: [4,5,6,7,8].map(value => ({type:"number",const:value})) };
 schemas.AdminRuntimeLegacyInputSchema ??= schemas.AdminRuntimeInputSchema;
 schemas.AdminRuntimeInputSchema = { anyOf: [schemas.AdminRuntimeLegacyInputSchema, schemas.AdminRuntimeSelectionSchema] };
 schemas.AdminDefaultWorkPatchSchema.properties.modelRef = schemas.ResourceIdSchema;

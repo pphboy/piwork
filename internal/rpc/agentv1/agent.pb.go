@@ -985,6 +985,12 @@ type Session struct {
 	ThinkingLevel       string                 `protobuf:"bytes,8,opt,name=thinking_level,json=thinkingLevel,proto3" json:"thinking_level,omitempty"`
 	ThinkingUnrequested bool                   `protobuf:"varint,9,opt,name=thinking_unrequested,json=thinkingUnrequested,proto3" json:"thinking_unrequested,omitempty"`
 	ThinkingProfile     *string                `protobuf:"bytes,10,opt,name=thinking_profile,json=thinkingProfile,proto3,oneof" json:"thinking_profile,omitempty"`
+	Title               *string                `protobuf:"bytes,11,opt,name=title,proto3,oneof" json:"title,omitempty"`
+	TitleRevision       uint64                 `protobuf:"varint,12,opt,name=title_revision,json=titleRevision,proto3" json:"title_revision,omitempty"`
+	TitleSource         string                 `protobuf:"bytes,13,opt,name=title_source,json=titleSource,proto3" json:"title_source,omitempty"`
+	AutoNameState       string                 `protobuf:"bytes,14,opt,name=auto_name_state,json=autoNameState,proto3" json:"auto_name_state,omitempty"`
+	ManualTitleLock     bool                   `protobuf:"varint,15,opt,name=manual_title_lock,json=manualTitleLock,proto3" json:"manual_title_lock,omitempty"`
+	DeletedAt           *string                `protobuf:"bytes,16,opt,name=deleted_at,json=deletedAt,proto3,oneof" json:"deleted_at,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1085,6 +1091,48 @@ func (x *Session) GetThinkingUnrequested() bool {
 func (x *Session) GetThinkingProfile() string {
 	if x != nil && x.ThinkingProfile != nil {
 		return *x.ThinkingProfile
+	}
+	return ""
+}
+
+func (x *Session) GetTitle() string {
+	if x != nil && x.Title != nil {
+		return *x.Title
+	}
+	return ""
+}
+
+func (x *Session) GetTitleRevision() uint64 {
+	if x != nil {
+		return x.TitleRevision
+	}
+	return 0
+}
+
+func (x *Session) GetTitleSource() string {
+	if x != nil {
+		return x.TitleSource
+	}
+	return ""
+}
+
+func (x *Session) GetAutoNameState() string {
+	if x != nil {
+		return x.AutoNameState
+	}
+	return ""
+}
+
+func (x *Session) GetManualTitleLock() bool {
+	if x != nil {
+		return x.ManualTitleLock
+	}
+	return false
+}
+
+func (x *Session) GetDeletedAt() string {
+	if x != nil && x.DeletedAt != nil {
+		return *x.DeletedAt
 	}
 	return ""
 }
@@ -3088,7 +3136,7 @@ const file_agent_proto_rawDesc = "" +
 	"\n" +
 	"timeout_ms\x18\x04 \x01(\rR\ttimeoutMs\")\n" +
 	"\rDrainResponse\x12\x18\n" +
-	"\adrained\x18\x01 \x01(\bR\adrained\"\x9d\x03\n" +
+	"\adrained\x18\x01 \x01(\bR\adrained\"\x93\x05\n" +
 	"\aSession\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12\x1d\n" +
 	"\n" +
@@ -3104,8 +3152,17 @@ const file_agent_proto_rawDesc = "" +
 	"\x0ethinking_level\x18\b \x01(\tR\rthinkingLevel\x121\n" +
 	"\x14thinking_unrequested\x18\t \x01(\bR\x13thinkingUnrequested\x12.\n" +
 	"\x10thinking_profile\x18\n" +
-	" \x01(\tH\x00R\x0fthinkingProfile\x88\x01\x01B\x13\n" +
-	"\x11_thinking_profile\"X\n" +
+	" \x01(\tH\x00R\x0fthinkingProfile\x88\x01\x01\x12\x19\n" +
+	"\x05title\x18\v \x01(\tH\x01R\x05title\x88\x01\x01\x12%\n" +
+	"\x0etitle_revision\x18\f \x01(\x04R\rtitleRevision\x12!\n" +
+	"\ftitle_source\x18\r \x01(\tR\vtitleSource\x12&\n" +
+	"\x0fauto_name_state\x18\x0e \x01(\tR\rautoNameState\x12*\n" +
+	"\x11manual_title_lock\x18\x0f \x01(\bR\x0fmanualTitleLock\x12\"\n" +
+	"\n" +
+	"deleted_at\x18\x10 \x01(\tH\x02R\tdeletedAt\x88\x01\x01B\x13\n" +
+	"\x11_thinking_profileB\b\n" +
+	"\x06_titleB\r\n" +
+	"\v_deleted_at\"X\n" +
 	"\x14CreateSessionRequest\x12\x17\n" +
 	"\awork_id\x18\x01 \x01(\tR\x06workId\x12'\n" +
 	"\x0fidempotency_key\x18\x02 \x01(\tR\x0eidempotencyKey\"j\n" +
@@ -3302,7 +3359,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x13RUN_STATE_SUCCEEDED\x10\x04\x12\x14\n" +
 	"\x10RUN_STATE_FAILED\x10\x05\x12\x17\n" +
 	"\x13RUN_STATE_CANCELLED\x10\x06\x12\x19\n" +
-	"\x15RUN_STATE_INTERRUPTED\x10\a2\xbc\x15\n" +
+	"\x15RUN_STATE_INTERRUPTED\x10\a2\xa4\x1a\n" +
 	"\fAgentService\x12p\n" +
 	"!RefreshServiceInteractionBindings\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12R\n" +
 	"\tReadiness\x12!.piwork.agent.v1.ReadinessRequest\x1a\".piwork.agent.v1.ReadinessResponse\x12\x85\x01\n" +
@@ -3326,7 +3383,13 @@ const file_agent_proto_rawDesc = "" +
 	"\x11ListSlashCommands\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12d\n" +
 	"\x15GetSessionChatOptions\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12d\n" +
 	"\x15SetSessionChatOptions\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12c\n" +
-	"\x14LookupChatSubmission\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12`\n" +
+	"\x14LookupChatSubmission\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12o\n" +
+	" GetSessionManagementCapabilities\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12h\n" +
+	"\x19GetSessionManagementState\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12\\\n" +
+	"\rRenameSession\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12^\n" +
+	"\x0fAutoNameSession\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12\\\n" +
+	"\rDeleteSession\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12o\n" +
+	" LookupSessionManagementOperation\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12`\n" +
 	"\x11ListAgentRequests\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12^\n" +
 	"\x0fGetAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12a\n" +
 	"\x12CancelAgentRequest\x12$.piwork.agent.v1.AgentContentRequest\x1a%.piwork.agent.v1.AgentContentResponse\x12`\n" +
@@ -3435,43 +3498,55 @@ var file_agent_proto_depIdxs = []int32{
 	1,  // 41: piwork.agent.v1.AgentService.GetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
 	1,  // 42: piwork.agent.v1.AgentService.SetSessionChatOptions:input_type -> piwork.agent.v1.AgentContentRequest
 	1,  // 43: piwork.agent.v1.AgentService.LookupChatSubmission:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 44: piwork.agent.v1.AgentService.ListAgentRequests:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 45: piwork.agent.v1.AgentService.GetAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 46: piwork.agent.v1.AgentService.CancelAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 47: piwork.agent.v1.AgentService.RetryAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 48: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:input_type -> piwork.agent.v1.AgentContentRequest
-	1,  // 49: piwork.agent.v1.AgentService.GetAgentEvidence:input_type -> piwork.agent.v1.AgentContentRequest
-	2,  // 50: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:output_type -> piwork.agent.v1.AgentContentResponse
-	4,  // 51: piwork.agent.v1.AgentService.Readiness:output_type -> piwork.agent.v1.ReadinessResponse
-	10, // 52: piwork.agent.v1.AgentService.PrepareConfigurationChange:output_type -> piwork.agent.v1.PrepareConfigurationChangeResponse
-	12, // 53: piwork.agent.v1.AgentService.Drain:output_type -> piwork.agent.v1.DrainResponse
-	13, // 54: piwork.agent.v1.AgentService.CreateSession:output_type -> piwork.agent.v1.Session
-	16, // 55: piwork.agent.v1.AgentService.ListSessions:output_type -> piwork.agent.v1.ListSessionsResponse
-	24, // 56: piwork.agent.v1.AgentService.ReadSession:output_type -> piwork.agent.v1.SessionHistory
-	2,  // 57: piwork.agent.v1.AgentService.GetSessionHistoryCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
-	19, // 58: piwork.agent.v1.AgentService.ReadSessionPage:output_type -> piwork.agent.v1.SessionHistoryPage
-	2,  // 59: piwork.agent.v1.AgentService.GetChatImageCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
-	23, // 60: piwork.agent.v1.AgentService.ReadSessionImage:output_type -> piwork.agent.v1.SessionImage
-	30, // 61: piwork.agent.v1.AgentService.SubmitRun:output_type -> piwork.agent.v1.SubmitRunResponse
-	28, // 62: piwork.agent.v1.AgentService.GetRun:output_type -> piwork.agent.v1.Run
-	33, // 63: piwork.agent.v1.AgentService.GetActiveRun:output_type -> piwork.agent.v1.GetActiveRunResponse
-	39, // 64: piwork.agent.v1.AgentService.WatchRun:output_type -> piwork.agent.v1.RunEvent
-	28, // 65: piwork.agent.v1.AgentService.CancelRun:output_type -> piwork.agent.v1.Run
-	2,  // 66: piwork.agent.v1.AgentService.ListRunModels:output_type -> piwork.agent.v1.AgentContentResponse
-	13, // 67: piwork.agent.v1.AgentService.SetSessionModel:output_type -> piwork.agent.v1.Session
-	2,  // 68: piwork.agent.v1.AgentService.ListChatModels:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 69: piwork.agent.v1.AgentService.ListSlashCommands:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 70: piwork.agent.v1.AgentService.GetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 71: piwork.agent.v1.AgentService.SetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 72: piwork.agent.v1.AgentService.LookupChatSubmission:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 73: piwork.agent.v1.AgentService.ListAgentRequests:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 74: piwork.agent.v1.AgentService.GetAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 75: piwork.agent.v1.AgentService.CancelAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 76: piwork.agent.v1.AgentService.RetryAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 77: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:output_type -> piwork.agent.v1.AgentContentResponse
-	2,  // 78: piwork.agent.v1.AgentService.GetAgentEvidence:output_type -> piwork.agent.v1.AgentContentResponse
-	50, // [50:79] is the sub-list for method output_type
-	21, // [21:50] is the sub-list for method input_type
+	1,  // 44: piwork.agent.v1.AgentService.GetSessionManagementCapabilities:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 45: piwork.agent.v1.AgentService.GetSessionManagementState:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 46: piwork.agent.v1.AgentService.RenameSession:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 47: piwork.agent.v1.AgentService.AutoNameSession:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 48: piwork.agent.v1.AgentService.DeleteSession:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 49: piwork.agent.v1.AgentService.LookupSessionManagementOperation:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 50: piwork.agent.v1.AgentService.ListAgentRequests:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 51: piwork.agent.v1.AgentService.GetAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 52: piwork.agent.v1.AgentService.CancelAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 53: piwork.agent.v1.AgentService.RetryAgentRequest:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 54: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:input_type -> piwork.agent.v1.AgentContentRequest
+	1,  // 55: piwork.agent.v1.AgentService.GetAgentEvidence:input_type -> piwork.agent.v1.AgentContentRequest
+	2,  // 56: piwork.agent.v1.AgentService.RefreshServiceInteractionBindings:output_type -> piwork.agent.v1.AgentContentResponse
+	4,  // 57: piwork.agent.v1.AgentService.Readiness:output_type -> piwork.agent.v1.ReadinessResponse
+	10, // 58: piwork.agent.v1.AgentService.PrepareConfigurationChange:output_type -> piwork.agent.v1.PrepareConfigurationChangeResponse
+	12, // 59: piwork.agent.v1.AgentService.Drain:output_type -> piwork.agent.v1.DrainResponse
+	13, // 60: piwork.agent.v1.AgentService.CreateSession:output_type -> piwork.agent.v1.Session
+	16, // 61: piwork.agent.v1.AgentService.ListSessions:output_type -> piwork.agent.v1.ListSessionsResponse
+	24, // 62: piwork.agent.v1.AgentService.ReadSession:output_type -> piwork.agent.v1.SessionHistory
+	2,  // 63: piwork.agent.v1.AgentService.GetSessionHistoryCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
+	19, // 64: piwork.agent.v1.AgentService.ReadSessionPage:output_type -> piwork.agent.v1.SessionHistoryPage
+	2,  // 65: piwork.agent.v1.AgentService.GetChatImageCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
+	23, // 66: piwork.agent.v1.AgentService.ReadSessionImage:output_type -> piwork.agent.v1.SessionImage
+	30, // 67: piwork.agent.v1.AgentService.SubmitRun:output_type -> piwork.agent.v1.SubmitRunResponse
+	28, // 68: piwork.agent.v1.AgentService.GetRun:output_type -> piwork.agent.v1.Run
+	33, // 69: piwork.agent.v1.AgentService.GetActiveRun:output_type -> piwork.agent.v1.GetActiveRunResponse
+	39, // 70: piwork.agent.v1.AgentService.WatchRun:output_type -> piwork.agent.v1.RunEvent
+	28, // 71: piwork.agent.v1.AgentService.CancelRun:output_type -> piwork.agent.v1.Run
+	2,  // 72: piwork.agent.v1.AgentService.ListRunModels:output_type -> piwork.agent.v1.AgentContentResponse
+	13, // 73: piwork.agent.v1.AgentService.SetSessionModel:output_type -> piwork.agent.v1.Session
+	2,  // 74: piwork.agent.v1.AgentService.ListChatModels:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 75: piwork.agent.v1.AgentService.ListSlashCommands:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 76: piwork.agent.v1.AgentService.GetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 77: piwork.agent.v1.AgentService.SetSessionChatOptions:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 78: piwork.agent.v1.AgentService.LookupChatSubmission:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 79: piwork.agent.v1.AgentService.GetSessionManagementCapabilities:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 80: piwork.agent.v1.AgentService.GetSessionManagementState:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 81: piwork.agent.v1.AgentService.RenameSession:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 82: piwork.agent.v1.AgentService.AutoNameSession:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 83: piwork.agent.v1.AgentService.DeleteSession:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 84: piwork.agent.v1.AgentService.LookupSessionManagementOperation:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 85: piwork.agent.v1.AgentService.ListAgentRequests:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 86: piwork.agent.v1.AgentService.GetAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 87: piwork.agent.v1.AgentService.CancelAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 88: piwork.agent.v1.AgentService.RetryAgentRequest:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 89: piwork.agent.v1.AgentService.LookupAgentRequestRetrySubmission:output_type -> piwork.agent.v1.AgentContentResponse
+	2,  // 90: piwork.agent.v1.AgentService.GetAgentEvidence:output_type -> piwork.agent.v1.AgentContentResponse
+	56, // [56:91] is the sub-list for method output_type
+	21, // [21:56] is the sub-list for method input_type
 	21, // [21:21] is the sub-list for extension type_name
 	21, // [21:21] is the sub-list for extension extendee
 	0,  // [0:21] is the sub-list for field type_name

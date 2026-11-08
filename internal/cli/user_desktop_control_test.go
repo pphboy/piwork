@@ -180,6 +180,12 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"PUT", "/_desktop/api/works/work-1/configuration/agents", `{"agentsMd":"# Agent"}`, "/api/v1/works/work-1/configuration/agents"},
 		{"GET", "/_desktop/api/works/work-1/models", "", "/api/v1/works/work-1/models"},
 		{"GET", "/_desktop/api/works/work-1/chat-capabilities", "", "/api/v1/works/work-1/chat-capabilities"},
+		{"GET", "/_desktop/api/works/work-1/session-management-capabilities", "", "/api/v1/works/work-1/session-management-capabilities"},
+		{"GET", "/_desktop/api/works/work-1/sessions/session-1/management", "", "/api/v1/works/work-1/sessions/session-1/management"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/name", `{"operationKey":"rename-key","expectedRevision":0,"title":"新名称"}`, "/api/v1/works/work-1/sessions/session-1/name"},
+		{"POST", "/_desktop/api/works/work-1/sessions/session-1/delete", `{"operationKey":"delete-key","expectedRevision":1}`, "/api/v1/works/work-1/sessions/session-1/delete"},
+		{"POST", "/_desktop/api/works/work-1/sessions/session-1/auto-name", `{"operationKey":"auto-key","expectedRevision":1}`, "/api/v1/works/work-1/sessions/session-1/auto-name"},
+		{"GET", "/_desktop/api/works/work-1/sessions/session-1/management-operations/delete-key", "", "/api/v1/works/work-1/sessions/session-1/management-operations/delete-key"},
 		{"GET", "/_desktop/api/works/work-1/chat-models", "", "/api/v1/works/work-1/chat-models"},
 		{"GET", "/_desktop/api/works/work-1/commands", "", "/api/v1/works/work-1/commands"},
 		{"GET", "/_desktop/api/works/work-1/sessions/session-1/chat-options", "", "/api/v1/works/work-1/sessions/session-1/chat-options"},
@@ -221,7 +227,13 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 				t.Fatalf("profile was not forwarded intact: %+v", last.body)
 			}
 		}
-		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") {
+		if strings.HasSuffix(item.path, "/sessions/session-1/name") || strings.HasSuffix(item.path, "/sessions/session-1/delete") || strings.HasSuffix(item.path, "/sessions/session-1/auto-name") {
+			var expected map[string]any
+			if err := json.Unmarshal([]byte(item.payload), &expected); err != nil || last.body["operationKey"] != expected["operationKey"] || last.body["expectedRevision"] != expected["expectedRevision"] {
+				t.Fatalf("original Session operation identity changed: %+v", last.body)
+			}
+		}
+		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") && !strings.HasSuffix(item.path, "/sessions/session-1/delete") && !strings.HasSuffix(item.path, "/sessions/session-1/auto-name") {
 			if key, _ := last.body["idempotencyKey"].(string); !strings.HasPrefix(key, "desktop-") {
 				t.Fatalf("mutation has no idempotency key: %+v", last)
 			}
@@ -254,6 +266,10 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"POST", "/_desktop/api/works/work-1/temporary-cleanups/service-1", "", "csrf"},
 		{"DELETE", "/_desktop/api/works/work-1/temporary-cleanups?runId=run-1", "", "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/model", `{"modelRef":null,"credential":"not-allowed"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/name", `{"operationKey":"key","expectedRevision":-1,"title":"name"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/name", `{"operationKey":"key","expectedRevision":0,"title":"name","credential":"private"}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/sessions/session-1/delete", `{"operationKey":"key","expectedRevision":0,"extra":true}`, "csrf"},
+		{"GET", "/_desktop/api/works/work-1/sessions/session-1/management-operations/%2e%2e", "", ""},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"invalid"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":null,"thinkingProfile":"messages-adaptive-v1"}`, "csrf"},
 		{"PATCH", "/_desktop/api/works/work-1/sessions/session-1/chat-options", `{"modelRef":null,"thinkingLevel":"max","thinkingProfile":"messages-budget-v1"}`, "csrf"},

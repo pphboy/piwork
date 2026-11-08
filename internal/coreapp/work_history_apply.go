@@ -196,7 +196,7 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 			return nil
 		}
 	}
-	if capabilities.WorkHistorySchema != 5 && capabilities.WorkHistorySchema != 6 && capabilities.WorkHistorySchema != 7 {
+	if capabilities.WorkHistorySchema != 5 && capabilities.WorkHistorySchema != 6 && capabilities.WorkHistorySchema != 7 && capabilities.WorkHistorySchema != 8 {
 		return nil
 	}
 	if plan.HistoryBackup == nil {
@@ -216,7 +216,7 @@ func (a *Application) prepareHistoryUpgrade(ctx context.Context, operationID str
 		plan.HistoryBackup = nil
 		return a.saveApplyPlan(ctx, operationID, *plan)
 	}
-	if (result.SchemaVersion != 4 && result.SchemaVersion != 5 && result.SchemaVersion != 6) || result.SchemaVersion >= capabilities.WorkHistorySchema || result.State != "saved" || len(result.ManifestDigest) != 64 {
+	if (result.SchemaVersion != 4 && result.SchemaVersion != 5 && result.SchemaVersion != 6 && result.SchemaVersion != 7) || result.SchemaVersion >= capabilities.WorkHistorySchema || result.State != "saved" || len(result.ManifestDigest) != 64 {
 		return corestore.ErrStorage
 	}
 	plan.HistoryBackup.State = "saved"
@@ -246,7 +246,7 @@ func (a *Application) restoreHistoryUpgrade(ctx context.Context, operationID str
 		}
 		if result.State == "not-required" {
 			plan.HistoryBackup.State = "restored"
-		} else if result.State == "saved" && (result.SchemaVersion == 4 || result.SchemaVersion == 5 || result.SchemaVersion == 6) && len(result.ManifestDigest) == 64 {
+		} else if result.State == "saved" && (result.SchemaVersion == 4 || result.SchemaVersion == 5 || result.SchemaVersion == 6 || result.SchemaVersion == 7) && len(result.ManifestDigest) == 64 {
 			plan.HistoryBackup.State = "saved"
 			plan.HistoryBackup.SourceSchema = result.SchemaVersion
 			plan.HistoryBackup.ManifestDigest = result.ManifestDigest
@@ -508,7 +508,7 @@ func (a *Application) reconcileHistoryUpgradeLocked(ctx context.Context, workID 
 			if target == 0 {
 				target = 5
 			}
-			if (result.SchemaVersion < 4 || result.SchemaVersion > 6 || result.SchemaVersion >= target) || len(result.ManifestDigest) != 64 {
+			if (result.SchemaVersion < 4 || result.SchemaVersion > 7 || result.SchemaVersion >= target) || len(result.ManifestDigest) != 64 {
 				return corestore.ErrStorage
 			}
 			plan.HistoryBackup.State = "saved"

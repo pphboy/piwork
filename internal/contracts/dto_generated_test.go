@@ -299,6 +299,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "AutoNameSessionInputSchema":
+				value, err := Decode[AutoNameSessionInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "BrainBehaviorChecksSchema":
 				value, err := Decode[BrainBehaviorChecks](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -427,6 +433,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "CreateUserRequestSchema":
 				value, err := Decode[CreateUserRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "DeleteSessionInputSchema":
+				value, err := Decode[DeleteSessionInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -989,6 +1001,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "RenameSessionInputSchema":
+				value, err := Decode[RenameSessionInput](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ResetUserPasswordRequestSchema":
 				value, err := Decode[ResetUserPasswordRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -1157,6 +1175,12 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "SessionAutoNameStateSchema":
+				value, err := Decode[SessionAutoNameState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "SessionChatOptionsSchema":
 				value, err := Decode[SessionChatOptions](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
@@ -1165,6 +1189,36 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 				target = value
 			case "SessionContentBlockSchema":
 				value, err := Decode[SessionContentBlock](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionManagementCapabilitiesSchema":
+				value, err := Decode[SessionManagementCapabilities](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionManagementLookupSchema":
+				value, err := Decode[SessionManagementLookup](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionManagementOperationQuerySchema":
+				value, err := Decode[SessionManagementOperationQuery](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionManagementStateSchema":
+				value, err := Decode[SessionManagementState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "SessionTitleSourceSchema":
+				value, err := Decode[SessionTitleSource](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {
 					t.Fatal(err)
 				}

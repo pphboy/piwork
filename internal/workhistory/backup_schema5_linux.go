@@ -12,7 +12,7 @@ import (
 
 func restoreMemoryHistory(ctx context.Context, root, spool int, request BackupRequest, manifest BackupManifest, digest string) (BackupResult, error) {
 	var attrs unix.Stat_t
-	if unix.Fstat(root, &attrs) != nil || digest != request.ExpectedManifestDigest || request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 7 || manifest.WorkID != request.WorkID || manifest.OperationID != request.OperationID || manifest.BackupKey != request.BackupKey || manifest.RootDev != uint64(attrs.Dev) || manifest.RootIno != attrs.Ino {
+	if unix.Fstat(root, &attrs) != nil || digest != request.ExpectedManifestDigest || request.TargetSchema <= manifest.SourceSchema || request.TargetSchema > 8 || manifest.WorkID != request.WorkID || manifest.OperationID != request.OperationID || manifest.BackupKey != request.BackupKey || manifest.RootDev != uint64(attrs.Dev) || manifest.RootIno != attrs.Ino {
 		return BackupResult{}, ErrInvalid
 	}
 	if err := verifyBackupFiles(ctx, spool, manifest); err != nil {

@@ -52,10 +52,13 @@ test("session and run messages survive binary serialization", () => {
     modelPreferenceJson: "",
     sourceJson: "",
     thinkingLevel: "high", thinkingUnrequested:false, thinkingProfile:"responses-effort-v1",
+    title: 'Reading plan', titleRevision: 2n, titleSource: 'manual', autoNameState: 'completed', manualTitleLock: true,
   });
   assert.equal(session.sessionId, "session-0199e6d8abcd");
   assert.equal(session.thinkingLevel, "high");
   assert.equal(session.thinkingProfile,"responses-effort-v1");
+  assert.equal(session.title, 'Reading plan');
+  assert.equal(session.titleRevision, 2n);
 
   const run = roundTrip(Run, {
     workId: session.workId,
@@ -139,6 +142,12 @@ test("generated grpc-js service exposes the durable Agent API", () => {
     "getSessionChatOptions",
     "setSessionChatOptions",
     "lookupChatSubmission",
+    "getSessionManagementCapabilities",
+    "getSessionManagementState",
+    "renameSession",
+    "autoNameSession",
+    "deleteSession",
+    "lookupSessionManagementOperation",
     "listAgentRequests",
     "getAgentRequest",
     "cancelAgentRequest",

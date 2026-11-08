@@ -26,6 +26,12 @@ service AgentService {
   rpc GetSessionChatOptions(AgentContentRequest) returns (AgentContentResponse);
   rpc SetSessionChatOptions(AgentContentRequest) returns (AgentContentResponse);
   rpc LookupChatSubmission(AgentContentRequest) returns (AgentContentResponse);
+  rpc GetSessionManagementCapabilities(AgentContentRequest) returns (AgentContentResponse);
+  rpc GetSessionManagementState(AgentContentRequest) returns (AgentContentResponse);
+  rpc RenameSession(AgentContentRequest) returns (AgentContentResponse);
+  rpc AutoNameSession(AgentContentRequest) returns (AgentContentResponse);
+  rpc DeleteSession(AgentContentRequest) returns (AgentContentResponse);
+  rpc LookupSessionManagementOperation(AgentContentRequest) returns (AgentContentResponse);
   rpc ListAgentRequests(AgentContentRequest) returns (AgentContentResponse);
   rpc GetAgentRequest(AgentContentRequest) returns (AgentContentResponse);
   rpc CancelAgentRequest(AgentContentRequest) returns (AgentContentResponse);
@@ -133,6 +139,12 @@ message Session {
   string thinking_level = 8;
   bool thinking_unrequested = 9;
   optional string thinking_profile = 10;
+  optional string title = 11;
+  uint64 title_revision = 12;
+  string title_source = 13;
+  string auto_name_state = 14;
+  bool manual_title_lock = 15;
+  optional string deleted_at = 16;
 }
 
 message CreateSessionRequest {

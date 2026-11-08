@@ -157,6 +157,22 @@ func TestImmutableDockerAndOCINativeInspection(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeAgentHistoryVersionEightAndUnknownVersion(t *testing.T) {
+	for _, history := range []string{"8", "9"} {
+		data, id := makeImage(t, false, false, [][]byte{nativeLayer(t)}, func(config *imageConfig) {
+			config.Config.Labels["io.piwork.work-history.schema"] = history
+		})
+		capabilities, err := InspectNativeAgent(context.Background(), bytes.NewReader(data), int64(len(data)), id)
+		if history == "8" {
+			if err != nil || capabilities.WorkHistorySchema != 8 {
+				t.Fatalf("schema 8: capabilities=%+v error=%v", capabilities, err)
+			}
+		} else if !errors.Is(err, ErrIncompatible) {
+			t.Fatalf("unknown schema accepted: %v", err)
+		}
+	}
+}
 func stringsRepeat(s string, n int) string {
 	var b bytes.Buffer
 	for i := 0; i < n; i++ {

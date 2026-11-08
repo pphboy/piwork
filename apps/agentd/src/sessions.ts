@@ -37,12 +37,15 @@ export class AgentSessionService {
       updatedAt: now,
       ...(sourceJson ? { sourceJson } : {}),
     };
-    if (idempotencyKey === undefined) { this.store.createSession(record); return record; }
+    if (idempotencyKey === undefined) {
+      this.store.createSession(record);
+      return this.store.getSession(this.workId, record.sessionId)!;
+    }
     const accepted = this.store.createSessionIdempotent(record, idempotencyKey);
     if (accepted.reused) {
       try { unlinkSync(snapshot.historyPath); } catch { /* best effort unused file cleanup */ }
     }
-    return accepted.session;
+    return this.store.getSession(this.workId, accepted.session.sessionId)!;
   }
 
   list(): SessionRecord[] {

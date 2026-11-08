@@ -23,6 +23,10 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 	if err := VerifyReadiness(scope, "context-1", false, &current); err != nil {
 		t.Fatal("current history 6 rejected", err)
 	}
+	current.WorkHistorySchemaVersion = 8
+	if err := VerifyReadiness(scope, "context-1", false, &current); err != nil {
+		t.Fatal(err)
+	}
 	current.WorkHistorySchemaVersion = 7
 	if err := VerifyReadiness(scope, "context-1", false, &current); err != nil {
 		t.Fatal("current history 7 rejected", err)
@@ -44,7 +48,7 @@ func TestReadinessRequiresCurrentIdentityAndContracts(t *testing.T) {
 		{"old-protocol", func(r *agentv1.ReadinessResponse) { r.ProtocolVersion = "v1" }},
 		{"old-context-contract", func(r *agentv1.ReadinessResponse) { r.ContextContractVersion = 0 }},
 		{"old-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 3 }},
-		{"unknown-future-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 8 }},
+		{"unknown-future-history", func(r *agentv1.ReadinessResponse) { r.WorkHistorySchemaVersion = 9 }},
 		{"no-model-contract", func(r *agentv1.ReadinessResponse) { r.RunModelContractVersion = 0 }},
 		{"no-feedback-contract", func(r *agentv1.ReadinessResponse) { r.WorkFeedbackContractVersion = 0 }},
 		{"old-package-contract", func(r *agentv1.ReadinessResponse) { r.PackageContractVersion = 0 }},

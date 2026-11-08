@@ -1,4 +1,5 @@
 import { WORK_SCHEMA_V6_SQL } from "./schema-v6.js";
+import { WORK_SCHEMA_V8_SQL } from "./schema-v8.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -32,8 +33,9 @@ function fixture() {
   const sdk = Buffer.from('{"type":"session","version":3,"id":"session-local","cwd":"/var/data/workspace"}\n{"type":"message","text":"work-source context-source exact original bytes"}\n');
   writeFileSync(join(volume, "sessions", "one.jsonl"), sdk);
   const business = new DatabaseSync(join(volume, "business.sqlite")); business.exec("CREATE TABLE user_data(value TEXT); INSERT INTO user_data VALUES ('work-source')"); business.close();
-  const initialized=WorkStore.open(join(volume, "work.sqlite"),{workId:SOURCE});initialized.close();
-  const store = WorkStore.open(join(volume, "work.sqlite"));
+  const initialized = WorkStore.open(join(volume, "work.sqlite"), { workId: SOURCE, targetVersion: 7 });
+  initialized.close();
+  const store = WorkStore.open(join(volume, "work.sqlite"),{targetVersion:7});
   store.createSessionIdempotent({ workId: SOURCE, sessionId: "session-local", sdkHistoryPath: "/var/data/sessions/one.jsonl", createdAt: NOW, updatedAt: NOW, }, "session-key");
   const accepted = store.acceptRun({ workId: SOURCE, sessionId: "session-local", submissionKey: "submit-key", requestDigest: "request-digest", promptDigest: "prompt-digest", contextIdentity: CONTEXT, now: NOW });
   store.appendEvent(accepted.run.runId, "text", '{ "delta": "work-source", "workId": "user text work-source" }', NOW);
@@ -46,6 +48,51 @@ function fingerprint(volume: string): Map<string, string> {
 function edit(volume: string, sql: string): void {
   const database = new DatabaseSync(join(volume, "work.sqlite")); try { database.prepare("ATTACH DATABASE ? AS memory").run(join(volume,"memory.sqlite")); database.exec(sql); } finally { database.close(); }
 }
+
+test('schema 8 cold snapshot preserves Session metadata and rejects cross-Session naming references', () => {
+  const f = fixture();
+  try {
+    f.store.close();
+    const db = new DatabaseSync(join(f.volume, 'work.sqlite'), { enableForeignKeyConstraints: true });
+    try {
+      const offset = WORK_SCHEMA_V8_SQL.indexOf('-- Session management metadata');
+      assert.ok(offset > 0);
+      db.exec(WORK_SCHEMA_V8_SQL.slice(offset));
+      db.exec('UPDATE schema_migrations SET version=8');
+      db.prepare("INSERT INTO session_management(work_id,session_id,title,title_source,title_revision,manual_lock,deleted_at) VALUES(?,?,?,'manual',1,1,?)").run(SOURCE, 'session-local', '阅读进度', NOW);
+      const result = JSON.stringify({ title: '阅读进度', titleSource: 'manual', revision: 1, manualLock: true, deletedAt: NOW, autoState: 'eligible' });
+      db.prepare("INSERT INTO session_management_operations(work_id,operation_key,session_id,operation_kind,request_digest,result_json,created_at) VALUES(?,?,?,'delete',?,?,?)").run(SOURCE, 'delete-key', 'session-local', 'a'.repeat(64), result, NOW);
+    } finally { db.close(); }
+    const snapshot = WorkHistorySnapshot.open(f.volume, f.scope);
+    assert.ok(snapshot);
+    assert.equal(snapshot.schemaVersion, 8);
+    const target = join(f.root, 'v8-import');
+    cpSync(f.volume, target, { recursive: true });
+    try { snapshot.rebuild(target, 'work-target', new Map([[CONTEXT, 'context-target']])); }
+    finally { snapshot.close(); }
+    const restored = WorkHistorySnapshot.open(target, { sourceWorkId: 'work-target', contextIds: new Set(['context-target']), scratchDirectory: f.root });
+    assert.ok(restored);
+    restored.close();
+    const imported = new DatabaseSync(join(target, 'work.sqlite'), { readOnly: true });
+    try {
+      const metadata = imported.prepare('SELECT work_id,title,deleted_at FROM session_management').get();
+      assert.equal(metadata?.work_id, 'work-target');
+      assert.equal(metadata?.title, '阅读进度');
+      assert.equal(metadata?.deleted_at, NOW);
+      assert.equal(imported.prepare('SELECT operation_key FROM session_management_operations').get()?.operation_key, 'delete-key');
+    } finally { imported.close(); }
+
+    edit(f.volume, `UPDATE session_management_operations SET result_json='{"title":null,"titleSource":"default","revision":1,"manualLock":null,"deletedAt":"${NOW}","autoState":"eligible"}'`);
+    assert.throws(() => WorkHistorySnapshot.open(f.volume, f.scope), WorkHistoryValidationError);
+    const validResult = JSON.stringify({ title: '阅读进度', titleSource: 'manual', revision: 1, manualLock: true, deletedAt: NOW, autoState: 'eligible' });
+    const repair = new DatabaseSync(join(f.volume, 'work.sqlite'));
+    try { repair.prepare('UPDATE session_management_operations SET result_json=?').run(validResult); } finally { repair.close(); }
+    writeFileSync(join(f.volume, 'sessions', 'other.jsonl'), f.sdk);
+    edit(f.volume, `INSERT INTO sessions(work_id,session_id,sdk_history_path,created_at,updated_at) VALUES('${SOURCE}','other','/var/data/sessions/other.jsonl','${NOW}','${NOW}');
+      INSERT INTO session_management(work_id,session_id,auto_run_id) VALUES('${SOURCE}','other','${f.runId}')`);
+    assert.throws(() => WorkHistorySnapshot.open(f.volume, f.scope), WorkHistoryValidationError);
+  } finally { f.close(); }
+});
 
 for (const version of [6,7] as const) test(`schema ${version} snapshots rebuild checkpoint bytes and reject broken chunk ranges`, () => {
   const f = fixture();
@@ -97,7 +144,7 @@ test("rebuild maps only Work/context identities and retains local IDs, idempoten
         assert.ok(!existsSync(join(target, "work.sqlite-wal"))); assert.ok(!existsSync(join(target, "work.sqlite-shm")));
         assert.deepEqual(readFileSync(join(target, "sessions", "one.jsonl")), f.sdk);
         assert.deepEqual(readFileSync(join(target, "business.sqlite")), readFileSync(join(f.volume, "business.sqlite")));
-        const reopened = WorkStore.open(join(target, "work.sqlite"));
+        const reopened = WorkStore.open(join(target, "work.sqlite"),{targetVersion:7});
         try {
           assert.equal(reopened.getSession(SOURCE, "session-local"), undefined);
 
@@ -214,7 +261,7 @@ test('managed model descriptors retain Thinking while imported preferences lose 
         const target=join(f.root,ambiguous?'ambiguous':'unique'),workId=ambiguous?'work-target-ambiguous':'work-target-unique';cpSync(f.volume,target,{recursive:true});
         const candidate={modelRef:'model-target-12345678',label:'Recipient provider',provider:'openai',model:'custom-alias',api:'openai-responses' as const,baseUrl:'https://model.example/v1',capabilities};
         snapshot.rebuild(target,workId,new Map([[CONTEXT,'context-target']]),ambiguous?[candidate,{...candidate,modelRef:'model-target-87654321'}]:[candidate]);
-        const imported=WorkStore.open(join(target,'work.sqlite'));
+        const imported=WorkStore.open(join(target,'work.sqlite'),{targetVersion:7});
         try{const pref=JSON.parse(imported.getSession(workId,'session-local')!.modelPreferenceJson!);assert.equal(pref.thinkingLevel,'high');assert.equal(pref.thinkingProfile,'responses-effort-v1');assert.equal(pref.executionBindingId,undefined);assert.equal(pref.availability,ambiguous?'unavailable':'available');}
         finally{imported.close();}
       }
@@ -243,7 +290,7 @@ test("schema5 cold history retains verified experience and waits while imports a
       for (const [suffix, candidates] of [["a", [{ modelRef: "model-target-12345678", label: "Target", provider: "anthropic", model: "claude-sonnet-4-6", baseUrl: "https://model.example" }]], ["b", []]] as const) {
         const workId = `work-target-${suffix}`, target = join(f.root, workId); cpSync(f.volume, target, { recursive: true });
         snapshot.rebuild(target, workId, new Map([[CONTEXT, `context-${workId}`]]), candidates);
-        const imported = WorkStore.open(join(target, "work.sqlite"));
+        const imported = WorkStore.open(join(target, "work.sqlite"),{targetVersion:7});
         try {
           assert.equal(imported.feedback.getRequest(workId, f.learned)?.state, "completed");
           assert.equal(imported.feedback.getRequest(workId, f.waiting)?.state, "waiting_result");
@@ -294,7 +341,7 @@ test("circular Service receipts and candidate Operation waits import historicall
     try {
       const target = join(f.root, "imported"); cpSync(f.volume, target, { recursive: true });
       snapshot.rebuild(target, "work-target-1234567890", new Map([[CONTEXT, "context-target"]]), [], new Map([["operation-source-12345678", "operation-target-12345678"]]));
-      const restored = WorkStore.open(join(target, "work.sqlite"));
+      const restored = WorkStore.open(join(target, "work.sqlite"),{targetVersion:7});
       try {
         assert.equal(restored.feedback.getRequest("work-target-1234567890", candidate.requestId)?.waitRef?.id, "operation-target-12345678");
         assert.equal(restored.feedback.getRequest("work-target-1234567890", receipt.requestId!)?.disposition, "historical");
@@ -339,7 +386,7 @@ test("fixed adoption proofs import into two contexts while business input remain
       for (const suffix of ["a", "b"]) {
         const id = `work-adoption-${suffix}`, context = `context-adoption-${suffix}`, target = join(f.root, id);
         cpSync(f.volume, target, { recursive: true }); snapshot.rebuild(target, id, new Map([[CONTEXT, context]]));
-        const imported = WorkStore.open(join(target, "work.sqlite"));
+        const imported = WorkStore.open(join(target, "work.sqlite"),{targetVersion:7});
         try {
           const details = imported.feedback.evidenceDetails(id, f.proofId) as Record<string, unknown>;
           assert.equal(details.contextIdentity, context);
@@ -394,7 +441,12 @@ test('schema 5 optional Thinking and input mode survive cold validation and rebi
   edit(f.volume,`UPDATE runs SET actual_model_json='${JSON.stringify(model)}',model_selector_json='{"kind":"session-preference","inputMode":"text"}'`);
   const snapshot=WorkHistorySnapshot.open(f.volume,f.scope)!;const target=join(f.root,'imported');cpSync(f.volume,target,{recursive:true});
   try{snapshot.rebuild(target,'work-target-1234567890',new Map([[CONTEXT,'context-target']]),[{...model,modelRef:'model-target-12345678',thinkingLevel:undefined}]);}finally{snapshot.close();}
-  const imported=WorkStore.open(join(target,'work.sqlite'));try{assert.equal(JSON.parse(imported.getSession('work-target-1234567890','session-local')!.modelPreferenceJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.actualModelJson!).thinkingLevel,'high');assert.equal(JSON.parse(imported.getRun(f.runId)!.modelSelectorJson!).inputMode,'text');}finally{imported.close();}
+   const imported = WorkStore.open(join(target, 'work.sqlite'), { targetVersion: 7 });
+   try {
+     assert.equal(JSON.parse(imported.getSession('work-target-1234567890', 'session-local')!.modelPreferenceJson!).thinkingLevel, 'high');
+     assert.equal(JSON.parse(imported.getRun(f.runId)!.actualModelJson!).thinkingLevel, 'high');
+     assert.equal(JSON.parse(imported.getRun(f.runId)!.modelSelectorJson!).inputMode, 'text');
+   } finally { imported.close(); }
   for(const invalid of ['"impossible"','3']){edit(f.volume,`UPDATE runs SET actual_model_json='{"modelRef":null,"label":"Default","provider":"fixture","model":"one","thinkingLevel":${invalid}}'`);assert.throws(()=>WorkHistorySnapshot.open(f.volume,f.scope),WorkHistoryValidationError);}
  }finally{f.close();}
 });

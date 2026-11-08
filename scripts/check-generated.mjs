@@ -11,8 +11,8 @@ export const generatedChains = {
     command: ['node', 'scripts/generate-work-history.mjs'],
     sources: ['internal/workhistory/*.sql'],
     outputs: [
-      ...['brain-schema', 'schema-objects', 'previous-schema', 'previous-schema-objects', 'schema-v6', 'schema-v6-objects', 'schema-v5', 'schema-v5-objects', 'legacy-schema', 'legacy-schema-objects', 'memory-schema', 'memory-schema-objects'].map(name => `packages/work-store/src/${name}.ts`),
-      ...['schema-objects', 'schema-v6-objects', 'schema-v5-objects', 'schema-v4-objects', 'memory-schema-objects'].map(name => `internal/workhistory/${name}.json`),
+      ...['brain-schema', 'schema-objects', 'schema-v8', 'schema-v8-objects', 'schema-v7', 'schema-v7-objects', 'previous-schema', 'previous-schema-objects', 'schema-v6', 'schema-v6-objects', 'schema-v5', 'schema-v5-objects', 'legacy-schema', 'legacy-schema-objects', 'memory-schema', 'memory-schema-objects'].map(name => `packages/work-store/src/${name}.ts`),
+      ...['schema-objects', 'schema-v8-objects', 'schema-v7-objects', 'schema-v6-objects', 'schema-v5-objects', 'schema-v4-objects', 'memory-schema-objects'].map(name => `internal/workhistory/${name}.json`),
     ],
   },
   protocol: {

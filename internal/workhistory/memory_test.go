@@ -345,3 +345,99 @@ func TestSchemaSevenColdHistoryRetainsPerRunContextsWithoutSessionBinding(t *tes
 		t.Fatal(imported.SchemaVersion, imported.Summary)
 	}
 }
+
+func TestSchemaEightColdHistoryRetainsSessionManagement(t *testing.T) {
+	private, scope := memoryFixture(t)
+	db, err := database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v6 := schemaV6SQL[strings.Index(schemaV6SQL, "CREATE TABLE run_output_chunks"):]
+	v8 := schemaV8SQL[strings.Index(schemaV8SQL, "-- Session management metadata"):]
+	if _, err = db.Exec(v6 + "; ALTER TABLE sessions DROP COLUMN active_context_identity; " + v8 + "; UPDATE schema_migrations SET version=8"); err != nil {
+		t.Fatal(err)
+	}
+	now := "2026-10-08T00:00:00Z"
+	if _, err = db.Exec(`INSERT INTO session_management(work_id,session_id,title,title_source,title_revision,manual_lock,deleted_at) VALUES(?,'session','阅读进度','manual',1,1,?)`, scope.SourceWorkID, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO session_management_operations(work_id,operation_key,session_id,operation_kind,request_digest,result_json,created_at) VALUES(?,'delete-key','session','delete',?,'{"title":"阅读进度","titleSource":"manual","revision":1,"manualLock":true,"deletedAt":"2026-10-08T00:00:00Z","autoState":"eligible"}',?)`, scope.SourceWorkID, strings.Repeat("a", 64), now); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	snapshot, err := Open(context.Background(), private, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.SchemaVersion != 8 {
+		t.Fatal(snapshot.SchemaVersion)
+	}
+	target := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(target, "sessions"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"work.sqlite", "memory.sqlite", "sessions/one.jsonl"} {
+		data, err := os.ReadFile(filepath.Join(private, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(target, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = snapshot.Rebuild(context.Background(), target, "target-work", map[string]string{"context-memory-source": "target-context"}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Close()
+	imported, err := Open(context.Background(), target, Scope{SourceWorkID: "target-work", ContextIDs: map[string]bool{"target-context": true}, ScratchDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported.Close()
+	restored, err := database(filepath.Join(target, "work.sqlite"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var work, title, deleted string
+	if err = restored.QueryRow("SELECT work_id,title,deleted_at FROM session_management").Scan(&work, &title, &deleted); err != nil || work != "target-work" || title != "阅读进度" || deleted != now {
+		t.Fatal(work, title, deleted, err)
+	}
+	restored.Close()
+
+	db, err = database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`UPDATE session_management_operations SET result_json='{"title":null,"titleSource":"default","revision":1,"manualLock":null,"deletedAt":"2026-10-08T00:00:00Z","autoState":"eligible"}'`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if bad, err := Open(context.Background(), private, scope); err == nil {
+		bad.Close()
+		t.Fatal("accepted a malformed operation receipt")
+	}
+	db, err = database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`UPDATE session_management_operations SET result_json='{"title":"阅读进度","titleSource":"manual","revision":1,"manualLock":true,"deletedAt":"2026-10-08T00:00:00Z","autoState":"eligible"}'`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	if err = os.WriteFile(filepath.Join(private, "sessions", "other.jsonl"), []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err = database(filepath.Join(private, "work.sqlite"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO sessions(work_id,session_id,sdk_history_path,created_at,updated_at) VALUES(?,'other','/var/data/sessions/other.jsonl',?,?); INSERT INTO session_management(work_id,session_id,auto_run_id) VALUES(?,'other','run')`, scope.SourceWorkID, now, now, scope.SourceWorkID); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if bad, err := Open(context.Background(), private, scope); err == nil {
+		bad.Close()
+		t.Fatal("accepted a naming Run from another Session")
+	}
+}

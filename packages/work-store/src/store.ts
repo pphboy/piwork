@@ -1,4 +1,4 @@
-import { WORK_SCHEMA_SQL } from "./brain-schema.js";
+import { WORK_SCHEMA_V7_SQL } from "./schema-v7.js";
 import { randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +10,8 @@ import { MemoryStore, type MemorySelection } from "./memory.js";
 import { migrateExperience, type HistoryMigration } from "./memory-migration.js";
 import { parseChatImageInput, chatInputDigest, ChatImageError } from "@piwork/contracts";
 import { readOutputChunks, readOutputEventIndex, readOutputTextRange, recordOutputChunks, type OutputChunk, type OutputEventKind, type OutputEventIndex } from "./output-checkpoint.js";
+import { SessionManagementError, SessionManagementStore, type SessionAutoState, type SessionTitleSource } from "./session-management.js";
+import { WORK_SCHEMA_V8_SQL } from "./schema-v8.js";
 
 export { WORK_SCHEMA_VERSION };
 export const DEFAULT_MAX_RUN_EVENTS = 10_000;
@@ -43,6 +45,12 @@ export interface SessionRecord {
   readonly updatedAt: string;
   readonly modelPreferenceJson?: string | null;
   readonly sourceJson?: string | null;
+  readonly title?: string | null;
+  readonly titleSource?: SessionTitleSource;
+  readonly titleRevision?: number;
+  readonly deletedAt?: string | null;
+  readonly autoNameState?: SessionAutoState;
+  readonly manualTitleLock?: boolean;
 }
 
 export interface RunRecord {
@@ -117,12 +125,14 @@ export class WorkStore {
   readonly feedback: FeedbackStore;
 
   readonly memory: MemoryStore;
+  readonly sessionManagement: SessionManagementStore;
   private constructor(private readonly database: DatabaseSync) {
     this.memory = new MemoryStore(database);
     this.feedback = new FeedbackStore(database, this.memory);
+    this.sessionManagement = new SessionManagementStore(database);
   }
 
-  static open(databasePath: string, options: { workId?: string; historyMigration?: HistoryMigration } = {}): WorkStore {
+  static open(databasePath: string, options: { workId?: string; historyMigration?: HistoryMigration; targetVersion?: 7 | 8 } = {}): WorkStore {
     if (databasePath !== resolve(databasePath) || databasePath.includes("\0")) throw new Error("WORK_HISTORY_INVALID");
     mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
     let directory = "/";
@@ -146,13 +156,15 @@ export class WorkStore {
       const fresh = objects.length === 0;
       const legacy = !fresh && sameSchema(objects, LEGACY_SCHEMA_OBJECTS);
       const previous = !fresh && !legacy ? Number(database.prepare("SELECT version FROM schema_migrations").get()?.version) : 0;
-      const needsUpgrade=previous===5||previous===6;
+      const targetVersion = options.targetVersion ?? WORK_SCHEMA_VERSION;
+      const needsUpgrade=[5,6,7].includes(previous) && previous < targetVersion;
       if (legacy) {
         validateLegacyWorkDatabase(database);
-        if (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== 4 || options.historyMigration.toSchema !== 7) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        if (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== 4 || options.historyMigration.toSchema !== targetVersion) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
       } else if (!fresh) {
-        if (needsUpgrade && (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== previous || options.historyMigration.toSchema !== 7)) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
-        if(needsUpgrade)validatePreviousWorkDatabase(database);else migrateWorkDatabase(database);
+        if (needsUpgrade && (!options.historyMigration || options.historyMigration.workId !== options.workId || options.historyMigration.fromSchema !== previous || options.historyMigration.toSchema !== targetVersion)) throw new Error("WORK_HISTORY_MIGRATION_REQUIRED");
+        if (needsUpgrade) validatePreviousWorkDatabase(database);
+        else migrateWorkDatabase(database, targetVersion);
       }
       try { const identity=secure(memoryPath, fresh);if(fresh)createdMemory=identity; }
       catch (error) {
@@ -168,7 +180,10 @@ export class WorkStore {
         if (database.prepare(`PRAGMA ${schema}.synchronous`).get()?.synchronous !== 2) throw new Error("WORK_MEMORY_JOURNAL_UNSUPPORTED");
       }
       database.exec("PRAGMA foreign_keys = ON");
-      if (fresh) { database.exec("BEGIN IMMEDIATE"); migrateWorkDatabase(database); }
+      if (fresh) {
+        database.exec("BEGIN IMMEDIATE");
+        migrateWorkDatabase(database, targetVersion);
+      }
       initializeMemoryDatabase(database);
       if (legacy) migrateExperience(database, options.historyMigration!);
       const store = new WorkStore(database);
@@ -184,13 +199,18 @@ export class WorkStore {
         database.exec("BEGIN IMMEDIATE");
         if (database.prepare("SELECT 1 FROM runs WHERE state IN ('accepted','running','cancelling') LIMIT 1").get() || database.prepare("SELECT 1 FROM work_activity LIMIT 1").get()) throw new Error("WORK_HISTORY_BUSY");
         if (previous === 5) {
-          const offset = WORK_SCHEMA_SQL.indexOf("CREATE TABLE run_output_chunks");
-          database.exec(WORK_SCHEMA_SQL.slice(offset));
+          const offset = WORK_SCHEMA_V7_SQL.indexOf("CREATE TABLE run_output_chunks");
+          database.exec(WORK_SCHEMA_V7_SQL.slice(offset));
         }
-        database.exec("ALTER TABLE sessions DROP COLUMN active_context_identity");
-        const result = database.prepare("UPDATE schema_migrations SET version=7 WHERE version=?").run(previous);
+        if (previous === 5 || previous === 6) database.exec("ALTER TABLE sessions DROP COLUMN active_context_identity");
+        if (targetVersion === 8) {
+          const offset = WORK_SCHEMA_V8_SQL.indexOf('-- Session management metadata');
+          if (offset < 0) throw new Error('WORK_HISTORY_FORMAT_UNSUPPORTED');
+          database.exec(WORK_SCHEMA_V8_SQL.slice(offset));
+        }
+        const result = database.prepare("UPDATE schema_migrations SET version=? WHERE version=?").run(targetVersion, previous);
         if (result.changes !== 1) throw new Error("WORK_HISTORY_FORMAT_UNSUPPORTED");
-        migrateWorkDatabase(database);
+        migrateWorkDatabase(database, targetVersion);
         database.exec("COMMIT");
       }
       if (fresh) database.exec("COMMIT");
@@ -251,9 +271,11 @@ export class WorkStore {
 
   getSession(workId: string, sessionId: string): SessionRecord | undefined {
     this.assertOpen();
+    const management = this.schemaVersion >= 8 ? ', m.title AS managed_title, m.title_source AS managed_title_source, m.title_revision AS managed_title_revision, m.deleted_at AS managed_deleted_at, m.auto_state AS managed_auto_state, m.manual_lock AS managed_manual_lock' : '';
+    const join = this.schemaVersion >= 8 ? 'LEFT JOIN session_management m ON m.work_id=s.work_id AND m.session_id=s.session_id' : '';
     const row = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json
-      FROM sessions WHERE work_id = ? AND session_id = ?`).get(workId, sessionId) as
+      s.work_id, s.session_id, s.sdk_history_path, s.created_at, s.updated_at, s.model_preference_json, s.source_json${management}
+      FROM sessions s ${join} WHERE s.work_id = ? AND s.session_id = ?`).get(workId, sessionId) as
       | Record<string, string | null>
       | undefined;
     return row === undefined ? undefined : mapSession(row);
@@ -261,9 +283,12 @@ export class WorkStore {
 
   listSessions(workId: string): SessionRecord[] {
     this.assertOpen();
+    const management = this.schemaVersion >= 8 ? ', m.title AS managed_title, m.title_source AS managed_title_source, m.title_revision AS managed_title_revision, m.deleted_at AS managed_deleted_at, m.auto_state AS managed_auto_state, m.manual_lock AS managed_manual_lock' : '';
+    const join = this.schemaVersion >= 8 ? 'LEFT JOIN session_management m ON m.work_id=s.work_id AND m.session_id=s.session_id' : '';
+    const visible = this.schemaVersion >= 8 ? 'AND m.deleted_at IS NULL' : '';
     const rows = this.database.prepare(`SELECT
-      work_id, session_id, sdk_history_path, created_at, updated_at, model_preference_json, source_json
-      FROM sessions WHERE work_id = ? ORDER BY created_at, session_id`).all(workId) as Array<Record<string, string>>;
+      s.work_id, s.session_id, s.sdk_history_path, s.created_at, s.updated_at, s.model_preference_json, s.source_json${management}
+      FROM sessions s ${join} WHERE s.work_id = ? ${visible} ORDER BY s.created_at, s.session_id`).all(workId) as Array<Record<string, string>>;
     return rows.map(mapSession);
   }
 
@@ -292,6 +317,7 @@ export class WorkStore {
         "SELECT session_id FROM sessions WHERE work_id = ? AND session_id = ?",
       ).get(request.workId, request.sessionId) as { session_id: string } | undefined;
       if (session === undefined) throw new Error(`session ${request.sessionId} does not exist in Work ${request.workId}`);
+      if (this.schemaVersion >= 8 && this.sessionManagement.read(request.workId, request.sessionId).deletedAt) throw new SessionManagementError('SESSION_DELETED');
 
       const runId = `run-${randomUUID()}`;
       const now = request.now ?? new Date().toISOString();
@@ -366,6 +392,15 @@ export class WorkStore {
     this.assertOpen();
     const row = this.database.prepare(`SELECT ${historyRunColumns} FROM runs WHERE work_id=? AND run_id=?`).get(workId,runId) as Record<string,string|number|null> | undefined;
     return row ? { ...mapRun(row), resultBytes: row.result_bytes === null ? null : Number(row.result_bytes) } : undefined;
+  }
+
+  /** The first completed user Chat Run, without loading its full result body. */
+  firstSuccessfulChatRun(workId: string, sessionId: string): HistoryRunRecord | undefined {
+    this.assertOpen();
+    const row = this.database.prepare(`SELECT run_id FROM runs WHERE work_id=? AND session_id=? AND state='succeeded'
+      AND (source_json IS NULL OR (json_valid(source_json) AND COALESCE(json_extract(source_json,'$.kind'),'chat')='chat'))
+      ORDER BY accepted_at,run_id LIMIT 1`).get(workId, sessionId) as { run_id: string } | undefined;
+    return row ? this.historyRun(workId, row.run_id) : undefined;
   }
 
   historyResult(workId: string, sessionId: string, runId: string, byteOffset: number, bytes: number): Buffer {
@@ -449,7 +484,8 @@ export class WorkStore {
 
   setSessionModelPreference(workId: string, sessionId: string, value: string | null, now = new Date().toISOString()): SessionRecord {
     this.assertOpen();
-    const result = this.database.prepare("UPDATE sessions SET model_preference_json=?, updated_at=? WHERE work_id=? AND session_id=?").run(value, now, workId, sessionId);
+    const visible = this.schemaVersion >= 8 ? 'AND NOT EXISTS(SELECT 1 FROM session_management m WHERE m.work_id=sessions.work_id AND m.session_id=sessions.session_id AND m.deleted_at IS NOT NULL)' : '';
+    const result = this.database.prepare(`UPDATE sessions SET model_preference_json=?, updated_at=? WHERE work_id=? AND session_id=? ${visible}`).run(value, now, workId, sessionId);
     if (result.changes !== 1) throw new Error("Session not found");
     return this.getSession(workId, sessionId)!;
   }
@@ -670,6 +706,14 @@ function mapSession(row: Record<string, string | null>): SessionRecord {
     updatedAt: row.updated_at ?? "",
     ...(row.model_preference_json ? { modelPreferenceJson: row.model_preference_json } : {}),
     ...(row.source_json ? { sourceJson: row.source_json } : {}),
+    ...(Object.hasOwn(row, 'managed_title') ? {
+      title: row.managed_title ?? null,
+      titleSource: (row.managed_title_source ?? 'default') as SessionTitleSource,
+      titleRevision: Number(row.managed_title_revision ?? 0),
+      deletedAt: row.managed_deleted_at ?? null,
+      autoNameState: (row.managed_auto_state ?? 'eligible') as SessionAutoState,
+      manualTitleLock: Number(row.managed_manual_lock ?? 0) === 1,
+    } : {}),
   };
 }
 
