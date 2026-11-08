@@ -105,3 +105,5 @@ Thanks to [LinuxDo](https://linux.do).
 ## License
 
 [Apache License 2.0](LICENSE)
+
+[FastAPI + htmx Service environment](deploy/images/fastapi-htmx-base/README.md)

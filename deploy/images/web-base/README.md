@@ -110,3 +110,5 @@ node scripts/check-web-base-core.mjs
 Real Core/SDK/browser checks also need the compatible acceptance Agent/helper images and built Go programs described in [testing](../../../AGENTS.md#构建与验证). Tests use unique installation/fixture labels and only clean their own resources. Preparation/start/restart, workspace/snapshot sizes and complete sharing are measured separately; a timeout budget is not a measured performance result.
 
 Local build/validation does not push. Publication uses `scripts/publish-web-base.mjs` only after explicit release authorization, validates the exact current candidate and evidence, rejects conflicting remote tags, and verifies anonymous digest pull/run before updating the formal brain reference. Old commit/dirty/input/digest identities remain unchanged.
+
+The optional [FastAPI + htmx environment](../fastapi-htmx-base/README.md) supplies a parallel starter.

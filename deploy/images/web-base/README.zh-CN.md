@@ -110,3 +110,5 @@ node scripts/check-web-base-core.mjs
 真实 Core/SDK/浏览器检查还使用兼容 acceptance Agent/helper 镜像与已构建 Go 程序，见[测试说明](../../../AGENTS.md#构建与验证)。测试按唯一 installation/fixture 标签创建并仅清理自身资源。分别测量准备/启动/重启、workspace/快照体积及完整分享，超时预算不作为性能结果。
 
 本地构建/检查不推送。只有明确要求发行后才使用 `scripts/publish-web-base.mjs`，核对实际当前候选与证据、拒绝远端 tag 冲突，并在匿名 digest 拉取/运行通过后更新正式脑包引用；旧 commit/dirty/input/digest 身份保留。
+
+可选的 [FastAPI + htmx 环境](../fastapi-htmx-base/README.zh-CN.md) 提供并列 starter。
