@@ -5,7 +5,14 @@ import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { sourceStyleIssues, newStyleIssues } from './check-source-style.mjs';
+import { sourceStyleIssues, newStyleIssues, upstreamStyleAsset } from './check-source-style.mjs';
+
+test('only the two pinned upstream resources bypass authored-source formatting', () => {
+  assert(upstreamStyleAsset('deploy/images/fastapi-htmx-base/vendor/htmx.min.js'));
+  assert(upstreamStyleAsset('deploy/images/fastapi-htmx-base/vendor/bootstrap.min.css'));
+  assert(!upstreamStyleAsset('deploy/images/fastapi-htmx-base/vendor/custom.js'));
+  assert(!upstreamStyleAsset('internal/coreassets/piwork-brain/templates/fastapi-htmx/static/page-client.js'));
+});
 
 test('new TS/JS must not compress independent statements into one line', () => {
   const valid = 'function run() {\n  read();\n  write();\n}\n';

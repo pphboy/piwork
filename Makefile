@@ -83,6 +83,10 @@ workstation-fixture:
 web-base-image:
 	node scripts/build-web-base.mjs
 
+.PHONY: fastapi-htmx-base-image
+fastapi-htmx-base-image:
+	node scripts/build-fastapi-htmx-base.mjs
+
 .PHONY: native-history4-web-base-fixture
 native-history4-web-base-fixture:
 	docker build -f internal/coreapp/testdata/Dockerfile.memory-history4-web-base -t piwork-memory-history4-web-base:acceptance .

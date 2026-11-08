@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python /opt/piwork-web-base/lib/piwork_fastapi.py "$@"

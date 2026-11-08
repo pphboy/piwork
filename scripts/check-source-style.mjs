@@ -5,6 +5,14 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+// Exact upstream bytes are checked by the image vendor SHA256 manifest.
+export function upstreamStyleAsset(file) {
+  return new Set([
+    'deploy/images/fastapi-htmx-base/vendor/htmx.min.js',
+    'deploy/images/fastapi-htmx-base/vendor/bootstrap.min.css',
+  ]).has(file);
+}
+
 export function sourceStyleIssues(source, file) {
   const issues = [];
   const lines = source.split('\n');
@@ -131,6 +139,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   let failed = false;
   let checked = 0;
   for (const file of paths) {
+    if (upstreamStyleAsset(file)) continue;
     if (!/\.(?:go|ts|js|mjs|css)$/.test(file) || !existsSync(resolve(root, file))) continue;
     if (/^(?:internal\/(?:desktopassets|consoleassets)\/static|openspec\/changes\/.*\/prototype)\//.test(file) || /(?:_generated\.go$|\/generated\/|\.d\.ts$)/.test(file)) continue;
     checked++;
