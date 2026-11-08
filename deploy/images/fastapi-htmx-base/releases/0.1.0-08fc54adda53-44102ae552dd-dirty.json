@@ -1,0 +1,35 @@
+{
+  "state": "published",
+  "contractVersion": 1,
+  "platform": "linux/amd64",
+  "version": "0.1.0-08fc54adda53-44102ae552dd-dirty",
+  "commit": "08fc54adda53a0c9ee71f66d3ec237050adf9be0",
+  "modified": true,
+  "reference": "docker.io/pphboy/piwork-fastapi-htmx-base:0.1.0-08fc54adda53-44102ae552dd-dirty",
+  "inputHash": "44102ae552dd9b9fc8f608277cb3db99a416739fb78cbb33615afa5bb054eaea",
+  "environment": {
+    "contractVersion": 1,
+    "version": "0.1.0",
+    "platform": "linux/amd64",
+    "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+    "pythonVersion": "3.13.16",
+    "sqlite3Version": "3.40.1-2+deb12u2",
+    "pipVersion": "26.2.1",
+    "stack": "python-fastapi-htmx-sqlite",
+    "fastapiVersion": "0.143.0",
+    "htmxVersion": "2.0.11",
+    "bootstrapVersion": "5.3.8"
+  },
+  "imageId": "sha256:d23d4cea03a546bf2dd55506989af323ab91cd8ea679f523fd5db2944594945f",
+  "registryDigest": "sha256:a6deae4184ddd1261ea93bad8eeccb8b51e0aea91065e24cac3833ef8a3f9fb1",
+  "fixedReference": "docker.io/pphboy/piwork-fastapi-htmx-base:0.1.0-08fc54adda53-44102ae552dd-dirty@sha256:a6deae4184ddd1261ea93bad8eeccb8b51e0aea91065e24cac3833ef8a3f9fb1",
+  "anonymousReadable": true,
+  "anonymousRuntime": {
+    "inputHash": "44102ae552dd9b9fc8f608277cb3db99a416739fb78cbb33615afa5bb054eaea",
+    "stack": "python-fastapi-htmx-sqlite",
+    "fastapiVersion": "0.143.0",
+    "browserResourcesVerified": true,
+    "httpReady": true
+  },
+  "checkedAt": "2026-11-08T08:54:12.233Z"
+}

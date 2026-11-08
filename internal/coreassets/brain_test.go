@@ -3,14 +3,16 @@ package coreassets
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 	version, err := BrainPackageVersion()
-	if err != nil || version != "1.3.0" {
+	if err != nil || version != "1.3.3" {
 		t.Fatal(version, err)
 	}
 	raw, err := BrainPackageArchive()
@@ -38,7 +40,7 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		}
 	}
 	for name, expected := range map[string]string{
-		"package.json":                                            `"version": "1.3.0"`,
+		"package.json":                                            `"version": "1.3.3"`,
 		"skills/application-awareness/SKILL.md":                   "name: application-awareness",
 		"skills/application-awareness/references/nicegui.md":      "Desktop Service",
 		"skills/deploy-work-service/SKILL.md":                     "Python + NiceGUI + SQLite",
@@ -47,7 +49,7 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		"templates/web-app/ui.py":                                 "from nicegui import ui",
 		"templates/web-app/page-files.json":                       `"files": []`,
 		"templates/workstation/page-files.json":                   `"files": []`,
-		"references/fastapi-htmx-base.json":                       `"state": "unpublished"`,
+		"references/fastapi-htmx-base.json":                       `"state": "published"`,
 		"templates/fastapi-htmx/app.py":                           "workers=1",
 		"templates/common-workstation/workstation.py":             "class Workstation",
 		"skills/application-awareness/references/fastapi-htmx.md": "checked version copy",
@@ -55,6 +57,27 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		if !strings.Contains(files[name], expected) {
 			t.Fatalf("%s omitted %q", name, expected)
 		}
+	}
+	var fastapi struct {
+		State, Reference, ImageID, InputHash, RegistryDigest string
+		AnonymousReadable                                    bool
+	}
+	if err := json.Unmarshal([]byte(files["references/fastapi-htmx-base.json"]), &fastapi); err != nil {
+		t.Fatal(err)
+	}
+	var published struct {
+		State, FixedReference, ImageID, InputHash, RegistryDigest string
+		AnonymousReadable                                         bool
+	}
+	release, err := os.ReadFile("../../deploy/images/fastapi-htmx-base/release.json")
+	if err != nil || json.Unmarshal(release, &published) != nil {
+		t.Fatal("FastAPI publication record missing or invalid", err)
+	}
+	if fastapi.State != "published" || !fastapi.AnonymousReadable || !published.AnonymousReadable ||
+		fastapi.Reference != published.FixedReference || fastapi.ImageID != published.ImageID ||
+		fastapi.InputHash != published.InputHash || fastapi.RegistryDigest != published.RegistryDigest ||
+		!strings.HasSuffix(fastapi.Reference, "@"+fastapi.RegistryDigest) {
+		t.Fatal("FastAPI brain identity differs from the anonymously verified publication")
 	}
 	awareness := files["skills/application-awareness/SKILL.md"]
 	for _, required := range []string{"1. Product", "2. UI", "3. UX", "4. Reactivity", "5. Engineering Judgment", "功能可用、操作直观、状态正确、界面整洁", "普通 Query/Action", "不增加独立设计阶段"} {

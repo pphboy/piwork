@@ -8,6 +8,12 @@ A Linux amd64 application Service environment: Python 3.13, FastAPI + Uvicorn, J
 
 Exact Python dependencies are in [requirements.lock](requirements.lock); [environment.json](environment.json) fixes the upstream image. [Browser resource identities and licenses](vendor/manifest.json) bind local htmx and CSS. No CDN, npm frontend build, ORM or migration system is needed. Runtime supports UID/GID 10001:10001, a read-only root and a granted writable workspace.
 
+**Published and anonymously verified.** Use the fixed Linux amd64 reference below. [release.json](release.json) records the actual source commit, dirty state, input hash, image ID, registry digest and anonymous runtime result. The bundled brain uses the same fixed reference. `dist/fastapi-htmx-base/candidate.json` retains the local build identity; previous NiceGUI and FastAPI/React records keep their original identities.
+
+```text
+docker.io/pphboy/piwork-fastapi-htmx-base:0.1.1-08fc54adda53-291497dc377a-dirty@sha256:2314f5a787a1be0e575c892899e32cb779cacd163d02a137c777e3a0358a1aad
+```
+
 ## Direct use and starter
 
 Ordinary applications can use their own `python app.py` or Uvicorn command without a Piwork identity. They must bind 0.0.0.0 at the declared Service port. To extend the environment, use `ARG FASTAPI_BASE` followed by `FROM ${FASTAPI_BASE}` and install your own exact dependencies at build time; supply the verified fixed reference as the build argument.
@@ -35,4 +41,6 @@ node --test scripts/build-fastapi-htmx-base.test.mjs
 node scripts/check-fastapi-htmx-base.mjs
 ```
 
-Run commands from the repository root. Local checks do not push images.
+Run commands from the repository root. Local checks do not push images. Explicitly authorized publication uses `node scripts/publish-fastapi-htmx-base.mjs --sdk-report <matching-SDK-result.json> --push`; omit --push for preflight only. It rejects conflicting fixed tags, verifies the exact candidate evidence, and checks anonymous digest pull/run before recording publication. Validation must match the actual candidate image ID/input hash. Broader SDK feedback/import validation uses the existing Core integration runner; targeted runs remain partial results.
+
+[Previous 0.1.0 publication](releases/0.1.0-08fc54adda53-44102ae552dd-dirty.json) retains its original identity and verification facts.
