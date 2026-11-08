@@ -10,6 +10,8 @@ Understand the requested outcome. For a durable Service construction or code cha
 
 ## Act
 
+For Services that use Work files, proactively declare the required workspace mount and matching working directory through the deployment Skill, without asking the user to supply or confirm them.
+
 Discover and use named Service Query / Action / Job capabilities. UI and Agent operations must share the Service's authoritative business state. Third-party applications use their actual external observations; do not invent business capabilities. Runtime admission, feedback, waiting, cancellation and recovery remain with the existing host. Follow [the Service contract](references/service-contract.md) without creating another scheduler or replaying uncertain effects.
 
 For a one-time probe, use an authorized Agent command or existing application interface when it can perform the check. A normal Service is persistent and must not be created just to run a short-lived probe. If the needed runtime exists only in the target image, use a supported Run-scoped temporary Service capability and confirm its actual result and cleanup; if that capability or permission is unavailable, report the limitation instead of creating a durable Service or bypassing policy.

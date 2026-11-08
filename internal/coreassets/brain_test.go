@@ -8,11 +8,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"piwork/internal/servicedefinition"
 )
 
 func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 	version, err := BrainPackageVersion()
-	if err != nil || version != "1.3.3" {
+	if err != nil || version != "1.3.4" {
 		t.Fatal(version, err)
 	}
 	raw, err := BrainPackageArchive()
@@ -40,7 +42,7 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		}
 	}
 	for name, expected := range map[string]string{
-		"package.json":                                            `"version": "1.3.3"`,
+		"package.json":                                            `"version": "1.3.4"`,
 		"skills/application-awareness/SKILL.md":                   "name: application-awareness",
 		"skills/application-awareness/references/nicegui.md":      "Desktop Service",
 		"skills/deploy-work-service/SKILL.md":                     "Python + NiceGUI + SQLite",
@@ -86,6 +88,69 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		}
 	}
 	brain := files["brain.md"]
+	for name, required := range map[string][]string{
+		"brain.md":                            {"proactively declare the required workspace mount", "matching working directory", "without asking the user"},
+		"skills/deploy-work-service/SKILL.md": {"`mounts`", "`workingDirectory`", "without asking the user", "`InvalidArgument`", "supporting evidence", "reference.md#mounts-and-workingdirectory"},
+	} {
+		for _, text := range required {
+			if !strings.Contains(files[name], text) {
+				t.Fatalf("%s omitted workspace deployment guidance %q", name, text)
+			}
+		}
+	}
+	examples := strings.Split(files["skills/deploy-work-service/reference.md"], "```json\n")[1:]
+	if len(examples) != 2 {
+		t.Fatalf("expected workspace and image-native JSON examples, got %d", len(examples))
+	}
+	for index, name := range []string{"workspace", "image-native"} {
+		t.Run(name, func(t *testing.T) {
+			fragment, _, closed := strings.Cut(examples[index], "\n```")
+			if !closed {
+				t.Fatal("unterminated deployment example")
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(fragment), &fields); err != nil {
+				t.Fatal(err)
+			}
+			definition := map[string]json.RawMessage{
+				"name": json.RawMessage(`"sample"`), "image": json.RawMessage(`{"reference":"fixture/app"}`), "command": json.RawMessage(`"app"`),
+			}
+			for key, value := range fields {
+				definition[key] = value
+			}
+			raw, err := json.Marshal(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			input, err := servicedefinition.Normalize(raw)
+			if err != nil {
+				t.Fatal("delivered deployment example violates the Service contract", err)
+			}
+			if name == "image-native" {
+				if input.WorkingDirectory.Value != "/" || len(input.Mounts.Value) != 0 {
+					t.Fatal("image-native example must not grant workspace access")
+				}
+				return
+			}
+			if input.WorkingDirectory.Value != "/var/data/workspace" || len(input.Mounts.Value) != 1 {
+				t.Fatal("workspace example needs its matching mount")
+			}
+			mount := input.Mounts.Value[0]
+			if mount.Source != "workspace" || mount.Target != "/var/data/workspace" || mount.ReadOnly {
+				t.Fatal("workspace example must permit its declared application writes")
+			}
+			delete(definition, "mounts")
+			raw, err = json.Marshal(definition)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = servicedefinition.Normalize(raw)
+			validation, ok := err.(*servicedefinition.ValidationError)
+			if !ok || validation.Field != "workingDirectory" {
+				t.Fatal("missing workspace mount must still be rejected", err)
+			}
+		})
+	}
 	if !strings.Contains(brain, "[application-awareness](skills/application-awareness/SKILL.md) directly") ||
 		!strings.Contains(brain, "service start/stop and unchanged third-party deployments") {
 		t.Fatal("default cognition omitted independent routing or its business boundary")

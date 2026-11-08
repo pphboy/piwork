@@ -4,7 +4,35 @@ The service MCP server exposes `deployment_context`, `service_create`, `service_
 
 Ordinary `service_create` creates a persistent Service. For one-time probes, first use an authorized Agent command or existing application API when suitable. A compatible `deployment_context` advertises `runTemporaryServiceContractVersion: 1`; only then use `service_create` with `temporaryMode: "once"` for a command or `temporaryMode: "listener"` for short-lived readiness. The Agent bridge binds the current Run automatically; never supply a Run or generation as a tool argument. For `once`, inspect `service_get.temporary.exitCode` after the original command exits; for `listener`, observe actual readiness. Read the original bounded `service_logs` before requesting `service_remove`, then observe its returned cleanup Operation and confirm its terminal state. Run termination also requests cleanup automatically. If the capability or required tool is unavailable, report that fact and do not silently create a durable Service. Do not infer the lifetime from its name or exit code.
 
-Use `/var/data/workspace` as the workspace mount target. A service can receive it read-only or read-write. A mount-free image-native service must use `/` as its working directory. `service_remove` removes the runtime and desired service while retaining the shared Work workspace.
+## mounts and workingDirectory
+
+Supply these fields yourself when preparing a Service definition; the user does not need to request or confirm workspace access already granted for the task. Files visible in Agent workspace become available to a Service through its explicit `mounts` declaration.
+
+The following JSON blocks are fields to merge into `definition`, not complete `service_create` requests. Supply the actual image, executable and other application fields through the existing deployment flow.
+
+For an application using workspace source and writing persistent data, declare the supported workspace mount and a matching working directory:
+
+```json
+{
+  "workingDirectory": "/var/data/workspace",
+  "mounts": [
+    { "source": "workspace", "target": "/var/data/workspace", "readOnly": false }
+  ]
+}
+```
+
+Use `readOnly: true` only when the Service needs read-only workspace access. A Service that writes databases, dependencies or runtime materials there needs `readOnly: false`. The working directory may be the mount root or an existing directory below it.
+
+For an image-native Service that needs no Work files, omit workspace access and explicitly use `/` as the working directory:
+
+```json
+{
+  "workingDirectory": "/",
+  "mounts": []
+}
+```
+
+A workspace working directory without the corresponding mount is rejected before acceptance. Correct a proven argument mismatch rather than switching images to diagnose that mismatch. `service_remove` removes the runtime and desired service while retaining the shared Work workspace.
 
 Dependencies installed at runtime must use a reproducible command and a cache or environment below the workspace. Prefer images that already contain the required runtime. Store mutable application data below `data/<service-name>`.
 
