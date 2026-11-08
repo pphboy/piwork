@@ -2,13 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"piwork/internal/client"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +23,20 @@ func TestHostedInspectionIsPrivateToBrowserAndKnownOperationsToUser(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	hash := sha256.Sum256(content)
+	digest := hex.EncodeToString(hash[:])
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/work-snapshots/snapshot-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"workId": "work-1", "snapshotId": "snapshot-1", "state": "succeeded", "digest": digest, "size": len(content)})
+			return
+		case "/api/v1/work-snapshots/snapshot-1/content":
+			w.Header().Set("Content-Type", workPackageMIME)
+			w.Header().Set("X-Piwork-Sha256", digest)
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+			_, _ = w.Write(content)
+			return
+		}
 		if r.URL.Path != "/api/v1/me" {
 			t.Error("inspection contacted business Core", r.URL.Path)
 			w.WriteHeader(404)
@@ -97,6 +114,21 @@ func TestHostedInspectionIsPrivateToBrowserAndKnownOperationsToUser(t *testing.T
 	}
 	if known.Code != 200 || json.Unmarshal(known.Body.Bytes(), &restored) != nil || len(restored.Operations) != 1 || !restored.Operations[0].Terminal || restored.Operations[0].TerminalState != "failed" || restored.Operations[0].TerminalCheckedAt == "" {
 		t.Fatal("terminal hint not exposed to same user", known.Code, known.Body.String())
+	}
+	prepared := call(first, "POST", "work-snapshots/snapshot-1/downloads", nil)
+	var download struct{ TransferID string }
+	if prepared.Code != 200 || json.Unmarshal(prepared.Body.Bytes(), &download) != nil || download.TransferID == "" {
+		t.Fatal("hosted download preparation", prepared.Code, prepared.Body.String())
+	}
+	for range 2 {
+		response := call(first, "GET", "downloads/"+download.TransferID+"/content", nil)
+		kind, params, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
+		if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), content) || err != nil || kind != "attachment" || params["filename"] != "golden.work" {
+			t.Fatal("hosted download filename or content changed", response.Code, response.Header(), err)
+		}
+	}
+	if response := call(second, "GET", "downloads/"+download.TransferID+"/content", nil); response.Code != 404 {
+		t.Fatal("hosted download crossed browser session", response.Code)
 	}
 	first.Close()
 	if _, err := os.Stat(filepath.Join(root, "sessions", "first", "desktop-transfers-go", value.TransferID)); !os.IsNotExist(err) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"testing"
@@ -134,6 +135,12 @@ func TestSnapshotContentOwnerBoundarySurvivesDeletedSourceAndExpires(t *testing.
 	}
 	snapshot, pack, data := seedReadySnapshot(t, a, string(owner.Id))
 	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`UPDATE works SET name=? WHERE id='work-snapshot-owner'`, "我的项目 Demo/\"A\r\n")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Store.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE works SET deleted_at=?,observed_state='deleted' WHERE id='work-snapshot-owner'`, packageNow())
 		return err
 	}); err != nil {
@@ -155,6 +162,12 @@ func TestSnapshotContentOwnerBoundarySurvivesDeletedSourceAndExpires(t *testing.
 		response.Body.Close()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if response.StatusCode == 200 && account == "snapshot-owner" {
+			kind, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+			if err != nil || kind != "attachment" || params["filename"] != "我的项目 Demo__A__.work" || response.Header.Get("A") != "" {
+				t.Fatal("unsafe or incorrect snapshot filename", response.Header, err)
+			}
 		}
 		return response.StatusCode, raw
 	}

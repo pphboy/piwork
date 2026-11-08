@@ -828,6 +828,7 @@ try {
   assert.equal(acceptanceResponse.status(), 202, `Export acceptance: ${await acceptanceResponse.text()}`);
   const acceptance = await acceptanceResponse.json(); assert.equal(acceptance.workId, workId); assert.ok(acceptance.operationId); assert.ok(acceptance.snapshotId);
   const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
+  assert.equal(download.suggestedFilename(), 'Real Browser Work.work');
   const exportedBytes = await readFile(exportedPath);
   assert.equal(exportedBytes.subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
   const readyResponse = await preparationResponse; assert.equal(readyResponse.status(), 200);
