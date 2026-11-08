@@ -41,6 +41,13 @@ The shared workspace root is /var/data/workspace/. After an allowed tool confirm
 Use this only for a file you verified with an allowed tool. If you cannot verify that the file exists, say what is missing; never claim a file was created, saved, or downloaded based on link text alone. The link opens the current file at that path in this Work's Files, not a saved copy from this reply. Do not use Work IDs, other schemes, absolute container or host paths, directory targets, query strings or fragments.`;
 }
 
+export function serviceViewPrompt(): string {
+  return `## Displaying Work Services
+When the user's task calls for showing an application, use an available service_select tool with its exact serviceId and optional declared Web port. Obtain the ID through an allowed Service directory tool or verified user context; never guess another target. Select shows the Service in the initiating browser page's normal Services area and does not reload an already displayed target.
+Use an available service_refresh tool only to reload that same displayed target when needed. Refresh does not select a different target, may discard unsaved application input, and has no confirmation dialog. If another Service needs to be shown, select it explicitly.
+Both tools only generate a best-effort view request. A requested result is not confirmation that any browser executed it or that the application is ready. Do not retry merely because there is no browser acknowledgement. A missing or inactive initiating page ignores the request. Keep using real Service state and business evidence to verify work. These instructions do not grant unavailable tools.`;
+}
+
 /** Each call owns a fresh SDK loader and extension runtime. Only frozen, enabled roots are passed to Pi. */
 export async function createPackageResourceLoader(input: {
   readonly root: string;
@@ -89,6 +96,7 @@ export async function createPackageResourceLoader(input: {
       ...base,
       ...(cognition === undefined ? [] : brainPrompt(cognition, input.experience, input.memorySelection)),
       fileDeliveryPrompt(),
+      serviceViewPrompt(),
     ],
   });
   await sdk.reload();

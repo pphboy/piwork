@@ -1,3 +1,4 @@
+import { resolveServiceViewTarget, type ServiceViewAttempt } from "./service-view-controls.js";
 import { desktopNoticePageRegion } from './notice-page-region.js';
 import { BootstrapReadFeedback, type BootstrapReadSource } from './bootstrap-read-feedback.js';
 import { createLanguagePicker } from './i18n.js';
@@ -1657,6 +1658,62 @@ function serviceViewport(w: Work, service: Service) {
   // a usable application may still have unfinished subresources.
   return `<div class="service-viewport"><iframe data-service-key="${esc(key)}" class="real-service-frame" title="${esc(t('service.applicationTitle', { name: service.name }))}" src="${esc(url)}"></iframe></div>`;
 }
+async function selectServiceTarget(w: Work, service: Service, port: number) {
+  serviceChoice++;
+  view.serviceOpenError = '';
+  view.service = service.id;
+  view.port = port;
+  if (route()[0] === 'app') {
+    history.replaceState(null, '', `#/app/${encodeURIComponent(w.id)}/${encodeURIComponent(service.id)}/${port}`);
+    lastRoute = location.hash;
+  }
+  closeModal();
+  render();
+  if (service.enabled && service.observed === 'Ready') await adapter.ensureServiceEntry(w.id, service.id, port);
+}
+
+async function selectAgentService(attempt: ServiceViewAttempt) {
+  const w = current(), choice = serviceChoice;
+  const valid = () => attempt.current() && current()?.id === attempt.workId && view.session === attempt.sessionId && serviceChoice === choice;
+  if (!w || !valid() || !adapter.project(w).usable) return;
+  if (!w.services.some(service => service.id === attempt.request.serviceId)) await adapter.loadServices(w.id);
+  if (!valid()) return;
+  const target = resolveServiceViewTarget(attempt.request, w.services, { serviceId: activeService(w)?.id || '', port: view.port });
+  if (!target) return;
+  await guard(async () => {
+    if (!valid() || !await exitWorkspaceFocus() || !valid()) return;
+    const live = resolveServiceViewTarget(attempt.request, w.services, { serviceId: activeService(w)?.id || '', port: view.port });
+    if (!live) return;
+    areaChoice++;
+    view.tab = 'Services';
+    await selectServiceTarget(w, live.service, live.port);
+  });
+}
+
+async function refreshDisplayedService(attempt: ServiceViewAttempt) {
+  const w = current();
+  if (!w || !attempt.current() || w.id !== attempt.workId || view.session !== attempt.sessionId) return;
+  const target = resolveServiceViewTarget(attempt.request, w.services, { serviceId: activeService(w)?.id || '', port: view.port });
+  if (!target) return;
+  const { service, port } = target, key = `${w.id}:${service.id}:${port}`;
+  const frame = [...root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')].find(node => node.dataset.serviceKey === key);
+  const valid = () => attempt.current() && current()?.id === w.id && view.session === attempt.sessionId
+    && activeService(w)?.id === service.id && view.port === port && frame?.isConnected && !!frame.getClientRects().length
+    && adapter.project(w).usable && !!w.services.find(item => item.id === service.id && item.enabled && item.observed === 'Ready' && item.ports.includes(port))
+    && !!adapter.serviceEntryUrl(w.id, service.id, port) && adapter.serviceEmbed(w.id, service.id, port) !== 'denied';
+  if (!frame || !valid()) return;
+  await adapter.serviceFrameLoaded(w.id, service.id, port);
+  if (!valid()) return;
+  try {
+    if (frame.contentWindow) {
+      frame.contentWindow.location.reload();
+      return;
+    }
+  } catch { /* Isolated Desktop application origins require the validated entry. */ }
+  const url = adapter.serviceEntryUrl(w.id, service.id, port);
+  if (url && adapter.serviceEmbed(w.id, service.id, port) === 'allowed') frame.src = url;
+}
+
 function observeServiceFrames() {
   for (const frame of root.querySelectorAll<HTMLIFrameElement>('iframe[data-service-key]')) if (!frame.dataset.observed) {
     const epoch = adapter.identityEpoch;
@@ -3094,14 +3151,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case 'select-service': {
       const service = currentWork?.services.find(item => item.id === el.dataset.id && item.ports.length && item.observed !== 'Removed');
       if (!currentWork || !service) break;
-      const port = service.ports[0];
-      serviceChoice++; view.serviceOpenError = ''; view.service = service.id; view.port = port;
-      if (route()[0] === 'app') {
-        history.replaceState(null, '', `#/app/${encodeURIComponent(currentWork.id)}/${encodeURIComponent(service.id)}/${port}`);
-        lastRoute = location.hash;
-      }
-      closeModal(); render();
-      if (service.enabled && service.observed === 'Ready') await stay(adapter.ensureServiceEntry(currentWork.id, service.id, port));
+      await stay(selectServiceTarget(currentWork, service, service.ports[0]));
       break;
     }
     case 'toggle-workspace-chat': {
@@ -5298,6 +5348,9 @@ adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.ide
   if (coreWasBlocked && !gateBlocked && adapter.state.signedIn && (routeDeferredByCore || lastAdmittedView === `${adapter.identityEpoch}:${location.hash}`)) queueMicrotask(() => { void loadRoute().catch(() => undefined); });
   coreWasBlocked = gateBlocked;
   advanceImportStarts(); confirmPendingChatCommand();render(); });
+adapter.serviceViews.subscribe(attempt => {
+  void (attempt.request.action === 'select' ? selectAgentService(attempt) : refreshDisplayedService(attempt)).catch(() => undefined);
+});
 lastRoute = location.hash;
 render();
 document.dispatchEvent(new Event('piwork:boot-ready'));

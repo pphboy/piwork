@@ -227,6 +227,14 @@ function streamDeterministic(
     if (prompt.trim() === "inspect piwork brain candidate cognition") {
       emitText(stream, output, `brain-candidate-new:${systemPrompt.includes("Workstation candidate cognition")}`); return;
     }
+    const serviceView = /^service view (select|refresh) (service-[A-Za-z0-9-]+)(?: ([0-9]+))?$/.exec(prompt.trim());
+    if (serviceView) {
+      const name = serviceView[1] === "select" ? "service_select" : "service_refresh";
+      const result = toolResults.find(value => value.toolName === name);
+      if (!result) emitToolCall(stream, output, `view-${serviceView[1]}`, name, { serviceId: serviceView[2], ...(serviceView[3] ? { port: Number(serviceView[3]) } : {}) });
+      else emitText(stream, output, result.isError ? "Service view request failed." : "Service view request generated; browser completion is not confirmed.");
+      return;
+    }
     if (prompt.trim() === "inspect file delivery guidance") {
       emitText(stream, output, `file-delivery-guidance:${systemPrompt.includes("piwork-file:/relative/path")}:${systemPrompt.includes("/var/data/workspace/")}:${systemPrompt.includes("Piwork workstation cognition") ? "brain" : "plain"}`);
       return;

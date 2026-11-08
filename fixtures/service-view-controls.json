@@ -1,0 +1,5 @@
+{
+  "validTargets": [{"serviceId":"service-a"},{"serviceId":"service-b","port":3000},{"serviceId":"service-c","port":65535}],
+  "invalidTargets": [null,[],{}, {"serviceId":"other"},{"serviceId":"service-"},{"serviceId":"service-a","port":0},{"serviceId":"service-a","port":65536},{"serviceId":"service-a","port":1.5},{"serviceId":"service-a","port":"80"},{"serviceId":"service-a","url":"https://example.test"},{"serviceId":"service-a","workId":"other"}],
+  "invalidRequests": [{"version":2},{"action":"open"},{"status":"completed"},{"kind":"other"},{"url":"https://example.test"}]
+}

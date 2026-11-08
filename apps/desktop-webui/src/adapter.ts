@@ -1,3 +1,4 @@
+import { ServiceViewControls } from "./service-view-controls.js";
 import { RunFeedbackObservations } from './chat-run-feedback.js';
 import { thinkingOptions } from './thinking-options.js';
 import { randomUUID, sha256Hex } from './browser-crypto.js';
@@ -117,6 +118,7 @@ function mapService(raw: Data): Service {
   return { id: raw.serviceId, name: raw.name, domain: raw.access?.hostname ?? '', enabled: raw.enabled, observed, ports: (raw.access?.ports ?? []).filter((p: Data) => /^https?:/.test(p.url ?? '')).sort((a: Data, b: Data) => Number(b.name === raw.access.defaultPortName) - Number(a.name === raw.access.defaultPortName)).map((p: Data) => p.port), error: serviceErrorText(raw.lastError), diagnostic: serviceDiagnostic(raw.lastError), temporary };
 }
 export class DesktopAdapter {
+  readonly serviceViews = new ServiceViewControls();
   private historySupport = new Map<string, boolean>();
   private historyProjections = new Map<string, HistoryProjection>();
   private legacyProjections = new Map<string, LegacyHistoryProjection>();
@@ -682,6 +684,7 @@ export class DesktopAdapter {
 
   worksLoading = false; worksChecked = ''; worksError = '';
   private clearIdentity(preserveInspection = false) {
+    this.serviceViews.reset();
     this.runFeedbackObservations.clear();
     if (this.preferenceRead) {
       this.preferenceSequence++;
@@ -1961,6 +1964,7 @@ export class DesktopAdapter {
     await Promise.allSettled(pending);
   }
   observePage(workId: string, visible: boolean, includeChat = true, serviceName='',requestId='',requestList=false,listService='', worksList=false) {
+    this.serviceViews.observePage(this.epoch, workId);
     const observeRecovery = visible && this.state.signedIn && (worksList || this.coreGate.blocked || this.status.readiness?.value?.state === 'RECOVERING');
     if (observeRecovery !== this.recoveryListVisible) {
       this.recoveryListVisible = observeRecovery; this.recoveryObservation++;
@@ -2073,6 +2077,7 @@ export class DesktopAdapter {
     return this.getWork(id)?.sessions.find(session=>session.id===sessionId)?.messages.find(message=>message.submission?.key===key);
   }
   private acceptSubmissionMessage(id:string,sessionId:string,key:string,runId:string,images?:import('./images.js').HistoryImage[]) {
+    this.serviceViews.accept(key, id, sessionId, runId);
     const message=this.submissionMessage(id,sessionId,key);
     if(!message)return;
     message.id=`${runId}-user`;message.runId=runId;
@@ -2142,6 +2147,7 @@ export class DesktopAdapter {
     const work=this.getWork(id)!,session=work.sessions.find(item=>item.id===sessionId);
     if(!session)throw failure('INVALID_REQUEST','d.error.sessionAcceptanceNoId');
     const intent={kind:'run' as const,key:randomUUID(),sessionId,cancelRunId,error:''};this.chatSubmissions.set(id,intent);
+    this.serviceViews.begin(intent.key, id, sessionId);
     if(previous){const old=previous.submission!;this.failedChatSnapshots.delete(old.key);previous.submission={key:intent.key,phase:'sending',stopping:!!cancelRunId,previousKeys:[...(old.previousKeys??[]),old.key].slice(-16)};}
     else session.messages.push({id:`submission-${intent.key}`,role:'user',text,submission:{key:intent.key,phase:'sending',stopping:!!cancelRunId},...(images.length?{pendingImages:images.map(image=>({...image}))}:{})});
     this.emit();
@@ -2293,6 +2299,7 @@ export class DesktopAdapter {
         else if (kind?.$case === 'text' && update) { this.appendLiveText(session,run,update,sources); }
         else if (kind?.$case === 'tool') { const tool = kind.tool,incoming={id:`${run.id}-tool-${tool.toolCallId}`,runId:run.id,role:'assistant' as const,text:'',tool:{id:tool.toolCallId,name:tool.toolName,status:tool.phase==='tool-end'?(tool.isError?'Failed':'Completed'):'Running',isError:tool.isError,content:resultText(tool.result,tool.toolName)}};sources.tool(run.id,sequence,incoming,tool.phase);if(legacy){session.messages=legacy.project(session.messages);}else upsertTool(session.messages,incoming); }
         else if (kind?.$case === 'state') { run.status = runStates[kind.state.state] ?? 'interrupted';run.resultRef=kind.state.resultRef; run.error = run.executionError = kind.state.error?.message;run.errorCode=typeof kind.state.error?.code==='string'?kind.state.error.code:undefined;run.errorRetryable=typeof kind.state.error?.retryable==='boolean'?kind.state.error.retryable:undefined; if(legacy&&kind.state.finalText)legacy.result({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText}); if (kind.state.finalText && !session.messages.some(m=>m.runId===run.id && m.role==='assistant' && !!m.text))session.messages.push({id:`${run.id}-final`,runId:run.id,role:'assistant',text:kind.state.finalText});if(legacy)session.messages=legacy.project(session.messages); }
+        this.serviceViews.consume(event);
         if (['text', 'tool'].includes(kind?.$case) || kind?.$case === 'state' && runStates[kind.state.state]) {
           this.runFeedbackObservations.record(id, run, true);
         }
@@ -2309,6 +2316,7 @@ export class DesktopAdapter {
       run.errorCode = typeof raw.error?.code === 'string' ? raw.error.code : undefined;
       run.errorRetryable = typeof raw.error?.retryable === 'boolean' ? raw.error.retryable : undefined;
       run.resultRef = raw.resultRef;
+      if (!['accepted', 'running', 'cancelling'].includes(run.status)) this.serviceViews.finish(run.id);
       if (['accepted', 'running', 'cancelling'].includes(run.status)) {
         if(this.historySupport.get(id)&&sources.pendingFragments(run.id)){run.historyRecovery=true;const observer={controller,run,epoch,failures:0};this.historyObservers.set(id,observer);await this.recoverRunHistory(id,observer);}
         else run.error = localizedText('d.error.eventStreamEnded');

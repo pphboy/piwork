@@ -10,8 +10,11 @@ let base = '';
 let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<boolean>) | undefined;
 const server = createServer(async (request, response) => {
   if (nativeDownloadHandler && await nativeDownloadHandler(request, response)) return;
-  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : 'index.html');
-  try { response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : 'text/html'); response.end(await readFile(new URL(path, import.meta.url))); }
+  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : request.url === '/piwork-logo.png' ? 'piwork-logo.png' : 'index.html');
+  try {
+    response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.png') ? 'image/png' : 'text/html');
+    response.end(await readFile(new URL(path, import.meta.url)));
+  }
   catch { response.writeHead(404); response.end(); }
 });
 before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
@@ -4627,4 +4630,183 @@ for(const known of [false,true])test(`same Thinking level repairs an unavailable
  assert.equal(requests.filter(r=>r.method==='PATCH').length,1);
  await expect(page.locator('#composer')).toHaveValue('Keep this repair draft');
  assert.equal(requests.filter(r=>r.method==='POST'&&r.path.endsWith('/runs')).length,0);
+});
+
+async function serviceViewFixture(t: { after: (fn: () => Promise<void>) => void }) {
+  let number = 0;
+  let eventWait: Promise<void> | undefined;
+  let probeWait: Promise<void> | undefined;
+  let command = { action: 'select', serviceId: 'service-b', port: 80 };
+  const loads: Record<string, number> = {};
+  const handler = (r: RequestRecord): Reply | undefined | Promise<Reply | undefined> => {
+    if (r.path.endsWith('/chat-capabilities')) return { json: { contractVersion: 3 } };
+    if (r.path.endsWith('/chat-models')) return { json: chatModels() };
+    if (r.path.endsWith('/services')) return { json: { services: ['a', 'b', 'c'].map(id => ({ serviceId: `service-${id}`, name: `Tool ${id.toUpperCase()}`, enabled: id !== 'c', observedState: id === 'c' ? 'stopped' : 'ready', access: { hostname: `${id}.work.test`, ports: [80, 8080].map(port => ({ port, name: `web-${port}`, url: `http://${id}.work.test:${port}` })) } })) } };
+    if (r.path === 'service-entries') {
+      const target = JSON.parse(r.body), path = `/_desktop/asvc/${target.serviceId}/${target.port}/`;
+      return { json: { ...target, entryId: `entry-${target.serviceId}-${target.port}`, origin: base, basePath: path, entryUrl: base + path, embed: 'allowed' } };
+    }
+    if (r.path.startsWith('service-entries/')) {
+      if (probeWait) return probeWait.then(() => handler(r));
+      return { json: { embed: 'allowed' } };
+    }
+    if (r.path.startsWith('/_desktop/asvc/')) {
+      loads[r.path] = (loads[r.path] || 0) + 1;
+      return { body: `<html><body data-document="${loads[r.path]}"><input aria-label="Application draft"><p>${r.path}</p></body></html>`, headers: { 'Content-Type': 'text/html' } };
+    }
+    if (r.path === 'works/work-1/runs' && r.method === 'POST') {
+      const input = JSON.parse(r.body);
+      number++;
+      command = JSON.parse(input.prompt);
+      return { json: { run: { workId: 'work-1', sessionId: 'session-1', runId: `asvc-${number}`, submissionKey: input.submissionKey, state: 1 } } };
+    }
+    if (r.path.endsWith('/events')) {
+      if (eventWait) return eventWait.then(() => handler(r));
+      const common = { workId: 'work-1', sessionId: 'session-1', runId: `asvc-${number}` };
+      const result = { kind: 'piwork.service-view', version: 1, status: 'requested', ...command };
+      const tool = { ...common, sequence: '1', kind: { $case: 'tool', tool: { toolName: `service_${command.action}`, toolCallId: 'view|call', phase: 'tool-end', isError: false, result: { kind: 'text', text: JSON.stringify(result), truncated: false, isError: false } } } };
+      return { body: [tool, { ...tool, sequence: '2' }, { ...common, sequence: '3', kind: { $case: 'state', state: { state: 4, finalText: 'View request generated.' } } }].map(value => JSON.stringify(value)).join('\n') + '\n' };
+    }
+    if (/\/runs\/asvc-/.test(r.path)) return { json: { workId: 'work-1', sessionId: 'session-1', runId: `asvc-${number}`, state: 4 } };
+  };
+  const f = await fixture(t, handler);
+  const send = async (action: string, serviceId: string, port = 80) => {
+    await f.page.locator('#composer').fill(JSON.stringify({ action, serviceId, port }));
+    await expect(button(f.page, 'send-message')).toBeEnabled();
+    await button(f.page, 'send-message').click();
+    await expect.poll(() => api(f.page, "return adapter.getWork('work-1')?.run?.status;")).toBe('succeeded');
+  };
+  const pause = (kind: 'events' | 'probe') => {
+    let release!: () => void;
+    const wait = new Promise<void>(done => { release = done; });
+    if (kind === 'events') eventWait = wait;
+    else probeWait = wait;
+    const resume = () => {
+      if (kind === 'events') eventWait = undefined;
+      else probeWait = undefined;
+      release();
+    };
+    t.after(async () => resume());
+    return resume;
+  };
+  return { ...f, send, loads, handler, pause };
+}
+
+test('ASVC selects exact Service and port, repeats Select without reload, and refreshes only that application', async t => {
+  const { page, send, loads, requests, pause } = await serviceViewFixture(t);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await expect(page.locator('iframe')).toBeVisible();
+  await send('select', 'service-b', 8080);
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
+  await expect(page.locator('iframe')).toHaveAttribute('data-service-key', 'work-1:service-b:8080');
+  await expect(page.locator('#app')).toHaveAttribute('data-layout', 'workspace');
+  const frame = page.frameLocator('iframe');
+  await frame.getByLabel('Application draft').fill('unsaved application input');
+  await page.evaluate(() => {
+    (window as any).asvcFrame = document.querySelector('iframe');
+    (window as any).asvcComposer = document.querySelector('#composer');
+  });
+  await send('select', 'service-b', 8080);
+  await expect(frame.getByLabel('Application draft')).toHaveValue('unsaved application input');
+  assert.equal(loads['/_desktop/asvc/service-b/8080/'], 1);
+  const resumeProbe = pause('probe');
+  await send('refresh', 'service-b', 8080);
+  await page.locator('#composer').fill('keep Chat draft during refresh');
+  resumeProbe();
+  await expect(frame.getByLabel('Application draft')).toHaveValue('');
+  await expect(page.locator('#composer')).toHaveValue('keep Chat draft during refresh');
+  assert.equal(loads['/_desktop/asvc/service-b/8080/'], 2, 'duplicate tool completion must not refresh twice');
+  assert.equal(await page.evaluate(() => (window as any).asvcComposer === document.querySelector('#composer')), true);
+  await page.locator('#composer').fill('keep Chat draft');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await send('refresh', 'service-a');
+  assert.equal(loads['/_desktop/asvc/service-b/8080/'], 2);
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
+  await button(page, 'tab-Chat').click();
+  await send('refresh', 'service-b', 8080);
+  await expect(page.locator('iframe')).toHaveCount(0);
+  await send('select', 'service-c');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-c');
+  await expect(page.locator('iframe')).toHaveCount(0);
+  assert.equal(requests.some(r => r.method === 'POST' && /\/(start|restart|stop)$/.test(r.path)), false);
+  await page.screenshot({ path: '/tmp/piwork-asvc-unavailable-pc-success.png' });
+});
+
+test('ASVC ignores observing pages, reload history and invalid targets and displays Select at mobile width', async t => {
+  const { page, send, handler } = await serviceViewFixture(t);
+  const observer = await fixture(t, handler);
+  await send('select', 'service-b');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
+  const stale = { workId: 'work-1', sessionId: 'session-1', runId: 'asvc-1', sequence: '4', kind: { $case: 'tool', tool: { phase: 'tool-end', toolName: 'service_select', toolCallId: 'another-call', isError: false, result: { kind: 'text', truncated: false, isError: false, text: JSON.stringify({ kind: 'piwork.service-view', version: 1, status: 'requested', action: 'select', serviceId: 'service-b' }) } } } };
+  await api(observer.page, `adapter.serviceViews.consume(${JSON.stringify(stale)});`);
+  await expect(observer.page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  await page.reload();
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  await api(page, `adapter.serviceViews.consume(${JSON.stringify(stale)});`);
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  await send('select', 'service-missing');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await button(page, 'tab-Chat').click();
+  await send('select', 'service-b');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
+  await expect(page.locator('iframe')).toBeVisible();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.screenshot({ path: '/tmp/piwork-asvc-select-mobile-success.png' });
+});
+
+test('ASVC late Select respects Settings drafts', async t => {
+  const { page, pause, requests } = await serviceViewFixture(t);
+  const resume = pause('events');
+  await page.locator('#composer').fill(JSON.stringify({ action: 'select', serviceId: 'service-b', port: 80 }));
+  await button(page, 'send-message').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/runs' && r.method === 'POST').length).toBe(1);
+  await openWorkSettings(page);
+  await page.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep unsaved Settings draft');
+  resume();
+  await expect(page.locator('#modal [data-action=dirty-config-discard]')).toBeVisible();
+  await page.screenshot({ path: '/tmp/piwork-asvc-settings-pc-confirm.png' });
+  await button(page, 'close-modal').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep unsaved Settings draft');
+  await expect(page.locator('iframe')).toHaveCount(0);
+});
+
+test('ASVC leaving and returning to a Work revokes an in-flight request', async t => {
+  const { page, pause, requests } = await serviceViewFixture(t);
+  const resume = pause('events');
+  await page.locator('#composer').fill(JSON.stringify({ action: 'select', serviceId: 'service-b', port: 80 }));
+  await button(page, 'send-message').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/runs' && r.method === 'POST').length).toBe(1);
+  await page.evaluate(() => { location.hash = '/works'; });
+  await expect(page.locator('.works-page')).toBeVisible();
+  await page.evaluate(() => { location.hash = '/work/work-1'; });
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  resume();
+  await expect.poll(() => api(page, "return adapter.getWork('work-1')?.run?.status;")).toBe('succeeded');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+});
+
+test('ASVC an entry probe cannot override a newer manual selection and identity changes revoke a request', async t => {
+  const { page, send, pause, requests } = await serviceViewFixture(t);
+  const resumeProbe = pause('probe');
+  await send('select', 'service-b');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
+  await button(page, 'service-picker').click();
+  await page.locator('[data-action=select-service][data-id=service-a]').click();
+  resumeProbe();
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
+  await expect(page.locator('iframe')).toHaveAttribute('data-service-key', 'work-1:service-a:80');
+  const resumeEvents = pause('events');
+  await page.locator('#composer').fill(JSON.stringify({ action: 'select', serviceId: 'service-b', port: 80 }));
+  await button(page, 'send-message').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/runs' && r.method === 'POST').length).toBe(2);
+  await api(page, 'await adapter.signOut();');
+  await expect(page.getByLabel('Password')).toBeVisible();
+  resumeEvents();
+  await page.getByRole('textbox', { name: 'Account', exact: true }).fill('owner');
+  await page.getByLabel('Password').fill('synthetic-password');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.evaluate(() => { location.hash = '/work/work-1'; });
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-a');
 });

@@ -716,6 +716,11 @@ func verifyResources(response *agentv1.ReadinessResponse, captured captured) err
 		if len(allowed) != 0 && !allowed[tool] || denied[tool] {
 			return agentclient.ErrReadiness
 		}
+		// Optional agentd-native view tools are independent of MCP/package tools.
+		// Older Agents may omit them; their reported presence still obeys policy.
+		if tool == "service_select" || tool == "service_refresh" {
+			continue
+		}
 		if match := packageToolName.FindStringSubmatch(tool); match != nil {
 			selected := false
 			for _, entry := range captured.config.Packages {
