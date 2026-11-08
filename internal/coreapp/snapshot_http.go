@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/identity"
+	"piwork/internal/workpackage"
 )
 
 func (a *Application) snapshotHTTP(w http.ResponseWriter, r *http.Request, actor identity.Principal, token string) (bool, error) {
@@ -165,6 +167,13 @@ func snapshotExpired(value string) bool {
 	return err != nil || !expires.After(time.Now())
 }
 func (a *Application) downloadSnapshot(w http.ResponseWriter, r *http.Request, actor identity.Principal, token string, job corestore.SnapshotJob, pack corestore.SnapshotPackage) error {
+	if job.SourceWorkID == nil {
+		return contracts.NewError("PACKAGE_UNAVAILABLE", "")
+	}
+	work, err := a.Store.Work(r.Context(), *job.SourceWorkID, true)
+	if err != nil {
+		return contracts.NewError("PACKAGE_UNAVAILABLE", "")
+	}
 	if !a.beginSnapshotTransfer() {
 		return contracts.NewError("RUNTIME_UNAVAILABLE", "")
 	}
@@ -238,7 +247,7 @@ func (a *Application) downloadSnapshot(w http.ResponseWriter, r *http.Request, a
 	w.Header().Set("Content-Type", "application/vnd.piwork.work-package")
 	w.Header().Set("Content-Length", strconv.FormatInt(pack.Size, 10))
 	w.Header().Set("X-Piwork-SHA256", *pack.Digest)
-	w.Header().Set("Content-Disposition", `attachment; filename="snapshot.work"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": workpackage.ExportFilename(work.Name)}))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(200)
 	buffer := make([]byte, 1<<20)

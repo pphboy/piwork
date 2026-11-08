@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -844,7 +845,7 @@ func (d *nativeDesktop) serveDesktopDownload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	t.mu.Lock()
-	ready, size, workID := job.phase == "ready", job.size, job.workID
+	ready, size, sourceName := job.phase == "ready", job.size, job.summary.SourceName
 	t.mu.Unlock()
 	if !ready {
 		desktopTransferError(w, 409, "TRANSFER_NOT_READY")
@@ -858,7 +859,7 @@ func (d *nativeDesktop) serveDesktopDownload(w http.ResponseWriter, r *http.Requ
 	defer file.Close()
 	w.Header().Set("Content-Type", workPackageMIME)
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.work\"", workID))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": workpackage.ExportFilename(sourceName)}))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(200)

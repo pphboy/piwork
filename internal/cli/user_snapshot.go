@@ -31,6 +31,11 @@ type snapshotCommand struct {
 	wait                        bool
 }
 
+type snapshotOutputError struct{ err error }
+
+func (e *snapshotOutputError) Error() string { return e.err.Error() }
+func (e *snapshotOutputError) Unwrap() error { return e.err }
+
 func parseUserSnapshot(args []string) (snapshotCommand, error) {
 	invalid := errors.New("invalid Work snapshot command; run piwork-cli --help")
 	if len(args) < 2 {
@@ -45,7 +50,6 @@ func parseUserSnapshot(args []string) (snapshotCommand, error) {
 		}
 		cmd.kind = "export"
 		cmd.id = args[1]
-		cmd.output = args[1] + ".work"
 		options = args[2:]
 	case "snapshot":
 		if len(args) < 3 || args[1] != "download" || !validCLIId(args[2]) {
@@ -89,7 +93,7 @@ func parseUserSnapshot(args []string) (snapshotCommand, error) {
 			cmd.key = options[i]
 		}
 	}
-	if cmd.kind != "import" && (cmd.output == "" || cmd.output == "-") {
+	if cmd.kind == "download" && cmd.output == "" || cmd.kind != "import" && cmd.output == "-" {
 		return cmd, invalid
 	}
 	return cmd, nil
@@ -118,8 +122,25 @@ func runUserSnapshotWithin(ctx context.Context, api *client.Client, args []strin
 	if command.kind == "import" {
 		return importUserSnapshot(ctx, api, command, stderr)
 	}
+	defaultOutput := command.kind == "export" && command.output == ""
+	if defaultOutput {
+		var work struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := api.Request(ctx, "GET", "/api/v1/works/"+url.PathEscape(command.id), nil, &work); err != nil {
+			return nil, err
+		}
+		if work.ID != command.id || strings.TrimSpace(work.Name) == "" || len(work.Name) > 128 || strings.ContainsRune(work.Name, 0) {
+			return nil, errors.New("Core did not return the requested Work name")
+		}
+		command.output = workpackage.ExportFilename(work.Name)
+	}
 	if err := checkSnapshotDestination(command.output); err != nil {
-		return nil, err
+		if defaultOutput {
+			err = fmt.Errorf("default export output is unavailable; use --output to choose another path: %w", err)
+		}
+		return nil, &snapshotOutputError{err}
 	}
 	var metadata snapshotMetadata
 	if command.kind == "export" {
@@ -200,7 +221,7 @@ func checkSnapshotDestination(output string) error {
 func saveSnapshotDownload(ctx context.Context, api *client.Client, snapshotID, output, digest string, size int64) (string, error) {
 	directory, name, target, err := openSnapshotDirectory(output)
 	if err != nil {
-		return "", err
+		return "", &snapshotOutputError{err}
 	}
 	defer directory.Close()
 	key, err := randomKey()
@@ -210,7 +231,7 @@ func saveSnapshotDownload(ctx context.Context, api *client.Client, snapshotID, o
 	temporary := ".piwork-" + key + ".tmp"
 	file, err := directory.CreatePrivateExclusive(temporary)
 	if err != nil {
-		return "", err
+		return "", &snapshotOutputError{err}
 	}
 	defer func() { file.Close(); _ = directory.Remove(temporary) }()
 	headers := make(http.Header)
@@ -233,17 +254,17 @@ func saveSnapshotDownload(ctx context.Context, api *client.Client, snapshotID, o
 		return "", errors.New("snapshot download digest mismatch")
 	}
 	if err := file.Sync(); err != nil {
-		return "", err
+		return "", &snapshotOutputError{err}
 	}
 	inspection, err := workpackage.Inspect(ctx, file, size)
 	if err != nil || inspection.Digest != digest || inspection.Size != size {
 		return "", errors.New("downloaded Work package verification failed")
 	}
 	if err := file.Close(); err != nil {
-		return "", err
+		return "", &snapshotOutputError{err}
 	}
 	if err := directory.PublishNoReplace(ctx, temporary, name); err != nil {
-		return "", err
+		return "", &snapshotOutputError{err}
 	}
 	return target, nil
 }

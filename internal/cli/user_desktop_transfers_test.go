@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -132,9 +133,12 @@ func TestNativeDesktopWorkPackageTransferUsesOriginalSnapshotAndSession(t *testi
 		TransferID string `json:"transferId"`
 	}
 	_ = json.Unmarshal(prepared.Body.Bytes(), &download)
-	response := request("GET", "downloads/"+download.TransferID+"/content", "", nil, "")
-	if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), content) {
-		t.Fatal("download", response.Code, response.Body.Len())
+	for range 2 {
+		response := request("GET", "downloads/"+download.TransferID+"/content", "", nil, "")
+		kind, params, err := mime.ParseMediaType(response.Header().Get("Content-Disposition"))
+		if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), content) || err != nil || kind != "attachment" || params["filename"] != "golden.work" {
+			t.Fatal("download", response.Code, response.Header(), response.Body.Len(), err)
+		}
 	}
 	d.mu.Lock()
 	d.identity.generation++

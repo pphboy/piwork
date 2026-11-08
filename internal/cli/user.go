@@ -44,6 +44,7 @@ const userUsage = `usage: piwork-cli [--core <url>] [--json] [command]
   work service <list|show|start|stop|restart|retry|remove|logs> ...
   work package inspect <file>
   work export <workId> [--output <file>]
+    Default output: <Work name>.work in the current directory; existing files are not overwritten.
   work snapshot download <snapshotId> --output <file>
   work import <file> [--name <name>] [--wait]
   work packages <list|show|install|update|enable|disable|remove> ...
@@ -292,6 +293,10 @@ func runUserWithDesktop(args []string, stdout, stderr io.Writer, launch func(*cl
 		}
 		var localFailure *logExportLocalError
 		if errors.As(err, &localFailure) {
+			return 2
+		}
+		var snapshotFailure *snapshotOutputError
+		if errors.As(err, &snapshotFailure) {
 			return 2
 		}
 		var verificationFailure *logExportVerificationError
