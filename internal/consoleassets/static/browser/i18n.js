@@ -230,41 +230,90 @@ export function applyBootLocale(page, options = {}) {
 
 /** Anchored, nonmodal single-value picker shared by both WebUIs. */
 export function createLanguagePicker(options) {
-  let panel = null, anchor = null, restore = null, events = null;
+  let panel = null;
+  let anchor = null;
+  let parentMenu = null;
+  let restore = null;
+  let events = null;
   const visible = node => node?.isConnected && node.getClientRects().length && !node.closest('[hidden],[inert]');
+
   function close(returnFocus = false) {
     if (!panel) return;
     events?.abort();
-    panel.remove(); panel = null;
+    panel.remove();
+    panel = null;
     anchor?.setAttribute('aria-expanded', 'false');
     if (returnFocus) {
       const destination = restore?.();
       if (visible(destination)) destination.focus({ preventScroll: true });
       else if (visible(anchor)) anchor.focus({ preventScroll: true });
     }
-    anchor = null; restore = null;
+    anchor = null;
+    parentMenu = null;
+    restore = null;
+    events = null;
   }
+
+  function position(box) {
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    if (parentMenu) {
+      const parent = parentMenu.getBoundingClientRect();
+      const side = innerWidth - parent.right >= width + 14 ? 'right' : 'left';
+      const left = side === 'right' ? parent.right + 6 : parent.left - width - 6;
+      panel.style.left = `${Math.max(8, Math.min(left, innerWidth - width - 8))}px`;
+      panel.style.top = `${Math.max(8, Math.min(box.top, innerHeight - height - 8))}px`;
+      anchor.dataset.submenuSide = side;
+    } else {
+      panel.style.left = `${Math.max(8, Math.min(box.right - width, innerWidth - width - 8))}px`;
+      panel.style.top = `${Math.max(8, Math.min(box.bottom + 6, innerHeight - height - 8))}px`;
+    }
+  }
+
+  // The menu owner explicitly refreshes the DOM anchor after its own render.
+  function reanchor(trigger, parent) {
+    if (!panel) return;
+    if (!visible(trigger) || parent && !visible(parent)) {
+      close();
+      return;
+    }
+    if (anchor !== trigger) anchor?.setAttribute('aria-expanded', 'false');
+    anchor = trigger;
+    parentMenu = parent || null;
+    anchor.setAttribute('aria-expanded', 'true');
+    position(anchor.getBoundingClientRect());
+  }
+
   function open(trigger, settings = {}) {
-    if (panel && anchor === trigger) { close(true); return; }
+    if (panel && anchor === trigger) {
+      close(true);
+      return;
+    }
     close();
     const box = settings.anchorRect || trigger.getBoundingClientRect();
     settings.beforeOpen?.();
     anchor = trigger;
+    parentMenu = settings.parentMenu || null;
     restore = settings.restoreFocus || (() => {
       const key = trigger.dataset.languageTrigger;
       return key ? document.querySelector(`[data-language-trigger="${CSS.escape(key)}"]`) : trigger;
     });
     panel = document.createElement('div');
-    panel.className = 'language-picker';
+    panel.className = 'language-picker' + (parentMenu ? ' submenu-language-picker' : '');
     panel.setAttribute('role', 'listbox');
     panel.setAttribute('aria-label', options.label());
     panel.setAttribute('popover', 'manual');
     for (const choice of options.choices()) {
       const row = document.createElement('button');
-      row.type = 'button'; row.className = 'language-picker-option'; row.tabIndex = -1;
-      row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(choice.selected));
+      row.type = 'button';
+      row.className = 'language-picker-option';
+      row.tabIndex = -1;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', String(choice.selected));
       row.dataset.locale = choice.id;
-      const label = document.createElement('span'); label.textContent = choice.label; row.append(label);
+      const label = document.createElement('span');
+      label.textContent = choice.label;
+      row.append(label);
       if (choice.selected) row.insertAdjacentHTML('beforeend', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>');
       row.addEventListener('click', event => {
         event.stopPropagation();
@@ -278,9 +327,7 @@ export function createLanguagePicker(options) {
     }
     document.body.append(panel);
     panel.showPopover?.();
-    const width = panel.offsetWidth, height = panel.offsetHeight;
-    panel.style.left = `${Math.max(8, Math.min(box.right - width, innerWidth - width - 8))}px`;
-    panel.style.top = `${Math.max(8, Math.min(box.bottom + 6, innerHeight - height - 8))}px`;
+    position(box);
     anchor.setAttribute('aria-expanded', 'true');
     events = new AbortController();
     const listen = { signal: events.signal, capture: true };
@@ -296,10 +343,25 @@ export function createLanguagePicker(options) {
       if (event.key === 'ArrowUp') next = (index - 1 + rows.length) % rows.length;
       if (event.key === 'Home') next = 0;
       if (event.key === 'End') next = rows.length - 1;
-      if (next >= 0) { event.preventDefault(); event.stopImmediatePropagation(); rows[next].focus({ preventScroll: true }); }
-      else if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); close(true); }
-      else if (event.key === 'Tab') close(true);
-      else if (index >= 0 && ['Enter', ' '].includes(event.key)) { event.preventDefault(); event.stopImmediatePropagation(); rows[index].click(); }
+      if (next >= 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        rows[next].focus({ preventScroll: true });
+      } else if (event.key === 'Escape' || parentMenu && event.key === 'ArrowLeft') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close(true);
+      } else if (event.key === 'Tab') {
+        if (parentMenu) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+        close(true);
+      } else if (index >= 0 && ['Enter', ' '].includes(event.key)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        rows[index].click();
+      }
     }, listen);
     document.addEventListener('focusin', event => {
       if (panel && !panel.contains(event.target) && !anchor?.contains(event.target)) close();
@@ -308,11 +370,16 @@ export function createLanguagePicker(options) {
     window.addEventListener('pagehide', () => close(), listen);
     (panel.querySelector('[aria-selected=true]') || panel.firstElementChild)?.focus({ preventScroll: true });
   }
+
   if (typeof document !== 'undefined') document.addEventListener('keydown', event => {
     const trigger = event.target.closest?.('[data-language-trigger]');
-    if (!panel && trigger && trigger.getAttribute('role') !== 'menuitem' && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
-      event.preventDefault(); trigger.click();
+    const side = trigger?.dataset.languageSubmenu === 'true';
+    if (!panel && trigger && (side && event.key === 'ArrowRight'
+      || trigger.getAttribute('role') !== 'menuitem' && ['ArrowDown', 'ArrowUp'].includes(event.key))) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      trigger.click();
     }
   });
-  return { open, close, get isOpen() { return !!panel; } };
+  return { open, close, reanchor, get isOpen() { return !!panel; }, get isSubmenu() { return !!panel && !!parentMenu; } };
 }

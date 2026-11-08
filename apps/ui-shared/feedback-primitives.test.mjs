@@ -2,11 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { pendingDots, sharedIcon } from './feedback-primitives.js';
 
-test('Refresh is a shared single circular arrow at 18 CSS pixels even with a small request', () => {
+test('Refresh shares a circular pair of arrows at 18 CSS pixels in compact controls', () => {
   const icon = sharedIcon('refresh', 15);
   assert.match(icon, /width="18" height="18"/);
   assert.equal((icon.match(/<path /g) || []).length, 1);
-  assert.doesNotMatch(icon, /M3 21v-6h6/);
+  assert.match(icon, /M20 8a8 8/);
+  assert.match(icon, /M4 16a8 8/);
+});
+
+test('Work identity and List/Grid choices have distinct shared semantics', () => {
+  for (const name of ['work', 'view-list', 'view-grid']) {
+    assert.match(sharedIcon(name, 18), /aria-hidden="true"/);
+    assert.match(sharedIcon(name, 18), /width="18" height="18"/);
+  }
+  assert.notEqual(sharedIcon('work'), sharedIcon('view-grid'));
+  assert.notEqual(sharedIcon('view-list'), sharedIcon('view-grid'));
 });
 
 test('Open enters a workspace rather than playing or opening an external window', () => {

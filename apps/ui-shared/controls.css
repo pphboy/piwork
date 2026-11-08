@@ -348,3 +348,84 @@ dialog, dialog::backdrop { animation:none; transition:none; }
   bottom: auto;
   max-height: var(--notice-page-max-height);
 }
+
+/* Compact roles are opt-in: ordinary forms, confirmations and progress keep their original geometry. The feature still owns admission and content. */ .modal.anchored-overlay.compact-menu {
+  width: min(216px, calc(100vw - 16px));
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px #17345014;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .dropdown-title {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .modal-body {
+  padding: 4px 6px 6px;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list {
+  gap: 1px;
+  margin: 0;
+  min-width: 0;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > :is(.button, .btn) {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.45;
+  white-space: normal;
+  text-align: left;
+  background: transparent;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > :is(.button, .btn) > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 18px;
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > :is(.button, .btn):hover:not(:disabled) {
+  background: var(--surface-subtle);
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > :is(.button, .btn).danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+.menu-separator {
+  height: 1px;
+  flex: none;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.language-picker.submenu-language-picker {
+  width: 212px;
+  box-shadow: 0 8px 24px #17345018;
+}
+.submenu-language-picker .language-picker-option {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.language-trigger[aria-expanded="true"] {
+  color: var(--accent);
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > .language-trigger[aria-expanded="true"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.language-trigger[data-submenu-side="left"][aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
+}
+:is(.modal, .admin-account-dropdown).compact-menu .menu-list > :is(.button, .btn) > .icon-refresh {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-account-dropdown.command-dropdown.compact-menu {
+  width: min(248px, calc(100vw - 16px));
+}

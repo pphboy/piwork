@@ -492,20 +492,30 @@ test('已缓存的 Core 读取错误随语言切换', async ({ browser }) => {
   }
 });
 
-test('账号菜单只有一个语言入口，选择浮层关闭并将焦点返回头像', async ({ browser }) => {
+test('账号语言子层保留父菜单，方向键与 Escape 逐层返回', async ({ browser }) => {
   const context=await browser.newContext({locale:'zh-CN',viewport:{width:1440,height:900}});const page=await context.newPage();
   try {
     await mockConsole(page,{authenticated:true});await page.goto(`${base}/admin`);
     const trigger=page.locator('#account-trigger');await trigger.focus();await trigger.press('ArrowDown');
     const menu=page.locator('#account-dropdown');await expect(menu.locator('[data-locale]')).toHaveCount(0);
     await page.keyboard.press('ArrowDown');await expect(menu.locator('[data-action="language"]')).toBeFocused();
-    await page.keyboard.press('Enter');await expect(menu).toBeHidden();
+    await page.keyboard.press('ArrowRight');
+    await expect(menu).toBeVisible();
+
     await expect(page.locator('[data-locale="auto"]')).toHaveAttribute('aria-selected','true');
     await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');await expect(page.locator('html')).toHaveAttribute('lang','en');
-    await expect(page.locator('.language-picker')).toHaveCount(0);await expect(trigger).toBeFocused();
+    await expect(page.locator('.language-picker')).toHaveCount(0);
+    await expect(menu.locator('[data-action=language]')).toBeFocused();
+    await expect(menu).toBeVisible();
+
     await openLanguage(page);await page.screenshot({path:fileURLToPath(new URL('../../../dist/language-picker-admin-1440.png',import.meta.url))});
-    await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(menu.locator('[data-action=language]')).toBeFocused();
+    await expect(menu).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(trigger).toBeFocused();
+
   }finally{await context.close();}
 });
 
@@ -950,7 +960,6 @@ test('360px Administration account menu reflects the selected locale after retai
     await expect(page.locator('.nav a')).toHaveCount(4);
     await expect(page.locator('.topbar')).toHaveCSS('height', '88px');
     await selectLanguage(page, 'zh-CN');
-    await page.locator('#account-trigger').click();
     const menu = page.locator('#account-dropdown');
     await expect(menu).toContainText(zh['shell.roleAdmin']);
     await expect(menu).toContainText(zh['shell.aboutPiwork']);
@@ -960,6 +969,9 @@ test('360px Administration account menu reflects the selected locale after retai
     await expect(menu.locator('.dropdown-title')).toHaveText('admin');
     await menu.locator('[data-action=language]').click();
     await expect(page.locator('.language-picker [data-locale="zh-CN"]')).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Escape');
+    await expect(menu.locator('[data-action=language]')).toBeFocused();
+    await expect(menu).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.locator('#account-trigger')).toBeFocused();
     await page.setViewportSize({ width: 1440, height: 900 });
