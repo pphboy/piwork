@@ -240,9 +240,20 @@ for(const hasRows of [true,false]) test(`Works refresh preserves confirmed ${has
  c.workControls=new Map();
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'now',worksError:'',state:{scenario:'loading',works:hasRows?[work]:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
- let html=c.works();assert.doesNotMatch(html,/loading-list|Loading your Works/);assert.match(html,/data-read-busy="true"/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
+ let html=c.works();
+ assert.doesNotMatch(html,/loading-list|Loading your Works/);
+ assert.match(html,/data-read-busy="true"/);
+ assert.match(html,hasRows?/work-table/:/Start with your first Work/);
+
  c.adapter.worksLoading=false;c.adapter.state.scenario='normal';html=c.works();assert.doesNotMatch(html,/aria-busy|Updated|Status checked/);
- c.adapter.worksError='Read failed';c.adapter.state.scenario='list-error';html=c.works();assert.match(html,/Works could not be refreshed\. Read failed/);assert.equal((html.match(/Read failed/g)||[]).length,1);assert.doesNotMatch(html,/Works could not be loaded/);assert.match(html,hasRows?/work-table/:/Make room for your next idea/);
+ c.adapter.worksError='Read failed';
+ c.adapter.state.scenario='list-error';
+ html=c.works();
+ assert.match(html,/Works could not be refreshed\. Read failed/);
+ assert.equal((html.match(/Read failed/g)||[]).length,1);
+ assert.doesNotMatch(html,/Works could not be loaded/);
+ assert.match(html,hasRows?/work-table/:/Start with your first Work/);
+
 });
 
 test('Works first load owns a static labelled skeleton, first failure is never an empty list, and cached search is retained',()=>{
@@ -258,8 +269,23 @@ test('Works first load owns a static labelled skeleton, first failure is never a
  Object.assign(c.adapter,{worksLoading:true,worksChecked:'',worksError:'',state:{scenario:'loading',works:[],core:{account:'user'}}});
  vm.runInContext(extract('worksRefreshButton','works'),c);
  assert.match(c.works(),/loading-list/);
- const loading=c.works().match(/<div class="loading-list"[\s\S]*?<\/div><div class="works-footer"/)?.[0];assert.ok(loading);assert.match(loading,/aria-label="Loading your Works" aria-busy="true"/);assert.equal(loading.replace(/<div class="works-footer"$/,'').replace(/<[^>]*>/g,''),'');assert.equal((loading.match(/class="skeleton"/g)||[]).length,3);assert.doesNotMatch(loading,/pending-dots|data-action=/);assert.doesNotMatch(c.works(),/0 Works|Make room for your next idea|No matching Works/);
- c.adapter.worksLoading=false;c.adapter.worksError='No response';c.adapter.state.scenario='list-error';let html=c.works();assert.match(html,/Works could not be loaded/);assert.match(html,/works-error-cause">No response/);assert.equal((html.match(/>Retry loading</g)||[]).length,1);assert.doesNotMatch(html,/Works could not be refreshed|feedback warning|Make room for your next idea|No matching Works/);
+ const loading=c.works().match(/<div class="loading-list"[\s\S]*?<\/div><div class="works-footer"/)?.[0];
+ assert.ok(loading);
+ assert.match(loading,/aria-label="Loading your Works" aria-busy="true"/);
+ assert.equal(loading.replace(/<div class="works-footer"$/,'').replace(/<[^>]*>/g,''),'');
+ assert.equal((loading.match(/class="skeleton"/g)||[]).length,3);
+ assert.doesNotMatch(loading,/pending-dots|data-action=/);
+ assert.doesNotMatch(c.works(),/0 Works|Start with your first Work|No matching Works/);
+
+ c.adapter.worksLoading=false;
+ c.adapter.worksError='No response';
+ c.adapter.state.scenario='list-error';
+ let html=c.works();
+ assert.match(html,/Works could not be loaded/);
+ assert.match(html,/works-error-cause">No response/);
+ assert.equal((html.match(/>Retry loading</g)||[]).length,1);
+ assert.doesNotMatch(html,/Works could not be refreshed|feedback warning|Start with your first Work|No matching Works/);
+
  c.adapter.state.works=[work];c.adapter.worksLoading=true;c.view.search='missing';html=c.works();assert.match(html,/value="missing"/);assert.match(html,/No matching Works/);assert.doesNotMatch(html,/loading-list/);
 });
 
@@ -301,7 +327,7 @@ for(const scenario of ['normal','core-offline','env-not-ready','empty']) test(`W
  Object.assign(c.adapter,{worksLoading:false,worksChecked:'',worksError:'',state:{scenario,works:[],core:{account:'user'},lastChecked:'not confirmed'}});
  vm.runInContext(extract('worksRefreshButton','works'),c);const html=c.works();
  assert.match(html,/Works have not been read/);assert.match(html,/>Read Works<\/button>/);assert.match(html,/Works not yet read/);
- assert.doesNotMatch(html,/No matching Works|Make room for your next idea|0 Works|loading-list|pending-dots/);
+ assert.doesNotMatch(html,/No matching Works|Start with your first Work|0 Works|loading-list|pending-dots/);
 });
 
 test('Works rows project one compact state; original details and checks live in the Work menu',()=>{

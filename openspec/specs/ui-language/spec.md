@@ -401,9 +401,9 @@ Desktop、管理及登录／首次引导入口 SHALL 在成功取得入口 HTML 
 
 **Identifier:** UIL-I18N-001
 
-Desktop 工作台、Serve 管理界面、登录和首次初始化 SHALL 支持 `zh-CN` 简体中文和 `en` 英文界面。浏览器当前 origin 没有有效的显式选择时，界面 SHALL 按浏览器语言偏好顺序匹配：中文语言标签使用简体中文，英文语言标签使用英文；均不匹配时使用英文。语言选择 SHALL 提供“跟随浏览器”、`简体中文` 和 `English` 三项并标识当前偏好，并在登录前、登录后可由键盘访问；Desktop 的 Work 工作区及设置中 SHALL 无需离开当前页面即可访问。选择 SHALL 立即应用；显式语言保存在当前浏览器的 origin 内并优先于浏览器语言。“跟随浏览器”为默认偏好，选择后 SHALL 清除原显式语言并重新匹配浏览器偏好，不将当前匹配语言另存为手动选择。
+Desktop 工作台、Serve 管理界面、登录和首次初始化 SHALL 支持 `zh-CN` 简体中文和 `en` 英文界面。浏览器当前 origin 没有有效的显式选择时，界面 SHALL 按浏览器语言偏好顺序匹配：中文语言标签使用简体中文，英文语言标签使用英文；均不匹配时使用英文。语言选择 SHALL 提供“跟随浏览器”、`简体中文` 和 `English` 三项并标识当前偏好，并在登录前、登录后可由键盘访问；Desktop 登录后的手动语言入口 SHALL 集中在全局账户菜单，Work 行菜单、Work 详情菜单及 Work Settings 不再另设入口；选择只改变界面呈现。选择 SHALL 立即应用；显式语言保存在当前浏览器的 origin 内并优先于浏览器语言。“跟随浏览器”为默认偏好，选择后 SHALL 清除原显式语言并重新匹配浏览器偏好，不将当前匹配语言另存为手动选择。
 
-登录及首次初始化页 SHALL 在右上方提供带统一线条地球图标、所选界面语言的“语言”标签和下箭头的轻量按钮。登录后的账户菜单、Work 更多菜单 SHALL 只保留一行带地球图标、当前偏好和展开提示的语言入口，点击后再选择语言；设置页提供等价入口。选择使用锚定入口的轻量单选浮层，白底、细边框、小圆角、选中项右侧勾选，与现有菜单密度一致，不叠加两层菜单或增加模态遮罩。浮层 SHALL 支持方向键、Home/End、Enter/Space、Escape 和 Tab，选择后立即关闭，焦点回到有效入口；外侧关闭不抢焦点，360px 下不溢出。
+登录及首次初始化页 SHALL 保留带地球图标、当前偏好和下箭头的轻量语言入口。登录后的账户菜单保留一行带图标、当前偏好和展开提示的语言项，并侧向展开为其明确归属的二级单选 Pop，父菜单保持展开；空间不足时翻转/约束到视口。该有父子关系的语言选择是允许的菜单层级例外，不是无归属叠层，不新增模态遮罩或焦点陷阱。选择项继续为跟随浏览器、简体中文、English，选中项勾选；选择后关闭子层并更新真实界面及原偏好。支持方向键、Home/End、Enter/Space，右方向进入子层，左方向或首次 Escape 返回父项，再次 Escape 关闭父菜单；Tab/外侧关闭保持合理焦点移交。360px 下两层均可操作且不溢出，身份/导航变化关闭旧层。
 
 同一 origin 的托管登录、初始化、Desktop 和 Serve SHALL 读取同一语言偏好；其他 IP、端口或独立 CLI Desktop origin SHALL 按各自浏览器来源保存，不要求跨设备或账号同步。存储被拒绝或不可用时 SHALL 不阻止使用或切换，本页维持选择，下次访问按可取得的偏好重新确定语言；无效保存值 SHALL 被忽略。偏好 SHALL 不包含账号凭证、业务草稿或其他用户数据。
 
@@ -424,8 +424,8 @@ Desktop 工作台、Serve 管理界面、登录和首次初始化 SHALL 支持 `
 - **THEN** 原显式偏好被清除，立即使用中文；同源刷新继续按浏览器偏好匹配，其他来源不被修改
 
 #### Scenario: 统一入口与轻量选择
-- **WHEN** 用户在登录页、首次初始化、账户下拉、Work 更多菜单或设置页访问语言入口
-- **THEN** 首先看到单个带地球图标的语言入口，激活后再展示三个单选项；选择后关闭并恢复焦点，不显示并排的常驻语言按钮，不叠加菜单或模态遮罩，键盘及360px布局可用
+- **WHEN** 用户在登录/初始化或全局账户菜单访问语言选择，也查看 Work 行、Work 详情与设置
+- **THEN** 登录前入口继续可用；账户语言以侧向二级 Pop 选择并正确返回父层，Work 两处菜单及 Settings 没有重复语言项；偏好即时生效且键盘/360px 可用
 
 ### Requirement: 切换语言只改变产品界面呈现
 
@@ -517,23 +517,23 @@ Desktop 与 Serve SHALL 使用单一浮动通知宿主呈现适合通知的短�
 
 **Identifier:** UIL-V13-CHROME-001
 
-Desktop/Serve SHALL 沿用已确认的 V12 紧凑头部层级与原 PW 资源，不因等待、通知或增加评审入口而增高头部或新增无用途空白。宽屏 Desktop 首页与 Admin Header SHALL 等高为最新批准 V14 的 52px，并共享水平对齐基线；Work 身份 Header 同为 52px，Service Toolbar 保持 39px 的次级密度。首页 Header 的既有 B 控件保持 icon-only，Work 列表的 Open 仍为图标加文字。窄屏按 V14 必要布局折行为 88px 双行而不隐藏主要操作，不将旧约64–72px身份栏基线强加给新的紧凑 Work Header。
+Desktop/Serve SHALL 沿用当前共享浅色语言、紧凑头部层级与原 PW 资源，不因等待、通知或增加评审入口而增高头部或新增无用途空白。宽屏 Desktop 首页与 Admin Header SHALL 等高为52px，并共享水平对齐基线；Work 身份 Header 同为 52px，Service Toolbar 保持 39px 的次级密度。首页 Header 的既有 B 控件保持 icon-only，Work 列表/卡片的 Open 使用明确的轻量文字导航，必要的进入图形按同一语义取得，不强制再附图标。窄屏按必要布局折行为88px双行而不隐藏主要操作；其他本次未涉及的管理页面与表单继续使用自己的有效布局。
 
-Work 的 Open SHALL 使用表示进入工作区的箭头形，不使用播放或外链箭头；Start 仍表示生命周期启动，Service 新标签打开仍使用外链语义。Refresh SHALL 共用单圆箭头路径，常规可见 Refresh 图形为18×18 CSS px，不回退双向/双箭头或因 `.small` 覆盖缩成16px；图形尺寸不缩小原可操作热区。两端所有同语义 Refresh 使用同一来源，状态切换保持固定槽、可访问名称与 tooltip。
+Work 的 Open SHALL 明确表示进入工作区，不使用播放或 Service 外链语义；列表/卡片允许只显示明确文字，其他需要图形的完成出口仍用共享进入语义。Start 继续表示生命周期启动，Service 新标签打开使用外链语义。Refresh SHALL 共用本变更确定的循环双箭头路径，常规图形为18×18 CSS px，不因小尺寸上下文缩成16px；图形尺寸不缩小原可操作热区。两端同语义 Refresh 使用同一来源，发起动作与真实目标由准确文字/无障碍名表达，busy 前后保持固定槽与几何。
 
-V14 最新批准的视觉参考 SHALL 以所属 change 冻结附件为准；Service、Files 与 Agent 次级工具栏保持 39px。Administration 的 Overview、Users、Setup、Models 四个短主导航与 Services/Files/Chat 导航 SHALL 使用对应批准的 18px SVG，保留双语可访问名称、真实权限及原导航目标；Setup 下 Defaults/Skills/Packages 次级导航 SHALL 保持 39px。Quick setup、Skills、Find operation 与已知未结束操作 SHALL 继续在所属管理入口可达，不移动到 Work 行菜单。正常密度 SHALL NOT 裁掉长错误、未知状态或必要恢复控制。
+本次局部呈现更新 SHALL 以当前规格和所属冻结原型为准，不从历史画面推导未声明的新行为；Service 与 Chat 次级工具栏保持39px；Files 列表/详情工具栏使用本变更明确的 44px 局部密度。Administration 的 Overview、Users、Setup、Models 四个短主导航与 Services/Files/Chat 导航 SHALL 使用对应批准的 18px SVG，保留双语可访问名称、真实权限及原导航目标；Setup 下 Defaults/Skills/Packages 次级导航 SHALL 保持 39px。Quick setup、Skills、Find operation 与已知未结束操作 SHALL 继续在所属管理入口可达，不移动到 Work 行菜单。正常密度 SHALL NOT 裁掉长错误、未知状态或必要恢复控制。
 
 #### Scenario: V14 覆盖历史视觉数值而不覆盖业务
-- **WHEN** 实施者将冻结 V14 的 52px/88px 头部及 SVG 导航应用到产品
-- **THEN** 使用真实会话、健康及模型来源，保留首次读取、陈旧与未知状态；宽屏和 360px 对照验收分别记录，不能以历史 V13 测试或原型模拟宣称 V14 通过
+- **WHEN** 实施者将52px/88px头部、Files的44px局部密度及共享图形应用到产品
+- **THEN** 使用真实会话、健康及模型来源，保留首次读取、陈旧与未知状态；宽屏和 360px 对照验收分别记录，不能以历史记录或合成原型模拟宣称真实实现已通过
 
 #### Scenario: Open 与 Start 分开
 - **WHEN** Ready Work 显示 Open 而 Stopped Work 显示 Start
-- **THEN** Open 是进入工作区箭头并仅导航，Start 是启动命令；Service 外链图标不被用于 Work Open
+- **THEN** 列表/卡片的 Open 是明确的轻量文字导航且仅进入工作区，Start 仍执行启动；必要进入图形不使用 Service 外链或播放语义
 
 #### Scenario: Refresh 大小一致
 - **WHEN** 用户比较 Works、Files、Serve 或详情里的常规 Refresh
-- **THEN** 都是18px单圆箭头且使用共享定义，热区/文字对齐和 busy前后几何保持
+- **THEN** 18px循环双箭头来自同一共享定义，热区/文字对齐及 busy 前后几何保持，不用相似图形暗中切换身份或重试业务
 
 #### Scenario: 紧凑 Header 与原 PW 标记
 - **WHEN** 宽屏或窄屏查看 Works、Work、Service 和 Admin
@@ -569,7 +569,7 @@ CoreSetup、统一登录和 Admin SHALL 沿用现有 Piwork Desktop 的 Logo、�
 
 同类控件 SHALL 保持字阶、字重、高度、padding、图标尺寸/间距、文字基线和 default/hover/focus-visible/active/disabled/loading/selected（适用时）规则一致。主动作、次级、轻量图标与危险动作保持不同角色；同一任务最多一个突出主动作。不同密度必须由容器角色明确区分，不能因为所属程序不同而产生无依据的新变体。新链接导航使用链接语义并取得与同角色按钮一致的外观，托管 Desktop 的 Sign in 等入口不得遗漏现有样式。图标动作有与所选界面语言一致的名称与提示，等待在原控件/区域可感知，不能仅把所有按钮变灰。
 
-Desktop 账户下拉 SHALL 沿用 DUL-007 与 DUL-OVERLAY-ROLE-001 的命令菜单结构，账号只作为标题显示一次，`Role: Administrator` 和 Core 地址作为次级身份信息。`Administration`（中文为“管理”）SHALL 仅在 Desktop 全局账号菜单提供，并与 `About Piwork` 使用一致的菜单行高度、padding、前置装饰图标尺寸/间距、文字起点、字阶及 hover/focus-visible 状态，不得退化为居中的普通按钮或裸链接。管理导航 SHALL 保留真实链接目标和链接语义，同时取得菜单项语义并参与现有方向键、Home/End、激活、Tab 离开及 Escape 返回触发器的规则；不能只把 button 纳入菜单键盘遍历。仅有效托管管理员显示 Administration；Quick setup 从 Admin 的所属导航进入，不另在 Work 行/Work 菜单增加管理入口，普通用户与独立 CLI Desktop 的既有动作保持；Sign out 仍可辨为危险动作，菜单保持锚定且无模态焦点陷阱。
+Desktop 账户下拉 SHALL 沿用 DUL-007 与 DUL-OVERLAY-ROLE-001 的命令菜单结构，账号只作为标题显示一次，`Role: Administrator` 和 Core 地址作为次级身份信息。`Administration`（中文为“管理”）SHALL 仅在 Desktop 全局账号菜单提供，并与 `About Piwork` 使用一致的菜单行高度、padding、前置装饰图标尺寸/间距、文字起点、字阶及 hover/focus-visible 状态，不得退化为居中的普通按钮或裸链接。管理导航 SHALL 保留真实链接目标和链接语义，同时取得菜单项语义并参与现有方向键、Home/End、激活、Tab 离开及 Escape 返回触发器的规则；不能只把 button 纳入菜单键盘遍历。仅有效托管管理员显示 Administration；Quick Setup 在同一有权托管管理员的 Desktop 全局账户菜单可有直达 /admin/setup 的快捷链接，同时保留 Admin Overview 的原入口；它复用原模型/准备流程，不另建配置流程，也不进入 Work 行/Work 菜单，普通用户与独立 CLI Desktop 的既有动作保持；Sign out 仍可辨为危险动作，菜单保持锚定且无模态焦点陷阱。
 
 Admin 中包含 About Piwork 的账户下拉 SHALL 使用同一 Desktop 命令菜单 UX：头像触发器、展开状态、单次账号标题、Role/Core 次级信息、带前置图标的完整菜单行，以及危险 Sign out。Core 地址 SHALL 表示当前实际连接的 Core，缺少已确认信息时明确未取得，不能把 UI 自己的地址冒充 Core。About Piwork 保留导航链接语义和现有版本内容；Sign out 保留动作语义、真实等待/错误及会话撤销边界。
 
@@ -633,7 +633,11 @@ Quick setup SHALL 共用 Admin 的顶栏、当前导航和最大 1100px 外层�
 - **WHEN** 共享控件样式更新后打开既有 Desktop 工作区或 Core 内嵌管理区
 - **THEN** 同角色控件一致，Service 应用内部样式、管理导航、危险确认和各自布局保持既有职责，没有全局 CSS 串扰或旧构建资源残留
 
-Work 列表行及其菜单 SHALL 不提供 Administration 或 Requests；打开 Work 后的 Requests 沿 DUL-NAVSCOPE-001 处理。删除这些跨层级入口不删除当前适用的语言入口、Work 信息、危险操作确认或诊断恢复。
+Work 列表行及其菜单 SHALL 不提供 Administration 或 Requests；打开 Work 后的 Requests 沿 DUL-NAVSCOPE-001 处理。语言集中在全局账户的二级 Pop，Work 行/详情菜单和 Settings 不保留重复语言项；这不删除 Work 信息、危险确认或所属诊断恢复。
+
+#### Scenario: 全局 Quick Setup 快捷入口
+- **WHEN** 托管管理员、普通用户或独立 CLI Desktop 用户打开账户菜单
+- **THEN** 仅有权托管管理员看到真实 /admin/setup 快捷链接；原管理/日志/语言/退出等合法动作仍可达，进入 Quick Setup 沿用原授权和未保存保护，不自动创建 Work 或配置 Runtime
 
 ### Requirement: 浏览器整页启动使用连续的居中品牌画面
 
@@ -683,18 +687,18 @@ Work 列表行及其菜单 SHALL 不提供 Administration 或 Requests；打开 
 
 ### Requirement: Work 路由读取不推移共用 Header
 
-Desktop 在进入 Work 或其 Service、Files、Chat 和设置时，SHALL 不在共用 Work Header 显示等待三点或插入路由慢读取文字；读取开始、持续及结束不得因此改变 Work 名称、真实状态及相邻控件的位置。路由读取的可访问状态 SHALL 保留且不占布局空间；Core 检查、Work 状态同步及生命周期动作继续以真实状态文字或可访问说明表达，不因移除三点而虚报已就绪或失去错误恢复。Service 首次读取继续使用所属内容区骨架，失败或超时 SHALL 按现有规则显示真实原因及可操作只读恢复；已确认内容、用户草稿及已取得的 Service iframe SHALL 按原规则保留。
+Desktop 在进入 Work 或其 Service、Files、Chat 和 Settings 时，SHALL 不在共用 Header 显示读取三点或插入慢读取文字；必要读取以既有预留槽中的局部骨架表达，不增高头部或移动名称、真实状态和相邻动作。已确认字段在背景重读时保留，尚待确认字段使用骨架；不能把真实失败或未知状态替换成无意义的持续加载。读取保留可访问 busy/状态说明。Core 检查、Work 同步与生命周期仍表达实际事实、接受目标和必要恢复；所属正文的首次骨架、错误重试、草稿及已取得 iframe 按原规则保持。
 
-此要求作为 UIL-PENDING-001 中 Work Header 等待三点及路由读取十秒提示的可视例外：慢读取保留可访问说明，实际读取超时或失败仍显示可见原因和只读重试；Header 以外的等待状态仍依照其所属契约呈现。Work 实际状态、生命周期操作以及其他独立对象的状态与恢复继续按原事实呈现；不得假称已经就绪、屏蔽真实错误或重发用户操作。
+此要求作为 UIL-PENDING-001 的窄范围呈现例外：Work 身份 Header 以及本变更涉及的 Service/Chat/连接信息头部中的只读加载槽使用固定几何骨架，减少动态效果时静态；慢读取的可访问说明不占新布局，实际超时/失败仍有可见原因和只读恢复。明确发起按钮中的 pending、生命周期任务、传输进度与 Header 以外的等待继续依所属契约；同一检查不同时增加两个主要等待动画。骨架结束不等于业务完成，不释放未知保护或重发用户动作。
 
 #### Scenario: 进入 Service 及切换 Work 区域
-- **WHEN** 用户打开 Work 或进入 Service、Files、Chat 或设置，而 Work 路由读取仍在进行或结束
-- **THEN** Header 不出现路由读取三点或慢读取文字，名称、状态及相邻控件不因该读取位移；Service 尚未确认时保留内容区骨架，真实状态与可访问读取说明仍可辨
+- **WHEN** 用户打开 Work 或进入 Service、Files、Chat、Settings，相关字段正在读取或读取结束
+- **THEN** Header 没有三点和慢读取文字；未确认区域用预留槽骨架，名称、已确认状态和相邻动作不位移，正文首读/真实错误/可访问说明保留
 
 #### Scenario: 慢读取和失败
 - **WHEN** Work 路由读取持续或其中一次读取超时、失败
 - **THEN** 不插入推移 Header 的临时提示；内容区按原规则显示待确认或实际原因及只读重试，不用空集合伪装失败，也不自动重发写入
 
 #### Scenario: Core 检查和 Work 状态同步
-- **WHEN** 用户已进入 Work，Core 连接正在检查，或 Work 状态同步／生命周期动作正在等待确认
-- **THEN** Work Header 没有可见的等待三点，相邻控件不因这些点出现或消失而位移；状态文字、可访问 busy 和必要的失败恢复仍按事实提供，其他区域的等待反馈不受影响
+- **WHEN** 用户已进入 Work，Core 检查、状态同步或生命周期动作等待确认
+- **THEN** 头部只读等待使用其固定槽骨架，真实状态、操作接受/失败/未知及必要恢复仍可辨；发起按钮和其他区域沿原规则，不增加重复主要等待

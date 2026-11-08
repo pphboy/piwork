@@ -18,12 +18,12 @@ test('Work header refuses stale targets and identities', () => {
 });
 
 test('administration is global, hosted, and permission gated', () => {
-  assert.deepEqual(menuCommands({ ...context, scope: 'global-account' }).map((command: { href: string }) => command.href), ['/admin']);
+  assert.deepEqual(menuCommands({ ...context, scope: 'global-account' }).map((command: { href: string }) => command.href), ['/admin/setup', '/admin']);
   assert.deepEqual(menuCommands({ ...context, scope: 'global-account', administrator: false }), []);
   assert.deepEqual(menuCommands({ ...context, scope: 'global-account', hosted: false }), []);
 });
 
-test('service request command carries Work and Service identities', () => {
+test('service command carries Work and Service identities', () => {
   const commands = menuCommands({ ...context, scope: 'service', targetWorkId: 'opened-a', targetServiceId: 'service-a' });
   assert.equal(commands[0].serviceId, 'service-a');
   assert.equal(commands[0].workId, 'opened-a');
@@ -74,3 +74,12 @@ for (const [name, changes] of [
     assert.equal(workHeaderStatusPresentation({ ...receipt, ...changes, synchronizationPending: true }), 'control');
   });
 }
+
+ test('row and header share ordered commands without language, history or requests', () => {
+  const row = menuCommands({ ...context, targetWorkId: 'opened-a', scope: 'work-row' });
+  const header = menuCommands({ ...context, targetWorkId: 'opened-a', scope: 'work-header' });
+  assert.deepEqual(row, header);
+  assert.deepEqual(row.map((item: { action: string }) => item.action), ['settings', 'work-info', 'export', 'stop-work', 'delete-work']);
+  assert.deepEqual(row.filter((item: { separatorBefore?: boolean }) => item.separatorBefore).map((item: { action: string }) => item.action), ['export', 'delete-work']);
+  assert.ok(!menuCommands({ ...context, scope: 'work-row', canStop: false }).some((item: { action: string }) => item.action === 'stop-work'));
+});

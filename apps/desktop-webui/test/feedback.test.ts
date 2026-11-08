@@ -34,7 +34,10 @@ async function openWorkForRecovery(page: Page) {
 }
 async function findPreviousExport(page: Page) {
   await openWorkForRecovery(page);
-  await button(page, 'work-menu').click(); await button(page, 'find-previous-export').click();
+  await button(page, 'work-menu').click(); await button(page, 'work-info').click();
+  await page.locator('.work-diagnostics > summary').click();
+  await button(page, 'find-previous-export').click();
+
 }
 /** Tasks without a visible Work live behind the Works header entry, not in front of the list. */
 async function openWorksTasks(page: Page) {
@@ -168,10 +171,9 @@ async function openWorkSettings(page: Page) {
   await page.locator('#modal [data-action="settings"]').click();
 }
 async function openRequests(page: Page, scope: 'work' | 'service' = 'work') {
-  const action = scope === 'service' ? 'service-requests' : 'pi-requests';
-  const trigger = button(page, action);
-  if (!await trigger.isVisible()) await button(page, scope === 'service' ? 'service-menu' : 'work-menu').click();
-  await button(page, action).click();
+  if (!await page.locator('#pi-service-filter').isVisible()) await button(page, 'agent-menu').click();
+  await button(page, 'pi-requests').click();
+  if (scope === 'service') await page.locator('#pi-service-filter').selectOption({ index: 1 });
 }
 function listing(body: string, modified: string) { return `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/note.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${modified}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`; }
 
@@ -281,7 +283,23 @@ for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (cons
   held='';
   await expect(trigger).not.toHaveAttribute('aria-busy','true');
   assert.deepEqual(await trigger.boundingBox(),before);
- await button(page,'back-work').click();await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();trigger=button(page,'refresh-logs');before=await trigger.boundingBox();held='works/work-1/services/tool/logs';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);await button(page,'close-modal').click();
+ await button(page,'back-work').click();
+ await button(page,'tab-Services').click();
+ await button(page,'service-picker').click();
+ await button(page,'service-details').click();
+ trigger=button(page,'refresh-logs');
+ before=await trigger.boundingBox();
+ held='works/work-1/services/tool/logs';
+ gate=deferred();
+ await trigger.click();
+ await expect(trigger).toHaveAttribute('aria-busy','true');
+ assert.deepEqual(await trigger.boundingBox(),before);
+ gate.resolve();
+ held='';
+ await expect(trigger).not.toHaveAttribute('aria-busy','true');
+ assert.deepEqual(await trigger.boundingBox(),before);
+ await button(page,'close-modal').click();
+
  await button(page,'tab-Chat').click();await page.locator('#composer').fill('retained draft');trigger=button(page,'sessions');before=await trigger.boundingBox();held='sessions';gate=deferred();await trigger.click();await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);gate.resolve();held='';await expect(page.locator('#modal .session-list')).toHaveAttribute('aria-busy','false');assert.deepEqual(await trigger.boundingBox(),before);await page.keyboard.press('Escape');await expect(page.locator('#composer')).toHaveValue('retained draft');
  await openRequests(page);
  await expect(page.locator('#modal .request-list')).toBeVisible();
@@ -775,7 +793,9 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
     else {await page.locator('#modal [data-action="settings"]').click(); trigger=entry==='catalog'?'check-catalog':'refresh-config';}
   } else if (entry==='services' || entry==='files') trigger=entry==='services'?'tab-Services':'tab-Files';
   else if (entry==='sessions') trigger='sessions';
-  else if (entry==='new-session') {await button(page,'agent-menu').click();trigger='new-session';}
+  else if (entry==='new-session') {await button(page,'sessions').click();
+  trigger='new-session';
+  }
   else if (entry==='select-session') {await button(page,'sessions').click();trigger='select-session';}
   else {
     await api(page,`adapter.state.operations.push(${JSON.stringify(operation)})`);
@@ -807,7 +827,10 @@ for (const control of ['start','stop','restart','retry','remove'] as const) test
     if(r.path.includes('/logs')) return {json:{text:'bounded logs',status:'collected',collectedAt:'2026-10-03T00:00:00Z'}};
     if(r.method==='POST'&&r.path.endsWith('/'+control)) {await mutation.promise;accepted=true;return{json:{operationId:'op-service-'+control,workId:'work-1'}};}
   });
-  await button(page,'tab-Services').click();await button(page,'manage-services').click();await button(page,'service-details').click();
+  await button(page,'tab-Services').click();
+  await button(page,'service-picker').click();
+  await button(page,'service-details').click();
+
   await page.locator(`[data-action="service-action"][data-control="${control}"]`).click();
   if(control==='stop'||control==='remove') await button(page,'confirm-service-control').click();
   const owner = control==='stop'||control==='remove' ? button(page,'confirm-service-control') : page.locator(`[data-action="service-action"][data-control="${control}"]`);
@@ -834,7 +857,10 @@ for(const action of ['detail','refresh'] as const)test(`D09 ${action} reports lo
     if(r.path.endsWith('/services'))return{json:{services:[{serviceId:'tool',name:'Tool',enabled:true,observedState:'ready',access:{ports:[]}}]}};
     if(r.path.includes('/logs')){if(armed)await gate.promise;return{json:{text:'',status:'empty',collectedAt:'2026-10-03T01:00:00Z'}};}
   });
-  await button(page,'tab-Services').click();await button(page,'manage-services').click();if(action==='refresh')await button(page,'service-details').click();
+  await button(page,'tab-Services').click();
+  await button(page,'service-picker').click();
+  if(action==='refresh')await button(page,'service-details').click();
+
   armed=true;const before=requests.filter(r=>r.path.includes('/logs')).length;const geometry=action==='refresh'?await button(page,'refresh-logs').boundingBox():null;await button(page,action==='detail'?'service-details':'refresh-logs').click();
   if(action==='refresh'){await expect(button(page,'refresh-logs')).toHaveAttribute('aria-busy','true');await expect(button(page,'refresh-logs').locator('.pending-dots')).toHaveCount(1);assert.deepEqual(await button(page,'refresh-logs').boundingBox(),geometry);}
   else await expect(page.locator('[aria-busy="true"]').filter({has:page.locator('.pending-dots'),hasText:'tool'}).first()).toBeVisible();assert.equal(requests.filter(r=>r.path.includes('/logs')).length-before,1);gate.resolve();
@@ -1120,8 +1146,16 @@ test('DWUI-012 pending Service A permits unrelated B; closing and reopening deta
     if(r.path==='works/work-1/services/a/start'){await gate.promise;return{json:{operationId:'op-a',workId:'work-1'}};}
     if(r.path==='works/work-1/services/b/start')return{json:{operationId:'op-b',workId:'work-1'}};
   });
-  await button(page,'tab-Services').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="a"]').click();await page.locator('[data-action="service-action"][data-control="start"]').click();
-  await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="start"] [role="status"]')).toContainText('service:a');await button(page,'close-modal').click();await button(page,'manage-services').click();await page.locator('[data-action="service-details"][data-id="b"]').click();
+  await button(page,'tab-Services').click();
+  await button(page,'service-picker').click();
+  await page.locator('[data-action="service-details"][data-id="a"]').click();
+  await page.locator('[data-action="service-action"][data-control="start"]').click();
+
+  await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="start"] [role="status"]')).toContainText('service:a');
+  await button(page,'close-modal').click();
+  await button(page,'service-picker').click();
+  await page.locator('[data-action="service-details"][data-id="b"]').click();
+
   gate.resolve();await expect(page.locator('#modal-title')).toHaveText('Tool b');await page.locator('[data-action="service-action"][data-control="start"]').click();await expect(page.locator('#modal .object-control-progress [data-action=operation][data-id="op-b"]')).toBeVisible();
   assert.equal(requests.filter(r=>r.path==='works/work-1/services/a/start').length,1);assert.equal(requests.filter(r=>r.path==='works/work-1/services/b/start').length,1);
 });
@@ -1136,7 +1170,10 @@ test('W1 Service control stays locked across port changes while another Service 
     if (r.path === 'works/work-1/services/a/restart') { await gate.promise; return { json: { operationId: 'op-a', workId: 'work-1' } }; }
     if (r.path === 'works/work-1/services/b/restart') return { json: { operationId: 'op-b', workId: 'work-1' } };
   });
-  const details = async (id: string) => { await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator(`[data-action="service-details"][data-id="${id}"]`).click(); };
+  const details = async (id: string) => { await button(page, 'service-picker').click();
+  await page.locator(`[data-action="service-details"][data-id="${id}"]`).click();
+  };
+
   await details('a'); await page.locator('[data-control="restart"]').click();
   await expect(page.locator('[data-action="service-action"][data-id="a"][data-control="restart"] [role="status"]')).toContainText('service:a');
   await button(page, 'close-modal').click(); await details('a'); await page.getByRole('combobox', { name: 'Web entry', exact: true }).selectOption('8080'); await button(page, 'close-modal').click(); await details('a');
@@ -1172,14 +1209,16 @@ test('DWUI-OPREC-001 recovered Service controls stay with the confirmed Service 
   await api(page, "await Promise.all(adapter.state.operations.map(op => adapter.checkOperation(op.id)))");
   await expect(page.locator('iframe')).toHaveCount(1);
   await page.locator('iframe').evaluate(frame => { (window as any).recoveryFrame = frame; });
-  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await button(page, 'service-picker').click();
   await expect(page.locator('#modal')).toContainText('The original Service has not been confirmed.');
   await expect(page.locator('#modal')).toContainText('The Service is no longer in the current list.');
   await page.locator('#modal [data-action="service-details"][data-id="a"]').click();
   await expect(page.locator('#modal .object-control-progress [data-id="service-a-op"]')).toBeVisible();
   await expect(page.locator('#modal [data-control="restart"]')).toBeDisabled();
   await page.locator('#modal [data-action="check-service-progress"]').click();
-  await button(page, 'manage-services').click(); await page.locator('#modal [data-action="service-details"][data-id="b"]').click();
+  await button(page, 'service-picker').click();
+  await page.locator('#modal [data-action="service-details"][data-id="b"]').click();
+
   await expect(page.locator('#modal .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal [data-control="restart"]')).toBeEnabled();
   assert.equal(await page.locator('iframe').evaluate(frame => frame === (window as any).recoveryFrame), true);
@@ -1561,7 +1600,10 @@ test('DWUI-OPREC-001 a previous snapshot is found only within the original Work'
     if (r.path === 'work-snapshots/snapshot-other') return { json: { snapshotId: 'snapshot-other', workId: 'work-other', operationId: 'op-other', state: 'succeeded', size: 4, digest: 'hash', expiresAt: '2099-01-01T00:00:00Z' } };
     if (r.path === 'work-snapshots/snapshot-original') return { json: { snapshotId: 'snapshot-original', workId: 'work-1', operationId: 'op-original', state: 'succeeded', size: 4, digest: 'hash', expiresAt: '2099-01-01T00:00:00Z' } };
   });
-  await button(page, 'work-menu').click(); await button(page, 'find-previous-export').click();
+  await button(page, 'work-menu').click(); await button(page, 'work-info').click();
+  await page.locator('.work-diagnostics > summary').click();
+  await button(page, 'find-previous-export').click();
+
   await page.locator('#snapshot-query').fill('snapshot-other'); await button(page, 'lookup-snapshot').click();
   await expect(page.locator('#modal')).toContainText('does not match');
   assert.equal(await api(page, "return !!adapter.getSnapshot('snapshot-other')"), false);
@@ -1743,7 +1785,9 @@ for (const source of ['service', 'apply'] as const) test(`DWUI-OPREC-003 ${sourc
   });
   await api(page, "await adapter.checkOperation('service-failed')");
   if (source === 'service') {
-    await button(page, 'tab-Services').click(); await button(page, 'manage-services').click();
+    await button(page, 'tab-Services').click();
+    await button(page, 'service-picker').click();
+
     await page.locator('#modal [data-action="service-details"][data-id="svc-a"]').click();
     await page.locator('#modal [data-action="operation"][data-id="service-failed"]').click();
   } else {
@@ -1870,7 +1914,16 @@ test('C02 list Start keeps original local progress and gates Open Work on real r
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
   await expect(page.locator('#modal')).toHaveCount(0); await expect(page.locator('.works-page')).toBeVisible();
   // The read-only check lives in the Work's own menu, next to its original task.
-  const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click(); await button(page,'work-history').click(); await page.locator('#modal [data-action=operation][data-id=c02-start]').click(); await button(page,'check-operation').click(); await button(page,'close-modal').click(); await expect(page.locator('#modal')).toHaveCount(0); };
+  const checkFromMenu = async () => { await page.locator('.work-row').filter({ hasText: 'Recovery Work' }).locator('[data-action="work-menu"]').click();
+  await button(page,'work-info').click();
+  await page.locator('.work-diagnostics > summary').click();
+  await button(page,'work-history').click();
+  await page.locator('#modal [data-action=operation][data-id=c02-start]').click();
+  await button(page,'check-operation').click();
+  await button(page,'close-modal').click();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  };
+
   terminal = true; await checkFromMenu();
   await expect(page.getByRole('link', { name: 'Open Work', exact: true })).toHaveCount(0);
   ready = true; await checkFromMenu();
@@ -2149,12 +2202,12 @@ test('pending independent: About aggregates version reads and keeps the known ve
 // Session chooser presentation uses the production renderer with synthetic API responses.
 for (const width of [1440, 360]) test(`Session chooser presentation stays readable at ${width}px`, async t => {
   let stress = false;
-  const longTitle = 'release-notes-' + 'verylongunbrokentoken'.repeat(7);
+  const longTitle = 'release-notes-' + 'verylongunbrokentoken'.repeat(5);
   const { page, requests } = await fixture(t, r => {
     if (/\/sessions\/extra-/.test(r.path)) return { json: { session: { workId: 'work-1', sessionId: r.path.split('/').at(-1) }, messages: [], runs: [] } };
-    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: stress
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: (stress
       ? [{ sessionId: 'session-1', title: 'Release planning' }, { sessionId: 'session-2', title: longTitle }, ...Array.from({ length: 12 }, (_, i) => ({ sessionId: `extra-${i}`, title: `Conversation ${i + 3}` }))]
-      : [{ sessionId: 'session-1', title: 'Release planning' }] } };
+      : [{ sessionId: 'session-1', title: 'Release planning' }]).map(session => ({ ...session, titleSource: 'manual', titleRevision: 1, manualTitleLock: true, deletedAt: null, autoNameState: 'completed' })) } };
   });
   await page.setViewportSize({ width, height: 900 });
   await button(page, 'sessions').click();
@@ -2219,7 +2272,7 @@ for (const width of [1440, 360]) test(`Session chooser presentation stays readab
   await page.keyboard.press('Home'); await expect(page.locator('#modal [role=option]').first()).toBeFocused();
   await expect(button(page, 'sessions')).toBeEnabled();
   await page.keyboard.press('Escape');
-  await expect.poll(() => page.evaluate(() => ({id:document.activeElement?.id, tag:document.activeElement?.tagName, action:(document.activeElement as HTMLElement)?.dataset.action, modal:!!document.querySelector('#modal')}))).toEqual({id:'session-current-trigger',tag:'BUTTON',action:'sessions',modal:false});
+  await expect.poll(() => page.evaluate(() => ({id:document.activeElement?.id, tag:document.activeElement?.tagName, action:(document.activeElement as HTMLElement)?.dataset.action, modal:!!document.querySelector('#modal')}))).toEqual({id:'sessions-trigger',tag:'BUTTON',action:'sessions',modal:false});
   assert.equal(requests.filter(r => r.method === 'POST').length, 0, 'opening and keyboard navigation never mutate Sessions or Runs');
 });
 
@@ -2535,7 +2588,7 @@ test('delivered file links open current Files content, bounded image previews an
 
   // Focus chat must exit before Files is truly visible.
   await page.locator('[data-action="focus-chat"]').click();
-  await expect(page.locator('[data-action="exit-service-focus"]')).toBeVisible();
+  await expect(page.locator('[data-action="restore-layout"]')).toBeVisible();
   await page.locator('a.chat-file-link[data-path="/image.png"]').click();
   await expect(page.locator('.file-image-preview img')).toBeVisible();
   assert.equal(await page.locator('#workspace-main').getAttribute('inert'), null);
@@ -2653,7 +2706,7 @@ test('retrying a failed file read keeps the unsaved draft and its separate rerea
   await page.locator('[data-action="retry-file-preview"]').click();
   await expect(page.locator('#file-editor')).toHaveValue('draft stays');
   await expect(page.locator('.file-reread pre')).toHaveText('server version');
-  await expect(page.locator('.editor-toolbar')).toContainText('Unsaved');
+  await expect(page.locator('.file-target-toolbar')).toContainText('Unsaved');
   assert.equal(requests.filter(record => record.method === 'PUT').length, 0);
 });
 
@@ -2764,7 +2817,7 @@ test('Core readiness failure is a static recoverable startup state', async t => 
   await expect(page.locator('.core-startup-blocks,.core-starting-spinner')).toHaveCount(0);
   await expect(button(page,'check-connection')).toBeVisible();
   await button(page, 'connection').click();
-  await expect(page.locator('.status-grid')).toContainText('Runtime unavailable');
+  await expect(page.locator('.connection-status-list')).toContainText('Runtime unavailable');
 });
 
 test('automatic Work recovery stays observable after one failed attempt and becomes Ready', async t => {
@@ -2830,7 +2883,10 @@ test('recovered Work keeps five failed retries in history, never as menu progres
     if(pass)await page.reload();
     await expect(button(page,'work-menu')).toBeVisible();await button(page,'work-menu').click();
     await expect(page.locator('.work-menu-task')).toHaveCount(0);
-    await expect(button(page,'work-history')).toBeVisible();await button(page,'work-history').click();
+    await button(page,'work-info').click();
+    await page.locator('.work-diagnostics > summary').click();
+    await button(page,'work-history').click();
+
     await expect(page.locator('.operation-list > button')).toHaveCount(5);
     await page.locator('[data-action=operation][data-id=retry-history-0]').click();
     await expect(page.locator('.phase-track')).toContainText('failed');
@@ -2917,7 +2973,11 @@ test('WARN-2 failed current Service stays current with Ready Work and becomes hi
  await api(page,"await adapter.operateService('work-1','counter','restart');await adapter.checkOperation('current-service-restart');await adapter.refreshWorkStatus('work-1',true);await adapter.listWorks();await adapter.loadServices('work-1');");
  assert.equal(await api(page,"return adapter.workSynchronizationPending('work-1');"),false);
  await button(page,'work-menu').click();await expect(button(page,'work-current-tasks')).toHaveCount(1);
- await button(page,'work-history').click();await page.locator('[data-action="history-filter"][data-filter="current"]').click();
+ await button(page,'work-info').click();
+ await page.locator('.work-diagnostics > summary').click();
+ await button(page,'work-history').click();
+ await page.locator('[data-action="history-filter"][data-filter="current"]').click();
+
  await expect(page.locator('.operation-list [data-id="current-service-restart"]')).toHaveCount(1);
  observed='ready';await api(page,"await adapter.loadServices('work-1');");
  await expect(page.locator('.operation-list [data-id="current-service-restart"]')).toHaveCount(0);
@@ -3649,7 +3709,7 @@ test('Service log first read uses a skeleton and cleanup refresh retains origina
     }
   });
   await button(page, 'tab-Services').click();
-  await button(page, 'manage-services').click();
+  await button(page, 'service-picker').click();
   await button(page, 'service-details').click();
   await expect(page.locator('#modal .read-placeholder').first()).toBeVisible();
   await expect(page.locator('#modal pre.logs')).toHaveCount(0);
@@ -3877,17 +3937,15 @@ test('FS52-ZH acknowledged versioned Save does not become a translated readback 
     if (r.method === 'GET') return { body: 'original', headers: { 'Last-Modified': mtime1 } };
     if (r.method === 'PUT') return { status: 204, headers: { 'Last-Modified': mtime2 } };
   });
-  await button(page, 'work-menu').click();
-  await button(page, 'language').click();
-  await page.getByRole('option', { name: '简体中文', exact: true }).click();
+  await page.evaluate(async () => (await import(new URL('/desktop/browser/locale.js', location.href).href)).chooseLocale('zh-CN'));
   await button(page, 'tab-Files').click();
   await page.locator('[data-action="open-file"][data-path="/note.txt"]').click();
   await page.locator('#file-editor').fill('新的已提交正文');
-  await expect(page.locator('.editor-toolbar')).toContainText('未保存');
+  await expect(page.locator('.file-target-toolbar')).toContainText('未保存');
   const acknowledged = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/note.txt') && response.status() === 204);
   await button(page, 'save-file').click();
   assert.equal((await acknowledged).status(), 204);
-  await expect(page.locator('.editor-toolbar')).toContainText('已保存');
+  await expect(page.locator('.file-target-toolbar')).toContainText('已保存');
   await expect(button(page, 'save-file')).not.toHaveAttribute('aria-busy', 'true');
   await expect(button(page, 'save-file').locator('.pending-dots')).toHaveCount(0);
   await expect(button(page, 'save-file')).toBeDisabled();
@@ -4262,6 +4320,8 @@ test('original snapshot lookup survives late stopped-Work Service hydration with
   }, false, false);
   await expect.poll(() => servicesStarted).toBe(true);
   await button(page, 'work-menu').click();
+  await button(page, 'work-info').click();
+  await page.locator('.work-diagnostics > summary').click();
   await button(page, 'find-previous-export').click();
   await page.locator('#snapshot-query').fill('original-snapshot');
   await button(page, 'lookup-snapshot').click();
@@ -4446,4 +4506,132 @@ test('independent Model and Thinking entries retain paired autosave and unknown 
     { modelRef: 'second-model', thinkingLevel: 'high', thinkingProfile: null },
   ]);
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+});
+
+test('compact Desktop surfaces preserve targets, unique entries and native chrome', async t => {
+  const services = [
+    { serviceId: 'a', name: 'Application A', enabled: true, observedState: 'ready', access: { hostname: 'a.work.test', ports: [{ name: 'web', port: 8000, url: 'http://a.work.test:8000/' }] } },
+    { serviceId: 'b', name: 'Application B with a longer name', enabled: true, observedState: 'stopped', access: { hostname: 'b.work.test', ports: [{ name: 'web', port: 8001, url: 'http://b.work.test:8001/' }] } },
+    { serviceId: 'worker', name: 'Background worker', enabled: false, observedState: 'stopped' },
+  ];
+  let empty = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works' && empty) return { json: { works: [] } };
+    if (r.method === 'PROPFIND') return { status: 207, body: listing('\noriginal file\n', mtime1) };
+    if (r.path === '/_desktop/files/works/work-1/files/note.txt') return { body: '\noriginal file\n', headers: { 'Last-Modified': mtime1 } };
+    if (r.path.endsWith('/services')) return { json: { services } };
+    if (r.path === 'service-entries') return { json: { entryId: 'a-entry', entryUrl: 'about:blank', origin: 'http://a.work.test', embed: 'allowed' } };
+    if (r.path === 'service-entries/a-entry') return { json: { embed: 'allowed' } };
+    if (r.path.endsWith('/logs')) return { status: 503, json: { message: 'Logs temporarily unavailable' } };
+  });
+  await mkdir('dist/ui-apply', { recursive: true });
+  await expect(page.locator('iframe')).toBeVisible();
+  await page.locator('#composer').fill('\nKeep the original draft\n');
+  await page.evaluate(() => { (window as any).compactFrame = document.querySelector('iframe');
+  (window as any).compactComposer = document.querySelector('#composer');
+  });
+
+  await expect(page.locator('.agent-header [data-action=sessions]')).toHaveCount(1);
+  await expect(page.locator('[data-action=sessions]')).toHaveCount(1);
+  await expect(page.locator('.agent-title')).not.toContainText('Agent');
+  await expect(page.locator('.work-header')).toHaveCSS('height', '52px');
+  await expect(page.locator('.service-toolbar')).toHaveCSS('height', '39px');
+  await expect(page.locator('.agent-header')).toHaveCSS('height', '39px');
+  await button(page, 'service-picker').click();
+  await expect(page.locator('.service-picker-row')).toHaveCount(3);
+  const columns = await page.locator('.service-choice').evaluateAll(rows => rows.map(row => {
+    const status = row.querySelector('.status')!.getBoundingClientRect();
+    const check = row.querySelector('.choice-check')!.getBoundingClientRect();
+    return [status.x, check.x];
+  }));
+  assert.deepEqual(columns[0], columns[1]);
+  assert.deepEqual(columns[1], columns[2]);
+  await page.screenshot({ path: 'dist/ui-apply/service-picker-wide.png' });
+  await page.locator('[data-action=service-details][data-id=b]').click();
+  await expect(page.locator('#modal h2')).toHaveText('Application B with a longer name');
+  await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'a');
+  await expect(page.locator('[data-action=service-action][data-control=start]')).toHaveAttribute('data-id', 'b');
+  await expect(page.locator('[data-action=service-action][data-control=start]')).toBeEnabled();
+  await expect(page.locator('#modal')).toContainText('Logs temporarily unavailable');
+  await expect(page.locator('#composer')).toHaveValue('\nKeep the original draft\n');
+  assert.equal(requests.filter(r => r.path.includes('/services/') && r.method === 'POST').length, 0);
+  await page.setViewportSize({ width: 360, height: 800 });
+  await expect(page.locator('#modal')).toBeVisible();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({ path: 'dist/ui-apply/service-management-narrow.png' });
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await button(page, 'service-menu').click();
+  await expect(page.locator('#modal [data-action=open-app],#modal [data-action=open-window],#modal [data-action=manage-services],#modal [data-action=service-requests]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-action=copy-local]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await button(page, 'agent-menu').click();
+  await expect(page.locator('#modal [data-action=sessions],#modal [data-action=new-session],#modal [data-action=focus-chat],#modal [data-action=restore-layout]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-action=pi-requests]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await button(page, 'focus-chat').click();
+  await expect(button(page, 'restore-layout')).toBeVisible();
+  await expect(page.locator('.agent-header [data-action=exit-service-focus]')).toHaveCount(0);
+  await button(page, 'restore-layout').click();
+  assert.equal(await page.evaluate(() => (window as any).compactFrame === document.querySelector('iframe')), true);
+  assert.equal(await page.evaluate(() => (window as any).compactComposer === document.querySelector('#composer')), true);
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('.files-toolbar')).toHaveCSS('height', '44px');
+  await button(page, 'open-file').click();
+  await expect(page.locator('.file-target-toolbar')).toHaveCSS('height', '44px');
+  await expect(page.locator('#file-editor')).toHaveValue('\noriginal file\n');
+  await expect(page.locator('.editor-toolbar')).toHaveCount(0);
+  await expect(page.locator('.file-refresh > svg')).toHaveAttribute('width', '18');
+  await page.screenshot({ path: 'dist/ui-apply/file-detail-wide.png' });
+  await button(page, 'work-menu').click();
+  await button(page, 'settings').click();
+  await expect(page.locator('.settings-layout > .settings-tabs')).toBeVisible();
+  await expect(page.locator('.settings-language')).toHaveCount(0);
+  await page.screenshot({ path: 'dist/ui-apply/settings-wide.png' });
+  await page.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
+  const leadingDraft = '\nKeep the first empty line.\n';
+  await page.locator('#agents-editor').fill(leadingDraft);
+  await page.locator('[data-action=settings-section][data-tab=Advanced]').click();
+  await page.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue(leadingDraft);
+  await button(page, 'back-works').click();
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page.locator('#agents-editor')).toHaveValue(leadingDraft);
+  await button(page, 'discard-config').click();
+  await button(page, 'back-works').click();
+  const writes = requests.filter(r => r.method !== 'GET').length;
+  await page.locator('[data-action=works-layout][data-id=grid]').click();
+  await expect(page.locator('.work-grid .work-row')).toHaveCount(1);
+  await page.locator('#search').fill('Recovery');
+  await page.locator('[data-action=works-layout][data-id=list]').click();
+  await expect(page.locator('#search')).toHaveValue('Recovery');
+  assert.equal(requests.filter(r => r.method !== 'GET').length, writes);
+  await button(page, 'account').click();
+  await page.locator('[data-language-trigger=menu]').focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('.language-picker [role=option]')).toHaveCount(3);
+  await expect(page.locator('#modal')).toBeVisible();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('[data-language-trigger=menu]')).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-language-trigger=menu]')).toBeFocused();
+  await expect(page.locator('#modal')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await button(page, 'connection').click();
+  await expect(page.locator('.connection-status-row')).toHaveCount(4);
+  await expect(page.locator('#modal .core-check-slot')).toHaveCount(0);
+  await page.screenshot({ path: 'dist/ui-apply/core-pop-wide.png' });
+  await page.keyboard.press('Escape');
+  await page.locator('#search').fill('');
+  empty = true;
+  await button(page, 'retry-works').click();
+  await expect(page.locator('.works-empty')).toBeVisible();
+  await expect(page.locator('.works-empty [data-action=new-work]')).toBeVisible();
+  await expect(page.locator('.works-empty [data-action=import]')).toBeVisible();
+  await page.screenshot({ path: 'dist/ui-apply/empty-wide.png' });
+  await page.locator('.works-empty [data-action=new-work]').click();
+  await expect(page.locator('#modal')).not.toHaveClass(/compact-menu/);
+  await expect(page.locator('#create-name')).toBeVisible();
 });

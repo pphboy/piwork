@@ -44,7 +44,9 @@ export declare function createLanguagePicker(options: {
   label: () => string;
   onChoose: (choice: string) => void;
 }): {
-  open(trigger: HTMLElement, options?: { anchorRect?: DOMRect; beforeOpen?: () => void; restoreFocus?: () => HTMLElement | null }): void;
+  open(trigger: HTMLElement, options?: { anchorRect?: DOMRect; parentMenu?: HTMLElement; beforeOpen?: () => void; restoreFocus?: () => HTMLElement | null }): void;
   close(restoreFocus?: boolean): void;
+  reanchor(trigger: HTMLElement | null, parentMenu: HTMLElement | null): void;
   readonly isOpen: boolean;
+  readonly isSubmenu: boolean;
 };

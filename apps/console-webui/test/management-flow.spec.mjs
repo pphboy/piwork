@@ -116,7 +116,7 @@ for (const width of [1440, 360]) test(`S08 reviewed Overview composition preserv
     ['zh-CN', ['用户', '设置', '模型', 'Runtime']],
     ['en', ['Users', 'Setup', 'Models', 'Runtime']],
   ]) {
-    await page.locator('#account-trigger').click();
+    if (await page.locator('#account-trigger').getAttribute('aria-expanded') !== 'true') await page.locator('#account-trigger').click();
     await page.locator('#account-dropdown [data-action="language"]').click();
     await page.locator(`.language-picker [data-locale="${locale}"]`).click();
     await expect(cards.locator('strong')).toHaveText(labels);
@@ -163,7 +163,7 @@ test('S08 initial unavailable Overview never projects unconfirmed model absence 
   await expect(page.locator('.overview-facts')).toHaveCount(0);
   await expect(page.locator('main')).not.toContainText('Not configured');
   for (const locale of ['zh-CN', 'en']) {
-    await page.locator('#account-trigger').click();
+    if (await page.locator('#account-trigger').getAttribute('aria-expanded') !== 'true') await page.locator('#account-trigger').click();
     await page.locator('#account-dropdown [data-action="language"]').click();
     await page.locator(`.language-picker [data-locale="${locale}"]`).click();
     await expect(page.locator('.overview-facts')).toHaveCount(0);

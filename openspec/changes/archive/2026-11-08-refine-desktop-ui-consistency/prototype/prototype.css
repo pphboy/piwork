@@ -1,0 +1,228 @@
+/* No replacement palette, font stack or global control system.
+   The app stylesheet is the exact concatenation from the current repository.
+   Only the following target regions change in Proposed mode. */
+:root{--prototype-dock-height:72px}
+#prototype-controls{position:fixed;z-index:1200;inset:auto 0 0;background:var(--surface);border-top:1px solid var(--control-border);padding:10px 18px;display:flex;gap:16px;align-items:center;min-height:var(--prototype-dock-height);color:var(--ink)}
+#prototype-controls .button{font-family:var(--font)}
+.proto-disclaimer{font-size:10px;line-height:1.6;min-width:160px}
+.proto-disclaimer strong{color:var(--warning);font-size:9px;letter-spacing:.2px;display:block}
+.proto-disclaimer span{color:var(--muted)}
+.proto-compare{display:flex;border:1px solid var(--border);border-radius:7px;padding:2px;flex:none}
+#prototype-controls nav{display:flex;gap:2px}
+.proto-variant{font-size:11px;color:var(--muted);margin-left:auto;white-space:nowrap;display:flex;align-items:center;gap:7px}
+.proto-variant select{font:inherit;border:1px solid var(--control-border);border-radius:5px;padding:5px;background:var(--surface);color:var(--ink)}
+.proto-review{font-size:11px;color:var(--muted);white-space:nowrap;position:relative}
+.proto-review summary{cursor:pointer}
+.proto-review>div{position:absolute;bottom:38px;right:0;width:330px;max-width:calc(100vw - 24px);white-space:normal;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:0 8px 24px #17345018;line-height:1.8}
+.proto-review p{font-size:12px}
+body{padding-bottom:var(--prototype-dock-height)}
+#app.workspace-page{height:calc(100dvh - var(--prototype-dock-height));min-height:0}
+.proto-after .proto-layout-switch{display:flex;gap:2px;border:1px solid var(--border);border-radius:7px;padding:2px}
+.proto-after .work-row .proto-open-work{border-color:transparent;background:transparent;color:var(--muted);font-weight:400;padding:7px 10px}
+.proto-after .work-row .proto-open-work:hover{color:var(--accent);background:var(--accent-soft)}
+.proto-after .work-table.proto-work-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;border:0;background:transparent}
+.proto-after .proto-work-grid .work-row{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:15px;padding:20px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.proto-after .proto-work-grid .work-name{grid-column:1;min-width:0}
+.proto-after .proto-work-grid .work-name small{overflow-wrap:anywhere;white-space:normal}
+.proto-after .proto-work-grid .work-status{grid-column:1;grid-row:2}
+.proto-after .proto-work-grid .work-row>div:has(>.proto-open-work){grid-column:1/-1;grid-row:3;border-top:1px solid var(--border);padding-top:10px;display:flex;justify-content:flex-end}
+.proto-after .proto-work-grid .work-row>.icon-button{grid-column:2;grid-row:1}
+.proto-after .button.proto-service-trigger{background:transparent;border-color:transparent;box-shadow:none}
+.proto-after .button.proto-service-trigger:hover{background:var(--surface-subtle)}
+.proto-after .proto-service-trigger .service-name{font-weight:400;color:var(--muted);font-size:12px}
+.proto-after .proto-service-trigger>.icon:first-child{color:var(--muted);width:15px;height:15px}
+.proto-after .proto-service-trigger .status{font-size:10px}
+.proto-after .proto-settings-layout{display:grid;grid-template-columns:145px minmax(0,1fr);gap:28px;align-items:start}
+.proto-after .proto-settings-layout .settings-tabs{display:flex;flex-direction:column;align-items:stretch;border:0;gap:4px;margin:0;padding:0}
+.proto-after .proto-settings-layout .settings-tabs .button{justify-content:flex-start;border:0;border-radius:6px;padding:10px 12px;min-height:38px}
+.proto-after .proto-settings-layout .settings-tabs .button.active{color:var(--accent);background:var(--accent-soft)}
+.proto-after .proto-settings-layout .settings-tabs .button.active::after{display:none}
+.proto-after .proto-settings-content{min-width:0}
+.proto-after .proto-settings-content .section-heading{gap:10px;flex-wrap:wrap}
+.proto-after .proto-settings-content .capability-list{min-width:0}
+.proto-after .proto-settings-content .capability-check{min-width:0}
+.proto-after .proto-service-popover{width:min(460px,calc(100vw - 24px))!important}
+.proto-after .proto-service-popover .modal-body{padding:6px 10px 12px}
+.proto-after .proto-service-popover .modal-head{padding:14px 18px 10px}
+.proto-after .proto-service-popover #modal-title{font-size:14px}
+.proto-after .proto-service-collection{min-width:0}
+.proto-after .proto-service-row{display:flex;align-items:center;gap:2px;padding:3px;border-radius:6px}
+.proto-after .proto-service-row.is-selected{background:var(--accent-soft)}
+.proto-after .proto-service-name{flex:1;min-width:0;text-align:left;justify-content:flex-start;gap:9px;padding:8px 7px;white-space:normal}
+.proto-after .proto-service-name>span:nth-child(2){flex:1;min-width:0}
+.proto-after .proto-service-name strong{display:block;font-weight:550;font-size:12px;overflow-wrap:anywhere}
+.proto-after .proto-service-name small{display:block;font-size:10px;color:var(--muted)}
+.proto-after .proto-service-name .status{font-size:10px;flex:none}
+.proto-after .proto-service-inspector{padding:14px 12px 5px;border-top:1px solid var(--border);margin-top:7px}
+.proto-after .proto-service-inspector h3{margin:0 0 7px;font-size:13px}
+.proto-after .proto-service-inspector .service-controls{display:flex;flex-wrap:wrap;gap:5px;margin-top:12px}
+.proto-after .proto-service-inspector .service-controls>.button{font-size:11px;padding:5px 8px;min-height:30px}
+.proto-after .proto-service-B{width:min(700px,calc(100vw - 24px))!important}
+.proto-after .proto-service-B .modal-body:has(>.proto-service-inspector){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr);gap:12px}
+.proto-after .proto-service-B .proto-service-inspector{border-top:0;border-left:1px solid var(--border);margin:0}
+.proto-after .proto-inline-service{padding:0 10px 12px 35px;border-bottom:1px solid var(--border)}
+.proto-after .proto-inline-service .service-controls{display:flex;flex-wrap:wrap;gap:5px}
+.proto-after .proto-inline-service .service-controls>.button{font-size:11px;min-height:30px;padding:5px 8px}
+.proto-after .proto-managed-detail .property-list{font-size:12px}
+.proto-after .proto-managed-detail .logs{max-height:180px}
+.proto-after .proto-domain-copy{margin:-8px 0 14px}
+.proto-after .proto-request-inspector .request-row-button{padding:14px 5px}
+.proto-after .proto-request-inspector .request-copy strong{font-size:13px}
+.proto-after .proto-request-inspector .request-row-meta{margin-top:4px}
+.proto-after .proto-request-inspector .request-overview>h3{font-size:19px;line-height:1.5}
+.proto-after .proto-request-inspector .request-result{background:var(--surface-subtle);border-radius:var(--radius);padding:14px}
+@media(max-width:1100px){#prototype-controls{gap:8px;padding-inline:10px}.proto-disclaimer{min-width:120px}.proto-disclaimer span{display:none}.proto-after .work-table.proto-work-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.proto-variant{font-size:10px}}
+@media(max-width:800px){:root{--prototype-dock-height:112px}#prototype-controls{flex-wrap:wrap;justify-content:center;padding:7px 10px;gap:4px 9px}.proto-disclaimer{width:100%;text-align:center;line-height:1.3}.proto-disclaimer strong{font-size:8px}.proto-variant{margin-left:0}.proto-review>div{right:-20px}.proto-after .proto-settings-layout{grid-template-columns:minmax(0,1fr);gap:20px}.proto-after .proto-settings-layout .settings-tabs{flex-direction:row;overflow:auto}.proto-after .proto-settings-layout .settings-tabs .button{padding:7px 9px;min-height:34px}.proto-after .proto-service-B .modal-body:has(>.proto-service-inspector){grid-template-columns:minmax(0,1fr)}.proto-after .proto-service-B .proto-service-inspector{border-left:0;border-top:1px solid var(--border)}}
+@media(max-width:550px){.proto-after .work-table.proto-work-grid{grid-template-columns:minmax(0,1fr)}#prototype-controls nav .button{padding:5px 7px;font-size:11px;min-height:30px}.proto-compare .button{padding:5px 9px;font-size:11px;min-height:30px}.proto-after .proto-settings-content .section-heading .button{font-size:11px}}
+
+/* Skills keep every real field and action; only their arrangement changes. */
+.proto-after .proto-settings-content .capability:not(.package-capability){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 12px;padding:16px}
+.proto-after .proto-settings-content .capability:not(.package-capability) .capability-check{grid-column:1;grid-row:1}
+.proto-after .proto-settings-content .capability:not(.package-capability) .capability-meta{grid-column:2;grid-row:1;margin:0;align-self:start;flex-wrap:wrap;justify-content:flex-end}
+.proto-after .proto-settings-content .capability:not(.package-capability) .capability-status{grid-column:1/-1;grid-row:2;margin:3px 0 0 73px;gap:10px}
+#prototype-controls summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:700px){.proto-after .proto-settings-content .capability:not(.package-capability){grid-template-columns:minmax(0,1fr)}.proto-after .proto-settings-content .capability:not(.package-capability) .capability-meta{grid-column:1;grid-row:2;margin-left:73px;justify-content:flex-start}.proto-after .proto-settings-content .capability:not(.package-capability) .capability-status{grid-row:3}}
+
+/* v6: local adjustments on top of the rebased default UI. */
+.proto-after .proto-session-name{font-size:11px;font-weight:400;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+.proto-after .proto-header-status-skeleton{display:inline-block;flex:none;width:70px;height:10px;border-radius:4px}
+.proto-after .proto-header-icon-skeleton{display:inline-block;flex:none;width:18px;height:10px;border-radius:3px}
+.proto-after .proto-service-row{display:grid;grid-template-columns:minmax(0,1fr) 34px;column-gap:4px;padding:4px 0;min-width:0}
+.proto-after .proto-service-name{display:grid;grid-template-columns:18px minmax(0,1fr) 66px 18px;column-gap:10px;align-items:center;padding:8px 12px;width:100%;min-width:0;min-height:44px}
+.proto-after .proto-service-symbol{display:flex;align-items:center;justify-content:center;width:18px;min-width:18px}
+.proto-after .proto-service-copy{min-width:0}
+.proto-after .proto-service-name .status{width:66px;justify-content:flex-start;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proto-after .proto-service-tick{display:flex;align-items:center;justify-content:center;width:18px;min-width:18px;color:var(--accent)}
+.proto-after .proto-service-tick>.icon{width:14px;height:14px}
+.proto-after .proto-service-row>[data-proto="inspect"]{width:34px;height:34px;min-height:34px;justify-self:center;align-self:center}
+.proto-after .proto-service-inspector{padding:16px 12px 8px;margin-top:10px}
+.proto-after .proto-managed-heading{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;min-width:0;margin-bottom:9px}
+.proto-after .proto-managed-heading>svg{width:16px;height:16px;color:var(--muted)}
+.proto-after .proto-managed-heading h3{margin:0;min-width:0;overflow-wrap:anywhere;font-size:12px}
+.proto-after .proto-service-control-content{margin-left:28px;min-width:0}
+.proto-after .proto-service-control-content>.status{font-size:10px}
+.proto-after .proto-service-control-content .service-controls{margin:13px 0 8px;display:flex;flex-wrap:wrap;gap:6px}
+.proto-after .proto-service-control-content>[data-proto="service-detail"]{margin-left:-7px}
+.proto-after .proto-inline-service{padding-left:40px}
+@media(max-width:600px){.proto-after .proto-service-name{grid-template-columns:16px minmax(0,1fr) 52px 16px;column-gap:7px;padding:8px 9px}.proto-after .proto-service-name .status{width:52px;font-size:9px}.proto-after .proto-service-row{grid-template-columns:minmax(0,1fr) 30px;column-gap:2px}.proto-after .proto-service-inspector{padding-inline:9px}.proto-after .proto-managed-heading{grid-template-columns:16px minmax(0,1fr);column-gap:7px}.proto-after .proto-service-control-content{margin-left:23px}}
+
+/* The account menu remains open while its language list opens alongside it. */
+.proto-after .proto-language-trigger[aria-expanded=true]{color:var(--accent);background:var(--accent-soft)}
+.proto-after .proto-language-trigger[data-submenu-side=left][aria-expanded=true]>svg:last-child{transform:rotate(180deg)}
+.proto-after .proto-account-language{box-shadow:0 8px 24px #17345018}
+
+/* v8: only the Service selector gets a compact dropdown presentation. */
+.proto-after .service-toolbar .button.proto-service-trigger,
+.proto-after .service-toolbar .button.proto-service-trigger:hover:not(:disabled),
+.proto-after .service-toolbar .button.proto-service-trigger[aria-expanded=true]{height:30px;min-height:30px;padding:0 6px;gap:6px;border-color:transparent;background:transparent;box-shadow:none}
+.proto-after .service-toolbar .button.proto-service-trigger:hover:not(:disabled){background:var(--surface-subtle)}
+.proto-after .proto-service-popover.proto-compact-service{width:min(360px,calc(100vw - 16px))!important;border-radius:var(--radius);box-shadow:0 8px 24px #17345014}
+.proto-after .proto-compact-service .modal-body{padding:6px}
+.proto-after .proto-compact-service .proto-service-collection{max-height:min(288px,45dvh);overflow-y:auto;overscroll-behavior:contain}
+.proto-after .proto-compact-service .proto-service-row{grid-template-columns:minmax(0,1fr) 28px;column-gap:2px;padding:1px 0;border-radius:5px}
+.proto-after .proto-compact-service .proto-service-name{grid-template-columns:16px minmax(0,1fr) 54px 14px;column-gap:8px;min-height:36px;padding:6px 8px;border-radius:4px;line-height:1.4}
+.proto-after .proto-compact-service .proto-service-symbol{width:16px;min-width:16px}
+.proto-after .proto-compact-service .proto-service-symbol .icon{width:15px;height:15px}
+.proto-after .proto-compact-service .proto-service-name .status{width:54px;font-size:10px}
+.proto-after .proto-compact-service .proto-service-tick{width:14px;min-width:14px}
+.proto-after .proto-compact-service .proto-service-row>[data-proto="inspect"]{width:28px;height:28px;min-height:28px;border-radius:4px}
+.proto-after .proto-compact-service .proto-service-row>[data-proto="inspect"] .icon{width:15px;height:15px}
+.proto-after .proto-compact-service .proto-service-inspector{padding:12px 8px 5px;margin-top:6px}
+.proto-after .proto-compact-service .proto-managed-heading{grid-template-columns:16px minmax(0,1fr);column-gap:8px;margin-bottom:6px}
+.proto-after .proto-compact-service .proto-service-control-content{margin-left:24px}
+.proto-after .proto-compact-service .proto-service-control-content .service-controls{margin:8px 0 4px;gap:4px}
+.proto-after .proto-compact-service .proto-service-control-content>[data-proto="service-detail"]{min-height:28px;padding-block:3px}
+.proto-after .proto-compact-service .proto-inline-service{padding:3px 8px 8px 32px}
+.proto-after .proto-service-B.proto-compact-service:has(.proto-service-inspector){width:min(560px,calc(100vw - 16px))!important}
+.proto-after .proto-service-popover.proto-compact-service-detail{width:min(440px,calc(100vw - 16px))!important}
+
+/* v9: command menu density, with context-appropriate grouping. */
+.proto-after .modal.proto-compact-menu{width:min(216px,calc(100vw - 16px))!important;border-radius:var(--radius);box-shadow:0 8px 24px #17345014}
+.proto-after .proto-compact-menu .dropdown-title{padding:8px 12px 4px;font-size:11px;line-height:1.5;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proto-after .proto-compact-menu .modal-body{padding:4px 6px 6px}
+.proto-after .proto-compact-menu .menu-list{gap:1px;margin:0;min-width:0}
+.proto-after .proto-compact-menu .menu-list>.button{min-height:34px;padding:6px 8px;border:0;border-radius:4px;gap:8px;font-size:12px;font-weight:450;line-height:1.45;white-space:normal;text-align:left;background:transparent}
+.proto-after .proto-compact-menu .menu-list>.button>svg{width:16px;height:16px;flex:0 0 18px}
+.proto-after .proto-compact-menu .menu-list>.button:hover:not(:disabled){background:var(--surface-subtle)}
+.proto-after .proto-compact-menu .menu-list>.button.danger:hover:not(:disabled){background:var(--danger-soft)}
+.proto-after .proto-menu-separator{height:1px;flex:none;background:var(--border);margin:4px 2px}
+.proto-after .modal.proto-compact-account{width:min(248px,calc(100vw - 16px))!important}
+.proto-after .proto-compact-account .account-context{padding:2px 8px 7px;margin:0 2px 4px;line-height:1.5;font-size:10px;border-bottom:1px solid var(--border)}
+.proto-after .proto-compact-account .account-context span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proto-after .proto-compact-account .language-menu{padding-top:4px;margin-top:4px;border-top:1px solid var(--border)}
+.proto-after .proto-compact-account .account-management{padding-top:4px;margin-top:4px}
+.proto-after .proto-compact-account .language-current{font-size:11px}
+.proto-after .proto-account-language{width:212px}
+.proto-after .proto-account-language .language-picker-option{min-height:34px;padding:6px 10px;font-size:12px;line-height:1.45}
+.proto-after .proto-compact-file-actions{width:min(216px,calc(100vw - 24px));min-width:0;padding:6px;border-radius:var(--radius);box-shadow:0 8px 24px #17345014}
+.proto-after .proto-compact-file-actions>.button{min-height:34px;padding:6px 8px;gap:8px;border-radius:4px;font-size:12px;font-weight:450;line-height:1.45}
+.proto-after .proto-compact-file-actions>.button>svg{width:16px;height:16px;flex:0 0 18px}
+.proto-after .proto-compact-file-actions .file-actions-separator{margin:4px 2px}
+/* Chat choices share the density; existing values, checks and notes remain. */
+.proto-after .modal.proto-compact-sessions{width:min(280px,calc(100vw - 16px))!important;border-radius:var(--radius)}
+.proto-after .proto-compact-sessions .modal-body{padding:8px}
+.proto-after .proto-compact-sessions .session-picker-context{font-size:11px;margin:1px 7px 7px}
+.proto-after .proto-compact-sessions .session-picker-actions{margin-bottom:6px}
+.proto-after .proto-compact-sessions .session-picker-actions>.button{min-height:32px;padding:5px 9px;font-size:12px}
+.proto-after .proto-compact-sessions .session-list{gap:2px}
+.proto-after .proto-compact-sessions .session-list>button{min-height:38px;padding:7px 9px;border-radius:5px;font-size:12px}
+.proto-after .proto-compact-sessions .session-picker-note{font-size:10px;line-height:1.5;margin:8px 7px 2px}
+.proto-after .proto-compact-response-settings .dropdown-title{padding:7px 10px 3px;font-size:11px}
+.proto-after .proto-compact-response-settings .modal-body{padding:4px 6px 6px}
+.proto-after .proto-compact-response-settings .chat-picker-menu{gap:1px}
+.proto-after .proto-compact-response-settings .chat-picker-menu>.button{min-height:34px;padding:6px 8px;border-radius:4px;font-size:12px;line-height:1.45}
+.proto-after .proto-compact-response-settings .chat-picker-menu>.button small{font-size:10px}
+.proto-after .modal.proto-compact-input-options{width:min(300px,calc(100vw - 16px))!important;border-radius:var(--radius)}
+.proto-after .proto-compact-input-options .modal-head{padding:7px 10px;border-bottom:0}
+.proto-after .proto-compact-input-options .modal-head h2{font-size:13px}
+.proto-after .proto-compact-input-options .modal-head .icon-button{width:28px;height:28px;min-height:28px}
+.proto-after .proto-compact-input-options .modal-body{padding:4px 12px 12px}
+.proto-after .proto-compact-input-options .check-row{font-size:12px;margin:0 0 8px;line-height:1.5}
+.proto-after .proto-compact-input-options p{font-size:11px;line-height:1.6;margin:7px 0}
+.proto-after .proto-compact-input-options summary{font-size:11px;cursor:pointer}
+/* File details: one 44px toolbar, original navigation and edit actions. */
+.proto-after .files-toolbar.proto-file-detail-toolbar{height:44px;min-height:44px;padding:4px 12px;align-items:center;flex-wrap:nowrap;gap:10px}
+.proto-after .proto-file-detail-toolbar .proto-file-back{flex:none;min-height:32px;padding:5px 7px;font-size:12px;gap:6px}
+.proto-after .proto-file-detail-toolbar .file-target-heading{flex:1 1 auto;flex-direction:row;align-items:center;gap:10px;min-width:0}
+.proto-after .proto-file-detail-toolbar .file-target-heading strong{font-size:12px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.proto-after .proto-file-detail-toolbar .proto-file-path:not(.sr-only){font-size:10px;max-width:35%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proto-after .proto-file-detail-toolbar .file-toolbar-actions{flex:none;gap:6px;align-items:center;margin-left:auto}
+.proto-after .proto-file-detail-toolbar .file-refresh{width:32px;height:32px;min-height:32px;padding:0}
+.proto-after .proto-file-save-state{font-size:11px;margin-right:4px;white-space:nowrap}
+@media(max-width:600px){.proto-after .files-toolbar.proto-file-detail-toolbar{padding-inline:6px;gap:6px}.proto-after .proto-file-detail-toolbar .proto-file-back{padding-inline:4px;font-size:11px}.proto-after .proto-file-detail-toolbar .file-target-heading{gap:6px}.proto-after .proto-file-detail-toolbar .file-toolbar-actions{gap:2px}.proto-after .proto-file-save-state{font-size:10px;margin-right:0}}
+.proto-after .proto-compact-menu .menu-list>.button.proto-language-trigger[aria-expanded=true]{color:var(--accent);background:var(--accent-soft)}
+.proto-after .proto-compact-input-options .check-row{min-height:30px;align-items:center}
+.proto-after .files-toolbar:not(.file-target-toolbar){min-height:44px;padding:4px 12px}
+.proto-after .files-toolbar:not(.file-target-toolbar) .file-toolbar-actions .icon-button{width:32px;height:32px;min-height:32px}
+
+/* v10: Core connection is a compact facts popover, with the same live actions. */
+.proto-after .modal.proto-compact-connection{width:min(320px,calc(100vw - 16px))!important;border-radius:var(--radius);box-shadow:0 8px 24px #17345014}
+.proto-after .proto-compact-connection .modal-head{padding:6px 10px;border-bottom:1px solid var(--border)}
+.proto-after .proto-compact-connection .modal-head h2{font-size:13px;line-height:1.5;font-weight:550}
+.proto-after .proto-compact-connection .modal-head .icon-button{width:28px;height:28px;min-height:28px;padding:0}
+.proto-after .proto-compact-connection .modal-head .icon-button svg{width:16px;height:16px}
+.proto-after .proto-compact-connection .modal-body{padding:9px 12px 10px;font-size:12px;line-height:1.5}
+.proto-after .proto-compact-connection .modal-body>dl{grid-template-columns:64px minmax(0,1fr);gap:7px 10px;margin:0 0 12px;font-size:11px;line-height:1.5}
+.proto-after .proto-compact-connection .modal-body>dl>dd{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.proto-after .proto-compact-connection .modal-body>h3{margin:0 0 3px;font-size:11px;line-height:1.5;font-weight:500;color:var(--muted)}
+.proto-after .proto-compact-connection .status-grid{display:flex;flex-direction:column;gap:0;margin:0}
+.proto-after .proto-compact-connection .status-grid>span{display:flex;flex-direction:row;justify-content:space-between;align-items:center;gap:10px;flex:none;min-height:28px;padding:5px 0;border:0;border-bottom:1px solid var(--border);border-radius:0;font-size:12px;line-height:1.5}
+.proto-after .proto-compact-connection .status-grid>span:last-child{border-bottom:0}
+.proto-after .proto-compact-connection .status-grid .status{margin:0;font-size:11px;line-height:1.5}
+.proto-after .proto-compact-connection .modal-body>p.muted{font-size:10px;line-height:1.5;margin:8px 0 0}
+.proto-after .proto-compact-connection .modal-footer{padding:6px 10px;background:var(--surface);gap:6px}
+.proto-after .proto-compact-connection .modal-footer>.button{min-height:32px;min-width:0;padding:5px 10px;font-size:12px;line-height:1.45;gap:6px}
+
+.proto-after .proto-compact-connection .proto-core-check-slot{margin-left:auto;flex:none}
+
+/* v11: a simple first-Work prompt, using the existing product icon and controls. */
+.proto-after .works-page .empty.proto-empty-guidance{min-height:300px;padding:32px 24px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.proto-after .proto-empty-work-icon{display:grid;place-items:center;width:48px;height:48px;margin-bottom:16px;border-radius:10px;background:var(--accent-soft);color:var(--accent);flex:none}
+.proto-after .proto-empty-work-icon>svg{width:27px;height:27px}
+.proto-after .proto-empty-guidance h2{font-size:20px;line-height:1.4;font-weight:600;letter-spacing:-.35px;margin:0 0 8px}
+.proto-after .proto-empty-guidance>p{font-size:13px;line-height:1.7;max-width:48ch;margin:0 0 20px;text-wrap:pretty}
+.proto-after .proto-empty-actions{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:10px}
+.proto-after .proto-empty-actions>.button{min-height:40px;padding:8px 14px;font-size:13px}
+@media(max-width:550px){.proto-after .works-page .empty.proto-empty-guidance{min-height:310px;padding:28px 18px}.proto-after .proto-empty-guidance h2{font-size:19px}.proto-after .proto-empty-guidance>p{font-size:12px;max-width:30ch}.proto-after .proto-empty-actions{gap:8px}}
+.proto-after .proto-empty-guidance>p{text-wrap:balance}
+@media(max-width:550px){.proto-after .proto-empty-guidance>p{max-width:40ch}}

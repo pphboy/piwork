@@ -75,7 +75,7 @@ try {
   assert.equal(await evaluate("!!document.querySelector('.messages .read-placeholder')"), false);
   const first = await evaluate(`(async()=>{const {adapter}=await import('/desktop/browser/adapter.js');return adapter.getWork(${JSON.stringify(workId)}).sessions.find(s=>!${JSON.stringify(before)}.includes(s.id)).id})()`);
   const firstIndex = await evaluate(`(async()=>{const {adapter}=await import('/desktop/browser/adapter.js');return adapter.getWork(${JSON.stringify(workId)}).sessions.findIndex(s=>s.id===${JSON.stringify(first)})})()`);
-  assert.equal(await evaluate("document.querySelector('#session-current-trigger').innerText.trim()"), `Session ${firstIndex + 1}`);
+  assert.equal(await evaluate("document.querySelector('.session-identity').innerText.trim()"), `Session ${firstIndex + 1}`);
   await evaluate("document.querySelector('[data-action=\"sessions\"]').click()");
   await wait("!!document.querySelector('#modal [data-action=\"new-session\"]:not([disabled])')", 'second Session picker');
   await evaluate("document.querySelector('#modal [data-action=\"new-session\"]').click()");
@@ -92,7 +92,7 @@ try {
   await wait(replacementCondition, 'replacement Session after deletion');
   const replacementIndex = await evaluate(`(async()=>{const {adapter}=await import('/desktop/browser/adapter.js');const sessions=adapter.getWork(${JSON.stringify(workId)}).sessions;return sessions.findIndex(s=>document.querySelector('.messages')?.dataset.readingKey?.endsWith(':'+s.id))})()`);
   assert.ok(replacementIndex >= 0);
-  assert.equal(await evaluate("document.querySelector('#session-current-trigger').innerText.trim()"), `Session ${replacementIndex + 1}`);
+  assert.equal(await evaluate("document.querySelector('.session-identity').innerText.trim()"), `Session ${replacementIndex + 1}`);
   console.log('Real Desktop → Core → Agent: new Session leaves the skeleton; deleting it creates and selects a new Session.');
 } finally {
   socket?.close();

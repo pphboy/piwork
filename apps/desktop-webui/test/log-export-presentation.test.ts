@@ -7,9 +7,9 @@ const { catalog } = await import(new URL('../browser/i18n/catalog.js', import.me
 
 test('admin account menu owns the single global Export logs entry', () => {
   const account = source.slice(source.indexOf('case "account":'), source.indexOf('case "connection":'));
-  assert.match(account, /adapter\.state\.core\.role === "admin" \? btn\(`\$\{icon\("download"\)\} \$\{t\('account\.exportLogs'\)\}`, "export-logs"\)/);
+  assert.match(account, /adapter\.state\.core\.role === 'admin' \? btn\(`\$\{icon\('download'\)\} \$\{t\('account\.exportLogs'\)\}`, 'export-logs'\)/);
   assert.equal(catalog.en['account.exportLogs'], 'Export logs');
-  assert.equal((account.match(/"export-logs"/g) ?? []).length, 1);
+  assert.equal((account.match(/["']export-logs["']/g) ?? []).length, 1);
 });
 
 test('log export panel reports real stages, gaps and original delivery controls', () => {

@@ -336,7 +336,7 @@ try {
   await page.locator('.language-picker [data-locale="zh-CN"]').click();
   await expect(page.frameLocator('iframe').getByLabel('Service draft')).toHaveValue('bilingual service draft');
   await expect(page.locator('#composer')).toHaveValue('bilingual chat draft');
-  await expect(page.locator('.service-toolbar .status')).toContainText('就绪');
+  await expect(page.locator('.service-toolbar .status')).toContainText('运行中');
   await page.keyboard.press('Escape');
   await page.locator('.work-header [data-action="work-menu"]').click();
   await page.locator('#modal [data-action="language"]').click();

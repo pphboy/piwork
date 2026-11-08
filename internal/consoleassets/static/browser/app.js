@@ -344,7 +344,7 @@ function languageButtons() {
 }
 function accountMenuContent() {
     const selected = languageChoices().find(choice => choice.selected)?.label || '';
-    const language = `<button class="btn quiet language-trigger" type="button" role="menuitem" data-action="language" data-language-trigger="account" tabindex="-1" aria-haspopup="listbox" aria-expanded="false">${icon('globe', 18)}<span>${t('lang.menu')}</span><span class="language-current">${esc(selected)}</span>${icon('chevron', 14)}</button>`;
+    const language = `<button class="btn quiet language-trigger" type="button" role="menuitem" data-action="language" data-language-trigger="account" data-language-submenu="true" tabindex="-1" aria-haspopup="listbox" aria-expanded="${languagePicker.isSubmenu}">${icon('globe', 18)}<span>${t('lang.menu')}</span><span class="language-current">${esc(selected)}</span>${icon('chevron', 14)}</button>`;
     return `<div class="dropdown-title">${esc(adapter.account)}</div><div class="modal-body"><p class="account-context"><span>${t('shell.roleAdmin')}</span><span title="${esc(adapter.coreUrl)}">${t('shell.coreWithValue', { value: esc(adapter.coreUrl || t('shell.unavailable')) })}</span></p><div class="menu-list"><a class="btn" href="/about" data-nav role="menuitem" tabindex="-1">${icon('info', 18)} ${t('shell.aboutPiwork')}</a><div class="menu-separator" role="separator"></div>${language}<button class="btn danger quiet" type="button" data-action="sign-out" role="menuitem" tabindex="-1">${icon('logout', 18)} ${t('shell.signOut')}</button></div></div>`;
 }
 function shell(body) {
@@ -362,7 +362,7 @@ function shell(body) {
         [t('shell.navSetupShort'), "/default-work", workSetup, 'admin-setup'],
         [t('shell.navModelsShort'), "/models", path === '/models' || path.startsWith('/models/'), 'admin-models'],
     ];
-    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}" aria-label="${t('shell.findOperation')}">${icon("search", 18)}<span>${t('shell.findOperation')}</span></a><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
+    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}" aria-label="${t('shell.findOperation')}">${icon("search", 18)}<span>${t('shell.findOperation')}</span></a><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown compact-menu" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
     if (preserve)
         reconcileConsoleHTML(app, html);
     else
@@ -549,10 +549,15 @@ function closeAccountMenu(restore = false) {
 }
 function refreshAccountMenu() {
     const menu = document.querySelector('#account-dropdown');
-    if (!menu)
+    if (!menu) {
+        if (languagePicker.isSubmenu)
+            languagePicker.close();
         return;
+    }
     menu.innerHTML = accountMenuContent();
     menu.setAttribute('aria-label', t('shell.accountMenu'));
+    if (languagePicker.isSubmenu)
+        languagePicker.reanchor(menu.querySelector('[data-language-trigger="account"]'), menu);
 }
 function openAccountMenu(last = false) {
     languagePicker.close();
@@ -570,7 +575,8 @@ function openAccountMenu(last = false) {
 }
 let accountPointerOutside = false;
 document.addEventListener('pointerdown', event => {
-    accountPointerOutside = !event.target.closest('#account-dropdown,#account-trigger');
+    accountPointerOutside = !event.target.closest('#account-dropdown,#account-trigger')
+        && !(languagePicker.isSubmenu && event.target.closest('.language-picker'));
 });
 document.addEventListener('pointerup', event => {
     if (accountPointerOutside && document.querySelector('#account-dropdown')?.hidden === false && !event.target.closest('#account-dropdown,#account-trigger'))
@@ -2854,10 +2860,8 @@ async function handleConsoleAction(button) {
     else if (action === "language") {
         const fromAccount = !!button.closest('#account-dropdown');
         languagePicker.open(button, {
-            anchorRect: fromAccount ? document.querySelector('#account-trigger')?.getBoundingClientRect() : undefined,
-            beforeOpen: () => { if (fromAccount)
-                closeAccountMenu(); },
-            restoreFocus: () => document.querySelector(fromAccount ? '#account-trigger' : '[data-language-trigger="login"]'),
+            parentMenu: fromAccount ? document.querySelector('#account-dropdown') || undefined : undefined,
+            restoreFocus: () => document.querySelector(fromAccount ? '[data-language-trigger="account"]' : '[data-language-trigger="login"]'),
         });
     }
     else if (action === "close-dialog")

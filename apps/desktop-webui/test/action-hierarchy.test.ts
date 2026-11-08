@@ -33,7 +33,7 @@ function fixture() {
       project: () => ({ action: 'start', label: 'Stopped' }), getWork: (id: string) => id === work.id ? work : undefined,
       workSynchronizationPending: () => false, getOperation: () => undefined, getSnapshot: () => undefined, downloads: new Map(), directories: new Map([["work-a:/", {checkedAt:"now",loading:false,error:""}]]) },
     document:{fullscreenElement:null},root:{},location: {hash:'#/work/work-a'}, current: () => work, route: () => ['works'], controlReady: () => false, workControls: new Map(), workControl: () => undefined, controlMarkup: () => '', operationAction: (op: any) => op.kind,
-    exportFlows: { forWork: () => undefined, get: () => undefined },
+    languagePicker: { isSubmenu: false }, exportFlows: { forWork: () => undefined, get: () => undefined },
     filesRestoreNotice: '', uploadProgressMarkup: () => '', filesUploadState: () => undefined, transferResults: () => '', textEditor: () => '', size: (v: number) => `${v} B`,
     exportPanelModel, renderExportPanel, renderExportRecoveryPanel, exportPanelInput: () => ({}), actions: { records: new Map() },
   };
@@ -175,18 +175,20 @@ test('request entries are scoped icon actions and the duplicate footer creation 
   const context = { scope: 'service', identity: 1, currentIdentity: 1, targetWorkId: 'work-a', openedWorkId: 'work-a', targetServiceId: 'service-a' };
   const commands = menuCommands(context);
   assert.equal(commands.length, 1);
-  assert.equal(commands[0].action, 'service-requests');
+  assert.equal(commands[0].action, 'copy-local');
   assert.equal(commands[0].workId, 'work-a');
   assert.equal(commands[0].serviceId, 'service-a');
-  assert.equal(catalog.en[commands[0].labelKey], 'Agent requests');
+  assert.equal(catalog.en[commands[0].labelKey], 'Copy access link');
   assert.doesNotMatch(agent, /"pi-requests"/);
   const { c } = fixture();
   c.view.modal = 'agent-menu';
   assert.match(c.modalMarkup(), /data-action="pi-requests"/);
   assert.equal(catalog.en['work.piRequestsAria'], 'Pi requests for this Work');
-  assert.doesNotMatch(agent.split('<div class="session-line">')[1]?.split('<div class="messages"')[0] || '', /pi-requests/);
   assert.doesNotMatch(works, /Create a Work", "new-work"/);
-  assert.match(works, /t\('works\.emptyTitle'\)/);assert.match(works, /t\('works\.newWork'\)/);assert.equal(catalog.en['works.emptyTitle'],'Make room for your next idea');
+  assert.match(works, /t\('works\.emptyTitle'\)/);
+  assert.match(works, /t\('works\.newWork'\)/);
+  assert.equal(catalog.en['works.emptyTitle'],'Start with your first Work');
+
 });
 
 
@@ -233,8 +235,8 @@ for (const menu of ['account', 'work-menu', 'agent-menu', 'service-menu', 'file-
         assert.ok(content.replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, '').trim(), `${action}: visible text retained`);
       }
       if (menu === 'agent-menu') {
-        assert.deepEqual(rows.map(row => row[1]), ['sessions', 'new-session', 'pi-requests', layout === 'chat-only' ? 'restore-layout' : 'focus-chat', ...(layout !== 'workspace' || fullscreen ? ['service-fullscreen'] : [])]);
-        for (const label of ['Sessions', 'New session', 'Pi requests for this Work', layout === 'chat-only' ? 'Restore layout' : 'Focus chat']) assert.ok(html.includes(label));
+        assert.deepEqual(rows.map(row => row[1]), ['pi-requests', ...(layout !== 'workspace' || fullscreen ? ['service-fullscreen'] : [])]);
+        for (const label of ['Agent requests']) assert.ok(html.includes(label));
       }
       if (menu === 'file-menu') {
         assert.deepEqual(rows.map(row => row[1]), ['open-file', 'download-file', 'file-rename', 'file-move', 'file-copy', 'file-delete']);

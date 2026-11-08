@@ -217,10 +217,14 @@ async function focusLanguageRow(page: Page, locale: string): Promise<boolean> {
 async function switchLocale(page: Page, locale: string): Promise<void> {
   const direct=page.locator('[data-language-trigger="topbar"],[data-language-trigger="settings"]').first();
   if(await direct.isVisible()) await direct.click();
-  else {
-    const work=page.locator('[data-action="work-menu"]');
-    await (await work.isVisible()?work:page.locator('[data-action="account"]').first()).click();
+  else if (await page.locator('[data-action="account"]').isVisible()) {
+    await page.locator('[data-action="account"]').click();
     await page.locator('#modal [data-action="language"]').click();
+  } else {
+    // Work-local menus deliberately have no locale command. Exercise the same
+    // public locale owner without navigating or disturbing mounted documents.
+    await page.evaluate(async value => (await import(new URL('/desktop/browser/locale.js', location.href).href)).chooseLocale(value), locale);
+    return;
   }
   await page.locator('.language-picker').waitFor();
   await page.locator(`.language-picker [data-locale="${locale}"]`).click();
@@ -546,7 +550,7 @@ test('Work 页切换语言保留 Service iframe 文档、祖先节点、Chat 草
     await expect(page.frameLocator('iframe').getByLabel('Application draft')).toHaveValue('unsaved service input');
     await expect(page.locator('.chat-image-draft')).toContainText('draft.png');
     await expect(page.locator('.work-header .status')).toHaveText('就绪');
-    await expect(page.locator('.service-toolbar .status')).toHaveText('就绪');
+    await expect(page.locator('.service-toolbar .status')).toHaveText('运行中');
 
     // 呈现切到目标语言，包括 Chat 输入框的占位符。
     await expect(page.locator('[data-action="tab-Services"]')).toContainText(text(zh, 'work.tabServices'));
@@ -591,10 +595,10 @@ test('Work 页切换语言保留 Service iframe 文档、祖先节点、Chat 草
       '切换语言不得产生 POST/PATCH/PUT/DELETE 业务请求');
 
     await page.goto(`${app.base}/#/work/work-alpha/settings`);
-    const trigger=page.locator('.settings-language [data-language-trigger]');
-    await expect(trigger).toHaveCount(1);await trigger.focus();await page.keyboard.press('Enter');
-    await expect(page.locator('.language-picker [role=option]')).toHaveCount(3);
-    await page.keyboard.press('Escape');await expect(trigger).toBeFocused();
+    await expect(page.locator('.settings-language [data-language-trigger]')).toHaveCount(0);
+    await page.locator('[data-action=work-menu]').click();
+    await expect(page.locator('#modal [data-action=language]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await switchLocale(page,'auto');
     await expect(page.locator('html')).toHaveAttribute('lang','en');
     assert.equal(await page.evaluate(()=>localStorage.getItem('piwork.ui-locale')),null);

@@ -150,6 +150,7 @@ try{
   await call('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false},sid);
   await call('Page.navigate',{url:`http://127.0.0.1:${server.address().port}/#/work/work-1`},sid);
   await wait("!!document.querySelector('[data-action=\"sessions\"]')",'session trigger');
+  await run("document.querySelector('#sessions-trigger').focus()");
   await run("document.querySelector('[data-action=\"sessions\"]').click()");
   await wait("document.querySelectorAll('.session-choice-row').length===2 && !!document.querySelector('[data-action=\"new-session\"]') && !!document.querySelector('[data-action=\"toggle-session-menu\"]:not([disabled])')",'session list');
   assert.equal(await run("document.querySelectorAll('.session-choice-row').length"),2);
