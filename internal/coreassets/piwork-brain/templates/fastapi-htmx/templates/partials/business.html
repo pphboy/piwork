@@ -1,0 +1,28 @@
+<section id="business" data-piwork-business-content data-state-version="{{ query.stateVersion }}">
+{% if page == '/review' %}
+  <p>Completed Todos: {{ query.value.completed|length }}</p>
+  <ul class="list-group">
+    {% for todo in query.value.completed %}<li class="list-group-item">{{ todo.title }}</li>{% endfor %}
+  </ul>
+  {% for job in exports %}
+  <p class="mt-2">Export Job {{ job.jobId }}: {{ job.state }}
+    {% if job.state == 'succeeded' %}<a href="{{ url('/downloads/' + job.jobId + '.json') }}">Download review</a>{% endif %}
+  </p>
+  {% endfor %}
+{% else %}
+  <ul class="list-group">
+  {% for todo in query.value %}
+    <li class="list-group-item d-flex align-items-center justify-content-between fastapi-todo-row">
+      <span>{{ todo.title }}</span>
+      {% if todo.completed %}<span class="badge text-bg-success">Completed</span>
+      {% else %}
+      <form hx-post="{{ url('/forms/todo_complete') }}" hx-target="#business" hx-swap="outerHTML" hx-sync="closest main:drop" hx-disabled-elt="button[type=submit]">
+        <input type="hidden" name="expectedStateVersion" value="{{ query.stateVersion }}"><input type="hidden" name="id" value="{{ todo.id }}"><input type="hidden" name="page" value="/">
+        <button class="btn btn-outline-primary btn-sm" type="submit">Complete</button>
+      </form>
+      {% endif %}
+    </li>
+  {% else %}<li class="list-group-item text-secondary">No Todos yet.</li>{% endfor %}
+  </ul>
+{% endif %}
+</section>

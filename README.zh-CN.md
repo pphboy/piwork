@@ -105,3 +105,5 @@ Piwork 目前处于预览阶段。MicroVM 提供 Windows 和 Linux 本地启动�
 ## 许可证
 
 [Apache License 2.0](LICENSE)
+
+[FastAPI + htmx Service 环境](deploy/images/fastapi-htmx-base/README.zh-CN.md)

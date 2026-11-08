@@ -4,7 +4,11 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { inputHash, root } from './build-web-base.mjs';
+import { inputHash as niceguiHash, root } from './build-web-base.mjs';
+import { inputHash as fastapiHash } from './build-fastapi-htmx-base.mjs';
+const fastapi = process.argv.includes('--fastapi');
+const inputHash = fastapi ? fastapiHash : niceguiHash;
+const runner = fastapi ? 'piwork-fastapi' : 'piwork-web';
 
 const candidate = JSON.parse(readFileSync(resolve(process.argv[2] || 'dist/web-base/candidate.json')));
 assert.equal(candidate.inputHash, inputHash());
@@ -26,7 +30,7 @@ function python(program, image = candidate.reference) {
   return docker('run', '--rm', ...shared, '--entrypoint', 'python', image, '-c', program);
 }
 function invocation(name, install = false, image = candidate.reference) {
-  return ['run', '--rm', ...shared, ...environment, '--entrypoint', 'piwork-web', image, 'prepare', '--app', path(name), ...(install ? ['--install-deps'] : [])];
+  return ['run', '--rm', ...shared, ...environment, '--entrypoint', runner, image, 'prepare', '--app', path(name), ...(install ? ['--install-deps'] : [])];
 }
 function initialize(name, version = '1.0.0') {
   python(`from pathlib import Path\np=Path(${JSON.stringify(path(name))});p.mkdir(parents=True);(p/'app.py').write_text('import piwork_extra_fixture as extra;print("extra-version:"+extra.VERSION)\\n');(p/'requirements.in').write_text('piwork-extra-fixture==${version}\\n');(p/'keep.txt').write_text('preserved application data')`);
@@ -52,7 +56,7 @@ try {
   docker('network', 'create', '--internal', '--label', `piwork.fixture=${id}`, network);
   docker('run', '--rm', '--network', 'none', '--label', `piwork.fixture=${id}`, '--user', '0:0', '--mount', `type=volume,src=${volume},dst=/var/data/workspace`,
     '--entrypoint', 'sh', candidate.reference, '-c', 'mkdir -p /var/data/workspace/index /var/data/workspace/apps; chown -R 10001:10001 /var/data/workspace');
-  python(`from pathlib import Path\nimport zipfile,hashlib\nindex=Path('/var/data/workspace/index');simple=index/'simple/piwork-extra-fixture';simple.mkdir(parents=True)\nlinks=[]\nfor version in ['1.0.0','2.0.0','3.0.0']:\n prefix='piwork_extra_fixture-'+version+'.dist-info/'\n files={'piwork_extra_fixture.py':'VERSION='+repr(version)+'\\ndef main(): print("console-extra:"+VERSION)\\n',prefix+'METADATA':'Metadata-Version: 2.1\\nName: piwork-extra-fixture\\nVersion: '+version+'\\n'+('Requires-Dist: nicegui<1\\n' if version=='3.0.0' else ''),prefix+'WHEEL':'Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n',prefix+'entry_points.txt':'[console_scripts]\\npiwork-extra-probe = piwork_extra_fixture:main\\n'}\n files[prefix+'RECORD']=''.join(name+',,\\n' for name in [*files,prefix+'RECORD'])\n target=index/('piwork_extra_fixture-'+version+'-py3-none-any.whl')\n with zipfile.ZipFile(target,'w') as wheel:\n  for name,content in files.items():wheel.writestr(name,content)\n digest=hashlib.sha256(target.read_bytes()).hexdigest();links.append('<a href="../../'+target.name+'#sha256='+digest+'">'+target.name+'</a>')\n(simple/'index.html').write_text('\\n'.join(links))`);
+  python(`from pathlib import Path\nimport zipfile,hashlib\nindex=Path('/var/data/workspace/index');simple=index/'simple/piwork-extra-fixture';simple.mkdir(parents=True)\nlinks=[]\nfor version in ['1.0.0','2.0.0','3.0.0']:\n prefix='piwork_extra_fixture-'+version+'.dist-info/'\n files={'piwork_extra_fixture.py':'VERSION='+repr(version)+'\\ndef main(): print("console-extra:"+VERSION)\\n',prefix+'METADATA':'Metadata-Version: 2.1\\nName: piwork-extra-fixture\\nVersion: '+version+'\\n'+('Requires-Dist: ${fastapi ? 'fastapi<0.1' : 'nicegui<1'}\\n' if version=='3.0.0' else ''),prefix+'WHEEL':'Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n',prefix+'entry_points.txt':'[console_scripts]\\npiwork-extra-probe = piwork_extra_fixture:main\\n'}\n files[prefix+'RECORD']=''.join(name+',,\\n' for name in [*files,prefix+'RECORD'])\n target=index/('piwork_extra_fixture-'+version+'-py3-none-any.whl')\n with zipfile.ZipFile(target,'w') as wheel:\n  for name,content in files.items():wheel.writestr(name,content)\n digest=hashlib.sha256(target.read_bytes()).hexdigest();links.append('<a href="../../'+target.name+'#sha256='+digest+'">'+target.name+'</a>')\n(simple/'index.html').write_text('\\n'.join(links))`);
   const server = `from http.server import HTTPServer,SimpleHTTPRequestHandler\nfrom pathlib import Path\nimport time,os\nos.chdir('/var/data/workspace/index')\nclass Handler(SimpleHTTPRequestHandler):\n def do_GET(self):\n  gate=Path('delay.flag')\n  if self.path.endswith('.whl') and gate.exists():\n   Path('seen.flag').write_text('request reached registry')\n   deadline=time.monotonic()+20\n   while gate.exists() and time.monotonic()<deadline:time.sleep(.05)\n  super().do_GET()\nHTTPServer(('0.0.0.0',8095),Handler).serve_forever()\n`;
   docker('run', '-d', '--name', registry, '--network-alias', 'registry', ...shared, '--entrypoint', 'python', candidate.reference, '-c', server);
   initialize('one'); initialize('two', '2.0.0');
@@ -117,9 +121,9 @@ try {
   docker(...invocation('moved', false, derived)); const upgraded = verify('moved', '1.0.0', derived);
   assert.notEqual(upgraded.environmentHash, original.environmentHash);
   assert.notEqual(upgraded.environmentDirectory, original.environmentDirectory);
-  const run = command(['run', '--rm', ...shared, ...environment, '--entrypoint', 'piwork-web', derived, 'run', '--app', path('moved')]);
+  const run = command(['run', '--rm', ...shared, ...environment, '--entrypoint', runner, derived, 'run', '--app', path('moved')]);
   assert.match(run.stdout, /extra-version:1\.0\.0/);
-  writeFileSync(join(root, 'dist/web-base/dependencies-validation.json'), JSON.stringify({ contractVersion: 2, passed: true,
+  writeFileSync(join(root, fastapi ? 'dist/fastapi-htmx-base/dependencies-validation.json' : 'dist/web-base/dependencies-validation.json'), JSON.stringify({ contractVersion: 2, passed: true,
     imageId: candidate.imageId, inputHash: candidate.inputHash, checkedAt: new Date().toISOString(), internalRegistry: true,
     checks: ['explicit-python-install', 'selected-console-interpreter', 'base-unchanged', 'application-environment-isolation', 'conflict-rollback', 'download-failure-rollback',
       'serialized-preparation', 'changed-input-no-activation', 'offline-dependency-reuse', 'damaged-wheel-rejected', 'offline-reconstruction', 'moved-app-reconstruction', 'base-environment-reconstruction', 'actual-extra-application'] }, null, 2) + '\n');

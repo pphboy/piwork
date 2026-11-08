@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, chmodSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,6 +8,7 @@ import { chromium, expect } from '@playwright/test';
 import { inputHash, root } from './build-web-base.mjs';
 import { prefixFixture } from './web-base-prefix-fixture.mjs';
 import { queryFaultSource, checkQueryFailure } from './check-application-awareness-page.mjs';
+import { initialize } from '../internal/coreassets/piwork-brain/skills/deploy-work-service/initialize.mjs';
 
 const metadata = JSON.parse(readFileSync(resolve(process.argv[2] || 'dist/web-base/candidate.json')));
 const template = process.argv[3] || 'workstation';
@@ -34,6 +35,7 @@ const temporary = mkdtempSync(join(tmpdir(), 'piwork-nicegui-base-'));
 const identity = join(temporary, 'interaction.json');
 writeFileSync(identity, JSON.stringify({ contractVersion: 1, workId: 'work-base-fixture-0001', serviceId: 'service-base-fixture-0001', serviceName,
   token: 'synthetic-base-test-token-' + 'a'.repeat(64), agentUrl: 'https://agentd:7444', caPath: '/etc/piwork/interaction/installation-ca.crt' }));
+chmodSync(identity, 0o644);
 let browser, prefixed;
 const app = '/var/data/workspace/apps/app';
 const python = program => docker('exec', container, 'python', '-c', program);
@@ -53,11 +55,12 @@ function expectedFailure(args, pattern) {
   assert.match(result.stdout + result.stderr, pattern);
 }
 try {
+  initialize({ workspace: temporary, name: 'app', template });
   docker('volume', 'create', '--label', `piwork.fixture=${id}`, volume);
   docker('network', 'create', '--internal', '--label', `piwork.fixture=${id}`, network);
   assert.equal(JSON.parse(docker('network', 'inspect', network))[0].Internal, true);
   docker('run', '--rm', '--label', `piwork.fixture=${id}`, '--user', '0:0', '--network', 'none',
-    '--mount', `type=volume,src=${volume},dst=/var/data/workspace`, '--mount', `type=bind,src=${join(root, 'internal/coreassets/piwork-brain/templates', template)},dst=/template,readonly`,
+    '--mount', `type=volume,src=${volume},dst=/var/data/workspace`, '--mount', `type=bind,src=${join(temporary, 'apps/app')},dst=/template,readonly`,
     '--entrypoint', 'sh', metadata.reference, '-c', 'mkdir -p /var/data/workspace/apps/app; cp -R /template/. /var/data/workspace/apps/app/; chown -R 10001:10001 /var/data/workspace');
   const preparationStarted = Date.now();
   docker('run', '--rm', '--network', 'none', '--label', `piwork.fixture=${id}`, '--mount', `type=volume,src=${volume},dst=/var/data/workspace`,

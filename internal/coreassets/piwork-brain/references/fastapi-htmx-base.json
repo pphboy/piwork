@@ -1,0 +1,15 @@
+{
+  "state": "published",
+  "reference": "docker.io/pphboy/piwork-fastapi-htmx-base:0.1.1-08fc54adda53-291497dc377a-dirty@sha256:2314f5a787a1be0e575c892899e32cb779cacd163d02a137c777e3a0358a1aad",
+  "platform": "linux/amd64",
+  "version": "0.1.1-08fc54adda53-291497dc377a-dirty",
+  "imageId": "sha256:0365240a31f698b3cda3f380ba101ba76d633fec5f8b03ab573abea86e00b74c",
+  "inputHash": "291497dc377ac62a053a620049d3acbbb00f5811bfcae7d9c8a1badbc41bce0f",
+  "contractVersion": 1,
+  "environmentContract": 1,
+  "stack": "python-fastapi-htmx-sqlite",
+  "anonymousReadable": true,
+  "maintenanceSource": "deploy/images/fastapi-htmx-base/",
+  "registryDigest": "sha256:2314f5a787a1be0e575c892899e32cb779cacd163d02a137c777e3a0358a1aad",
+  "hostedPathSupport": true
+}

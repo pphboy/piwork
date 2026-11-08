@@ -126,6 +126,23 @@ func (f *brainAcceptance) serviceURL(names ...string) string {
 	}
 	return "http://" + address + ":8080"
 }
+func (f *brainAcceptance) serviceGet(path string) map[string]any {
+	f.t.Helper()
+	req, err := http.NewRequestWithContext(f.ctx, "GET", f.serviceURL()+path, nil)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var value map[string]any
+	if response.StatusCode != 200 || json.NewDecoder(response.Body).Decode(&value) != nil {
+		f.t.Fatal("Service GET failed", path)
+	}
+	return value
+}
 func (f *brainAcceptance) servicePost(path string, body string) map[string]any {
 	f.t.Helper()
 	req, err := http.NewRequestWithContext(f.ctx, "POST", f.serviceURL()+path, strings.NewReader(body))
@@ -159,6 +176,14 @@ func (f *brainAcceptance) agentEval(program string) string {
 	return nativeAgentEval(f.t, f.ctx, f.a, f.work, program)
 }
 func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *testing.T) {
+	runBrainWorkstationAcceptance(t, false)
+}
+
+func TestNativeBrainFastAPIWorkstationFeedbackExperienceAndActualCandidateBehavior(t *testing.T) {
+	runBrainWorkstationAcceptance(t, true)
+}
+
+func runBrainWorkstationAcceptance(t *testing.T, fastapi bool) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +205,11 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 		}
 		t.Fatal(status, models)
 	}
-	deployed := f.chat("deploy deterministic workstation", "deploy-station")
+	deploymentPrompt := "deploy deterministic workstation"
+	if fastapi {
+		deploymentPrompt = "deploy deterministic fastapi workstation"
+	}
+	deployed := f.chat(deploymentPrompt, "deploy-station")
 	if !strings.Contains(deployed["finalText"].(string), "workstation-deployed:") {
 		t.Fatal(deployed)
 	}
@@ -194,6 +223,23 @@ func TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior(t *t
 	detail := f.request("personal review omits", "completed")
 	if len(detail["evidence"].(map[string]any)["items"].([]any)) == 0 {
 		t.Fatal("completion lacks real Service evidence", detail)
+	}
+	if fastapi {
+		before := f.serviceGet("/api/runtime-version")
+		for _, kind := range []string{"frontend", "backend"} {
+			updated := f.chat("update deterministic fastapi workstation "+kind+" checked", "update-"+kind)
+			if !strings.Contains(updated["finalText"].(string), "workstation-"+kind+"-updated:") {
+				t.Fatal(updated)
+			}
+			after := f.serviceGet("/api/runtime-version")
+			if after["codeVersion"] == before["codeVersion"] {
+				t.Fatal("code version did not change", kind)
+			}
+			if kind == "backend" && after["frontendVersion"] != before["frontendVersion"] {
+				t.Fatal("business change altered page identity")
+			}
+			before = after
+		}
 	}
 	cognition := f.chat("inspect piwork brain cognition for personal review", "adopt-experience")
 	if !strings.HasSuffix(cognition["finalText"].(string), ":true") || cognition["adoptedExperienceVersion"].(float64) < 1 {
@@ -498,11 +544,21 @@ func (f *brainAcceptance) shareCopies() {
 // Crash after the actual business Action was durably accepted, before the SDK
 // registers a wait. Recovery must query that original effect rather than replay it.
 func TestNativeBrainAcceptedActionGapRecovery(t *testing.T) {
+	runBrainAcceptedActionGapRecovery(t, false)
+}
+func TestNativeBrainFastAPIAcceptedActionGapRecovery(t *testing.T) {
+	runBrainAcceptedActionGapRecovery(t, true)
+}
+func runBrainAcceptedActionGapRecovery(t *testing.T, fastapi bool) {
 	a, base, auth, work, _ := nativeApplyFixtureConfig(t, true)
 	ctx, cancel := context.WithTimeout(context.Background(), 9*time.Minute)
 	defer cancel()
 	f := brainAcceptance{t: t, a: a, base: base, auth: auth, work: work, path: "/api/v1/works/" + work, ctx: ctx}
-	f.chat("deploy deterministic workstation", "recovery-deploy")
+	prompt := "deploy deterministic workstation"
+	if fastapi {
+		prompt = "deploy deterministic fastapi workstation"
+	}
+	f.chat(prompt, "recovery-deploy")
 	for index, mode := range []string{"terminal", "running", "unprovable"} {
 		f.chat("configure workstation recovery "+mode, "recovery-config-"+mode)
 		goal := "Export the personal review. Interrupt before registering wait: " + mode
@@ -525,7 +581,12 @@ func TestNativeBrainAcceptedActionGapRecovery(t *testing.T) {
 				}
 			}
 			if original != nil {
-				break
+				// The earlier request projection can predate the Agent's accepted
+				// Action reference. Re-read it before asserting the crash window.
+				request = f.read(f.path + "/agent-requests/" + request["requestId"].(string))["request"].(map[string]any)
+				if request["state"] == "running" && request["waitRef"] == nil {
+					break
+				}
 			}
 			time.Sleep(100 * time.Millisecond)
 		}

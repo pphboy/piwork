@@ -12,14 +12,14 @@ const moduleURL = new URL('../internal/coreassets/piwork-brain/skills/deploy-wor
 test('standard initialization preserves editable files and rejects repeats before any write', () => {
   const workspace = mkdtempSync(join(tmpdir(), 'piwork-initialize-'));
   try {
-    for (const template of ['web-app', 'workstation']) {
+    for (const template of ['web-app', 'workstation', 'fastapi-htmx']) {
       assert.equal(initialize({ workspace, name: template, template }).initialized, true);
       const app = join(workspace, 'apps', template);
       const original = new URL(`../internal/coreassets/piwork-brain/templates/${template}/prepare.sh`, import.meta.url);
       assert.equal(statSync(join(app, 'prepare.sh')).mode & 0o111, statSync(original).mode & 0o111);
       assert(statSync(join(app, 'prepare.sh')).mode & 0o200);
       mkdirSync(join(workspace, 'data', template), { recursive: true });
-      const paths = ['SPEC.md', 'app.py', 'ui.py', 'page-files.json', 'requirements.in', 'requirements.lock'].map(name => join(app, name));
+      const paths = ['SPEC.md', 'app.py', ...(template === 'fastapi-htmx' ? ['pages.py'] : ['ui.py']), 'page-files.json', 'requirements.in', 'requirements.lock'].map(name => join(app, name));
       paths.push(join(workspace, 'data', template, 'business.txt'), join(workspace, '.pi/services', template + '.json'));
       for (const path of paths) writeFileSync(path, 'user content: ' + path);
       assert.throws(() => initialize({ workspace, name: template, template }), { code: 'EEXIST' });

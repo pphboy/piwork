@@ -1,0 +1,13 @@
+{
+  "contractVersion": 1,
+  "version": "0.1.1",
+  "platform": "linux/amd64",
+  "pythonImage": "python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641",
+  "pythonVersion": "3.13.16",
+  "sqlite3Version": "3.40.1-2+deb12u2",
+  "pipVersion": "26.2.1",
+  "stack": "python-fastapi-htmx-sqlite",
+  "fastapiVersion": "0.143.0",
+  "htmxVersion": "2.0.11",
+  "bootstrapVersion": "5.3.8"
+}

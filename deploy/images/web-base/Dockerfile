@@ -13,14 +13,15 @@ LABEL org.opencontainers.image.title="Piwork NiceGUI base" \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends "sqlite3=${SQLITE3_VERSION}" libstdc++6 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-COPY requirements.lock environment.json /opt/piwork-web-base/
+COPY web-base/requirements.lock web-base/environment.json /opt/piwork-web-base/
 RUN python -m pip download --only-binary=:all: --require-hashes \
       -r /opt/piwork-web-base/requirements.lock -d /tmp/piwork-wheels \
  && python -m pip install --no-index --require-hashes --no-cache-dir \
       --find-links /tmp/piwork-wheels -r /opt/piwork-web-base/requirements.lock \
  && rm -rf /tmp/piwork-wheels
-COPY --chmod=0644 tools/*.py tools/*.js /opt/piwork-web-base/lib/
-COPY --chmod=0755 tools/piwork-web /usr/local/bin/piwork-web
+COPY --chmod=0644 web-base/tools/*.py web-base/tools/*.js /opt/piwork-web-base/lib/
+COPY --chmod=0755 web-base/tools/piwork-web /usr/local/bin/piwork-web
+COPY --chmod=0644 web-common/piwork_web_dependencies.py /opt/piwork-web-base/lib/
 RUN chmod -R a+rX /opt/piwork-web-base \
  && python /opt/piwork-web-base/lib/freeze_environment.py
 ENV PYTHONPATH=/opt/piwork-web-base/lib \

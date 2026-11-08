@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personal workstation</title>
+  <link rel="stylesheet" href="{{ url('/piwork-assets/bootstrap.min.css') }}?v={{ runtime.frontendVersion }}">
+  <link rel="stylesheet" href="{{ url('/static/style.css') }}?v={{ runtime.frontendVersion }}">
+  <script id="piwork-runtime" type="application/json">{{ runtime|tojson }}</script>
+  <script src="{{ url('/piwork-assets/htmx.min.js') }}?v={{ runtime.frontendVersion }}" defer></script>
+  <script src="{{ url('/static/page-client.js') }}?v={{ runtime.frontendVersion }}" defer></script>
+</head>
+<body data-piwork-app data-state-version="{{ query.stateVersion }}" data-page="{{ page }}">
+<main class="container py-4 fastapi-workstation">
+  <header class="mb-4">
+    <p class="text-secondary small">YOUR WORKSPACE</p>
+    <h1>Personal workstation</h1>
+    <p>Build a little structure around your day.</p>
+    <nav class="d-flex gap-3" aria-label="Workstation">
+      <a href="{{ url('/') }}">Todos</a>
+      <a href="{{ url('/review') }}">Personal review</a>
+    </nav>
+  </header>
+  <p role="status" data-piwork-status></p>
+  <div id="notice" role="alert" data-piwork-notice></div>
+  <p role="status" data-piwork-data-status></p>
+  {% if page == '/' %}
+  <h2>Todos</h2>
+  <form class="d-flex gap-2 mb-4" hx-post="{{ url('/forms/todo_add') }}" hx-target="#business" hx-swap="outerHTML" hx-sync="closest main:drop" hx-disabled-elt="button[type=submit]">
+
+    <input type="hidden" name="expectedStateVersion" value="{{ query.stateVersion }}">
+    <input type="hidden" name="page" value="{{ page }}">
+    <div class="flex-grow-1">
+      <label for="todo-title" class="form-label">Todo title</label>
+      <input id="todo-title" class="form-control" name="title" maxlength="200" required autocomplete="off" data-clear-on-submit>
+    </div>
+    <button class="btn btn-primary align-self-end" type="submit">Add Todo</button>
+  </form>
+  {% else %}
+  <h2>Personal review</h2>
+  <button type="button" class="btn btn-outline-secondary mb-3" id="feedback">Report missing completed Todos</button>
+  <p role="status" data-piwork-feedback>No feedback submitted.</p>
+  <form hx-post="{{ url('/forms/export_review') }}" hx-target="#business" hx-swap="outerHTML" hx-sync="closest main:drop" hx-disabled-elt="button[type=submit]" class="mb-3">
+    <input type="hidden" name="expectedStateVersion" value="{{ query.stateVersion }}"><input type="hidden" name="page" value="{{ page }}">
+    <button class="btn btn-primary" type="submit">Export review</button>
+  </form>
+  {% endif %}
+  {% include 'partials/business.html' %}
+  <footer class="text-secondary small mt-4">Changes appear automatically. Your work stays in this Work.</footer>
+</main>
+</body>
+</html>

@@ -66,3 +66,5 @@ UI 与 Agent 复用同一业务逻辑和权威状态。业务数据同步与代�
 将这些判断融入原任务，不增加独立设计阶段、设计报告、五项 Spec 章节、逐项审批、视觉评分、固定截图审核或额外 Agent/模型 Run。小改动只维护受影响的已有设计和验证，不顺带重做整个应用。用户明确提出的视觉目标仍按原范围实施；默认取舍不能取消用户要求，也不能跳过必要的功能检查、部署生效或实际业务验证。
 
 普通 Query/Action、仅启停 Service、部署未改造的第三方镜像不进入此开发流程，不因这些认知自动改造既有应用。持久 Service 的必要 Spec、契约、环境、部署与验证继续由平级的 deploy-work-service Skill 承担；本 Skill 不复制该流程，不触发 Package/Work 自动 Apply，也不要求额外 Memory 步骤。
+
+For FastAPI/htmx development or diagnosis, read the conditional [FastAPI guidance](references/fastapi-htmx.md) from this same active package. Reuse it when already present. Ordinary business operations do not load this reference or initialize a template.

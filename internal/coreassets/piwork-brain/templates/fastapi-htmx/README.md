@@ -1,0 +1,13 @@
+# FastAPI + htmx starter
+
+Initialize with the initialize.mjs next to the loaded deployment Skill: `node <loaded-skill-directory>/initialize.mjs --template fastapi-htmx --name <service-name>`. Existing targets are refused. Adapt SPEC.md and its Implementation Map before implementing the requested domain.
+
+Use the matching verified FastAPI base and Service command `/usr/local/bin/piwork-fastapi` with args `["run", "--app", "/var/data/workspace/apps/<service-name>"]`. prepare/check/serve are also available; serve requires a previously checked copy. Python executes in Service, not Agent bash. Standard packages and browser resources are local. Extra exact requirements use `run --install-deps`, retain locks/wheels and reuse offline. See the loaded deployment Reference for actual Service mutation/Operation handling.
+
+Edit app source directly. The runner checks a version copy under .build/releases and serves that copy; working edits do not hot-update production. After changes complete the original Service update/restart and verify its loaded version and business result. Source and generated runtime material stay in the app, business data in data/<service-name>. Code restoration does not undo business transactions. Checked starts reuse the verified release named in .build/checks.json, including repaired copies with a suffix. The previous runtime record retains its release and dependency interpreter; preserve its referenced materials when recovering.
+
+FastAPI uses one Uvicorn worker for this example's Job executor. Bootstrap provides CSS; interaction uses native HTML, htmx and plain JS. URLs use the request's validated Service prefix. API/probe calls remain at /pi/v1 and /health. The browser receives no Agent token.
+
+Display refresh preserves unrelated input and focus within the current document. Once a form has captured its request parameters, that submitted input is cleared and is not restored on an error, timeout or navigation. The backend retains same-ID idempotency and Agent original-Action recovery. Old polls cannot replace newer display state. Form handling does not depend on browser storage and page adoption never waits on a persistent pending record. Inspect actual feedback/Job receipts. With an authorized browser verify from the real Desktop Service entry; without that capability report the page as unverified.
+
+The initialized app contains its shared business/protocol implementation and tests. It does not load business files from a frozen brain or another Work. Work import remains stopped until explicit Start; keep the fixed image available on the destination.

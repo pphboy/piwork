@@ -83,6 +83,14 @@ workstation-fixture:
 web-base-image:
 	node scripts/build-web-base.mjs
 
+.PHONY: fastapi-htmx-base-image
+fastapi-htmx-base-image:
+	node scripts/build-fastapi-htmx-base.mjs
+
+.PHONY: fastapi-htmx-workstation-fixture
+fastapi-htmx-workstation-fixture: fastapi-htmx-base-image
+	node --input-type=module -e 'import {readFileSync} from "node:fs"; import {execFileSync} from "node:child_process"; const c=JSON.parse(readFileSync("dist/fastapi-htmx-base/candidate.json")); execFileSync("docker",["tag",c.imageId,"piwork-fastapi-workstation:acceptance"]);'
+
 .PHONY: native-history4-web-base-fixture
 native-history4-web-base-fixture:
 	docker build -f internal/coreapp/testdata/Dockerfile.memory-history4-web-base -t piwork-memory-history4-web-base:acceptance .
