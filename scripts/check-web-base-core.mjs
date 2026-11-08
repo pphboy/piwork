@@ -12,6 +12,8 @@ import { join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
 const root = resolve(import.meta.dirname, '..');
+const fastapi = process.argv.includes('--fastapi');
+const deployPrompt = fastapi ? 'deploy deterministic fastapi workstation' : 'deploy deterministic workstation';
 const cliBinary = join(root, 'dist/go/piwork-cli');
 const agent = process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE || 'piwork-agentd:go-migration-acceptance';
 const file = process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE || 'piwork-file-helper:go-migration-acceptance';
@@ -105,6 +107,7 @@ async function chat(prompt) {
   console.log('Core check SDK completed:', prompt);
   return run;
 }
+async function main() {
 try {
   const [httpPort, grpcPort, desktopPort, controlPort] = await Promise.all([port(), port(), port(), port()]);
   coreUrl = `http://127.0.0.1:${httpPort}`;
@@ -116,12 +119,23 @@ try {
   const control=await operatorAPI(coreUrl,data);
   await control('POST','admin/bootstrap',{account:'admin',password:'web-base-synthetic-password'});
   await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v1',credential:'synthetic-fixture-key'});
-  await wait(async () => (await fetch(coreUrl + '/readyz')).ok, 'Core readiness');
+  let preparationReported = false;
+  await wait(async () => {
+    const ready = (await fetch(coreUrl + '/readyz')).ok;
+    if (!ready && !preparationReported) {
+      const current = await control('GET', 'status');
+      if (current.preparation?.state === 'failed') {
+        console.log('Fixture preparation:', JSON.stringify(current.preparation));
+        preparationReported = true;
+      }
+    }
+    return ready;
+  }, 'Core readiness');
   token = (await api('POST', '/login', { account: 'admin', password: 'web-base-synthetic-password' })).token;
   const created = await api('POST', '/works', { name: 'Web base validation', idempotencyKey: 'web-base-validation' });
   work = created.workId;
   await wait(async () => (await api('GET', `/operations/${created.operationId}`)).state === 'succeeded', 'Work creation');
-  assert.match((await chat('deploy deterministic workstation')).finalText, /workstation-deployed:/);
+  assert.match((await chat(deployPrompt)).finalText, /workstation-deployed:/);
 
   const initialService = (await api('GET', `/works/${work}/services`)).services.find(item => item.name === 'workstation');
   await writeSource('apps/workstation/workstation.py', (await readSource('apps/workstation/workstation.py')) + queryFaultSource);
@@ -144,7 +158,7 @@ try {
   await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password').fill('web-base-synthetic-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+  await page.getByRole('link', { name: /^Web base validation/ }).waitFor();
   await page.getByRole('link', { name: /^Web base validation/ }).click();
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   const frame = page.frameLocator('iframe.real-service-frame');
@@ -156,7 +170,7 @@ try {
   await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password', { exact: true }).fill('web-base-synthetic-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+  await page.getByRole('link', { name: /^Web base validation/ }).waitFor();
   await page.getByRole('link', { name: /^Web base validation/ }).click();
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await frame.getByRole('heading', { name: 'Personal workstation', exact: true }).waitFor();
@@ -168,6 +182,70 @@ try {
   await frame.getByLabel('Todo title', { exact: true }).fill('keep this unfinished input');
   await frame.getByRole('link', { name: 'Personal review', exact: true }).click();
   await expect(frame.getByText('Completed Todos: 0', { exact: true })).toBeVisible();
+  if (fastapi) {
+    const primaryWork = work, primarySession = session;
+    const second = await api('POST', '/works', {name:'Second FastAPI fixture', idempotencyKey:'second-fastapi'});
+    await wait(async () => (await api('GET', `/operations/${second.operationId}`)).state === 'succeeded', 'second Work');
+    work = second.workId;
+    session = undefined;
+    assert.match((await chat(deployPrompt)).finalText, /workstation-deployed:/);
+    const secondaryService = (await api('GET', `/works/${work}/services`)).services.find(item => item.name === 'workstation');
+    const other = await browserContext.newPage();
+    await other.goto(`${controlUrl}/services/${work}/${secondaryService.serviceId}/8080/`);
+    await other.getByLabel('Todo title').fill('second independent draft');
+    let otherNavigations = 0;
+    other.on('framenavigated', () => { otherNavigations++; });
+    work = primaryWork;
+    session = primarySession;
+    assert.match((await chat('update deterministic fastapi workstation frontend hosted')).finalText, /workstation-frontend-updated:/);
+    await expect(frame.getByText('Updated page structure around your day.')).toBeVisible({timeout:90000});
+    await expect(other.getByText('Build a little structure around your day.')).toBeVisible();
+    await expect(other.getByLabel('Todo title')).toHaveValue('second independent draft');
+    assert.equal(otherNavigations, 0);
+    await other.close();
+    assert.match((await chat('update deterministic fastapi workstation backend hosted')).finalText, /workstation-backend-updated:/);
+    await expect(frame.getByText('Completed Todos: 1', {exact:true})).toBeVisible({timeout:90000});
+    await frame.getByRole('link', {name:'Todos',exact:true}).click();
+    await expect(frame.getByLabel('Todo title')).toHaveValue('');
+    await frame.getByLabel('Todo title').focus();
+    const before = documentResponses.length;
+    assert.equal((await chat('add deterministic workstation Todo')).finalText, 'workstation-live-todo-verified');
+    await expect(frame.getByText('Agent live Todo', {exact:true})).toBeVisible({timeout:15000});
+    await expect(frame.getByLabel('Todo title')).toBeFocused();
+    assert.equal(documentResponses.length, before);
+    const dataEvidence = await checkQueryFailure(frame, async enabled => {
+      const response = await fetch(`${coreUrl}/api/v1/works/${work}/files/data/workstation/awareness-query-failure`, {
+        method:enabled?'PUT':'DELETE', headers:{Authorization:`Bearer ${token}`}, body:enabled?'synthetic fault':undefined});
+      assert(response.ok);
+    });
+    const originalSession = session;
+    session = (await api('POST', `/works/${work}/sessions`, {idempotencyKey:'fastapi-reinitialize'})).sessionId;
+    assert.equal((await chat(deployPrompt)).finalText, 'workstation-deployment-failed:initialization-refused');
+    session = originalSession;
+    await stop(core, true);
+    core = spawn(coreBinary, ['--data-dir',data,'--ui-port',new URL(controlUrl).port,'--core-port',String(httpPort)],
+      {stdio:['ignore','pipe','pipe'],env:{...process.env,PATH:'/nonexistent'}});
+    coreOutput = output(core);
+    await wait(async () => (await api('GET', `/works/${work}`)).observedState === 'ready', 'FastAPI Core recovery', 300000);
+    await page.goto(controlUrl);
+    await page.getByRole('textbox',{name:'Account',exact:true}).fill('admin');
+    await page.getByLabel('Password',{exact:true}).fill('web-base-synthetic-password');
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await page.getByRole('link',{name:/^Web base validation/}).waitFor();
+    await page.getByRole('link',{name:/^Web base validation/}).click();
+    await page.getByRole('button',{name:'Services',exact:true}).click();
+    await expect(frame.getByText('Agent live Todo',{exact:true})).toBeVisible({timeout:90000});
+    assert.deepEqual(errors, []);
+    const candidate = JSON.parse(await readFile(join(root,'dist/fastapi-htmx-base/candidate.json')));
+    const installation = JSON.parse(await readFile(join(data,'core-format.json'))).installationId;
+    const ids = docker(['ps','-q','--filter',`label=piwork.installation_id=${installation}`,'--filter',`label=piwork.work_id=${work}`,'--filter','label=piwork.resource_kind=service']).split('\n').filter(Boolean);
+    assert(ids.map(id=>JSON.parse(docker(['inspect',id]))[0]).some(item=>item.Config.Image===candidate.imageId));
+    await writeFile(join(root,'dist/fastapi-htmx-base/core-validation.json'),JSON.stringify({passed:true,imageId:candidate.imageId,inputHash:candidate.inputHash,
+      entry:'authenticated-control-plane-and-cli-desktop',dataEvidence,
+      checks:['real-sdk','real-cli-desktop','real-hosted-prefix','two-independent-services','page-business-edits','draft-focus','query-recovery','safe-initialization','normal-core-restart']},null,2)+'\n');
+    console.log('FastAPI actual Desktop/hosted entries, SDK edits, independent services and normal Core recovery passed.');
+    return;
+  }
   // No goto/reload is performed below: version adoption belongs to the application.
   assert.match((await chat('update deterministic workstation frontend browser-frontend')).finalText, /workstation-frontend-updated:[a-f0-9]{64}/);
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
@@ -258,7 +336,7 @@ try {
   }
   const originalSession = session;
   session = (await api('POST', `/works/${work}/sessions`, { idempotencyKey: 'web-base-reinitialization' })).sessionId;
-  const rejected = await chat('deploy deterministic workstation');
+  const rejected = await chat(deployPrompt);
   session = originalSession;
   assert.equal(rejected.finalText, 'workstation-deployment-failed:initialization-refused');
   for (const [path, content] of preserved) assert.equal(await readSource(path), content, 'Repeat initialization overwrote ' + path);
@@ -447,7 +525,7 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   await page.getByRole('textbox', { name: 'Account', exact: true }).fill('admin');
   await page.getByLabel('Password', { exact: true }).fill('web-base-synthetic-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.getByRole('heading', { name: 'Works', exact: true }).waitFor();
+  await page.getByRole('link', { name: /^Web base validation/ }).waitFor();
   await page.getByRole('link', { name: /^Web base validation/ }).click();
   await page.getByRole('button', { name: 'Services', exact: true }).click();
   await expect(frame.getByRole('heading', { name: 'Updated workstation', exact: true })).toBeVisible({ timeout: 90000 });
@@ -498,4 +576,6 @@ HTTPServer(('0.0.0.0',8081),Handler).serve_forever()
   await rm(temporary, { recursive: true, force: true });
 }
 
-if (!process.argv.includes('--main-only')) await runCoreDependencyChecks();
+}
+await main();
+if (!fastapi && !process.argv.includes('--main-only')) await runCoreDependencyChecks();

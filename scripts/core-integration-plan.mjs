@@ -13,6 +13,7 @@ export const requiredNames = [
   "TestRealNativeAgentImageStaticCapabilitiesAndBuildEvidence",
   "TestRealManagedResourceLifecycleAndOwnership",
   "TestNativeBrainWorkstationFeedbackExperienceAndActualCandidateBehavior",
+  "TestNativeBrainFastAPIWorkstationFeedbackExperienceAndActualCandidateBehavior",
   "TestNativeCoreWebDAVUploadStopApplyRevocationAndRestart",
   "TestNativeMemoryMigrationProcessRecoveryAndStopSupersession",
   "TestNativeSchema4ConversationUpgradeRollbackAndDowngradeFence",

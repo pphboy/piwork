@@ -498,7 +498,9 @@
     "piwork/internal/workruntime#TestReadinessTimingExcludesDelayedDiagnosticTransportAndPersistence",
     "piwork/internal/workruntime#TestReadyResourcesRejectMissingCapturedSkillAndPackage",
     "piwork/internal/workruntime#TestRevokeAllCancelsEveryRouteLifetime",
-    "piwork/internal/workruntime#TestShutdownDetachesOriginalRoutesWithoutLosingDrainAuthority"
+    "piwork/internal/workruntime#TestShutdownDetachesOriginalRoutesWithoutLosingDrainAuthority",
+    "piwork/internal/coreapp#TestNativeBrainFastAPIWorkstationFeedbackExperienceAndActualCandidateBehavior",
+    "piwork/internal/coreapp#TestNativeBrainFastAPIAcceptedActionGapRecovery"
   ],
   "indivisible": [],
   "exclusive": [

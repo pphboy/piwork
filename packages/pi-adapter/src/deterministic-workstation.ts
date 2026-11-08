@@ -62,13 +62,16 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     } else end("workstation-live-todo-verified");
     return true;
   }
-  if (/^update deterministic workstation (frontend|backend) [A-Za-z0-9-]+$/.test(prompt)) {
-    const kind = prompt.split(" ")[3]!, key = prompt.split(" ").at(-1)!;
+  if (/^update deterministic (fastapi )?workstation (frontend|backend) [A-Za-z0-9-]+$/.test(prompt)) {
+    const fastapi = prompt.includes("fastapi workstation");
+    const kind = prompt.includes(" frontend ") ? "frontend" : "backend", key = prompt.split(" ").at(-1)!;
     const reads = results.filter(result => result.toolName === "read");
     if (!reads.length) invoke("read", { path: "apps/workstation/SPEC.md" });
     else if (!previous("write")) invoke("write", { path: "apps/workstation/SPEC.md", content: text(reads[0]!) + `\nAcceptance update: verify the actual ${kind} version and automatic page adoption.\n` });
     else if (!previous("bash")) {
-      const script = kind === "frontend"
+      const script = kind === "frontend" && fastapi
+        ? `const fs=require('fs');const p='apps/workstation/templates/page.html';fs.copyFileSync(p,'apps/workstation/.build/page.checkpoint.html');fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('Build a little structure','Updated page structure'));`
+        : kind === "frontend"
         ? `const fs=require('fs');const p='apps/workstation/ui.py';fs.copyFileSync(p,'apps/workstation/.build/ui.checkpoint.py');fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('Personal workstation','Updated workstation'));`
         : `const fs=require('fs');const p='apps/workstation/review_config.json';fs.copyFileSync(p,'apps/workstation/.build/review.checkpoint.json');const v=JSON.parse(fs.readFileSync(p,'utf8'));v.includeCompleted=true;v.codeVersion='workstation-v2';fs.writeFileSync(p,JSON.stringify(v));`;
       invoke("bash", { command: `node -e ${shellQuote(script)}` });
@@ -145,7 +148,18 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     const mode = prompt.split(" ").at(-1)!;
     const script = `const fs=require('node:fs');const p='apps/workstation/review_config.json';const v=JSON.parse(fs.readFileSync(p,'utf8'));v.exportDelayMs=${mode === "terminal" ? 1 : mode === "running" ? 20000 : 8000};v.unavailableOriginalAction=${mode === "unprovable"};fs.writeFileSync(p,JSON.stringify(v));`;
     if (!previous("bash")) invoke("bash", { command: `node -e ${shellQuote(script)}` });
-    else end("workstation-recovery-configured"); return true;
+    else if (!previous(modelMcpToolName("work-services", "service_list"))) invoke(modelMcpToolName("work-services", "service_list"), {});
+    else if (!previous(modelMcpToolName("work-services", "service_restart"))) {
+      const service = value(previous(modelMcpToolName("work-services", "service_list"))).services.find((item: any) => item.name === "workstation");
+      invoke(modelMcpToolName("work-services", "service_restart"), { serviceId: service.serviceId, idempotencyKey: `recovery-config-${mode}` });
+    } else {
+      const operation = results.filter(result => result.toolName === modelMcpToolName("work-services", "operation_get")).at(-1);
+      if (!operation || ["pending", "running"].includes(value(operation).state)) {
+        if (operation && results.at(-1)?.toolName !== "bash") invoke("bash", { command: "sleep 0.5" });
+        else invoke(modelMcpToolName("work-services", "operation_get"), { operationId: value(previous(modelMcpToolName("work-services", "service_restart"))).operationId });
+      } else end(value(operation).state === "succeeded" ? "workstation-recovery-configured" : "workstation-recovery-configuration-failed");
+    }
+    return true;
   }
   if (/^prove workstation (action idempotency|state conflict) /.test(prompt)) {
     const conflict = prompt.includes("state conflict"), key = prompt.split(" ").at(-1)!;
@@ -170,21 +184,26 @@ export function deterministicWorkstation(stream: AssistantMessageEventStream, ou
     else end("workstation-brain-adopted");
     return true;
   }
-  if (prompt === "deploy deterministic workstation" || prompt === "deploy published workstation") {
+  if (prompt === "deploy deterministic workstation" || prompt === "deploy published workstation" || prompt === "deploy deterministic fastapi workstation") {
+    const fastapi = prompt === "deploy deterministic fastapi workstation";
     const published = prompt === "deploy published workstation";
     const reads = results.filter((result) => result.toolName === "read");
     if (!skill) { end("workstation-deployment-failed:skill-unavailable"); return true; }
     const brain = resolve(dirname(skill), "../..");
     if (!reads.length) invoke("read", { path: skill });
     else if (reads.length === 1) invoke("read", { path: resolve(brain, "references/service-contract.md") });
-    else if (reads.length === 2) invoke("read", { path: resolve(brain, "templates/workstation/SPEC.md") });
+    else if (reads.length === 2) invoke("read", { path: resolve(brain, fastapi ? "templates/fastapi-htmx/SPEC.md" : "templates/workstation/SPEC.md") });
     else if (published && reads.length === 3) invoke("read", { path: resolve(brain, "references/web-base.json") });
     else if (published && (value(reads[3]).state !== "published" || !/@sha256:[a-f0-9]{64}$/.test(value(reads[3]).reference || ''))) end('workstation-deployment-failed:published-base-unavailable');
-    else if (!previous("bash")) invoke("bash", { command: `node ${shellQuote(resolve(brain, 'skills/deploy-work-service/initialize.mjs'))} --template workstation --name workstation` });
+    else if (!previous("bash")) invoke("bash", { command: `node ${shellQuote(resolve(brain, 'skills/deploy-work-service/initialize.mjs'))} --template ${fastapi ? "fastapi-htmx" : "workstation"} --name workstation` });
     else if (previous("bash")!.isError || !text(previous("bash")!).includes('"initialized":true')) end("workstation-deployment-failed:initialization-refused");
+    else if (fastapi && results.filter(result => result.toolName === "bash").length === 1) invoke("bash", {
+      command: "node -e 'const fs=require(\"node:fs\");const p=\"apps/workstation/review_config.json\";const v=JSON.parse(fs.readFileSync(p,\"utf8\"));v.includeCompleted=false;fs.writeFileSync(p,JSON.stringify(v));fs.appendFileSync(\"apps/workstation/SPEC.md\",\"\\nAcceptance fixture: intentionally omit completed Todos until explicit feedback is verified and repaired.\\n\");'"
+    });
+    else if (fastapi && results.some(result => result.toolName === "bash" && result.isError)) end("workstation-deployment-failed:fixture-configuration-refused");
     else if (!previous(modelMcpToolName("work-services", "deployment_context"))) invoke(modelMcpToolName("work-services", "deployment_context"), {});
     else if (!previous(modelMcpToolName("work-services", "service_create"))) invoke(modelMcpToolName("work-services", "service_create"), {
-      definition: { name: "workstation", image: { reference: published ? value(reads[3]).reference : "piwork-workstation:acceptance" }, command: "/usr/local/bin/piwork-web",
+      definition: { name: "workstation", image: { reference: published ? value(reads[3]).reference : fastapi ? "piwork-fastapi-workstation:acceptance" : "piwork-workstation:acceptance" }, command: fastapi ? "/usr/local/bin/piwork-fastapi" : "/usr/local/bin/piwork-web",
         args: ["run", "--app", "/var/data/workspace/apps/workstation"],
         environment: { PYTHONDONTWRITEBYTECODE: "1" }, secretRefs: [], workingDirectory: "/var/data/workspace", mounts: [{ source: "workspace", target: "/var/data/workspace", readOnly: false }],
         ports: [{ name: "web", containerPort: 8080, protocol: "tcp" }], cpuMillis: 500, memoryBytes: 0, enabled: true, required: false,
