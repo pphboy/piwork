@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS ws_jobs(id TEXT PRIMARY KEY, action_id TEXT NOT NULL,
             temporary = self.data / (filename + ".tmp")
             temporary.write_text(row["snapshot_json"])
             temporary.replace(self.data / filename)
-            db.execute("UPDATE ws_jobs SET state='succeeded',result_json=? WHERE id=?", (canonical({"file": "data/workstation/" + filename}), job_id))
+            db.execute("UPDATE ws_jobs SET state='succeeded',result_json=? WHERE id=?", (canonical({"file": "data/" + self.protocol.identity["serviceName"] + "/" + filename}), job_id))
             self.bump(db)
             self.protocol.event(db, "job.completed", {"state": "succeeded"}, self.state(db), job_id=job_id,
                                 action_id=row["action_id"], causation_request_id=request_id, actor="service")

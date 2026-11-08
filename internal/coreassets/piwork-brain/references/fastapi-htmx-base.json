@@ -1,0 +1,15 @@
+{
+  "state": "unpublished",
+  "reference": null,
+  "platform": "linux/amd64",
+  "version": null,
+  "imageId": null,
+  "inputHash": null,
+  "contractVersion": 1,
+  "environmentContract": 1,
+  "stack": "python-fastapi-htmx-sqlite",
+  "anonymousReadable": false,
+  "maintenanceSource": "deploy/images/fastapi-htmx-base/",
+  "registryDigest": null,
+  "hostedPathSupport": true
+}

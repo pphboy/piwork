@@ -1,0 +1,4 @@
+{
+  "files": ["app.py", "pages.py", "ui_actions.py"],
+  "directories": ["templates", "static"]
+}

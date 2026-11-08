@@ -1,0 +1,4 @@
+.fastapi-workstation { max-width: 960px; }
+.fastapi-workstation [role="status"]:empty { display: none; }
+.fastapi-workstation .fastapi-todo-row { gap: 1rem; }
+.fastapi-workstation .htmx-request { opacity: 0.7; }

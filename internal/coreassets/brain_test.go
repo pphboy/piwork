@@ -10,7 +10,7 @@ import (
 
 func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 	version, err := BrainPackageVersion()
-	if err != nil || version != "1.2.2" {
+	if err != nil || version != "1.3.0" {
 		t.Fatal(version, err)
 	}
 	raw, err := BrainPackageArchive()
@@ -38,15 +38,19 @@ func TestBrainArchiveDeliversCurrentWebStack(t *testing.T) {
 		}
 	}
 	for name, expected := range map[string]string{
-		"package.json":                                       `"version": "1.2.2"`,
-		"skills/application-awareness/SKILL.md":              "name: application-awareness",
-		"skills/application-awareness/references/nicegui.md": "Desktop Service",
-		"skills/deploy-work-service/SKILL.md":                "Python + NiceGUI + SQLite",
-		"references/web-base.json":                           `"environmentContract": 2`,
-		"templates/web-app/app.py":                           "from nicegui import app",
-		"templates/web-app/ui.py":                            "from nicegui import ui",
-		"templates/web-app/page-files.json":                  `"files": []`,
-		"templates/workstation/page-files.json":              `"files": []`,
+		"package.json":                                            `"version": "1.3.0"`,
+		"skills/application-awareness/SKILL.md":                   "name: application-awareness",
+		"skills/application-awareness/references/nicegui.md":      "Desktop Service",
+		"skills/deploy-work-service/SKILL.md":                     "Python + NiceGUI + SQLite",
+		"references/web-base.json":                                `"environmentContract": 2`,
+		"templates/web-app/app.py":                                "from nicegui import app",
+		"templates/web-app/ui.py":                                 "from nicegui import ui",
+		"templates/web-app/page-files.json":                       `"files": []`,
+		"templates/workstation/page-files.json":                   `"files": []`,
+		"references/fastapi-htmx-base.json":                       `"state": "unpublished"`,
+		"templates/fastapi-htmx/app.py":                           "workers=1",
+		"templates/common-workstation/workstation.py":             "class Workstation",
+		"skills/application-awareness/references/fastapi-htmx.md": "checked version copy",
 	} {
 		if !strings.Contains(files[name], expected) {
 			t.Fatalf("%s omitted %q", name, expected)

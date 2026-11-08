@@ -16,8 +16,21 @@ function writable(path) {
   if (stat.isDirectory()) for (const name of readdirSync(path)) writable(join(path, name));
 }
 
+export function templateFiles(template) {
+  if (!['web-app', 'workstation', 'fastapi-htmx'].includes(template)) throw new Error('Unknown template');
+  const entries = new Map();
+  for (const part of ['common-workstation', template]) {
+    const source = join(packageRoot, 'templates', part);
+    for (const name of readdirSync(source)) {
+      if (entries.has(name)) throw new Error('Conflicting template input: ' + name);
+      entries.set(name, join(source, name));
+    }
+  }
+  return entries;
+}
+
 export function initialize({ name, template = 'web-app', workspace = '/var/data/workspace' }) {
-  if (!/^[a-z][a-z0-9-]{0,47}$/.test(name || '') || !['web-app', 'workstation'].includes(template)) {
+  if (!/^[a-z][a-z0-9-]{0,47}$/.test(name || '') || !['web-app', 'workstation', 'fastapi-htmx'].includes(template)) {
     throw new Error('Initialization requires a valid application name and standard template');
   }
   const root = realpathSync(workspace);
@@ -26,10 +39,11 @@ export function initialize({ name, template = 'web-app', workspace = '/var/data/
   // Exclusive mkdir rejects every existing target, including dangling links,
   // before the first Spec/source/registration write. Concurrent callers cannot win twice.
   mkdirSync(target);
-  const source = join(packageRoot, 'templates', template);
-  cpSync(join(source, 'SPEC.md'), join(target, 'SPEC.md'), { force: false, errorOnExist: true });
-  for (const entry of readdirSync(source).filter(entry => entry !== 'SPEC.md')) {
-    cpSync(join(source, entry), join(target, entry), { recursive: true, force: false, errorOnExist: true });
+  const entries = templateFiles(template);
+  cpSync(entries.get('SPEC.md'), join(target, 'SPEC.md'), { force: false, errorOnExist: true });
+  for (const [entry, source] of entries) {
+    if (entry === 'SPEC.md') continue;
+    cpSync(source, join(target, entry), { recursive: true, force: false, errorOnExist: true });
   }
   writable(target);
   directory(join(root, '.pi'));

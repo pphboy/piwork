@@ -125,7 +125,7 @@ func TestBundledBrainUpdatesLegacySeedAndPreservesDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.3.0:") || generation != 2 {
 		t.Fatal(head, generation)
 	}
 	after, _ := a.Store.DefaultWork(context.Background())
@@ -187,7 +187,7 @@ func TestBundledBrainUpdatesPriorNiceGUISeedAndRetainsOldArtifact(t *testing.T) 
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.3.0:") || generation != 2 {
 		t.Fatal("prior NiceGUI seed was not updated", head, generation)
 	}
 	retained, err := os.ReadFile(oldManifest)
@@ -237,7 +237,7 @@ func TestBundledBrainAddsAwarenessToPriorNiceGUISeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, generation := brainHead(t, a)
-	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.2.2:") || generation != 2 {
+	if !strings.HasPrefix(head, bundledBrainArtifactID+":1.3.0:") || generation != 2 {
 		t.Fatal("1.2.1 catalog was not upgraded", head, generation)
 	}
 	var current corestore.PackageArtifact
