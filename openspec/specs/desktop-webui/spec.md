@@ -306,7 +306,7 @@ Pi 开发且实现交互契约的 Service SHALL 可以主动记录页面路径�
 
 Starting、Failed、Disabled 和无 Web 入口 SHALL 分别说明真实原因；仅已确认未启用才使用 Disabled 解释。用户 Start/Restart/Retry Service 后 SHALL 保留原 Service 上下文和原 Operation 入口，结果确认后可返回该 Service，并在真实浏览器入口可用时提供 Open Service。详情/处理记录关闭使用 Close，真正取消请求仍使用 Cancel request，不混淆关闭观察与业务取消。
 
-Service选择器 SHALL 使用已确认的名称、observed、enabled及声明Web端口，区分应用切换和Manage services。单端口轻显示，多端口独立选择；非Web/Removed对象不伪造应用入口。切换不可用Service仅选择并解释原因，不自动Start；其他Service/端口的晚准备结果不得覆盖当前选择，Chat上下文保持。
+Service 选择器 SHALL 将应用切换和原管理能力纳入同一锚定 Pop，使用确认的名称、observed、enabled、声明 Web 端口及明确管理目标；单端口轻显示，多端口选择归对应详情，非 Web/Removed 对象不伪造应用入口。管理一个 Service 不自动切换当前应用，控制及日志绑定该确切对象。返回、布局和只读刷新保持当前 Service/端口与 Chat，晚准备结果不覆盖新选择。不可用服务仅选择并解释原因，不自动 Start。Service 工具栏保留原图标职责，外部打开只有一个入口，更多菜单不重复打开独立窗口、管理总列表或全 Work 请求；访问链接、详情中的可复制身份和原独立外壳兼容能力保持。
 
 #### Scenario: 非 Web 和禁用 Service
 - **WHEN** 服务没有可用 Web 端口或被禁用
@@ -343,6 +343,10 @@ Service选择器 SHALL 使用已确认的名称、observed、enabled及声明Web
 #### Scenario: 紧凑选择器保留真实状态与端口
 - **WHEN** 多个Service具有长名称、不同状态或多个声明端口，用户快速切换及用键盘关闭选择器
 - **THEN** 名称/状态/端口与选中项对齐可读，焦点回触发器，只打开当前合法目标；无自动Start、未声明端口或Chat切换
+
+#### Scenario: 在同一个选择 Pop 管理另一服务
+- **WHEN** 当前显示 Service A，用户在选择 Pop 管理 Service B 并读取日志或确认停止
+- **THEN** 控制和日志只绑定 B，不因全局选中项误作用于 A；原 A 应用和用户 Chat 保留，关闭观察不取消已经接受的控制
 
 ### Requirement: 浏览器文件操作覆盖共享 workspace
 
@@ -1313,17 +1317,17 @@ Cancel request 和 Retry request SHALL 是明确且作用域可辨的操作。�
 
 该工作区 SHALL 延续 master 的本地反馈、对象级锁、关闭只停止观察、跨身份清除及已受理 ID 恢复规则；页面状态刷新 SHALL 不重载 Service iframe。处理记录是领域记录，SHALL 不混入通用 UI 读取成功流水；请求状态未知 SHALL 显示最近确认值与 Check status，不能猜测成功或失败。
 
-Desktop SHALL 以当前 Work/Service 的有界请求查询确认是否存在记录。在现有 Service 工具栏右侧、Focus 与独立打开动作之前，仅当已确认有记录时显示所选界面语言的 Agent requests 按钮；确认空集合时隐藏，已完成、已取消和 historical 记录仍使入口保留。初次未确认时不新增空态占位，读取失败不能清除此前已确认存在的入口或被当作空集合。当前 Service 可见且 Work 可查询时 SHALL 自动进行有界、去重的只读刷新，使原本无记录时后来收到的请求能在下一次正常刷新后出现；页面隐藏、身份变化或离开该 Service时停止其周期查询。
+Desktop SHALL 从当前 Work 的 Chat 辅助菜单提供唯一 Agent 请求入口，不再在 Service 工具栏或 Work 更多菜单重复。用户打开后使用有界 Work 查询和显式 Service 来源过滤确认数据，筛选不按网页端口拆分；确认空集合、初次未确认和读取失败分别表达。没有记录时不新增空态工具栏按钮或占位，有记录也不增加计数、摘要条、顶层导航或自动弹窗。请求观察仅在相应检查上下文可见且当前身份/Work 允许查询时按既有规则进行。
 
-新增 Service 入口 SHALL 复用现有请求列表与详情，初始范围为原 Work 与当前 Service；切换网页端口不改变请求范围。列表展示请求内容摘要、来源、时间、真实状态及查看/取消；详情展示原请求、可取得的关联 Run 回复、请求结果与错误，证据和技术身份按需读取。无回复、读取失败、业务请求未完成与某次 Run 已结束 SHALL 分开表达，不拿其他请求的回复或某个 Run succeeded 填充请求完成。关联回复仅从原请求确有关系的 Run 取得，不因自动 Session 共用而展示整个 Session 的无关内容。
+该入口 SHALL 复用现有请求列表与详情，默认范围为原 Work；用户可显式筛选某个 Service，端口变化不产生另一份请求范围。列表展示目标、来源、更新时间、真实状态及原可用动作；详情先显示目标/结果/等待或错误，再按需读取执行、证据和技术身份。无回复、读取失败、业务目标未完成及某次 Run 已结束分别表达，不取其他请求回复，不用 Run succeeded 冒充请求完成。关联回复只来自原请求已确认的 runIds，不展示共用 Session 的无关历史。
 
-Service 入口的新增操作 SHALL 限于查看和取消，不增加补充对话或输入框；原 Chat 全 Work 入口和既有显式 Retry 能力保持原位置与语义，不在新入口增加重试流程。pending 或等待中的 live 请求可直接取消，执行中显示 cancelling 直到真实 Run 收尾；取消后不得再自动续接。终态完成先提交时返回原结果，historical 只读。取消 Agent 处理不撤销已经提交的业务 Job 或数据。
+合并入口仅改变发现位置，不增加补充对话或第二个输入框。既有 Work 级显式 Retry 及其准入保持，来源过滤不增加动作权限，不为请求自动重试。pending 或等待的 live 请求可按原规则取消，执行中保持 cancelling 直到真实收尾；终态完成先提交则保留原结果，historical 只读。取消 Agent 处理不撤销已提交业务 Job 或数据。
 
 列表/详情的查看、分页、状态刷新与关闭 SHALL 不修改用户 Session 选择，不重载同一 Service iframe，不启动 Run。关闭详情返回原请求列表及其过滤、阅读位置，关闭列表返回发起入口并恢复焦点；Work/Core/账号切换使旧响应失效。读取或取消未确认 SHALL 沿既有错误与原请求 Check status 恢复，不自动重发消息或新建请求。
 
 同一身份、Work 和原请求范围内，关联 Run 读取失败 SHALL 保留该 Run 最后确认的回复、实际模型与 Thinking，并显示读取错误及最后成功读取时间；首次未取得回复、已取得后刷新失败及其他 Run 成功刷新 SHALL 分别表达。部分失败不得清空其他已确认回复，不得使用其他请求缓存填充内容；关联仅以该原请求当前确认的 runIds 为准。
 
-原 Chat 显式 Retry 的接受响应未知时，Desktop SHALL 保留原 Work、原 requestId、原 submissionKey 和对应未知操作锁，并通过纯读取核对该次 Retry 的受理结果。确认受理时 SHALL 验证新请求属于该 Work 且 retryOf 指向原请求，展示该已受理新请求并仅解除匹配的未知锁；读取旧请求本身或另一个新请求不得视为该次 Retry 已确认。同一身份内未找到映射、读取失败或旧组件不支持时 SHALL 保留未知表达、原键和匹配锁，不自动重发 Retry、不新建键、不解除其他操作锁。身份改变 SHALL 使旧响应失效，不把旧意图或内容迁移到新身份，不以旧结果解除新身份的锁。只读核对不得唤醒处理、创建请求/Run 或隐式 Start/Apply；Service 新入口仍不增加 Retry 动作。
+原 Chat 显式 Retry 的接受响应未知时，Desktop SHALL 保留原 Work、原 requestId、原 submissionKey 和对应未知操作锁，并通过纯读取核对该次 Retry 的受理结果。确认受理时 SHALL 验证新请求属于该 Work 且 retryOf 指向原请求，展示该已受理新请求并仅解除匹配的未知锁；读取旧请求本身或另一个新请求不得视为该次 Retry 已确认。同一身份内未找到映射、读取失败或旧组件不支持时 SHALL 保留未知表达、原键和匹配锁，不自动重发 Retry、不新建键、不解除其他操作锁。身份改变 SHALL 使旧响应失效，不把旧意图或内容迁移到新身份，不以旧结果解除新身份的锁。只读核对不得唤醒处理、创建请求/Run 或隐式 Start/Apply；来源过滤不增加新的 Retry 准入。
 
 用户在列表取消后，Desktop SHALL 在列表或对应详情可见且 Work 可查询时，对该原记录立即及正常每五秒进行有界、去重的只读收尾核对，并将最新确认状态合并回原分页缓存。确认终态后结束该记录的收尾观察；读取失败保留最后确认状态和错误恢复入口，不将取消请求显示为已取消。隐藏页面、离开该 Work 或关闭列表/详情 SHALL 停止本地收尾观察，重新打开时核对原记录，不重发取消；完成先提交时保留真实完成结果。
 
@@ -1342,32 +1346,32 @@ Service 入口的新增操作 SHALL 限于查看和取消，不增加补充对�
 - **THEN** 能完整阅读历史，直接重试不可用，Work 启动不会因此产生自动 Run
 
 #### Scenario: 空 Service 后收到首个请求
-- **WHEN** Service 请求查询已确认空集合，随后该 Service 向 Agentd 成功投递首个请求
-- **THEN** 初始工具栏无按钮和占位，下一次正常只读刷新后出现 Agent requests；没有统计条、状态卡、额外页面或自动弹窗
+- **WHEN** 某 Service 尚无请求，后来收到首个请求，用户从 Chat 请求面板选择该来源
+- **THEN** 入口保持折叠在 Chat 菜单，不自动弹出；可见检查器的下一次正常有界读取显示真实记录，Service 工具栏没有新按钮或摘要
 
 #### Scenario: 只有终态或导入历史
-- **WHEN** 当前 Service 的记录全部已完成、已取消或 historical
-- **THEN** 按钮保留，用户可查看原结果；终态及 historical 不提供取消，historical 不进入自动执行
+- **WHEN** 用户在 Chat 的 Work 请求面板中筛选只有已完成、已取消或 historical 记录的来源
+- **THEN** 可查看原结果及来源，终态/historical 不提供取消，historical 不进入自动执行
 
 #### Scenario: Service 范围和晚响应
-- **WHEN** 用户从 Service A 打开请求记录，换端口或切换为 Service B，A 的旧读取随后返回
-- **THEN** A 的端口变化不产生另一份请求范围；B 的入口和记录只使用 B 的读取，旧响应不覆盖 B 或新的用户身份
+- **WHEN** 用户在同一个请求面板从 Service A 来源筛选改为 B，A 的旧读取随后返回
+- **THEN** A 的端口变化不产生新范围，B 只使用 B 的读取，旧响应不覆盖 B 或新的用户身份
 
 #### Scenario: 请求回复和 Main Chat 保持独立
 - **WHEN** 用户打开多个自动请求之一的详情，自动 Session 同时保存其他请求的历史
 - **THEN** 只显示该请求可确认关联的回复与结果，Main Chat 的 Session、草稿及阅读位置不变，同一 iframe 不增加文档加载，没有新模型提交
 
 #### Scenario: 取消等待或正在处理的请求
-- **WHEN** 用户从新 Service 入口取消一个 pending、waiting_result 或 running 的 live 请求
-- **THEN** 无活跃执行时取消原请求；执行中先显示 cancelling，确认停止后显示 cancelled并阻止续接；原业务 Job 和已提交结果仍按自己的真实状态显示
+- **WHEN** 用户在 Chat 的 Agent 请求检查器中取消一个 pending、waiting_result 或 running 的 live 请求
+- **THEN** 无活动执行时按原请求取消，执行中先显示 cancelling，确认后才显示 cancelled 并阻止续接；原业务 Job 与已提交结果继续表达自己的状态
 
 #### Scenario: 取消回执或查询失败
 - **WHEN** 已有记录的刷新失败，或取消返回结果未确认
 - **THEN** 原入口、请求身份和最后确认内容保留，现有错误与 Check status 可用，不把失败显示为无记录或已取消
 
 #### Scenario: 只读详情关闭与专注布局
-- **WHEN** 用户在 Service + Chat、仅 Service 或 360px 布局中查看、取消并关闭详情
-- **THEN** Agent requests 和退出动作可达，返回原列表或发起入口且焦点可恢复，Service iframe和用户 Chat节点不被重建
+- **WHEN** 用户在 Service + Chat、仅 Service 或360px布局需要查看/取消请求并返回
+- **THEN** 经现有 Show chat/模块导航访问唯一 Chat 请求入口；返回和当前布局出口可达，Service iframe、当前 Session、草稿与焦点保持
 
 #### Scenario: 已确认回复的重新读取失败
 - **WHEN** 原请求已有可见回复和实际执行信息，重新读取对应 Run 返回错误
@@ -1467,7 +1471,7 @@ Service identity 选项 SHALL 在资源命令输入期间明确说明不附加�
 
 Desktop SHALL 在可嵌入 Service 的工具栏提供 Focus，进入填满当前浏览器内容区域的 Service + Chat 布局，隐藏常规导航。Hide chat / Show chat 在同一专注布局切换仅 Service 或 Service + Chat，聊天仍为当前 Session。Exit focus SHALL 始终可达并恢复进入前的常规区域、对象选择、草稿、阅读位置和焦点来源。没有可嵌入 Service、尚未取得入口、明确禁止嵌入或入口失败时 SHALL 给出对应等待/原因与既有独立打开入口，不将 Focus 变成绕过嵌入限制的方法；可保留当前视口的未确认预览仍可进入 Focus，并继续显示真实未知状态。
 
-Focus chat SHALL 从常规区域或 Service 专注布局放大同一 Chat；仅 Chat 头部持续保留 Restore layout 与 Exit focus。恢复回到放大前常规区域或专注布局，退出直接恢复首次进入专注前常规区域。Service + Chat、仅 Service、仅 Chat 共用返回所有者，内部切换不覆盖最初返回目标；普通 Chat 模块仍有正常导航，不等同于 Focus chat。
+Focus chat SHALL 从常规区域或 Service 专注布局放大同一 Chat；Chat Header 只显示一个当前适用的 Focus/恢复/退出控件，不在更多菜单重复。仅 Chat 中恢复放大前常规区域或专注布局；目标已是常规布局时不另显示等效退出按钮。先进入 Service 专注再放大 Chat 时，先恢复原专注布局，再由已可见的 Service Header 退出到首次常规区域。窄屏已占满内容的 Chat 使用当前层级适用的恢复/退出动作。各层退出路径可见、可通过键盘完成；内部切换不覆盖最初返回目标，普通 Chat 模块不等同于 Focus chat。
 
 仅因 Focus chat 及恢复改变布局 SHALL 保持同一 Service iframe/祖先和 Chat 节点连接，隐藏而不卸载、不改 src、不重取入口；正常跨模块导航仍按原规则处理。用户明确切换 Service/端口或 Session 后返回保留该新选择，失效对象给原因且仍可退出。退出与恢复以现有图标按钮和所选界面语言的准确 tooltip/无障碍名表达，不藏在溢出菜单。
 
@@ -1502,8 +1506,8 @@ Full screen SHALL 是专注工具栏中的额外、明确用户动作，使用�
 - **THEN** 每一步有可见出口，恢复回原专注布局，退出恢复常规导航，同一 iframe/Session、表单、草稿、阅读位置及 Activity 展开保持，无重复文档加载或业务请求
 
 #### Scenario: 仅 Chat 直接退出
-- **WHEN** 用户从专注布局进入仅 Chat 并直接 Exit focus
-- **THEN** 一次退出恢复最初常规区域，不需先恢复 Service 工具栏或固定跳往 Services
+- **WHEN** 用户从 Service 专注放大 Chat，再使用头部唯一恢复控件
+- **THEN** 先恢复真实来源的 Service 专注布局，继续从该布局可见的退出动作回最初常规区域；没有两个等效 Focus 按钮，不固定跳往 Services
 
 #### Scenario: 返回目标随来源确定
 - **WHEN** 用户从常规 Files、常规 Chat 或仅 Service 专注进入 Focus chat 并恢复
@@ -1511,7 +1515,7 @@ Full screen SHALL 是专注工具栏中的额外、明确用户动作，使用�
 
 #### Scenario: 仅 Chat 的全屏与异常出口
 - **WHEN** 仅 Chat 中菜单打开、浏览器全屏，或 Work/Service 失去资格
-- **THEN** 菜单、浏览器全屏与布局遵守逐层键盘返回，Exit focus 始终可见，异常原因按真实资格表达，退出不发业务修改
+- **THEN** 菜单、浏览器全屏与布局遵守逐层键盘返回；当前恢复/退出控件持续可见，真实异常可读且退出不发业务修改
 
 ### Requirement: 本机 Desktop 的普通地址启动和使用边界
 
@@ -2169,13 +2173,13 @@ Work 列表 SHALL 根据当前确认的 observed 状态及目标显示对应状�
 
 #### Scenario: Work 已恢复且菜单包含多条旧 Retry
 - **WHEN** Work 当前目标与新鲜状态已确认收敛为可用，多个旧 Retry 已核实终结且无当前待确认义务
-- **THEN** 行只显示当前对象状态与适用动作，菜单通过一个操作记录入口保留每条原失败结果，不逐条常驻 Check progress，不把失败改成成功
+- **THEN** 行只显示当前对象状态与适用动作，通过该 Work 信息中的高级记录入口保留每条原失败结果，不逐条常驻 Check progress，不把失败改成成功
 
 ### Requirement: Work 当前任务与已结束操作历史分别呈现
 
 **Identifier:** DWUI-OPREC-004
 
-Desktop SHALL 在所属 Work 的菜单提供操作记录入口，按当前 Core/账号及已确认 Work 归属显示已知原操作的动作、结果、时间、原 ID 与详情，并可区分当前任务及已结束历史；不提供全局操作发现或跨用户历史。菜单 SHALL 以命令组织，当前需要处理的任务经一个入口查看，不把每条历史操作的进度、检查和详情按钮直接铺在菜单内。已有 Work 信息、设置、Export、原快照找回及合法生命周期命令 SHALL 继续可达。
+Desktop SHALL 在所属 Work 信息的高级“操作与诊断”上下文提供已知原操作的动作、结果、时间、原 ID 与详情，区分当前任务及已结束历史；Work 行和详情的命令菜单不再直接列 Operation history，不提供全局或跨用户历史发现。当前需要处理的任务仍经原对象状态/任务入口访问，不把每条历史操作的进度、检查和详情铺在菜单中。共有 Work 菜单保留设置、信息、Export 及合法生命周期命令。原快照找回由 Work 信息的高级恢复入口进入同 Work 的既有独立导出恢复上下文，不再直接列 Find a previous export，也不把技术 ID 或旧快照诊断塞进仅进度的 Export Details。入口移位不得删除记录、原查询能力或协调保护。
 
 当前任务 SHALL 包括已接受仍在执行、提交结果未知、原对象或同步尚未确认，以及明确失败且仍对应当前控制问题的任务；多个未决任务 SHALL 各保留原身份，不凭时间选择一个覆盖其他任务。已结束且当前没有匹配处理义务的任务 SHALL 归为历史；原 failed 结果保持 failed。Work Ready、Operation succeeded 或本地 terminal 提示中的任意单个信号 SHALL 不足以解除接受意图、Work/列表同步义务、记录保存失败或未知修改保护。旧 Start 结果不得解除新 Stop 的义务；当前状态和历史结果分别表达。
 

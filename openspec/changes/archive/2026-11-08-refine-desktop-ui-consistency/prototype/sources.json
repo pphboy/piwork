@@ -1,0 +1,19 @@
+{
+  "purpose": "Temporary prototype; real Desktop frontend plus synthetic API; no Core connection",
+  "revision": 11,
+  "sourceCommit": "1b8e48a9378ee8bda41fa095a331207b9934b2d3",
+  "sources": [
+    {
+      "file": "apps/ui-shared/tokens.css",
+      "sha256": "be0d1fd670d99951672b6c5d2708d5941d4076a3db409016574a0fd30b615fbb"
+    },
+    {
+      "file": "apps/ui-shared/controls.css",
+      "sha256": "0203399af0b143edfefa07cada20717ccfc0df1594016bb40d452ce061b4076b"
+    },
+    {
+      "file": "apps/desktop-webui/public/style.css",
+      "sha256": "646d9d61615610da6ef86981812b07cbea09062b919d760fa1cb05660660cd7e"
+    }
+  ]
+}

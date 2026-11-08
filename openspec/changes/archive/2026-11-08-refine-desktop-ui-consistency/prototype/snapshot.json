@@ -1,0 +1,63 @@
+{
+  "prototypeRevision": 11,
+  "sourceCommit": "1b8e48a9378ee8bda41fa095a331207b9934b2d3",
+  "kind": "frozen design experiment; synthetic API; not production implementation",
+  "files": [
+    {
+      "path": "changes.js",
+      "sha256": "1b36e42613f99ea2bbc68cc4a5c51a09eec38170f2b8f37d28470fe3c0e48e22"
+    },
+    {
+      "path": "prepare.mjs",
+      "sha256": "3e8a2257f83c2ecf516e1052b2f05c0c5b175fa56794beef9d759df9a3911995"
+    },
+    {
+      "path": "prototype.css",
+      "sha256": "f7ac9bd18bca922cecaa16fc81709e412a82e07ee0fbae99028d11ce3b939083"
+    },
+    {
+      "path": "screenshots/account-language.png",
+      "sha256": "48fabf6f9b939efd30deefc8b4ce01f2addd22704016eb6091efedaaa3de0b0a"
+    },
+    {
+      "path": "screenshots/chat-menu.png",
+      "sha256": "b7c97dd9c59d808d8b25b174d585a2107ea4d3a8c2f24d71138926545a13bb78"
+    },
+    {
+      "path": "screenshots/core-connection.png",
+      "sha256": "2f46fbabfe4744585d4f5619a00a112efdf96c2c4b25ff5e3b1614c66b298b24"
+    },
+    {
+      "path": "screenshots/empty-work.png",
+      "sha256": "0e91995ec035d26091d5ee433ef8e4fde4bce22a5e605df32a1dbc46b8280449"
+    },
+    {
+      "path": "screenshots/file-detail.png",
+      "sha256": "0c292a77d4df41ced130fdb78ff7ee6da527b0dd28836591c7ace8db124ae01a"
+    },
+    {
+      "path": "screenshots/service-selector.png",
+      "sha256": "02a116f98c78e59791d6b13b343f2447c669ff377dd7b5f22e2bd43ab6c51954"
+    },
+    {
+      "path": "screenshots/settings.png",
+      "sha256": "bcbfb3d8801cdbcc82f595739ff91002c1e59429d0f60403fd77c8084db3c63c"
+    },
+    {
+      "path": "screenshots/work-grid.png",
+      "sha256": "76ede92b7c4f1f6b6c2e225ce05da0aa86942563e3778ad35b8db8169886a47c"
+    },
+    {
+      "path": "screenshots/work-menu.png",
+      "sha256": "de3bb88fce15028bcaaedf9124d7ec10b16be012e7e59b2769a44efcfb8a1e85"
+    },
+    {
+      "path": "server.mjs",
+      "sha256": "0e720cc0b4fac95e8a683a23d2a3259a1a95f6976a04a7b60b4fc5c1cc509d70"
+    },
+    {
+      "path": "sources.json",
+      "sha256": "cd9947778bebd7cd7ccea216d0bfd96a3af0f514b0ff82cfce4773277346ffcd"
+    }
+  ]
+}

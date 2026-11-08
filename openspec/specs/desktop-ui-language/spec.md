@@ -44,16 +44,16 @@ Desktop SHALL 以独立 Work 列表为首层；打开 Work SHALL 进入该 Work 
 | 对象详情 | Service、Run、Operation、日志或身份诊断；Close/Back 返回来源，关闭只结束详情展示/观察，明确导出交付的协调观察按 DUL-009 继续；必要时放大为主区域 |
 | 输入与确认弹层 | 目标、字段/影响、提交与取消；取消不提交，成功返回来源并刷新，已接受操作不因关闭而取消 |
 
-Session 选择器 SHALL 仅列当前 Work 的 Sessions，并在顶部提供 New session。Manage services SHALL 从应用视图进入同 Work 服务列表/详情，返回恢复原 Service/端口选择；独立 Service 窗口 SHALL 保留 Back to Work，关闭不停止 Service。
+Session 选择器 SHALL 仅列当前 Work 的 Sessions，并在顶部提供 New session。Chat Header 右上角 SHALL 是选择 Session 的唯一入口；当前 Session 名称可作为非交互身份显示，不再另设名称下拉或在更多菜单重复 Sessions/New session。Service Header 的选择 Pop SHALL 同时承接该 Work 的服务切换和管理子视图，不再经过独立的 Manage services 总列表；管理目标与当前应用选择分别表达，返回恢复原 Service/端口选择。既有独立 Service 外壳的 Back to Work 和关闭不停止服务的行为继续保留。
 
 模型选择 SHALL 进入既有 Agent 辅助栏或聚焦 Chat；Service 处理记录与证据 SHALL 进入所属 Work 请求检查面板和对象详情；脑包编辑与候选状态 SHALL 进入 Files / Settings 的 Pi Packages。入口不得新增必须先经过的总览；选中 Services 时常规布局保持 Service 主区域；各区域继续保持 Services / Files / Chat 同级导航、单一 Session 输入上下文及返回规则。
 
 Service 工具栏 SHALL 提供 Focus 进入当前 Work 的专注布局。专注布局 SHALL 隐藏常规 Work 身份栏、模块导航及全局低频动作，以紧凑工具栏保留当前对象身份、真实状态、Exit focus 和布局切换入口；仅 Chat 时由 Agent 头部承接可见退出动作；默认保留同一当前 Chat，Hide chat 进入仅 Service 视图。此布局是常规导航规则的明确例外，返回 SHALL 恢复原 Work、模块及对象选择。仅改变布局 SHALL 不改变应用 origin、不重载同一 Service/端口的 iframe、不创建 Session、不停止观察或执行；任意应用自身刷新、跨窗口同步和网络故障仍不属于外壳保存保证。Settings、Files 或其他模块导航 SHALL 先恢复常规布局，再沿原返回规则打开。
-Focus chat SHALL 从常规或 Service 专注布局放大同一 Session，Restore layout 返回放大前区域或专注布局，Exit focus 直接恢复首次进入专注前常规区域。两者目标可辨且持续可见，不依赖被隐藏的 Service 工具栏，不将返回统一固定为 Services。返回保留用户在专注期间明确作出的对象选择；失效对象给真实原因与可用出口。
+Focus chat SHALL 从常规或 Service 专注布局放大同一 Session，Chat Header 只显示一个当前上下文适用的 Focus/恢复控件，不在更多菜单重复同一动作。仅 Chat 中由该控件恢复放大前区域或专注布局；恢复目标已是常规布局时不另显示等效 Exit focus。若先进入 Service 专注再放大 Chat，则先恢复原专注布局，再由恢复后可见的 Service Header 退出到最初常规区域。窄屏已占满内容区的 Chat 使用当前层级适用的退出/恢复动作，避免并排重复 Focus。各层始终存在可见退出路径，目标由来源确定，不固定跳往 Services；返回保留专注期间明确作出的对象选择，失效对象给真实原因与可用出口。
 
-当前 Service 存在已确认的请求记录时，Desktop SHALL 在现有 Service 工具栏右侧操作区、Focus/独立打开等访问动作之前显示带可访问名称和悬浮提示的 Agent requests 图标按钮。确认没有记录时 SHALL 隐藏该新增按钮，不预留空白区域；已完成、已取消和 historical 记录仍属于存在记录。该入口 SHALL 不附带计数、摘要条、最近状态卡或额外顶层导航；初次读取未确认及读取失败不得被表述为真正空集合，已确认存在记录时读取失败 SHALL 保留入口及既有错误恢复。
+当前 Work 的 Agent 请求 SHALL 折叠在 Chat Header 的辅助菜单中，使用唯一的全 Work 请求检查入口；Work 行、Work 更多菜单、Service 工具栏及 Service 更多菜单不再重复提供请求入口。入口不因暂时无记录而制造摘要条、计数或自动弹窗；首次读取未确认、读取失败和已确认空集合分别表达。
 
-Agent requests SHALL 复用同一请求检查面板，默认范围为当前 Work 和当前 Service，不按网页端口拆分；全 Work 的 Pi Requests SHALL 位于 Work 导航右侧的辅助动作，不作为当前 Session 历史或第四个必经主区域。Service + Chat 和仅 Service 专注布局中，符合显示条件的 Service 入口 SHALL 保持可达；全 Work 入口在仅 Chat 或其他专注布局中 SHALL 从可见的 Work/对象辅助菜单保持可达，并明确 Work 范围。打开、取消后的刷新及关闭 SHALL 保持同一 Service iframe、当前用户 Session、草稿和阅读位置；返回及键盘焦点按 DUL-007 恢复，不创建第二个输入上下文。
+Agent 请求 SHALL 复用同一请求检查面板，初始范围为当前 Work，可在其中显式按 Service 来源过滤，不按网页端口拆分。入口不是当前 Session 历史或第四个必经主区域。仅 Service 专注或 Chat 收起时，用户经现有 Show chat/模块导航进入同 Work Chat 后访问该菜单，不额外增加另一个请求按钮。打开、刷新、取消后的核对及关闭保持同一 Service iframe、当前用户 Session、草稿和阅读位置；返回及键盘焦点按 DUL-007 恢复，不创建第二个输入上下文。
 
 请求详情读取失败时，Desktop SHALL 在原容器保留同一请求最后确认的回复与执行信息，并叠加读取失败及最后确认时间；首次没有取得内容与已有内容暂时无法刷新 SHALL 分开表达。列表取消中的记录 SHALL 在原列表或对应详情可见时核对真实收尾，更新原记录而不重置分页、过滤或阅读位置；关闭只停止观察，不改变远端取消。
 
@@ -65,7 +65,7 @@ Pi Requests SHALL 区分业务目标、一次 Run 和当前 Session：列表按�
 
 宽屏 Service/Chat SHALL 保持左应用右对话，并提供可拖动及键盘可操作的分隔线、最小可读宽度和重置默认布局入口。普通 Collapse Chat SHALL 只收起辅助栏，保留 Work 导航；Show chat 恢复当前身份页面内该 Work 的比例、Session、草稿和阅读位置。Focus chat、Restore layout、Exit focus 与普通折叠 SHALL 是不同动作。窄屏 SHALL 使用单面板或可关闭覆盖层，隐藏不可用的分隔线；返回宽屏恢复上次比例并按可用宽度限制，不新增跨重启恢复承诺。
 
-Service 选择器 SHALL 将名称、真实状态及选中标记按一致列表结构呈现；主Header与选择器不展示技术端口，声明端口与合法多入口选择归Service详情，Manage services 为管理出口。切换不自动启动不可用 Service，不切换当前 Chat Session，不猜测未声明端口；不可用项给真实原因，长名称与键盘/窄屏可操作。独立 Service 窗口不因布局改进新增 Chat。
+Service 选择器 SHALL 以轻量触发器和紧凑 Pop 显示名称、真实状态、固定选中槽及管理动作列，选中项变化不得挤动其他行的列。主 Header 与选择器不展示技术端口，声明端口与合法多入口选择归所属管理详情。无 Web 入口或不可用服务仍可被管理，不伪造应用入口；切换不自动启动、不改变当前 Chat Session、不猜测端口。管理子视图可在该 Pop 内展开，日志和长技术信息在其所属区域滚动，危险确认仍使用原确认容器。Service 工具栏保留既有布局、Focus、外部打开与更多图标职责，外部打开只保留一个明确动作，不在更多菜单重复独立窗口或管理命令。复制访问链接和独立外壳兼容行为保持，长名称、键盘和窄屏可操作。
 
 Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时使用局部结构骨架，可使用低对比渐变，减少动态效果时为静态；已有确认列表、空集合、消息及Service iframe在背景读取时保留，手动刷新等待回到原控件。失败与未知保留原对象恢复入口，不闪现假空列表或欢迎。Service首次信息或合法入口尚未取得时 SHALL 有局部占位；取得入口后直接显示iframe，不以等待导航load遮挡已可交互内容。导航load不等同于业务就绪，不因后续读取重建已显示iframe。Packages及Work/Service属性行 SHALL 保持名称、说明、状态和动作的对齐与分组，长内容与窄屏可换行。
 
@@ -98,24 +98,24 @@ Works、Open Work、Services与Chat SHALL 仅在所属内容首次未确认时�
 - **THEN** 同一应用视口和当前 Session 持续存在，原模块导航恢复，草稿和 Desktop 阅读位置保留，没有生命周期或对话提交副作用
 
 #### Scenario: 专注后聚焦聊天仍可退出
-- **WHEN** 用户依次进入 Focus、Focus chat、Restore layout、Exit focus
-- **THEN** 仅 Chat 中恢复和退出均可见，恢复返回原专注布局，退出恢复常规导航，Session 与草稿保留
+- **WHEN** 用户依次进入 Service Focus、Focus chat、恢复布局，再退出专注
+- **THEN** Chat Header 只提供当前适用的一个恢复控件；先回原专注布局，再使用已可见的 Service Header 退出，Session、草稿和 iframe 保持，没有两个等效 Focus/退出入口
 
 #### Scenario: 从 Files 放大 Chat 后恢复
 - **WHEN** 用户从 Files 辅助 Chat 进入 Focus chat 并恢复布局
 - **THEN** 返回原 Files 和未保存编辑，不强制切换 Services 或创建新 Session
 
 #### Scenario: 有记录才显示 Service 请求入口
-- **WHEN** 当前 Service 的读取分别确认无记录、有待处理记录或只有已完成/已取消/historical 记录
-- **THEN** 无记录时工具栏没有新增按钮及占位，其余情况在工具栏右侧显示 Agent requests，主区域没有摘要条、计数或状态卡
+- **WHEN** 当前 Service 的记录分别为空、存在待处理或只有已完成/已取消/historical 记录
+- **THEN** Service 工具栏均不新增请求按钮；Chat 辅助菜单中的 Work 请求入口保持可发现，打开后按真实读取显示内容、空态或错误
 
 #### Scenario: 从 Service 入口查看再返回
-- **WHEN** 用户从 Service 工具栏打开 Agent requests、查看详情并关闭
-- **THEN** 列表初始只显示该 Work/Service 的记录，返回保留原 Service/端口和 Main Chat 的 Session、草稿及阅读位置，同一 iframe 不重新加载
+- **WHEN** 用户从 Chat 的 Agent 请求进入同 Work 列表，并筛选当前 Service 后查看详情再关闭
+- **THEN** 范围只属于原 Work/Service，保留来源过滤、应用端口、当前 Session、草稿和阅读位置，同一 iframe 不重新加载
 
 #### Scenario: 专注和窄屏中的请求入口
-- **WHEN** 有记录的 Service 进入 Focus、隐藏 Chat，或窗口为 360px
-- **THEN** 工具栏中的 Agent requests 与 Exit focus 仍可操作，必要时工具栏换行，不另建页面；仅 Chat 时全 Work Pi Requests 辅助入口仍可达
+- **WHEN** 用户处于仅 Service、仅 Chat 或 360px 布局，需要查看请求
+- **THEN** 经现有 Show chat/Chat 导航进入唯一请求入口，恢复与退出路径可达，没有新增 Service 请求按钮、第二个 Session 或整页横向溢出
 
 #### Scenario: 读取失败不伪造空态
 - **WHEN** 已确认有记录后请求读取失败，或首次读取尚未确认
@@ -203,13 +203,13 @@ UI SHALL 区分 Work package（`.work`）与 Pi Package、Open Work 与 Start Wo
 
 **Identifier:** DUL-004
 
-Desktop SHALL 在当前 Service 工具栏展示 Core 映射的 `.work` 域名、真实状态和可复制身份；域名与浏览器实际可打开链接 SHALL 明确区分。WebUI 内嵌 Service、`Pop out` 独立窗口和复制可打开链接 SHALL 通过 CLI 提供的受保护本地浏览器入口访问同一运行中的 Service，用户 SHALL 无需配置浏览器代理/PAC。入口 SHALL 支持 HTTP、SSE、WebSocket 及正常应用导航、路径、跳转和会话行为，隔离不同 Service 的浏览器状态，并遵守 Work/Service 的真实准入。目标禁止嵌入时 SHALL 给出独立窗口入口；无默认 Web 端口时 SHALL 引导选择可用入口或说明无法预览，不假装成功。现有外部工具的 CLI forward proxy 继续作为独立访问方式。
+Desktop SHALL 以 Service 工具栏的唯一外部打开动作访问当前同一运行中 Service，不在更多菜单重复 Pop out/打开独立窗口；复制可直接打开链接继续保留。既有独立外壳直达路由及 Back to Work 兼容行为不因入口整理而删除。浏览器内嵌和外部打开 SHALL 继续遵守 browser-service-access、DWUI-HOSTED-001 及所属部署方式的既有 URL、身份、Cookie 和真实 Work/Service 准入；独立 CLI Desktop 仍使用受保护本地浏览器入口和 Core 映射身份，用户无需配置浏览器代理/PAC。域名身份与实际浏览器链接分开，不把托管同源路径改成另一套访问方式。HTTP、SSE、WebSocket、应用导航、跳转、会话及既有隔离边界保持。禁止嵌入时使用同一外部打开动作，不删除安全响应头；没有合法 Web 端口时说明原因，不假装成功。现有外部工具的 CLI forward proxy 继续独立提供。
 
-域名按 Core 的 `service_name.work_network_name.work` 映射展示；Work 网络标识、用户显示名称与完整 Work ID SHALL 分开，复制身份不替代复制可直接打开的链接。Work/Service 变为不可用时，正常独立外壳 SHALL 显示所属对象、不可用原因和 Back to Work，不保留虚假的成功状态。禁止嵌入的应用 SHALL 可直接在独立标签页打开，保留其安全策略与原应用界面；该模式的返回入口保留在原 Work 面板，下一次真正到达本地入口且被拒绝的文档导航 SHALL 返回带 Work 身份和 Back to Work 的不可用页，活动网络连接仍遵守 Core 撤销边界。外壳不承诺实时覆盖任意应用已渲染或离线缓存的画面。
+在提供该域名的独立 CLI 部署中，域名按 Core 的 `service_name.work_network_name.work` 映射展示；Work 网络标识、用户显示名称与完整 Work ID SHALL 分开，复制身份不替代复制可直接打开的链接。Work/Service 变为不可用时，正常独立外壳 SHALL 显示所属对象、不可用原因和 Back to Work，不保留虚假的成功状态。禁止嵌入的应用 SHALL 可直接在独立标签页打开，保留其安全策略与原应用界面；该模式的返回入口保留在原 Work 面板，下一次真正到达本地入口且被拒绝的文档导航 SHALL 返回带 Work 身份和 Back to Work 的不可用页，活动网络连接仍遵守 Core 撤销边界。外壳不承诺实时覆盖任意应用已渲染或离线缓存的画面。
 
 #### Scenario: 打开正在运行的 Service
-- **WHEN** 用户在未设置浏览器代理/PAC 的环境中打开 Work Service 并点击 `Pop out`
-- **THEN** 嵌入视图和独立窗口都能一键访问同一 Service；工具栏显示 Core 域名，复制的浏览器链接可直接打开
+- **WHEN** 用户在未设置浏览器代理/PAC 的环境中打开 Work Service，并点击工具栏唯一外部打开图标
+- **THEN** 内嵌与外部浏览器页面访问同一 Service，访问身份和真实准入不变；更多菜单不再重复独立窗口，原直达外壳和链接仍可使用
 
 #### Scenario: Service 拒绝嵌入
 - **WHEN** Service 的响应不允许被 WebUI 嵌入
@@ -806,7 +806,7 @@ Model/Thinking、slash 菜单、Activity 及状态反馈 SHALL 沿用现有同�
 
 **Identifier:** DUL-OVERLAY-ROLE-001
 
-Desktop SHALL 使用Dropdown承载一组命令、Popover承载Service/模型选择与简单设置、Modal承载必要阻断决策或独立子任务、Drawer承载持续Service管理与详情。Tooltip只解释元素。Dropdown/Popover SHALL 锚定实际触发控件、适配视口、无背景遮罩或焦点陷阱；外侧点击保持原目标动作，Escape恢复合法触发器，Dropdown支持方向键/Home/End和Tab离开。身份/上下文失效不得保留旧对象动作，现有危险确认和写入保护不变。Modal SHALL 继续立即开关，不引入动画。
+Desktop SHALL 使用 Dropdown 承载命令、Popover 承载 Service/模型/Session 选择和简单设置，Modal 承载必要阻断决策或独立子任务；持续且超出轻量管理范围的对象诊断继续使用所属详情容器。Service 选择 Pop 内可展开管理与有界日志子视图，不再强制先打开独立管理总列表。Tooltip 只解释元素。Dropdown/Popover 锚定实际触发控件、适配视口、无背景遮罩或焦点陷阱；外侧点击保持原目标动作，Escape 恢复合法触发器，命令菜单支持方向键/Home/End 和 Tab 离开。账户语言是有明确父子关系的二级单选 Pop：先返回父菜单再关闭父层，身份/上下文变化一并清理，不能形成无归属叠层。现有危险确认及写入保护不变，Modal 即时开关，不引入动画。
 
 #### Scenario: 选择Service不打断工作区
 - **WHEN** 用户点击Service Header名称选择Service
@@ -815,8 +815,8 @@ Desktop SHALL 使用Dropdown承载一组命令、Popover承载Service/模型选�
 账号、Work、Agent、Service及文件对象Dropdown的明确命令行 SHALL 使用一致的前置装饰图标与可读文字，包括Agent布局和浏览器全屏分支；属性值列表、提示文字及普通Dialog footer不适用此图标要求。
 
 #### Scenario: 更多命令与持续管理使用正确容器
-- **WHEN** 用户打开账号/Work/Agent/Service/文件更多操作，或进入Service详情
-- **THEN** 分别使用键盘可操作的Dropdown或持续侧栏；删除/停止确认仍阻断且不继承轻触关闭
+- **WHEN** 用户打开账号/Work/Agent/Service/文件更多操作，或从 Service 选择器进入管理与详情
+- **THEN** 命令使用紧凑 Dropdown，轻量服务管理在选择 Pop 的明确子视图中进行，长内容按所属区域滚动；删除/停止仍打开原阻断确认，不继承轻触关闭
 
 #### Scenario: Service Header原位切换Chat
 - **WHEN** 用户在宽屏或窄屏切换Show/Hide Chat
@@ -958,9 +958,9 @@ Desktop SHALL 将 Work、Service、Apply、Package 和导入导出的任务反�
 
 **Identifier:** DUL-NAVSCOPE-001
 
-Desktop 的 Administration（中文“管理”）SHALL 仅在有权的全局账号菜单出现，不放在 Work 行、行菜单或已打开 Work 的更多菜单；Serve/Admin Header SHALL 直接保留返回 Workbench 的真实链接，不藏入账号菜单。Work 列表行及行菜单 SHALL 不显示 Requests；Requests 只从已打开 Work 内的所属入口进入，并绑定该 Work，Service 请求过滤仍在其所属范围内。没有打开有效 Work 时不得复用旧选择显示 Requests。
+Desktop 的 Administration（中文“管理”）及 Quick Setup 快捷导航 SHALL 仅在有权的托管管理员全局账户菜单出现，分别进入既有 /admin 和 /admin/setup，不放在 Work 行、行菜单或 Work 更多菜单；Serve/Admin Header 继续直接提供返回 Workbench 的真实链接。Work 请求只通过已打开 Work 的 Chat 辅助菜单进入并绑定该 Work，Service 过滤在同一检查器内显式选择；没有有效 Work 时不得复用旧选择。语言选择集中到账户菜单的二级 Pop，Work 行菜单、Work 详情菜单与 Work Settings 不再重复语言入口。
 
-行菜单与已打开 Work 头部菜单 SHALL 以显式上下文区分，不通过同名按钮、当前全局选择或是否存在草稿推测。移除越级入口不改变语言选择、Work 信息、生命周期危险确认及其他适用命令；打开/返回不发起生命周期或Run副作用。权限变化或旧菜单晚回调不得把旧对象命令带入新上下文。
+行菜单与已打开 Work 头部菜单 SHALL 以显式上下文区分，不从全局选择或草稿推测目标；两者的共有命令、名称和顺序保持一致：设置、Work 信息、导出、当前适用的停止命令、删除，危险操作分组。Start/Retry 等原快捷动作及真实状态准入继续保留。移除 Operation history、Find a previous export、Requests 和语言的直接 Work 菜单项，不删除原操作记录、快照恢复、危险确认或业务能力：低频记录与原导出找回从 Work 信息的高级诊断进入所属独立上下文，当前未决反馈仍在原对象/任务区域可达。打开/返回无生命周期或 Run 副作用，权限变化或晚回调不把旧命令带到新上下文。
 
 #### Scenario: Work 行菜单
 - **WHEN** 用户在 Works 列表打开任一行菜单
@@ -975,5 +975,77 @@ Desktop 的 Administration（中文“管理”）SHALL 仅在有权的全局账
 - **THEN** 前者进入真实管理目标，后者直接提供Workbench链接；普通用户不因菜单改版取得权限
 
 #### Scenario: 语言与菜单作用域互不替代
-- **WHEN** 用户切换语言或从行菜单切到已打开Work菜单
-- **THEN** 语言入口按双语契约保留，菜单只更新所选语言和正确scope，不复制Admin/Requests到错误层级
+- **WHEN** 用户从全局账户菜单切换语言，或在 Work 列表行与已打开 Work 菜单间切换
+- **THEN** Work 两处菜单保持相同共有命令且都没有语言入口，选择的语言仍应用到所有当前界面；管理/请求不被复制到错误层级
+
+### Requirement: 紧凑工作台容器沿用默认样式与明确角色
+
+**Identifier:** DUL-CONSISTENCY-001
+
+Desktop SHALL 沿用当前共享浅色令牌、字体、PW Logo 和控件/图标体系，仅为命令菜单、选择 Pop 和信息 Pop 使用明确的紧凑密度。账户、Work、Files、Service、Chat 的命令行图标、文字起点、行距及焦点规则一致，按任务和风险分组；不把确认窗、编辑器或进度视图强制套成命令菜单。Service 选择的名称、状态、选中槽与管理列保持对齐；大标题和空白不挤占轻量选择，选中、悬停和键盘焦点分别可辨。Core 连接 Pop 使用属性和对齐状态行，保留真实 Core 地址、检查时间及 Core/Runtime/Services/文件的分别判断和检查动作，不能用“Core 可达”冒充能力已就绪。长值完整可访问，中英文、窄屏及必要错误不被裁切。
+
+#### Scenario: 命令菜单密度一致
+- **WHEN** 用户依次打开账户、Work 行/详情、文件操作、Service 和 Chat 更多菜单
+- **THEN** 共有命令使用同一紧凑控件语言，目标身份与危险组可辨；现有确认、未知锁和动作准入保持
+
+#### Scenario: 选择列不随选中变化错位
+- **WHEN** 服务名很长、选中项改变，且列表有 Ready/Failed/Disabled/无 Web 入口服务
+- **THEN** 每行固定列对齐，真实原因和有效管理动作可访问；点击切换不自动启动服务
+
+#### Scenario: Core 可达不等于能力可用
+- **WHEN** Core 可达但 Runtime 未就绪或文件/Service 读取失败
+- **THEN** 紧凑 Pop 分别显示实际状态、时间与检查/恢复，不能统一染为成功或伪造可用
+
+### Requirement: Work 列表布局与空态提供同一任务入口
+
+**Identifier:** DUL-CONSISTENCY-002
+
+Work 列表 SHALL 支持 List 与 Grid 两种视图，切换仅改变呈现，保持同一身份、搜索、对象状态、目标 Work 及合法快捷动作，不重新提交业务操作。Work 身份图标与 Service 图标语义区分；列表/卡片中的打开入口明确是导航，不能暗中 Start。只有已确认整个 Work 集合为空时显示简单的首次创建引导：说明 Work 用途，主动作创建 Work，次动作导入已有 Work，二者在同一紧凑区域。首次未确认、读取失败、无匹配结果、Core 未准备以及无可见 Work 的未决任务各沿原状态与恢复呈现；不以营销插图、虚构对象或新向导填充空白。
+
+#### Scenario: 切换布局保留同一对象与搜索
+- **WHEN** 用户搜索 Work 后在 List/Grid 之间切换，并打开某个结果的更多操作
+- **THEN** 过滤、真实状态和菜单目标一致，没有新的创建、启动或停止请求
+
+#### Scenario: 真正空集合有下一步
+- **WHEN** 有效身份确认 Work 集合为空
+- **THEN** 显示简短用途与明确创建/导入动作，仍可看到原有无对象任务、身份与必要恢复
+
+#### Scenario: 无结果和失败不冒充首次使用
+- **WHEN** 有 Work 但搜索无匹配，或首次读取尚未确认/失败
+- **THEN** 分别保留清空搜索、所属骨架或原错误重试，不显示“创建第一个 Work”来掩盖事实
+
+### Requirement: Files 使用单行文件身份与左侧返回
+
+**Identifier:** DUL-CONSISTENCY-003
+
+Files 列表和文件详情 SHALL 采用 44px 的紧凑工具栏局部密度；详情返回文件导航在左侧，文件名/路径和实际保存状态在一条工具栏中表达，不再重复一行相同文件标题。完整路径保持可访问，刷新使用统一图形、原控件和真实读取状态。文件编辑、版本/秒级修改时间保护、保存/放弃、重新读取及其失败/未知恢复保持；来自请求的返回来源继续准确，关闭/返回遇到未保存内容仍执行原保护，不因紧凑布局丢失身份、草稿或操作。
+
+#### Scenario: 查看并返回文件
+- **WHEN** 用户打开一个文本文件并返回列表
+- **THEN** 左侧返回恢复原 Work/路径/阅读上下文，文件身份与保存状态只出现一次，没有隐式保存或刷新其他对象
+
+#### Scenario: 未保存内容仍受保护
+- **WHEN** 用户编辑文件后点击左侧返回或刷新
+- **THEN** 原未保存决策和版本保护继续生效，取消离开保留完整草稿，刷新不暗中覆盖或重试未知写入
+
+#### Scenario: 路径长且视口较窄
+- **WHEN** 长文件路径或360px视口下查看文本/图片/不可编辑预览
+- **THEN** 完整路径及必要动作仍可访问，标题不过度增高，不裁掉失败信息、编辑内容或保存动作
+
+### Requirement: Settings 的紧凑呈现保留完整配置模型
+
+**Identifier:** DUL-CONSISTENCY-004
+
+Work Settings SHALL 以清楚的同 Work 分类导航和编辑区组织 Skills、Pi Packages、AGENTS.md 与 Advanced，宽屏可用侧向导航，窄屏保持分类可达。能力名称、描述、版本、来源、选中/启用、loaded/modelVisible 和详情按真实数据分层展示，未提供不可被虚构。全部分类共享同一草稿，保留完整安装来源、导入、JSON、包/脑包详情及文件跳转；Save、待应用、Apply、失败、未知和当前生效事实继续分开。一个当前任务不重复铺设等效主动作，普通一致状态保持轻量；设置底部不再提供语言切换，必要错误和当前恢复不为紧凑而折叠隐藏。
+
+#### Scenario: 保存不等于已应用
+- **WHEN** 用户修改 Skills/包/AGENTS 或有效 JSON 并保存
+- **THEN** 显示真实已保存待应用，只有明确 Apply 才观察生效；目录、副本、loaded 和行为核验不被合并为成功
+
+#### Scenario: 非法 JSON 与跨分类草稿
+- **WHEN** 用户在多个分类编辑同一配置，或输入非法 JSON
+- **THEN** 有效编辑共享，非法输入保留并按原规则阻止提交/分类转换；保存失败或未知保留草稿，不自动 Apply
+
+#### Scenario: 原功能在新布局仍可达
+- **WHEN** 用户安装包、查看脑包候选或从设置打开源文件
+- **THEN** 原支持来源、详情字段、准入与未保存保护完整，进入同 Work 的原文件并能按原规则返回
