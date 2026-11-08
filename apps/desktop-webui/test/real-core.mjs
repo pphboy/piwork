@@ -110,7 +110,14 @@ try {
   const control=await operatorAPI(coreUrl,dataDir);
   await control('POST','admin/bootstrap',{account:'admin',password:'real-browser-admin-password'});
   await control('PUT','runtime',{provider:'piwork-deterministic',model:'fixture-v1',credential:'fixture-key'});
-  await waitFor(async () => (await fetch(`${coreUrl}/readyz`)).ok, 'Go Core readiness');
+  await waitFor(async () => {
+    const response = await fetch(`${coreUrl}/readyz?profile=docker-delivery`);
+    if (!response.ok) {
+      const diagnostic = await response.json();
+      throw new Error(JSON.stringify(diagnostic));
+    }
+    return true;
+  }, 'Go Core readiness');
   const login = await api(coreUrl, '', 'POST', '/api/v1/login',
     { account: 'admin', password: 'real-browser-admin-password' });
   assert.equal(login.status, 200, JSON.stringify(login.data));
@@ -148,7 +155,13 @@ try {
   await page.locator('.works-page').waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
   const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
-  if(process.env.PIWORK_TEST_CHAT_LEGACY_RECOVERY==='only'){const {chatLegacyRecoveryAcceptance}=await import('./chat-recovery-real-core.mjs');await chatLegacyRecoveryAcceptance({page,coreUrl,token,api,waitFor,dataDir});}
+  if (process.env.PIWORK_TEST_SERVICE_VIEW === 'only') {
+    const { serviceViewAcceptance } = await import('./service-view-real-core.mjs');
+    await serviceViewAcceptance({ page, coreUrl, uiUrl: `http://127.0.0.1:${uiPort}`, token, api, waitFor, image });
+  } else if (process.env.PIWORK_TEST_CHAT_LEGACY_RECOVERY === 'only') {
+    const { chatLegacyRecoveryAcceptance } = await import('./chat-recovery-real-core.mjs');
+    await chatLegacyRecoveryAcceptance({ page, coreUrl, token, api, waitFor, dataDir });
+  }
   else if(process.env.PIWORK_TEST_CHAT_RECOVERY==='only'){const {chatRecoveryAcceptance}=await import('./chat-recovery-real-core.mjs');await chatRecoveryAcceptance({page,coreUrl,token,api,waitFor,dataDir});}
   else if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
   else if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();

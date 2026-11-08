@@ -96,6 +96,38 @@ func TestReadyResourcesRejectMissingCapturedSkillAndPackage(t *testing.T) {
 	}
 }
 
+func TestServiceViewToolsRespectReadinessPolicyAndLegacyAgents(t *testing.T) {
+	spec := fixtureContext(t)
+	context, err := readCaptured(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	basic := builtInTools(context.config.Tools)
+	for _, extra := range [][]string{nil, {"service_select"}, {"service_select", "service_refresh"}} {
+		ready := &agentv1.ReadinessResponse{ResolvedTools: append(append([]string{}, basic...), extra...)}
+		if err := verifyResources(ready, context); err != nil {
+			t.Fatal("valid native or legacy tool report rejected", err)
+		}
+	}
+	for _, extra := range [][]string{{"service_focus"}, {"service_select", "service_select"}} {
+		ready := &agentv1.ReadinessResponse{ResolvedTools: append(append([]string{}, basic...), extra...)}
+		if err := verifyResources(ready, context); !errors.Is(err, agentclient.ErrReadiness) {
+			t.Fatal("unknown or duplicate native tool admitted", err)
+		}
+	}
+	context.config.Tools.Denied = []contracts.WorkToolPolicyKey{"service_refresh"}
+	ready := &agentv1.ReadinessResponse{ResolvedTools: append(append([]string{}, basic...), "service_refresh")}
+	if err := verifyResources(ready, context); !errors.Is(err, agentclient.ErrReadiness) {
+		t.Fatal("denied native tool admitted", err)
+	}
+	context.config.Tools.Allowed = []contracts.WorkToolPolicyKey{"read", "service_select"}
+	context.config.Tools.Denied = nil
+	ready.ResolvedTools = []string{"read", "service_refresh"}
+	if err := verifyResources(ready, context); !errors.Is(err, agentclient.ErrReadiness) {
+		t.Fatal("native tool outside allowed policy admitted", err)
+	}
+}
+
 func TestCapturedContextRejectsOtherWritableFiles(t *testing.T) {
 	spec := fixtureContext(t)
 	path := filepath.Join(spec.ContextDirectory, "config.json")

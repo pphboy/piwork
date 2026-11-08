@@ -12,3 +12,5 @@ export * from "./ai-model-management.js";
 export * from "./log-export.js";
 
 export * from "./web-onboarding.js";
+
+export * from "./service-view-controls.js";

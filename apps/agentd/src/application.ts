@@ -1,6 +1,7 @@
 import { lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { X509Certificate } from "node:crypto";
 import { join } from "node:path";
+import { serviceViewToolNames, serviceViewTools } from "./service-view-tools.js";
 import { closeMcpWithDeadline } from './mcp-shutdown.js';
 import {
   Server,
@@ -13,6 +14,7 @@ import {
 import {
   AgentServiceService,
   BUILT_IN_WORK_TOOLS,
+  SERVICE_VIEW_TOOLS,
   CONTRACT_VERSION,
   resolveBuiltInWorkTools,
   RunState,
@@ -256,11 +258,12 @@ export class AgentApplication {
         throw error;
       }
       const bridgedTools = mcpTools(mcp, loaded.toolPolicy);
-      const customTools = bridgedTools.map((tool) => tool.definition);
+      const viewToolNames = serviceViewToolNames(loaded.toolPolicy);
+      const customTools = [...bridgedTools.map((tool) => tool.definition), ...serviceViewTools(viewToolNames)];
       const temporaryAttempts = new Set<string>();
-      const reserved = new Set<string>([...BUILT_IN_WORK_TOOLS, ...customTools.map((tool) => tool.name)]);
+      const reserved = new Set<string>([...BUILT_IN_WORK_TOOLS, ...SERVICE_VIEW_TOOLS, ...customTools.map((tool) => tool.name)]);
       const packageTools = selectPackageTools(loaded.packageTools, loaded.toolPolicy, reserved);
-      const resolvedTools = [...loaded.resolvedTools, ...bridgedTools.map((tool) => tool.canonicalName), ...packageTools.map(([canonical]) => canonical)];
+      const resolvedTools = [...loaded.resolvedTools, ...viewToolNames, ...bridgedTools.map((tool) => tool.canonicalName), ...packageTools.map(([canonical]) => canonical)];
       const sdkTools = [...loaded.resolvedTools, ...customTools.map((tool) => tool.name), ...packageTools.map(([, native]) => native)];
       const bindings = new ServiceBindingRegistry(config.workId, control);
       const interactions = new ServiceInteractionClient(workspace, bindings, store.feedback);
@@ -274,7 +277,7 @@ export class AgentApplication {
         join(config.dataDirectory, "agent"),
         { ...config.model, deterministic: config.deterministic },
         { resourceLoaderFactory: loaded.loaderFactory, resolvedTools: sdkTools, customTools, models, commands: loaded.commands, packageTools: new Map(packageTools),
-          customToolsFactory: (run) => mcpTools(mcp!, loaded.toolPolicy, { run, generation: config.generation, instanceId: config.instanceId, control, attempted: temporaryAttempts }).map((tool) => tool.definition),
+          customToolsFactory: (run) => [...mcpTools(mcp!, loaded.toolPolicy, { run, generation: config.generation, instanceId: config.instanceId, control, attempted: temporaryAttempts }).map((tool) => tool.definition), ...serviceViewTools(viewToolNames, run)],
           onSdkToolResult: (run, result) => candidates.recordSdkResult(run, result, new Map(packageTools)) },
       )), undefined, models, prompt => { requireResourceCommand(loaded.commands, prompt); }, activeBrain !== undefined, sessionId => sessions.hasImageContext(sessionId));
       runs.onSettled((run) => {
