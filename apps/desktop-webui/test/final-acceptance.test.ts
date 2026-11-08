@@ -316,7 +316,7 @@ test('Final 12.5 Service picker reports all real states and multi-port late prep
   await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
   await expect(page.locator('iframe')).toHaveAttribute('src', /work-1-service-b-80/);
   await expect(page.locator('#composer')).toHaveValue('same Session');
-  await expect(page.locator('.session-line')).toContainText('Session 1');
+  await expect(page.locator('.session-line')).toContainText('original prompt');
   const targets = requests.filter(r => r.path === 'service-entries').map(r => JSON.parse(r.body));
   assert.deepEqual(targets, [{ workId: 'work-1', serviceId: 'service-a', port: 80 }, { workId: 'work-1', serviceId: 'service-a', port: 81 }, { workId: 'work-1', serviceId: 'service-b', port: 80 }]);
   assert.equal(businessWrites(requests).length, 0);

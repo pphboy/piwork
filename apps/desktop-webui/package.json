@@ -7,6 +7,7 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs && node ../../scripts/sync-desktop-assets.mjs",
+    "test:session-cdp": "npm run build && node test/session-management-cdp.mjs",
     "test:browser": "tsc -p tsconfig.test.json && node --test --test-reporter=tap --test-timeout=120000 --test-concurrency=1 dist/test/*.test.js",
     "test:real-core": "node test/real-core.mjs"
   },

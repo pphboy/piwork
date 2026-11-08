@@ -2136,6 +2136,10 @@ for (const width of [1440, 360]) test(`Session chooser presentation stays readab
     await expect(page.locator('#modal [data-action=close-modal]')).toHaveCount(1);
     await expect(page.locator('#modal .modal-footer')).toHaveCount(0);
     await expect(page.locator('#modal [data-action=new-session]')).not.toHaveClass(/primary/);
+    const newButton = page.locator('#modal .modal-head [data-action=new-session]');
+    await expect(newButton).toHaveCount(1);
+    const newGeometry = await newButton.boundingBox(), pickerGeometry = await page.locator('#modal').boundingBox();
+    assert.ok(newGeometry && pickerGeometry && newGeometry.width < pickerGeometry.width / 2, 'New is a compact header action');
     const spacing = await page.evaluate(() => {
       const a = document.querySelector('#modal [data-action=new-session]')!.getBoundingClientRect();
       const b = document.querySelector('#modal [role=listbox]')!.getBoundingClientRect();
@@ -2211,7 +2215,196 @@ test('Session chooser keyboard switching retains drafts and creating remains sin
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/sessions')).length, 1);
   create.resolve(); await expect(page.locator('#modal')).toHaveCount(0);
   await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-new$/);
+  await expect(page.locator('#messages .chat-welcome')).toBeVisible();
+  assert.ok(requests.some(r => r.method === 'GET' && r.path.endsWith('/sessions/session-new')), 'the accepted Session history is actually read');
   assert.equal(requests.filter(r => r.method === 'POST' && !r.path.endsWith('/sessions')).length, 0);
+});
+
+test('new Session history failure keeps the created Session and retries only the read', async t => {
+  let created = false, failRead = true;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/history-capabilities')) return { status: 501, json: { code: 'HISTORY_UNSUPPORTED' } };
+    if (r.path === 'works/work-1/sessions' && r.method === 'POST') {
+      created = true;
+      return { json: { sessionId: 'session-new' } };
+    }
+    if (r.path === 'works/work-1/sessions' && r.method === 'GET') return { json: { sessions: created ? [{ sessionId: 'session-new' }, { sessionId: 'session-1' }] : [{ sessionId: 'session-1' }] } };
+    if (r.path.endsWith('/sessions/session-new')) return failRead ? { status: 503, json: { code: 'UNAVAILABLE', message: 'Synthetic history failure' } } : { json: { session: { workId: 'work-1', sessionId: 'session-new' }, messages: [], runs: [] } };
+  });
+  await button(page, 'sessions').click();
+  await button(page, 'new-session').click();
+  await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-new$/);
+  await expect(button(page, 'retry-conversation')).toBeVisible();
+  failRead = false;
+  await button(page, 'retry-conversation').click();
+  await expect(page.locator('#messages .chat-welcome')).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path === 'works/work-1/sessions').length, 1);
+});
+
+test('late Session creation does not replace a newer explicit selection or its draft', async t => {
+  const create = deferred(); t.after(async () => create.resolve());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/sessions') && r.method === 'POST') {
+      await create.promise;
+      return { json: { sessionId: 'session-late' } };
+    }
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: [{ sessionId: 'session-1' }, { sessionId: 'session-2' }] } };
+    if (r.path.endsWith('/sessions/session-2')) return { json: { session: { workId: 'work-1', sessionId: 'session-2' }, messages: [], runs: [] } };
+  });
+  await button(page, 'sessions').click();
+  await button(page, 'new-session').click();
+  await button(page, 'close-modal').click();
+  await button(page, 'sessions').click();
+  await page.locator('#modal [data-action=select-session][data-id=session-2]').click();
+  await page.locator('#composer').fill('Draft on the selected Session');
+  create.resolve();
+  await expect.poll(() => api(page, "return adapter.getWork('work-1').sessions.some(s => s.id === 'session-late')")).toBe(true);
+  await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', /session-2$/);
+  await expect(page.locator('#composer')).toHaveValue('Draft on the selected Session');
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/sessions')).length, 1);
+});
+
+for (const width of [1440, 360]) test(`Session management targets a nonselected row at ${width}px`, async t => {
+  let title = 'Second Session', revision = 0, deleted = false, autoKey = '', writes = 0;
+  const state = (id: string) => ({ workId: 'work-1', sessionId: id, title: id === 'session-2' ? title : null,
+    titleSource: id === 'session-2' ? revision ? 'manual' : 'auto' : 'default', titleRevision: id === 'session-2' ? revision || 1 : 0,
+    manualTitleLock: id === 'session-2' && revision > 0, deletedAt: null, autoNameState: 'eligible' });
+  // An existing generated title has revision 1.
+  revision = 1;
+  const { page } = await fixture(t, r => {
+    if (r.path.endsWith('/session-management-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/history-capabilities') || r.path.endsWith('/chat-image-capabilities')) return { status: 501, json: { code: 'UNSUPPORTED' } };
+    if (r.path === 'works/work-1/sessions' && r.method === 'GET') return { json: { sessions: [state('session-1'), ...(!deleted ? [state('session-2')] : [])] } };
+    if (r.path.endsWith('/sessions/session-1') || r.path.endsWith('/sessions/session-2')) return { json: { session: state(r.path.split('/').at(-1)!), messages: [], runs: [] } };
+    if (r.path.endsWith('/sessions/session-2/name') && r.method === 'PATCH') {
+      const input = JSON.parse(r.body);
+      assert.equal(input.expectedRevision, revision);
+      title = input.title;
+      revision++;
+      writes++;
+      return { json: { workId: 'work-1', sessionId: 'session-2', title, titleSource: 'manual', revision, manualLock: true, deletedAt: null, autoState: 'eligible' } };
+    }
+    if (r.path.endsWith('/sessions/session-2/auto-name') && r.method === 'POST') {
+      const input = JSON.parse(r.body);
+      assert.equal(input.expectedRevision, revision);
+      autoKey = input.operationKey;
+      writes++;
+      return { json: { operationKey: autoKey, status: 'pending', kind: 'auto-name', state: { workId: 'work-1', sessionId: 'session-2', title, titleSource: 'manual', revision, manualLock: true, deletedAt: null, autoState: 'pending' } } };
+    }
+    if (r.path.endsWith('/sessions/session-2/management-operations/' + autoKey)) {
+      title = 'Generated title';
+      revision++;
+      return { json: { operationKey: autoKey, status: 'accepted', kind: 'auto-name', state: { workId: 'work-1', sessionId: 'session-2', title, titleSource: 'auto', revision, manualLock: true, deletedAt: null, autoState: 'completed' } } };
+    }
+    if (r.path.endsWith('/sessions/session-2/delete') && r.method === 'POST') {
+      const input = JSON.parse(r.body);
+      assert.equal(input.expectedRevision, revision);
+      revision++;
+      deleted = true;
+      writes++;
+      return { json: { workId: 'work-1', sessionId: 'session-2', title, titleSource: 'auto', revision, manualLock: true, deletedAt: '2026-11-08T00:00:00Z', autoState: 'completed' } };
+    }
+  });
+  await page.setViewportSize({ width, height: 900 });
+  await button(page, 'sessions').click();
+  const selected = page.locator('#modal [data-action=select-session][data-id=session-1]');
+  await expect(selected).toHaveAttribute('aria-selected', 'true');
+  const menu = page.locator('#modal [data-action=toggle-session-menu][data-session=session-2]');
+  await expect(menu).toBeEnabled();
+  await menu.click();
+  await page.locator('#modal [data-action=rename-session]').click();
+  const input = page.locator('#session-name');
+  await expect(input).toHaveValue('Second Session');
+  await input.fill('Renamed Session');
+  await input.press('Enter');
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-2]')).toContainText('Renamed Session');
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-1]')).toHaveAttribute('aria-selected', 'true');
+  await page.locator('#modal [data-action=auto-name-session]').click();
+  await expect(page.locator('#modal [data-action=check-session-operation]')).toBeVisible();
+  await page.locator('#modal [data-action=check-session-operation]').click();
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-2]')).toContainText('Generated title');
+  await page.locator('#modal [data-action=delete-session]').click();
+  await expect(page.locator('#modal')).toContainText('Conversation history');
+  await button(page, 'close-modal').click();
+  assert.equal(writes, 2, 'cancel does not delete');
+  await page.locator('#modal [data-action=delete-session]').click();
+  await button(page, 'confirm-delete-session').click();
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-2]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-1]')).toHaveAttribute('aria-selected', 'true');
+  assert.equal(writes, 3);
+});
+
+test('Session management degrades safely on an old Agent and blocks active deletion', async t => {
+  let supported = false;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/session-management-capabilities')) return { json: { contractVersion: supported ? 1 : 0 } };
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: [{ sessionId: 'session-1' }] } };
+  });
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal .session-capability-note')).toContainText('unavailable');
+  await expect(page.locator('#modal [data-action=toggle-session-menu]')).toBeDisabled();
+  await button(page, 'close-modal').click();
+  supported = true;
+  await api(page, "adapter.sessionManagement.capabilities.delete('work-1')");
+  await button(page, 'sessions').click();
+  await expect(page.locator('#modal [data-action=toggle-session-menu]')).toBeEnabled();
+  await api(page, "adapter.getWork('work-1').run={id:'run-active',sessionId:'session-1',status:'running'};adapter.emit()");
+  await page.locator('#modal [data-action=toggle-session-menu]').click();
+  await expect(page.locator('#modal [data-action=delete-session]')).toBeDisabled();
+  await expect(page.locator('#modal .session-menu-hint')).toContainText('Stop the task');
+  assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
+});
+
+test('unknown Session rename checks its original key without replaying the write', async t => {
+  let saved = false, key = '';
+  const original = { workId: 'work-1', sessionId: 'session-1', title: null, titleSource: 'default', titleRevision: 0, manualTitleLock: false, deletedAt: null, autoNameState: 'eligible' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/session-management-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: [original] } };
+    if (r.path.endsWith('/sessions/session-1') && r.method === 'GET') return { json: { session: original, messages: [], runs: [] } };
+    if (r.path.endsWith('/sessions/session-1/name') && r.method === 'PATCH') {
+      saved = true;
+      key = JSON.parse(r.body).operationKey;
+      return { abort: true };
+    }
+    if (r.path.endsWith('/management-operations/' + key) && saved) return { json: { operationKey: key, status: 'accepted', kind: 'rename', state: { workId: 'work-1', sessionId: 'session-1', title: 'Recovered title', titleSource: 'manual', revision: 1, manualLock: true, deletedAt: null, autoState: 'eligible' } } };
+  });
+  await button(page, 'sessions').click();
+  const menu = page.locator('#modal [data-action=toggle-session-menu]');
+  await expect(menu).toBeEnabled();
+  await menu.click();
+  await page.locator('#modal [data-action=rename-session]').click();
+  await page.locator('#session-name').fill('Recovered title');
+  await page.locator('#session-name').press('Enter');
+  await expect(page.locator('#modal [data-action=check-session-operation]')).toBeVisible();
+  await page.locator('#modal [data-action=check-session-operation]').click();
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-1]')).toContainText('Recovered title');
+  assert.equal(requests.filter(r => r.method === 'PATCH' && r.path.endsWith('/sessions/session-1/name')).length, 1);
+  assert.ok(requests.some(r => r.method === 'GET' && r.path.endsWith('/management-operations/' + key)));
+});
+
+test('deleting the current last Session removes its draft and creates one replacement', async t => {
+  const original = { workId: 'work-1', sessionId: 'session-1', title: null, titleSource: 'default', titleRevision: 0, manualTitleLock: false, deletedAt: null, autoNameState: 'eligible' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/session-management-capabilities')) return { json: { contractVersion: 1 } };
+    if (r.path.endsWith('/sessions') && r.method === 'GET') return { json: { sessions: [original] } };
+    if (r.path.endsWith('/sessions/session-1') && r.method === 'GET') return { json: { session: original, messages: [], runs: [] } };
+    if (r.path.endsWith('/sessions/session-1/delete') && r.method === 'POST') return { json: { workId: 'work-1', sessionId: 'session-1', title: null, titleSource: 'default', revision: 1, manualLock: false, deletedAt: '2026-11-08T00:00:00Z', autoState: 'eligible' } };
+    if (r.path.endsWith('/sessions') && r.method === 'POST') return { json: { workId: 'work-1', sessionId: 'session-replacement' } };
+    if (r.path.endsWith('/sessions/session-replacement') && r.method === 'GET') return { json: { session: { workId: 'work-1', sessionId: 'session-replacement' }, messages: [], runs: [] } };
+  });
+  await page.locator('#composer').fill('Draft to discard');
+  await button(page, 'sessions').click();
+  const menu = page.locator('#modal [data-action=toggle-session-menu]');
+  await expect(menu).toBeEnabled();
+  await menu.click();
+  await page.locator('#modal [data-action=delete-session]').click();
+  await expect(page.locator('#modal')).toContainText('unsent draft');
+  await page.locator('#modal [data-action=confirm-delete-session]').click();
+  await expect(page.locator('#modal [data-action=select-session][data-id=session-replacement]')).toBeVisible();
+  await button(page, 'close-modal').click();
+  await expect(page.locator('#composer')).toHaveValue('');
+  assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/sessions')).length, 1);
 });
 
 test('Session chooser retains rows during a failed refresh and retries to a confirmed empty list', async t => {
