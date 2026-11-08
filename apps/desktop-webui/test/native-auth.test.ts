@@ -130,7 +130,7 @@ test('native auth: an accepted Import survives Core expiry and same-account logi
   f.page.on('request', r => { if (r.url().endsWith('/bootstrap')) bootstraps++; });
   await f.page.goto(f.launch); await f.login();
   const cookies = await f.context.cookies();
-  await f.page.getByRole('button', { name: 'Import Work', exact: true }).click();
+  await f.page.getByRole('button', { name: 'Import Work', exact: true }).first().click();
   await f.page.locator('#work-file-input').setInputFiles(packagePath);
   await f.page.getByText('Package format and contents verified locally.', { exact: true }).waitFor();
   await f.page.locator('#import-name').fill('Expired import');

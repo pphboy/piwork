@@ -32,8 +32,8 @@ const source=readFileSync(new URL('../browser/app.js',import.meta.url),'utf8');
 const extract=(name:string)=>{const value=source.match(new RegExp('^function '+name+'\\([\\s\\S]*?^}', 'm'));assert.ok(value,name);return value[0];};
 test('commands, value choices and sustained Service tools have explicit bounded roles',()=>{
  for(const name of ['account','work-menu','agent-menu','service-menu','file-menu'])assert.equal(overlayRole(name),'menu');
- for(const name of ['service-picker','sessions','chat-response-settings','chat-input-options','connection','work-info','skill-detail','chat-submission','chat-history-status'])assert.equal(overlayRole(name),'popover');
- for(const name of ['manage-services','service-details','operations','operation','run-details','package-detail'])assert.equal(overlayRole(name),'drawer');
+ for(const name of ['service-picker','sessions','chat-response-settings','chat-input-options','connection','work-info','skill-detail','chat-submission','chat-history-status','service-details'])assert.equal(overlayRole(name),'popover');
+ for(const name of ['operations','operation','run-details','package-detail'])assert.equal(overlayRole(name),'drawer');
  for(const name of ['delete-work','stop-work','service-control','import','new-work','dirty-file','upload-overwrite','unrecognized']){assert.equal(overlayRole(name),'modal');assert.equal(anchoredOverlay(name),false);}
 });
 test('anchor positioning fits narrow edges and flips above bottom launchers',()=>{
@@ -207,11 +207,13 @@ test('first reads render one labelled skeleton shape, never dots plus text plus 
  }
  delete work.resourceChecked.agent;
  const html=c.agent(work,false);
- assert.match(html,/data-action="sessions" aria-label="Loading conversations" aria-busy="true"/);
+ assert.match(html,/data-action="sessions"[^>]*aria-label="Sessions"[^>]*aria-busy="true"/);
  // One task, one main wait: the conversation skeleton carries it, so the
  // trigger names the read and its busy state instead of stacking another animation.
  assert.doesNotMatch(html,/class="pending-dots"/);assert.doesNotMatch(html,/read-placeholder-field/);assert.match(html,/id="composer"/);
- assert.match(html.replace(/<[^>]*>/g,''),/Loading conversations…/);assert.doesNotMatch(html,/No Session yet|chat-welcome/);
+ assert.match(html,/session-name-skeleton skeleton-fill/);
+ assert.doesNotMatch(html,/No Session yet|chat-welcome/);
+
  vm.runInContext(extract('modelComposer'),c);vm.runInContext(extract('modelFeedback'),c);
  c.chatSettings=()=>({name:'Loading models…',thinking:'Loading…',state:{ref:null},initialLoading:true,status:'Loading models…'});
  // The trigger keeps one glyph-sized box while the catalog is read; the name is

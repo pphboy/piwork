@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 const { desktopNoticePageRegion } = await import(new URL('../browser/notice-page-region.js', import.meta.url).href);
 const headerSelector = '.work-header, .topbar-works';
-const toolbarSelectors = ['#workspace-main > .files-toolbar', '#workspace-main > .service-toolbar', '.settings-page > .settings-navigation', '.settings-page > .settings-heading', '.settings-page > .configuration-state', '.settings-page > .settings-tabs', '.agent-panel > .agent-header', '#workspace-main > .file-target-toolbar', '.settings-page > .settings-back', '.settings-page > .feedback [data-action="refresh-config"]'];
+const toolbarSelectors = ['#workspace-main > .files-toolbar', '#workspace-main > .service-toolbar', '.settings-page > .settings-navigation', '.settings-page > .settings-heading', '.settings-page > .configuration-state', '.settings-layout > .settings-tabs', '.agent-panel > .agent-header', '.messages .message-submission.failed', '#workspace-main > .file-target-toolbar', '.settings-page > .settings-back', '.settings-page > .feedback [data-action="refresh-config"]'];
 const footerSelectors = ['#workspace-main > .editor-footer', '.settings-page > .settings-savebar', '.composer-wrap'];
 function fixture(header: object | null, toolbars: readonly object[], footers: readonly object[]) {
   const calls: string[] = [];

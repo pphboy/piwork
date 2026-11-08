@@ -211,7 +211,7 @@ test("browser signs in and out without exposing Core bearer to page storage", as
     await expect(page.locator('#modal .phase-track')).toContainText('superseded');
     assert.equal(await page.getByRole('button',{name:'Pause checking',exact:true}).count(), 0);
     await page.getByRole('button',{name:'Close dialog'}).click();
-    await page.getByRole('button',{name:'Import Work',exact:true}).click();
+    await page.getByRole('button',{name:'Import Work',exact:true}).first().click();
     await expect(page.getByRole('heading',{name:'Import Work',exact:true})).toBeVisible();
     await page.locator('#work-file-input').setInputFiles(workPackagePath);
     await page.getByText('Package format and contents verified locally.',{exact:true}).waitFor().catch(async error => { throw new Error(`${error}\nLocal inspection view: ${await page.locator('#modal').innerText()}`); });
@@ -358,6 +358,8 @@ test("browser Work lifecycle keeps stopped failures out of Retry and preserves D
     await expect(page.locator('#modal .export-snapshot')).toHaveCount(0);
     await page.getByRole('button',{name:'Close dialog'}).click();
     await page.getByRole('button',{name:'Work options'}).click();
+    await page.locator('#modal [data-action=work-info]').click();
+    await page.locator('.work-diagnostics > summary').click();
     await page.locator('#modal [data-action=find-previous-export]').click();
     const originalStop = page.locator('#modal [data-action="operation"][data-id="stop-failed-1234"]');
     await expect(originalStop).toBeVisible();
@@ -808,7 +810,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.locator('[data-action=open-work]').filter({hasText:'笔记工作'}).click();
     await selectService(page, 'notes');
     await page.getByRole('button', {name: 'Service options', exact: true}).click();
-    await page.locator('[data-action=manage-services]').click();
+    await page.locator('[data-action=service-picker]').click();
     await page.locator('[data-action=service-details][data-id=notes]').click();
     assert.equal(await page.getByRole('combobox',{name:'Web entry',exact:true}).inputValue(), '80');
     await page.getByRole('button',{name:'Close dialog',exact:true}).click();
@@ -873,7 +875,7 @@ test("browser opens a running Work Service in an iframe and a separate local tab
     await page.getByLabel('Edit note.txt').fill('saved through delivered UI');
     const notePutsBeforeSave = notePutCalls;
     await page.getByRole('button',{name:'Save file',exact:true}).click();
-    await expect(page.locator('.editor-toolbar').getByText('Saved',{exact:true})).toBeVisible();
+    await expect(page.locator('.file-target-toolbar').getByText('Saved',{exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Save file',exact:true})).toBeDisabled();
     await expect(page.getByLabel('Edit note.txt')).toHaveValue('saved through delivered UI');
     await expect.poll(() => workspaceText).toBe('saved through delivered UI');

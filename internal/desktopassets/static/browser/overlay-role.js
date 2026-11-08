@@ -6,9 +6,9 @@ export function overlayRole(name) {
     // outstanding tasks, not a global operations centre.
     if (name === 'works-tasks')
         return 'drawer';
-    if (['chat-history-status', 'chat-submission', 'service-picker', 'sessions', 'chat-response-settings', 'chat-input-options', 'connection', 'work-info', 'skill-detail'].includes(name))
+    if (['chat-history-status', 'chat-submission', 'service-picker', 'sessions', 'chat-response-settings', 'chat-input-options', 'connection', 'service-details', 'work-info', 'skill-detail'].includes(name))
         return 'popover';
-    if (['manage-services', 'service-details', 'operations', 'operation', 'run-details', 'package-detail', 'export-recovery'].includes(name))
+    if (['operations', 'operation', 'run-details', 'package-detail', 'export-recovery'].includes(name))
         return 'drawer';
     return 'modal';
 }

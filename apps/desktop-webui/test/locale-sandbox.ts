@@ -6,6 +6,7 @@ const { t, stateText, i18n, LocalizedMessage, messageText, formatDateTime, forma
 );
 
 export const localeSandbox = {
+  languagePicker: { isSubmenu: false, close: () => undefined },
   t,
   stateText,
   currentLocale: () => i18n.locale,

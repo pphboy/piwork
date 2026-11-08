@@ -783,21 +783,35 @@ test('UX revision Focus chat restores its prior layout or directly exits without
   await button(page,'service-focus').click(); await button(page,'focus-chat').click();
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
   await expect(page.getByRole('button',{name:'Restore layout',exact:true})).toBeVisible();
-  await expect(page.getByRole('button',{name:'Exit focus',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Exit focus',exact:true})).toHaveCount(0);
   await expect(page.locator('iframe')).toBeHidden();
   await assertKept();
-  await button(page,'agent-menu').click(); await expect(page.getByRole('menuitem',{name:'Restore layout',exact:true})).toBeVisible(); await expect(page.getByRole('menuitem',{name:'Focus chat',exact:true})).toHaveCount(0); await page.keyboard.press('Escape');
+  await button(page,'agent-menu').click();
+  await expect(page.getByRole('menuitem',{name:'Restore layout',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('menuitem',{name:'Focus chat',exact:true})).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
   await expect(page.locator('#modal')).toHaveCount(0);
   await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
   await assertKept();
   const offset=await page.locator('#messages').evaluate((node,key)=>{const item=[...node.querySelectorAll<HTMLElement>('[data-message-key]')].find(item=>item.dataset.messageKey===key)!;return item.getBoundingClientRect().top-node.getBoundingClientRect().top;},anchor.key);
   assert.ok(Math.abs(offset-anchor.offset)<2,`Layout moved reading anchor ${offset-anchor.offset}px`);
   await button(page,'exit-service-focus').click(); await expect(page.locator('.work-tabs')).toBeVisible(); await assertKept();
-  await button(page,'service-focus').click(); await button(page,'focus-chat').click(); await button(page,'exit-service-focus').click();
+  await button(page,'service-focus').click();
+  await button(page,'focus-chat').click();
+  await button(page,'restore-layout').click();
+  await button(page,'exit-service-focus').click();
+
   await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace'); await expect(page.locator('.work-tabs')).toBeVisible(); await assertKept();
   await button(page,'service-focus').click(); await button(page,'focus-toggle-chat').click();
-  await button(page,'service-menu').click(); await page.getByRole('menuitem',{name:'Focus chat',exact:true}).click();
-  await button(page,'restore-layout').click(); await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only'); await expect(page.locator('#composer')).toBeHidden();
+  await button(page,'focus-toggle-chat').click();
+  await button(page,'focus-chat').click();
+
+  await button(page,'restore-layout').click();
+  await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
+  await button(page,'focus-toggle-chat').click();
+  await expect(page.locator('#composer')).toBeHidden();
+
   await button(page,'exit-service-focus').click(); await assertKept();
 });
 
@@ -817,10 +831,13 @@ test('UX revision Files and ordinary Chat remain distinct from Focus chat and pr
   await button(page,'focus-chat').click();await button(page,'restore-layout').click();await expect(button(page,'tab-Chat')).toHaveClass(/active/);await expect(page.locator('.work-tabs')).toBeVisible();
   await button(page,'tab-Services').click();await button(page,'service-focus').click();await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();
   await button(page,'sessions').click();await page.locator('[data-action=select-session][data-id=session-2]').click();
-  await button(page,'focus-chat').click();await button(page,'exit-service-focus').click();
+  await button(page,'focus-chat').click();
+  await button(page,'restore-layout').click();
+  await button(page,'exit-service-focus').click();
+
   await expect(page.locator('#service-select')).toHaveAttribute('data-service-id','service-b');
   assert.equal(await api(page,"return adapter.getWork('work-1').sessions.find(s=>s.id==='session-2').messages[0].text"),'Other saved conversation');
-  await expect(page.locator('.session-line')).toContainText('Session 2');
+  await expect(page.locator('.session-identity')).toContainText('Session 2');
 });
 
 test('UX revision Focus icons use their toolbar roles and Escape closes exactly one level', async t => {
@@ -839,7 +856,7 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
   await button(page,'service-focus').focus();await page.keyboard.press('Enter');
   await expect(button(page,'focus-toggle-chat')).toHaveAttribute('aria-pressed','true');
   await button(page,'focus-chat').click();
-  for(const action of ['restore-layout','exit-service-focus']) {
+  for(const action of ['restore-layout']) {
     assert.deepEqual(await shape(action),await shape('agent-menu'));
     await expect(button(page,action)).toHaveClass(/icon-button quiet/);
     await expect(button(page,action).locator('svg')).toHaveCount(1);
@@ -855,7 +872,7 @@ test('UX revision Focus icons use their toolbar roles and Escape closes exactly 
   await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','service-chat');
   await expect(button(page,'focus-chat')).toBeFocused();
   await page.setViewportSize({width:360,height:800});
-  await expect(button(page,'focus-chat')).toBeFocused();
+  await expect(button(page,'exit-service-focus')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.locator('#app')).toHaveAttribute('data-layout','service-only');await expect(page.locator('#composer')).toBeHidden();
   await page.keyboard.press('Escape');await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
@@ -871,7 +888,9 @@ test('UX revision fullscreen failures keep Chat exits and browser exit preserves
   await button(page,'service-focus').click();await button(page,'focus-chat').click();
   await page.evaluate(()=>{const root=document.querySelector('#app')!;(window as any).nativeFullscreen=root.requestFullscreen;Object.defineProperty(root,'requestFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
   await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect(page.locator('.agent-panel')).toContainText('Focus remains available');
-  await expect(button(page,'restore-layout')).toBeVisible();await expect(button(page,'exit-service-focus')).toBeVisible();
+  await expect(button(page,'restore-layout')).toBeVisible();
+  await expect(page.locator('.agent-header [data-action=exit-service-focus]')).toHaveCount(0);
+
   await page.evaluate(()=>{Object.defineProperty(document.querySelector('#app'),'requestFullscreen',{configurable:true,value:(window as any).nativeFullscreen});});
   await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
   await openResponseSettings(page,'model');await page.keyboard.press('Escape');
@@ -881,10 +900,19 @@ test('UX revision fullscreen failures keep Chat exits and browser exit preserves
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');
   await openFullscreenOptions(page);await button(page,'service-fullscreen').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(true);
   await page.evaluate(()=>{(window as any).nativeExit=document.exitFullscreen;Object.defineProperty(document,'exitFullscreen',{configurable:true,value:()=>Promise.reject(new Error('denied'))});});
-  await button(page,'exit-service-focus').click();await expect(page.locator('.agent-panel')).toContainText('Full screen could not be closed');
+  await openFullscreenOptions(page);
+  await button(page,'service-fullscreen').click();
+  await expect(page.locator('.agent-panel')).toContainText('Full screen could not be closed');
+
   await expect(page.locator('#app')).toHaveAttribute('data-layout','chat-only');assert.equal(await page.evaluate(()=>!!document.fullscreenElement),true);
   await page.evaluate(()=>{Object.defineProperty(document,'exitFullscreen',{configurable:true,value:(window as any).nativeExit});});
-  await button(page,'exit-service-focus').click();await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);
+  await openFullscreenOptions(page);
+  await button(page,'service-fullscreen').click();
+  await expect.poll(()=>page.evaluate(()=>!!document.fullscreenElement)).toBe(false);
+
+  await button(page,'restore-layout').click();
+  await button(page,'exit-service-focus').click();
+
   await expect(page.locator('#app')).toHaveAttribute('data-layout','workspace');
 });
 
@@ -1500,7 +1528,7 @@ test('Compact settings no-Session selections stay local until one explicit creat
     }
   });
   await button(page, 'tab-Chat').click();
-  await expect(page.locator('.session-line')).toContainText('No Session yet');
+  await expect(page.locator('.session-identity')).toContainText('No Session yet');
   await page.locator('#composer').fill('new Session draft');
   await chooseThinking(page, 'high', true);
   await expect(page.locator('#modal')).toContainText('For new session');
@@ -1509,7 +1537,7 @@ test('Compact settings no-Session selections stay local until one explicit creat
   await expect(page.locator('#response-settings-trigger')).toHaveAccessibleName('Model: Default chat model (one)');
   await expect(page.locator('.options-status')).toContainText('For new session');
   assert.equal(chatWrites(requests).length, 0);
-  await button(page, 'agent-menu').click();
+  await button(page, 'sessions').click();
   await button(page, 'new-session').click();
   await expect.poll(() => api(page, "return adapter.modelSelection('work-1','session-1').phase;")).toBe('clean');
   await expect(page.locator('.response-thinking')).toHaveText('High');
@@ -2387,12 +2415,10 @@ test('Controls Service presence is bounded, discovers the first record, preserve
  await page.clock.runFor(5100);
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords")).toBe(true);
 
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
  await page.keyboard.press('Escape');
- await expect(button(page,'service-menu')).toBeFocused();
+ await expect(button(page,'agent-menu')).toBeFocused();
  await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool A')?.loading")).toBe(false);
  fail=true;
  const failedPresence = page.waitForResponse(response => {
@@ -2427,11 +2453,10 @@ test('Controls Service detail reads only associated replies, returns list focus 
  await page.locator('#composer').fill('Keep this Main draft');
  await page.evaluate(()=>{(window as any).controlFrame=document.querySelector('iframe');(window as any).controlComposer=document.querySelector('#composer');});
  const loads=requests.filter(r=>r.path==='/_desktop/focus-app/').length;
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();await expect(page.locator('#modal')).toContainText('Original associated reply');await expect(page.locator('#modal')).toContainText('job-original');
  await expect(page.locator('#modal')).toContainText('Waiting for result');await expect(page.locator('#modal input, #modal textarea')).toHaveCount(0);await expect(button(page,'retry-pi-request')).toHaveCount(0);
@@ -2440,7 +2465,7 @@ test('Controls Service detail reads only associated replies, returns list focus 
  assert.equal(await page.evaluate(()=>document.querySelector('#modal .modal-footer [data-action=pi-request-detail]')===(window as any).requestCheckButton),true);await button(page,'pi-request-detail').click();await expect(page.locator('#modal h2')).toHaveText('Agent request');
  await button(page,'back-pi-requests').click();await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');await expect(page.locator('[data-action=pi-request-detail]')).toBeFocused();
  await button(page,'close-modal').click();
- await expect(button(page,'service-menu')).toBeFocused();
+ await expect(button(page,'agent-menu')).toBeFocused();
  await expect(page.locator('#composer')).toHaveValue('Keep this Main draft');
  assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).controlFrame),true);assert.equal(await page.evaluate(()=>document.querySelector('#composer')===(window as any).controlComposer),true);assert.equal(requests.filter(r=>r.path==='/_desktop/focus-app/').length,loads);
  assert.equal(requests.filter(r=>r.path.includes('/sessions/session-auto')).length,0);assert.equal(chatWrites(requests).length,0);
@@ -2448,15 +2473,14 @@ test('Controls Service detail reads only associated replies, returns list focus 
  await button(page,'service-focus').click();
  await button(page,'focus-toggle-chat').click();
  await page.setViewportSize({width:360,height:800});
+ await button(page,'focus-toggle-chat').click();
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
  await expect(button(page,'exit-service-focus')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
  await page.keyboard.press('Escape');
- await expect(button(page,'service-menu')).toBeFocused();
+ await expect(button(page,'agent-menu')).toBeFocused();
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
 });
 
@@ -2471,11 +2495,10 @@ test('Controls cancelling request is observed to its actual terminal result; los
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await button(page,'cancel-pi-request').click();
@@ -2548,7 +2571,14 @@ test('Controls Service scopes discard late reads, share ports, retain list scrol
  await expect(page.locator('#service-select')).toBeVisible();await expect.poll(()=>requests.filter(r=>r.path.endsWith('/agent-requests')).length).toBeGreaterThan(0);
  await page.locator('#service-select').click();await page.locator('[data-action=select-service][data-id=service-b]').click();await expect.poll(()=>api(page,"return adapter.requestPresence.get('work-1:Tool B')?.confirmed")).toBe(true);release();await page.waitForTimeout(100);await expect(button(page,'service-requests')).toHaveCount(0);
  assert.equal(await api(page,"return adapter.requestPresence.get('work-1:Tool A')?.hasRecords || false"),false);
- delayed=false;await button(page,'service-menu').click();await button(page,'manage-services').click();await page.locator('[data-action=service-details][data-id=service-b]').click();await page.getByRole('combobox',{name:'Web entry',exact:true}).selectOption('81');await button(page,'close-modal').click();assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
+ delayed=false;
+ await button(page,'agent-menu').click();
+ await button(page,'service-picker').click();
+ await page.locator('[data-action=service-details][data-id=service-b]').click();
+ await page.getByRole('combobox',{name:'Web entry',exact:true}).selectOption('81');
+ await button(page,'close-modal').click();
+ assert.ok(requests.filter(r=>r.path.endsWith('/agent-requests')).every(r=>!new URLSearchParams(r.search).has('port')));
+
  await api(page,"await adapter.signOut()");assert.equal(await api(page,"return adapter.requestPresence.size"),0);await expect(button(page,'service-requests')).toHaveCount(0);
 });
 
@@ -2561,21 +2591,19 @@ for(const state of ['pending','waiting_result'])test(`Controls ${state} cancella
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await button(page,'back-pi-requests').click();
  await button(page,'close-modal').click();
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,0);
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await button(page,'cancel-pi-request').click();
@@ -2616,11 +2644,10 @@ test('Controls request pagination, filter and exact list reading position surviv
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'next-pi-requests').click();
  await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
@@ -2641,11 +2668,10 @@ test('Controls recovery: failed reread retains a confirmed Agent reply',async t=
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('Original associated reply');
@@ -2672,11 +2698,10 @@ for (const timing of ['virtual', 'real'] as const) test(`Controls recovery: canc
  }, false, true, timing === 'virtual' ? page => page.clock.install() : undefined);
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await button(page,'cancel-pi-request').click();
@@ -2751,11 +2776,10 @@ test('Controls recovery: partial reply reads retain independent values and exclu
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('First reply 1');await expect(page.locator('#modal')).toContainText('Second reply 1');
@@ -2793,11 +2817,10 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
 
  await button(page,'pi-request-detail').click();await button(page,'cancel-pi-request').click();await expect(page.locator('#modal')).toContainText('response was lost');await button(page,'back-pi-requests').click();
@@ -2809,11 +2832,10 @@ test('Controls recovery: closing or hiding cancellation list stops reads and reo
  await page.clock.runFor(15000);assert.equal(reads(),closed);
  fail=false;
  state='cancelled';
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await expect(page.locator('#modal')).toContainText(/[Cc]ancelled/);
  await expect(button(page,'cancel-pi-request')).toHaveCount(0);assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);
@@ -2857,11 +2879,10 @@ test('Controls recovery: first unconfirmed reply differs from a failed refresh a
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await expect(page.locator('#modal')).toContainText('reply has not been confirmed');await expect(page.locator('#modal')).not.toContainText('last confirmed content retained');await expect(page.locator('#modal')).not.toContainText('Last confirmed');
@@ -2881,11 +2902,10 @@ test('Controls recovery: a changed association during an in-flight read loads on
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await expect.poll(()=>started).toBe(true);
@@ -2919,11 +2939,10 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  await page.locator('#composer').fill('Keep draft during evidence pagination');
  await page.evaluate(()=>{(window as any).paginationFrame=document.querySelector('iframe');(window as any).paginationFrameLoads=0;document.querySelector('iframe')!.addEventListener('load',()=>{(window as any).paginationFrameLoads++;});});
  await page.clock.install();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'next-pi-requests').click();
  await expect(page.locator('#modal [data-action=pi-request-detail]')).toHaveCount(26);
@@ -2952,7 +2971,7 @@ test('Controls pagination: late evidence preserves the confirmed terminal and or
  assert.equal(await api(page,"return adapter.requestPage('work-1','Tool A').items.find(r=>r.requestId==='request-a').state"),'cancelled');
  assert.equal(readbacks(),before);await expect(button(page,'cancel-pi-request')).toHaveCount(0);
  await button(page,'close-modal').click();
- await expect(button(page,'service-menu')).toBeFocused();
+ await expect(button(page,'agent-menu')).toBeFocused();
  await expect(page.locator('#composer')).toHaveValue('Keep draft during evidence pagination');
  assert.equal(await page.evaluate(()=>document.querySelector('iframe')===(window as any).paginationFrame && (window as any).paginationFrameLoads===0),true);
  assert.equal(requests.filter(r=>r.path.endsWith('/cancel')).length,1);assert.equal(chatWrites(requests).length,0);
@@ -2974,11 +2993,10 @@ test('Controls pagination: late evidence retains current replies, status errors 
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await page.locator('#modal .request-evidence > summary').click();
@@ -3011,11 +3029,10 @@ for(const scope of ['view','identity'])test(`Controls pagination: late evidence 
  });
  await expect(page.locator('.service-toolbar [data-action="service-requests"]')).toHaveCount(0);
  await expect(button(page,'service-menu')).toBeVisible();
- await button(page,'service-menu').click();
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-work','work-1');
- await expect(page.locator('#modal [data-menu-scope="service"]')).toHaveAttribute('data-menu-service','service-a');
- await expect(page.locator('#modal [data-action="service-requests"]')).toHaveCount(1);
- await page.locator('#modal [data-action="service-requests"]').click();
+ await button(page,'agent-menu').click();
+ await expect(page.locator('#modal [data-action="pi-requests"]')).toHaveCount(1);
+ await page.locator('#modal [data-action="pi-requests"]').click();
+ await page.locator('#pi-service-filter').selectOption('Tool A');
  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
  await button(page,'pi-request-detail').click();
  await page.locator('#modal .request-evidence > summary').click();
@@ -3261,7 +3278,7 @@ test('temporary cleanup remains visible when Service logs fail and refresh confi
     if (r.path === 'works/work-1/services/service-probe/logs') return { status:503,json:{message:'Log snapshot unavailable'} };
     return focusFixture(r);
   });
-  await button(page,'service-menu').click(); await button(page,'manage-services').click();
+  await button(page,'service-picker').click();
   await page.locator('#modal [data-action="service-details"][data-id="service-probe"]').click();
   const modal=page.locator('#modal');
   await expect(modal).toContainText('Exit code'); await expect(modal).toContainText('7');
@@ -3326,7 +3343,7 @@ test('Service feedback: multiple failures and a Web-less failure use the Service
   await expect(notice).toContainText('2 Services failed');
   await expect(notice.locator('[data-action="manage-services"]')).toHaveCount(1);
   await notice.locator('[data-action="manage-services"]').click();
-  await expect(page.locator('#modal-title')).toHaveText('Manage services');
+  await expect(page.locator('#modal-title')).toHaveText('Services');
   await page.locator('#modal [data-action="service-details"][data-id="service-c"]').click();
   await expect(page.locator('#modal-title')).toHaveText('Tool C');
   await expect(page.locator('#modal .service-explanation')).toContainText('Tool C failed');
@@ -3540,7 +3557,7 @@ test('Service details: explanation, safe diagnostics and bounded logs stay bound
   await expect(page.locator('#modal [data-pending-action~="refresh-logs"]')).toHaveAttribute('title', /log snapshot/);
   assert.equal(await page.evaluate(() => (window as any).__serviceLeak), undefined);
   await button(page, 'close-modal').click();
-  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await button(page, 'service-picker').click();
   await page.locator('#modal [data-action="service-details"][data-id="service-b"]').click();
   await expect(page.locator('#modal-title')).toHaveText('Tool B');
   await expect(page.locator('#modal .logs')).toContainText('B bounded log');
@@ -3596,7 +3613,9 @@ for (const fail of [false, true]) test(`B Service details appear while their iso
     if (r.path.endsWith('/services/service-a/logs')) { await (++reads === 1 ? gate : retryGate); return fail ? { status: 503, json: { message: 'Only logs unavailable' } } : { json: { serviceId:'service-a', status:'available', text:'Confirmed log', collectedAt:'2026-10-20T00:00:00Z', truncated:false } }; }
     return focusFixture(r);
   });
-  await button(page, 'service-menu').click(); await button(page, 'manage-services').click(); await page.locator('[data-action="service-details"][data-id="service-a"]').click();
+  await button(page, 'service-picker').click();
+  await page.locator('[data-action="service-details"][data-id="service-a"]').click();
+
   await expect(page.locator('#modal')).toContainText('Tool A'); await expect(page.locator('#modal .service-controls')).toBeVisible();
   const reading = page.locator('#modal [data-pending-action~="refresh-logs"]');
   await expect(reading).toHaveAttribute('title', /Reading Tool A log snapshot/); await expect(reading).toHaveAttribute('aria-busy', 'true');
@@ -4413,7 +4432,9 @@ test('a new-session model command remains until compatible Thinking is confirmed
   if(r.path.endsWith('/chat-capabilities'))return{json:{contractVersion:4}};
   if(r.path.endsWith('/chat-models'))return{json:{contractVersion:4,models:[second],defaultModel:first,availability:'available',checkedAt:new Date().toISOString()}};
  });
- await button(page,'tab-Chat').click();await expect(page.locator('.session-line')).toContainText('No Session yet');
+ await button(page,'tab-Chat').click();
+ await expect(page.locator('.session-identity')).toContainText('No Session yet');
+
  await chooseThinking(page,'high');
  await page.locator('#composer').fill('/model');await page.locator('#composer').press('Escape');await button(page,'send-message').click();
  await chooseModel(page,second.modelRef,true);
@@ -4457,13 +4478,15 @@ for(const language of ['en','zh-CN'])test(`refresh chooses sendable user Session
   if(match)return{json:{session:{workId:'work-1',sessionId:match[1],modelPreference:{...chatModel,availability:'available'},thinkingLevel:'off',source:{kind:'chat'}},messages:[{role:'user',text:match[1]==='session-1'?'Old preserved history':'New conversation'}],runs:[]}};
  });
  if(language==='zh-CN'){await page.evaluate(()=>localStorage.setItem('piwork.ui-locale','zh-CN'));await page.reload();}
- await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+ await expect(page.locator('.session-identity')).toContainText('2');
  await page.locator('#composer').fill('unsent draft');await expect(button(page,'send-message')).toBeEnabled();
  await page.locator('[data-action="sessions"]').last().click();await page.locator('[data-action="select-session"][data-id="session-1"]').click();
  await expect(page.locator('.options-status').first()).toContainText(language==='en'?'environment or saved settings':'环境或已保存设置');
  await expect(page.locator('body')).toContainText('Old preserved history');await expect(button(page,'send-message')).toBeDisabled();
  await expect(page.locator('body')).not.toContainText(language==='en'?'Choose an available model.':'请选择可用模型。');
- await page.reload();await expect(page.locator('[data-action="sessions"]').last()).toContainText('2');
+ await page.reload();
+ await expect(page.locator('.session-identity')).toContainText('2');
+
  assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
  assert.equal(requests.filter(r=>r.path.includes('/session-service/chat-options')).length,0);
 });
@@ -4476,7 +4499,9 @@ test('all unavailable Sessions retain history and expose Session recovery withou
  });
  await expect(page.locator('.options-status').first()).toContainText('environment or saved settings');
  await page.locator('#composer').fill('keep this draft');await expect(button(page,'send-message')).toBeDisabled();
- await page.locator('.options-status [data-action="sessions"]').click();await expect(button(page,'new-session')).toBeVisible();
+ await button(page,'sessions').click();
+ await expect(button(page,'new-session')).toBeVisible();
+
  await button(page,'close-modal').click();await expect(page.locator('#composer')).toHaveValue('keep this draft');
  assert.equal(requests.filter(r=>['POST','PATCH','PUT','DELETE'].includes(r.method)).length,0);
 });
@@ -4535,12 +4560,12 @@ test('Requests menu origin restores Service trigger and late list read does not 
     }
     return controlFixture(r);
   });
-  await button(page, 'service-menu').click();
-  await page.locator('#modal [data-action="service-requests"]').click();
+  await button(page, 'agent-menu').click();
+  await page.locator('#modal [data-action="pi-requests"]').click();
   await expect.poll(() => started).toBe(true);
-  await expect(page.locator('#pi-service-filter')).toHaveValue('Tool A');
+  await expect(page.locator('#pi-service-filter')).toHaveValue('');
   await button(page, 'close-modal').click();
-  await expect(button(page, 'service-menu')).toBeFocused();
+  await expect(button(page, 'agent-menu')).toBeFocused();
   await openResponseSettings(page);
   await expect(page.locator('#response-model-options [aria-selected=true]')).toBeFocused();
   const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith('/agent-requests'));
@@ -4555,7 +4580,7 @@ test('Requests menu origin restores Service trigger and late list read does not 
     const matching = reads.filter(r => new URLSearchParams(r.search).get('limit') === limit);
     assert.equal(matching.length, 1);
     assert.equal(matching[0]!.method, 'GET');
-    assert.equal(new URLSearchParams(matching[0]!.search).get('serviceName'), 'Tool A');
+    assert.equal(new URLSearchParams(matching[0]!.search).get('serviceName'), limit === '1' ? 'Tool A' : null);
     assert.equal(new URLSearchParams(matching[0]!.search).has('cursor'), false);
   }
   assert.equal(chatWrites(requests).length, 0);
@@ -4575,8 +4600,7 @@ test('Service log read reaches its ten-second deadline and only an explicit retr
     return focusFixture(r);
   });
   await page.clock.install();
-  await button(page, 'service-menu').click();
-  await button(page, 'manage-services').click();
+  await button(page, 'service-picker').click();
   await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   const modal = page.locator('#modal');
   const pending = modal.locator('[data-pending-action~="refresh-logs"]');

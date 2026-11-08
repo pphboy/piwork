@@ -47,8 +47,21 @@ test('precise run focus selectors include run identity',()=>{
  const {c}=fixture();c.CSS={escape:(text:string)=>text};assert.equal(c.focusKey({dataset:{action:'run-details',runId:'old'}}),'[data-action="run-details"][data-run-id="old"]');
 });
 test('Service selection lists real state without technical ports or Start mutation controls',()=>{
- const {c,work}=fixture();work.services=[{id:'ready',name:'Notes',ports:[3000,3001],enabled:true,observed:'Ready'},{id:'failed',name:'Reports',ports:[4100],enabled:true,observed:'Failed',error:'Start failed'},{id:'disabled',name:'Closed',ports:[5000],enabled:false,observed:'Stopped'},{id:'no-web',name:'Worker',ports:[],observed:'Ready'},{id:'removed',name:'Gone',ports:[80],observed:'Removed'}];c.activeService=()=>work.services[0];c.view.modal='service-picker';const html=c.modalMarkup();
- assert.doesNotMatch(html,/Declared Web ports|3000|3001|4100|5000/);assert.match(html,/aria-selected="true" data-id="ready"/);assert.match(html,/Start failed/);assert.match(html,/Disabled/);assert.doesNotMatch(html,/Worker|Gone|data-action="service-action"/);assert.match(html,/Manage services/);
+ const {c,work}=fixture();
+ work.services=[{id:'ready',name:'Notes',ports:[3000,3001],enabled:true,observed:'Ready'},{id:'failed',name:'Reports',ports:[4100],enabled:true,observed:'Failed',error:'Start failed'},{id:'disabled',name:'Closed',ports:[5000],enabled:false,observed:'Stopped'},{id:'no-web',name:'Worker',ports:[],observed:'Ready'},{id:'removed',name:'Gone',ports:[80],observed:'Removed'}];
+ c.activeService=()=>work.services[0];
+ c.view.modal='service-picker';
+ c.unassignedServiceTasks=()=>'';
+ const html=c.modalMarkup();
+
+ assert.doesNotMatch(html,/Declared Web ports|3000|3001|4100|5000/);
+ assert.match(html,/aria-selected="true" data-id="ready"/);
+ assert.match(html,/Failed/);
+ assert.match(html,/Disabled/);
+ assert.match(html,/Worker/);
+ assert.doesNotMatch(html,/Gone|data-action="service-action"/);
+ assert.match(html,/data-action="service-details"[^>]*data-id="no-web"/);
+
 });
 
 test('confirmed externally started active Run in the selected Session has its own explicit controls',()=>{
@@ -71,7 +84,9 @@ test('terminal Request does not present a retained wait reference as current wai
 for(const width of [1180,500])for(const layout of ['workspace','service-chat','service-only','chat-only'])test(`Chat header has one layout affordance and no browser fullscreen at ${width}px ${layout}`,()=>{
  const {c,work}=fixture();c.innerWidth=width;c.view.layout=layout;c.document={fullscreenElement:null};c.root={};c.activeService=()=>undefined;
  const html=c.agentLayoutControls(work);
- assert.doesNotMatch(html,/data-action="service-fullscreen"/);assert.equal((html.match(/data-action="focus-chat"/g)||[]).length,layout==='chat-only'?0:1);
+ assert.doesNotMatch(html,/data-action="service-fullscreen"/);
+ assert.equal((html.match(/data-action="focus-chat"/g)||[]).length,layout==='chat-only' || layout==='service-chat' && width===500 ? 0 : 1);
+
  if(layout==='chat-only')assert.match(html,/aria-label="Restore layout"/);
  if(layout==='workspace') assert.doesNotMatch(html,/data-action="toggle-workspace-chat"/);
  if(layout==='service-chat' && width===500)assert.match(html,/aria-label="Exit focus"/);
@@ -93,7 +108,15 @@ test('assistant history and appended streaming prose render Markdown while users
 });
 
 test('independent Service options omit Chat and split commands',()=>{
- const {c}=fixture();c.view.modal='service-menu';c.route=()=>['app','work-a','service-a','80'];c.document={fullscreenElement:null};c.root={};const html=c.modalMarkup();assert.doesNotMatch(html,/data-action="(?:focus-chat|reset-workspace-split)"/);assert.match(html,/data-action="manage-services"/);
+ const {c}=fixture();
+ c.view.modal='service-menu';
+ c.route=()=>['app','work-a','service-a','80'];
+ c.document={fullscreenElement:null};
+ c.root={};
+ const html=c.modalMarkup();
+ assert.doesNotMatch(html,/data-action="(?:focus-chat|reset-workspace-split)"/);
+ assert.doesNotMatch(html,/data-action="manage-services"/);
+
 });
 
 test('narrow service-chat remains visible before resize can add the local narrow-chat class',()=>{

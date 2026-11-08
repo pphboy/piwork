@@ -277,8 +277,8 @@ test('Work header hides Core-check dots without losing busy status or moving con
   const slot = header.locator('.core-check-slot');
   await expect(slot).toHaveAttribute('aria-busy', 'true');
   await expect(slot).toHaveAttribute('aria-label', /.+/);
-  await expect(slot.locator('.pending-dots')).toHaveCount(1);
-  await expect(slot.locator('.pending-dots')).toBeHidden();
+  await expect(slot.locator('.header-check-skeleton')).toBeVisible();
+  await expect(slot.locator('.pending-dots')).toHaveCount(0);
   await expect(header.locator('.pending-dots:visible')).toHaveCount(0);
   assert.deepEqual(await Promise.all(selectors.map(selector => header.locator(selector).boundingBox())), before);
   gate.release();
@@ -348,37 +348,45 @@ test('Final 12.5 Service picker reports all real states and multi-port late prep
   await page.locator('#composer').fill('same Session');
   await page.setViewportSize({ width: 360, height: 800 });
   await page.locator('#service-select').click();
-  await expect(page.getByRole('listbox', { name: 'Services' }).getByRole('option')).toHaveCount(6);
+  await expect(page.getByRole('listbox', { name: 'Services' }).getByRole('option')).toHaveCount(7);
   await expect(page.locator('[data-action="select-service"][data-id="service-a"]')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#modal')).toContainText(longName.trim());
-  await expect(page.locator('#modal [data-id="service-nonweb"], #modal [data-id="service-removed"]')).toHaveCount(0);
+  await expect(page.locator('#modal [data-action=select-service][data-id="service-nonweb"]')).toBeDisabled();
+  await expect(page.locator('#modal [data-action=service-details][data-id="service-nonweb"]')).toBeEnabled();
+  await expect(page.locator('#modal [data-id="service-removed"]')).toHaveCount(0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   for (const [id, label] of [['starting', 'Starting'], ['stopped', 'Stopped'], ['failed', 'Failed'], ['disabled', 'Disabled']] as const) {
-    await expect(page.locator(`#modal [data-id="service-${id}"]`)).toContainText(label);
+    await expect(page.locator(`#modal [data-action=select-service][data-id="service-${id}"]`)).toContainText(label);
   }
   await page.keyboard.press('Escape'); await expect(page.locator('#service-select')).toBeFocused();
   const entryCount = requests.filter(r => r.path === 'service-entries').length;
   for (const id of ['starting', 'stopped', 'failed', 'disabled']) {
-    await page.locator('#service-select').click(); await page.locator(`#modal [data-id="service-${id}"]`).click();
+    await page.locator('#service-select').click();
+    await page.locator(`#modal [data-action=select-service][data-id="service-${id}"]`).click();
+
     await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', `service-${id}`);
     await expect(page.locator('iframe')).toHaveCount(0);
   }
   assert.equal(requests.filter(r => r.path === 'service-entries').length, entryCount);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.locator('#service-select').click(); await page.locator('#modal [data-id="service-a"]').click();
-  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await page.locator('#service-select').click();
+  await page.locator('#modal [data-action=select-service][data-id="service-a"]').click();
+
+  await button(page, 'service-picker').click();
   await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   await page.getByRole('combobox', { name: 'Web entry', exact: true }).selectOption('81');
   await expect.poll(() => requests.filter(r => r.path === 'service-entries' && JSON.parse(r.body).port === 81).length).toBe(1);
   await button(page, 'close-modal').click();
-  await page.locator('#service-select').click(); await page.locator('#modal [data-id="service-b"]').click();
+  await page.locator('#service-select').click();
+  await page.locator('#modal [data-action=select-service][data-id="service-b"]').click();
+
   await expect(page.locator('iframe')).toHaveAttribute('src', /work-1-service-b-80/);
   gate.release();
   await expect.poll(() => api(page, "return adapter.serviceEntryPending('work-1','service-a',81);")).toBe(false);
   await expect(page.locator('#service-select')).toHaveAttribute('data-service-id', 'service-b');
   await expect(page.locator('iframe')).toHaveAttribute('src', /work-1-service-b-80/);
   await expect(page.locator('#composer')).toHaveValue('same Session');
-  await expect(page.locator('.session-line')).toContainText('Session 1');
+  await expect(page.locator('.session-identity')).toContainText('Session 1');
   const targets = requests.filter(r => r.path === 'service-entries').map(r => JSON.parse(r.body));
   assert.deepEqual(targets, [{ workId: 'work-1', serviceId: 'service-a', port: 80 }, { workId: 'work-1', serviceId: 'service-a', port: 81 }, { workId: 'work-1', serviceId: 'service-b', port: 80 }]);
   assert.equal(businessWrites(requests).length, 0);
@@ -459,7 +467,7 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) test(`Final 15
     return filesFixture(r) ?? appFixture(r);
   });
   await page.emulateMedia({ reducedMotion });
-  await button(page, 'service-menu').click(); await button(page, 'manage-services').click();
+  await button(page, 'service-picker').click();
   await page.locator('[data-action="service-details"][data-id="service-a"]').click();
   const pendingLogs = page.locator('#modal [data-pending-action~="refresh-logs"]');
   await expect(pendingLogs).toHaveAttribute('title', /Reading Tool A log snapshot/);

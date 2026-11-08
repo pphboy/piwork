@@ -783,8 +783,8 @@ test('hosted account management links share menu geometry, icons and keyboard na
  try {
   const page=await browser.newPage();await loginSetup(page,server);await page.goto(server.origin+'/');
   const trigger=page.locator('[data-action=account]');await trigger.click();const menu=page.getByRole('menu');
-  const labels=['About Piwork','Export logs','Administration'];
-  await expect(menu.getByRole('menuitem', { name: 'Quick setup', exact: true })).toHaveCount(0);
+  const labels=['About Piwork','Export logs','Quick setup','Administration'];
+  await expect(menu.getByRole('menuitem', { name: 'Quick setup', exact: true })).toHaveAttribute('href', '/admin/setup');
   await expect(menu.getByRole('menuitem',{name:'Known operations',exact:true})).toHaveCount(0);
   await expect(menu.getByRole('menuitem',{name:'Core setup',exact:true})).toHaveCount(0);
   const items=labels.map(name=>menu.getByRole('menuitem',{name,exact:true}));
@@ -794,7 +794,7 @@ test('hosted account management links share menu geometry, icons and keyboard na
   await expect(menu.locator('.dropdown-title')).toHaveText('admin');
   await expect(menu.locator('.account-context')).toContainText('Role: Administrator');
   await expect(menu.locator('.account-context')).toContainText('Core: '+coreOrigin(server));
-  await expect(items[2]!).toHaveAttribute('href','/admin');
+  await expect(items[3]!).toHaveAttribute('href','/admin');
   assert.equal(await menu.getByRole('menuitem',{name:'Sign out',exact:true}).evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 50)');
   const language=menu.locator('[data-action="language"]');await expect(language).toHaveAttribute('aria-haspopup','listbox');
   await items[2]!.focus();
@@ -807,12 +807,32 @@ test('hosted account management links share menu geometry, icons and keyboard na
   await page.keyboard.press('ArrowDown');
   await expect(items[2]!).toBeFocused();
   await page.keyboard.press('ArrowDown');
+  await expect(items[3]!).toBeFocused();
+  await page.keyboard.press('ArrowDown');
   await expect(menu.getByRole('menuitem',{name:'Sign out',exact:true})).toBeFocused();
   await page.keyboard.press('Home');
   await expect(items[0]!).toBeFocused();
-  await language.focus();await page.keyboard.press('Enter');await expect(menu).toHaveCount(0);await expect(page.locator('.language-picker [data-locale="en"]')).toBeVisible();await expect(page.locator('.language-picker [data-locale="zh-CN"]')).toBeVisible();await page.keyboard.press('Escape');await expect(trigger).toBeFocused();await trigger.click();
+  await language.focus();
+  await page.keyboard.press('Enter');
+  await expect(menu).toBeVisible();
+  await expect(page.locator('.language-picker [data-locale="en"]')).toBeVisible();
+  await expect(page.locator('.language-picker [data-locale="zh-CN"]')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(language).toBeFocused();
+
   await captureFollowup(page,'account-menu');
-  await language.focus();await page.keyboard.press('Enter');await expect(page.locator('.language-picker [data-locale="auto"]')).toHaveAttribute('aria-selected','true');await page.keyboard.press('Escape');await expect(menu).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await page.keyboard.press('Tab');await expect(menu).toHaveCount(0);
+  await language.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.language-picker [data-locale="auto"]')).toHaveAttribute('aria-selected','true');
+  await page.keyboard.press('Escape');
+  await expect(language).toBeFocused();
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.keyboard.press('Tab');
+  await expect(menu).toHaveCount(0);
+
   await trigger.click();await page.mouse.click(3,3);await expect(menu).toHaveCount(0);
   await trigger.click();await menu.getByRole('menuitem',{name:'Administration',exact:true}).focus();await page.keyboard.press('Enter');await expect.poll(()=>new URL(page.url()).pathname).toBe('/admin');
   await page.locator('header [data-workbench]').click();

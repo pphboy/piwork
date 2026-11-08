@@ -93,8 +93,59 @@ export async function serviceViewAcceptance({ page, coreUrl, uiUrl, token, api, 
       await adapter.loadRunDetails(id, run);
     }, { id, run: foreign.runId });
     assert.equal(await documentId(target), refreshed);
+    const filePath = path + '/files/ui-consistency.txt';
+    const original = '\nOriginal UI verification file.\n';
+    const createdFile = await fetch(coreUrl + filePath, {
+      method: 'PUT', headers: { Authorization: 'Bearer ' + token, 'If-None-Match': '*', 'Content-Type': 'application/octet-stream' }, body: original,
+    });
+    // The other browser mode exercises the same retained Work and file.
+    assert.ok([201, 204, 412].includes(createdFile.status), 'real file creation must be confirmed or already present');
+    await target.locator('[data-action=tab-Files]').click();
+    await expect(target.locator('.files-toolbar')).toHaveCSS('height', '44px');
+    await target.locator('[data-action=open-file][data-path="/ui-consistency.txt"]').click();
+    const editor = target.locator('#file-editor');
+    await expect(editor).toBeVisible();
+    await expect(target.locator('.file-target-toolbar')).toHaveCSS('height', '44px');
+    const edited = `\nVerified ${mode} file save.\n`;
+    await editor.fill(edited);
+    await target.locator('[data-action=close-file]').click();
+    await expect(target.locator('#modal')).toContainText('Save your file changes?');
+    await target.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(editor).toHaveValue(edited);
+    await target.locator('[data-action=save-file]').click();
+    await expect(target.locator('.file-target-toolbar')).toContainText('Saved');
+    const savedFile = await fetch(coreUrl + filePath, { headers: { Authorization: 'Bearer ' + token } });
+    assert.equal(savedFile.status, 200);
+    assert.equal(await savedFile.text(), edited);
+    await target.locator('[data-action=work-menu]').click();
+    await target.locator('#modal [data-action=settings]').click();
+    await target.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
+    const agents = target.locator('#agents-editor');
+    const savedAgents = await agents.inputValue();
+    const draftAgents = savedAgents + '\nUI verification draft.\n';
+    await agents.fill(draftAgents);
+    await target.locator('[data-action=settings-section][data-tab=Advanced]').click();
+    await expect(target.locator('#advanced-editor')).toHaveValue(/UI verification draft\./);
+    await target.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
+    await expect(agents).toHaveValue(draftAgents);
+    await target.locator('[data-action=back-work]').click();
+    await expect(target.locator('#modal')).toContainText('Save configuration changes?');
+    await target.getByRole('button', { name: 'Keep editing', exact: true }).click();
+    await expect(agents).toHaveValue(draftAgents);
+    await target.locator('[data-action=back-work]').click();
+    await target.locator('[data-action=dirty-config-discard]').click();
+    const stylesheet = await target.locator('link[rel=stylesheet]').first().getAttribute('href');
+    assert.ok(stylesheet);
+    for (const [resource, mime] of [['/desktop/browser/i18n.js', /javascript/], [stylesheet, /text\/css/]]) {
+      const staticResponse = await target.request.get(new URL(resource, target.url()).href);
+      assert.equal(staticResponse.status(), 200);
+      assert.match(staticResponse.headers()['content-type'], mime);
+    }
+    const documentResponse = await target.request.get(new URL('/', target.url()).href);
+    assert.match(documentResponse.headers()['content-security-policy'], /script-src/);
     await target.screenshot({ path: `/tmp/piwork-asvc-${mode}-success.png`, fullPage: true });
     console.log(JSON.stringify({ result: 'Service view real SDK/Core/browser passed', mode, twoPages: true, exactTarget: true, repeatedSelectPreserved: true, refreshChangedDocument: true, foreignRunIgnored: true }));
+    console.log(JSON.stringify({ result: 'Compact Files/Settings and static resources passed', mode, fileSavedThroughUI: true, dirtyGuards: true, sharedConfigurationDraft: true, staticMIME: true, csp: true }));
   };
   const desktopObserver = await page.context().newPage();
   try { await inspect(page, desktopObserver, 'desktop'); }

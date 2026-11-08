@@ -16,6 +16,7 @@ export interface MenuCommand {
   readonly icon: string;
   readonly labelKey: string;
   readonly danger?: boolean;
+  readonly separatorBefore?: boolean;
   readonly href?: string;
   readonly workId?: string;
   readonly serviceId?: string;
@@ -25,25 +26,25 @@ export function menuCommands(context: MenuContext): readonly MenuCommand[] {
   if (context.identity !== context.currentIdentity) return [];
   if (context.scope === 'global-account') {
     return context.hosted && context.administrator
-      ? [{ action: 'administration', icon: 'grid', labelKey: 'account.administration', href: '/admin' }]
+      ? [
+        { action: 'quick-setup', icon: 'settings', labelKey: 'account.quickSetup', href: '/admin/setup' },
+        { action: 'administration', icon: 'grid', labelKey: 'account.administration', href: '/admin' },
+      ]
       : [];
   }
   const workId = context.targetWorkId;
   if (!workId) return [];
   if (context.scope !== 'work-row' && workId !== context.openedWorkId) return [];
   if (context.scope === 'service') {
-    return context.targetServiceId ? [{ action: 'service-requests', icon: 'note', labelKey: 'service.agentRequests', workId, serviceId: context.targetServiceId }] : [];
+    return context.targetServiceId ? [{ action: 'copy-local', icon: 'copy', labelKey: 'service.copyAccessLink', workId, serviceId: context.targetServiceId }] : [];
   }
   const entries: MenuCommand[] = [
-    { action: 'work-history', icon: 'clock', labelKey: 'history.title', workId },
-    { action: 'work-info', icon: 'info', labelKey: 'workMenu.info', workId },
     { action: 'settings', icon: 'settings', labelKey: 'workMenu.settings', workId },
-    { action: 'export', icon: 'download', labelKey: 'workMenu.export', workId },
-    { action: 'find-previous-export', icon: 'clock', labelKey: 'recovery.previousExport', workId },
+    { action: 'work-info', icon: 'info', labelKey: 'workMenu.info', workId },
+    { action: 'export', icon: 'download', labelKey: 'workMenu.export', workId, separatorBefore: true },
   ];
-  if (context.scope === 'work-header') entries.push({ action: 'pi-requests', icon: 'note', labelKey: 'work.piRequestsAria', workId });
   if (context.canStop) entries.push({ action: 'stop-work', icon: 'stop', labelKey: 'workMenu.stop', workId });
-  entries.push({ action: 'delete-work', icon: 'trash', labelKey: 'workMenu.delete', workId, danger: true });
+  entries.push({ action: 'delete-work', icon: 'trash', labelKey: 'workMenu.delete', workId, danger: true, separatorBefore: true });
   return entries;
 }
 
