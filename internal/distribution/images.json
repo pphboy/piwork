@@ -1,6 +1,6 @@
 {
-  "agent": "docker.io/pphboy/piwork-agentd:0.0.18-afc6a25400ed-fda9adc29ec4",
-  "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.18-afc6a25400ed-fda9adc29ec4",
-  "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.18-afc6a25400ed-fda9adc29ec4",
-  "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.18-afc6a25400ed-fda9adc29ec4"
+  "agent": "docker.io/pphboy/piwork-agentd:0.0.19-687e55562ead-0f50ab9f18d7",
+  "packageHelper": "docker.io/pphboy/piwork-agentd:0.0.19-687e55562ead-0f50ab9f18d7",
+  "fileHelper": "docker.io/pphboy/piwork-file-helper:0.0.19-687e55562ead-0f50ab9f18d7",
+  "snapshotHelper": "docker.io/pphboy/piwork-snapshot-helper:0.0.19-687e55562ead-0f50ab9f18d7"
 }
