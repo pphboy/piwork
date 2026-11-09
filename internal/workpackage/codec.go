@@ -1,4 +1,4 @@
-// Package workpackage owns the unchanged, language-independent .work V1 format.
+// Package workpackage owns the versioned, language-independent .work format.
 package workpackage
 
 import (
@@ -97,7 +97,10 @@ func Read(ctx context.Context, source io.Reader, options ReadOptions) (result Ve
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
 		return result, invalid("truncated")
 	}
-	if string(header[:8]) != Magic {
+	if string(header[:8]) != Magic && string(header[:8]) != MagicV2 {
+		if string(header[:6]) == "PIWORK" && header[6] >= '0' && header[6] <= '9' && header[7] == '\n' {
+			return result, &ValidationError{"PACKAGE_FORMAT_UNSUPPORTED", "formatVersion"}
+		}
 		return result, invalid("magic")
 	}
 	length := binary.BigEndian.Uint64(header[8:])
@@ -115,8 +118,12 @@ func Read(ctx context.Context, source io.Reader, options ReadOptions) (result Ve
 	if err != nil {
 		return result, err
 	}
+	if string(header[:8]) != frameMagic(spec.FormatVersion) {
+		return result, invalid("version")
+	}
 	result.Spec = spec
 	expected := int64(16 + length)
+	decodedSize := expected
 	metadataBytes := int64(length)
 	agents := map[string]bool{}
 	for _, c := range spec.Contexts {
@@ -124,10 +131,11 @@ func Read(ctx context.Context, source io.Reader, options ReadOptions) (result Ve
 	}
 	collect := map[string]bool{}
 	for _, blob := range spec.Blobs {
-		if int64(blob.Size) > limits.PackageBytes-expected {
+		if storedSize(blob) > limits.PackageBytes-expected || int64(blob.Size) > limits.PackageBytes-decodedSize {
 			return result, limit("packageBytes")
 		}
-		expected += int64(blob.Size)
+		expected += storedSize(blob)
+		decodedSize += int64(blob.Size)
 		digest := string(blob.Digest)
 		if metadataBlob(blob) || agents[digest] {
 			if int64(blob.Size) > limits.MetadataBytes {
@@ -153,24 +161,32 @@ func Read(ctx context.Context, source io.Reader, options ReadOptions) (result Ve
 		}
 		digest := string(blob.Digest)
 		result.Offsets[digest] = offset
-		offset += int64(blob.Size)
-		limited := &io.LimitedReader{R: reader, N: int64(blob.Size)}
+		offset += storedSize(blob)
+		limited := &io.LimitedReader{R: reader, N: storedSize(blob)}
+		decoded, err := openDecoded(limited, blob)
+		if err != nil {
+			return result, err
+		}
 		blobHash := sha256.New()
 		var metadata bytes.Buffer
 		sink := io.Writer(blobHash)
 		if collect[digest] {
 			sink = io.MultiWriter(blobHash, &metadata)
 		}
-		chunks := io.TeeReader(limited, sink)
+		chunks := io.TeeReader(decoded, sink)
 		if options.OnBlob != nil {
 			err = options.OnBlob(blob, chunks)
 		} else {
 			_, err = io.CopyBuffer(io.Discard, chunks, buffer)
 		}
+		if err == nil && decoded.remaining == 0 {
+			_, err = io.CopyBuffer(io.Discard, chunks, buffer)
+		}
+		decoded.Close()
 		if err != nil {
 			return result, err
 		}
-		if limited.N != 0 {
+		if limited.N != 0 || !decoded.verified {
 			return result, invalid("truncatedOrUnconsumedBlob")
 		}
 		if hex.EncodeToString(blobHash.Sum(nil)) != digest {
@@ -208,6 +224,8 @@ func metadataBlob(blob contracts.WorkBlob) bool {
 	return false
 }
 
+// OpenBlob opens one item. Content consumers use decoded bytes; Encode expects
+// the declared storage representation and requires EOF at the end of that item.
 type OpenBlob func(contracts.WorkBlob) (io.ReadCloser, error)
 
 // Sources are provisional until their declared length and hash have matched.
@@ -227,19 +245,18 @@ func Encode(ctx context.Context, spec contracts.PortableWorkSpec, open OpenBlob,
 		return limit("manifest")
 	}
 	size := int64(len(manifest) + 16)
+	decodedSize := size
 	for _, blob := range spec.Blobs {
-		if int64(blob.Size) > DefaultLimits.PackageBytes-size {
+		if storedSize(blob) > DefaultLimits.PackageBytes-size {
 			return limit("packageBytes")
 		}
-		size += int64(blob.Size)
+		size += storedSize(blob)
+		if int64(blob.Size) > DefaultLimits.PackageBytes-decodedSize {
+			return limit("decodedBytes")
+		}
+		decodedSize += int64(blob.Size)
 	}
-	var header [16]byte
-	copy(header[:8], Magic)
-	binary.BigEndian.PutUint64(header[8:], uint64(len(manifest)))
-	if err := writeExact(sink, header[:]); err != nil {
-		return err
-	}
-	if err := writeExact(sink, manifest); err != nil {
+	if err := writeHeader(sink, spec, manifest); err != nil {
 		return err
 	}
 	buffer := make([]byte, 1<<20)
@@ -251,21 +268,38 @@ func Encode(ctx context.Context, spec contracts.PortableWorkSpec, open OpenBlob,
 		if err != nil {
 			return err
 		}
-		hash := sha256.New()
-		n, copyErr := io.CopyBuffer(io.MultiWriter(sink, hash), io.LimitReader(contextReader{ctx, source}, int64(blob.Size)+1), buffer)
+		limited := &io.LimitedReader{R: contextReader{ctx, source}, N: storedSize(blob)}
+		output := &encodingWriter{Writer: sink}
+		decoded, decodeErr := openDecoded(io.TeeReader(limited, output), blob)
+		if decodeErr == nil {
+			_, decodeErr = io.CopyBuffer(io.Discard, decoded, buffer)
+			decoded.Close()
+		}
+		if decodeErr == nil && limited.N == 0 {
+			// The bound protects the package layout; the probe also confirms that
+			// its source item has not grown since its size was captured.
+			var extra [1]byte
+			n, probeErr := io.ReadFull(contextReader{ctx, source}, extra[:])
+			if n != 0 {
+				decodeErr = invalid("blobLength")
+			} else if probeErr != io.EOF {
+				decodeErr = probeErr
+			}
+		}
 		closeErr := source.Close()
-		if copyErr != nil {
-			return copyErr
+		if output.err != nil {
+			return output.err
+		}
+		if decodeErr != nil {
+			return decodeErr
 		}
 		if closeErr != nil {
 			return closeErr
 		}
-		if n != int64(blob.Size) {
+		if limited.N != 0 {
 			return invalid("blobLength")
 		}
-		if hex.EncodeToString(hash.Sum(nil)) != string(blob.Digest) {
-			return invalid("blobHash")
-		}
+
 	}
 	return nil
 }
@@ -282,4 +316,21 @@ func Code(err error) string {
 		return typed.Code
 	}
 	return "PACKAGE_INVALID"
+}
+
+// Preserve storage failures even when the decoder reports a truncated frame.
+type encodingWriter struct {
+	io.Writer
+	err error
+}
+
+func (w *encodingWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		w.err = err
+	}
+	return n, err
 }

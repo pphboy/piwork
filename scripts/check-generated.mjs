@@ -34,7 +34,7 @@ export const generatedChains = {
   http: {
     command: ['make', 'generate'],
     sources: ['internal/contracts/schemas.json (frozen base plus generated additions)', 'packages/contracts/src', 'internal/workhistory/*.sql', 'proto/*.proto'],
-    outputs: ['internal/contracts/schemas.json', 'internal/contracts/dto_generated.go', 'internal/contracts/dto_generated_test.go', 'internal/contracts/history_limits_generated.go', 'internal/contracts/testdata/ts-validation.json', 'internal/contracts/testdata/history-encoding.json', 'internal/coreapp/model-sdk-catalog.json'],
+    outputs: ['internal/workpackage/schema', 'internal/contracts/schemas.json', 'internal/contracts/dto_generated.go', 'internal/contracts/dto_generated_test.go', 'internal/contracts/history_limits_generated.go', 'internal/contracts/testdata/ts-validation.json', 'internal/contracts/testdata/history-encoding.json', 'internal/coreapp/model-sdk-catalog.json'],
   },
   ui: {
     command: ['make', 'webui-assets'],

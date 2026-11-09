@@ -58,15 +58,33 @@ func DecodeManifest(raw []byte) (contracts.PortableWorkSpec, error) {
 		return spec, err
 	}
 	if fields, ok := value.(map[string]any); ok {
-		if version, exists := fields["formatVersion"]; exists && version != int64(1) {
+		if version, exists := fields["formatVersion"]; exists && version != int64(1) && version != int64(2) {
 			return spec, &ValidationError{"PACKAGE_FORMAT_UNSUPPORTED", "formatVersion"}
 		}
 	}
-	if err := contracts.Validate("PortableWorkSpecSchema", value); err != nil {
+	schema := "PortableWorkSpecV1Schema"
+	if fields, ok := value.(map[string]any); ok && fields["formatVersion"] == int64(2) {
+		schema = "PortableWorkSpecV2Schema"
+		if blobs, ok := fields["blobs"].([]any); ok {
+			for _, item := range blobs {
+				if b, ok := item.(map[string]any); ok {
+					if encoding, ok := b["encoding"].(string); ok && encoding != "raw" && encoding != "zstd" {
+						return spec, &ValidationError{"PACKAGE_FORMAT_UNSUPPORTED", "encoding"}
+					}
+				}
+			}
+		}
+	}
+	if err := contracts.Validate(schema, value); err != nil {
 		return spec, invalid("manifest")
 	}
 	if err := json.Unmarshal(raw, &spec); err != nil {
 		return spec, invalid("manifest")
+	}
+	for _, b := range spec.Blobs {
+		if spec.FormatVersion == 2 && b.Encoding.Value == "raw" && storedSize(b) != int64(b.Size) {
+			return spec, invalid("storedSize")
+		}
 	}
 	return spec, validateManifestRelations(spec)
 }

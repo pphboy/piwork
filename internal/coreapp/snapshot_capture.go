@@ -301,7 +301,12 @@ func (a *Application) captureSnapshotPackage(ctx context.Context, job corestore.
 	}
 	defer file.Close()
 	open := func(blob contracts.WorkBlob) (io.ReadCloser, error) { return blobs.Read(string(blob.Digest)) }
-	if err := workpackage.Encode(ctx, spec, open, file); err != nil {
+	spec, stored, cleanup, err := workpackage.PrepareV2(ctx, spec, open, filepath.Join(a.options.DataDirectory, "snapshots", "jobs", job.OperationID))
+	if err != nil {
+		return workpackage.Verified{}, err
+	}
+	defer cleanup()
+	if err := workpackage.Encode(ctx, spec, stored, file); err != nil {
 		return workpackage.Verified{}, err
 	}
 	if err := file.Sync(); err != nil {

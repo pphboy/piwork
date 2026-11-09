@@ -1265,6 +1265,76 @@ type PortableWorkSpec struct {
 	Blobs []WorkBlob `json:"blobs"`
 }
 
+type PortableWorkSpecV1 struct {
+	FormatVersion float64 `json:"formatVersion"`
+	SnapshotKind  string  `json:"snapshotKind"`
+	CreatedAt     string  `json:"createdAt"`
+	SourceName    string  `json:"sourceName"`
+	Compatibility struct {
+		Os                string          `json:"os"`
+		Architecture      string          `json:"architecture"`
+		Variant           json.RawMessage `json:"variant"`
+		AgentProtocol     string          `json:"agentProtocol"`
+		WorkHistorySchema float64         `json:"workHistorySchema"`
+		StorageLayout     float64         `json:"storageLayout"`
+		PiPackageContract float64         `json:"piPackageContract"`
+	} `json:"compatibility"`
+	ActiveContext      json.RawMessage                `json:"activeContext"`
+	DesiredContext     WorkLogicalKey                 `json:"desiredContext"`
+	Contexts           []PortableWorkContext          `json:"contexts"`
+	PiPackageArtifacts []PortablePiPackageArtifact    `json:"piPackageArtifacts"`
+	Services           []PortableWorkService          `json:"services"`
+	QuotaReservations  []PortableWorkQuotaReservation `json:"quotaReservations"`
+	Images             []PortableWorkImage            `json:"images"`
+	Volumes            []json.RawMessage              `json:"volumes"`
+	Bindings           WorkBindingRequirements        `json:"bindings"`
+	History            struct {
+		Control           WorkBlobDigest `json:"control"`
+		SourceIdentityMap WorkBlobDigest `json:"sourceIdentityMap"`
+	} `json:"history"`
+	Blobs []struct {
+		Digest WorkBlobDigest `json:"digest"`
+		Size   WorkByteSize   `json:"size"`
+		Kinds  []string       `json:"kinds"`
+	} `json:"blobs"`
+}
+
+type PortableWorkSpecV2 struct {
+	FormatVersion float64 `json:"formatVersion"`
+	SnapshotKind  string  `json:"snapshotKind"`
+	CreatedAt     string  `json:"createdAt"`
+	SourceName    string  `json:"sourceName"`
+	Compatibility struct {
+		Os                string          `json:"os"`
+		Architecture      string          `json:"architecture"`
+		Variant           json.RawMessage `json:"variant"`
+		AgentProtocol     string          `json:"agentProtocol"`
+		WorkHistorySchema float64         `json:"workHistorySchema"`
+		StorageLayout     float64         `json:"storageLayout"`
+		PiPackageContract float64         `json:"piPackageContract"`
+	} `json:"compatibility"`
+	ActiveContext      json.RawMessage                `json:"activeContext"`
+	DesiredContext     WorkLogicalKey                 `json:"desiredContext"`
+	Contexts           []PortableWorkContext          `json:"contexts"`
+	PiPackageArtifacts []PortablePiPackageArtifact    `json:"piPackageArtifacts"`
+	Services           []PortableWorkService          `json:"services"`
+	QuotaReservations  []PortableWorkQuotaReservation `json:"quotaReservations"`
+	Images             []PortableWorkImage            `json:"images"`
+	Volumes            []json.RawMessage              `json:"volumes"`
+	Bindings           WorkBindingRequirements        `json:"bindings"`
+	History            struct {
+		Control           WorkBlobDigest `json:"control"`
+		SourceIdentityMap WorkBlobDigest `json:"sourceIdentityMap"`
+	} `json:"history"`
+	Blobs []struct {
+		Digest     WorkBlobDigest `json:"digest"`
+		Size       WorkByteSize   `json:"size"`
+		Kinds      []string       `json:"kinds"`
+		Encoding   string         `json:"encoding"`
+		StoredSize WorkByteSize   `json:"storedSize"`
+	} `json:"blobs"`
+}
+
 type ProductBuild struct {
 	Program       string        `json:"program"`
 	Version       string        `json:"version"`
@@ -1778,9 +1848,11 @@ type WorkBindingRequirements struct {
 type WorkBlobDigest string
 
 type WorkBlob struct {
-	Digest WorkBlobDigest `json:"digest"`
-	Size   WorkByteSize   `json:"size"`
-	Kinds  []string       `json:"kinds"`
+	Digest     WorkBlobDigest      `json:"digest"`
+	Size       WorkByteSize        `json:"size"`
+	Kinds      []string            `json:"kinds"`
+	Encoding   Field[string]       `json:"encoding,omitzero"`
+	StoredSize Field[WorkByteSize] `json:"storedSize,omitzero"`
 }
 
 type WorkByteSize int64

@@ -15,6 +15,7 @@ import (
 // It is inspected in place; no pathname is extracted or passed to Docker.
 type PortableLayer struct {
 	Reader io.ReaderAt
+	Open   func() (io.ReadCloser, error)
 	Size   int64
 }
 
@@ -46,11 +47,24 @@ func InspectPortableImage(ctx context.Context, raw []byte, layers []PortableLaye
 	}
 	state, budget := newLayerState(), &layerBudget{}
 	for i, source := range layers {
-		if source.Reader == nil || source.Size < 0 || source.Size > MaxArchiveBytes || !validDigest(config.RootFS.DiffIDs[i]) {
+		if (source.Reader == nil && source.Open == nil) || source.Size < 0 || source.Size > MaxArchiveBytes || !validDigest(config.RootFS.DiffIDs[i]) {
 			return Capabilities{}, ErrInvalid
 		}
 		a := archive{ctx: ctx, reader: source.Reader}
-		if err := a.applyLayer(layer{member: member{size: source.Size}}, config.RootFS.DiffIDs[i], expected.Architecture, state, budget); err != nil {
+		if source.Open != nil {
+			reader, err := source.Open()
+			if err != nil {
+				return Capabilities{}, err
+			}
+			err = a.applyLayerStream(reader, config.RootFS.DiffIDs[i], expected.Architecture, state, budget)
+			closeErr := reader.Close()
+			if err != nil {
+				return Capabilities{}, err
+			}
+			if closeErr != nil {
+				return Capabilities{}, closeErr
+			}
+		} else if err := a.applyLayer(layer{member: member{size: source.Size}}, config.RootFS.DiffIDs[i], expected.Architecture, state, budget); err != nil {
 			return Capabilities{}, err
 		}
 	}
