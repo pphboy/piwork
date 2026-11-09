@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files 拖拽上传 · A 方案原型</title>
+<!-- A only: test whether a list-local overlay clearly communicates the current directory.
+     Frozen planning attachment. No network, file-body reads, persistence, or production imports. -->
+<style>
+  :root { color-scheme:light; --canvas:#f5f8fc; --surface:#fff; --ink:#1b2634; --muted:#526477; --border:#dce7f2; --accent:#0969da; --accent-soft:#eaf3ff; --font:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; color:var(--ink); background:var(--canvas); font:14px/1.5 var(--font); }
+  button,input,textarea { font:inherit; }
+  button { cursor:pointer; color:inherit; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:7px 11px; }
+  button:hover { background:var(--accent-soft); }
+  button:focus-visible,input:focus-visible,textarea:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  button:disabled { cursor:default; opacity:.5; }
+  p { margin:5px 0; }
+  svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .prototype-intro { padding:16px 24px; border-bottom:1px solid var(--border); }
+  .prototype-intro strong { display:block; font-size:14px; }
+  .prototype-intro p,.muted { color:var(--muted); }
+  .app { margin:22px auto; max-width:1320px; background:var(--surface); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .work-header { display:flex; align-items:center; gap:12px; padding:16px 20px 10px; }
+  .back { border:0; padding:0; background:none; color:var(--muted); }
+  .work-name { font-size:18px; font-weight:600; }
+  .work-state { color:#18765c; font-size:12px; }
+  .tabs { display:flex; align-items:center; gap:26px; padding:0 20px; border-bottom:1px solid var(--border); }
+  .tabs span { padding:11px 0; color:var(--muted); }
+  .tabs .active { color:var(--accent); border-bottom:2px solid var(--accent); font-weight:600; }
+  .tabs .settings { margin-left:auto; }
+  .workspace { display:grid; grid-template-columns:minmax(0,1fr) 290px; min-height:490px; }
+  .files { min-width:0; display:flex; flex-direction:column; }
+  .toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:57px; padding:10px 17px; border-bottom:1px solid var(--border); }
+  .breadcrumbs { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; color:var(--muted); font-size:12px; }
+  .breadcrumbs button { padding:3px 0; border:0; background:none; color:var(--muted); }
+  .path-part { overflow-wrap:anywhere; }
+  .actions { display:flex; align-items:center; gap:6px; flex:none; }
+  .icon-button { border:0; padding:5px; display:flex; }
+  .menu-anchor { position:relative; }
+  .file-menu { position:absolute; top:calc(100% + 6px); right:0; z-index:2; padding:5px; border:1px solid var(--border); background:var(--surface); border-radius:8px; min-width:120px; }
+  .file-menu button { width:100%; text-align:left; border:0; }
+  .upload { color:var(--accent); }
+  .drop-area { position:relative; flex:1; min-height:340px; }
+  .row,.columns { display:grid; grid-template-columns:30px minmax(0,1fr) 78px 100px 28px; align-items:center; gap:8px; padding:14px 17px; border-bottom:1px solid var(--border); }
+  .columns { min-height:38px; padding-top:8px; padding-bottom:8px; color:var(--muted); font-size:12px; background:#f8fbff; }
+  .row-name { display:flex; align-items:center; gap:10px; border:0; padding:0; text-align:left; min-width:0; background:transparent; }
+  .row-name span { overflow-wrap:anywhere; }
+  .row-name small { display:block; font-size:11px; color:var(--muted); }
+  .row>span { font-size:12px; color:var(--muted); }
+  input[type=checkbox] { accent-color:var(--accent); width:14px; height:14px; }
+  .empty { text-align:center; padding:66px 20px; color:var(--muted); }
+  .empty strong { display:block; color:var(--ink); font-size:16px; margin-bottom:6px; }
+  .empty button { margin-top:14px; }
+  .drop-overlay { display:none; position:absolute; inset:12px; border:2px dashed var(--accent); border-radius:8px; background:rgba(234,243,255,.94); pointer-events:none; padding:24px; align-items:center; justify-content:center; text-align:center; }
+  .drop-area.is-dragging .drop-overlay { display:flex; }
+  .drop-message { min-width:0; max-width:100%; }
+  .drop-message svg { width:34px; height:34px; color:var(--accent); }
+  .drop-message strong { display:block; font-size:20px; font-weight:600; margin:10px 0 7px; }
+  .drop-path { display:block; color:var(--accent); font:14px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; }
+  .drop-message p { color:var(--muted); font-size:12px; margin-top:12px; }
+  .result { padding:10px 17px; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+  .result:empty { display:none; }
+  .chat { border-left:1px solid var(--border); display:flex; flex-direction:column; min-width:0; }
+  .chat-title { display:flex; align-items:center; justify-content:space-between; height:57px; border-bottom:1px solid var(--border); padding:10px 16px; font-weight:600; }
+  .messages { flex:1; padding:22px 18px; }
+  .messages p { margin:0 0 10px; }
+  .composer { margin:12px; border:1px solid #bac9d8; border-radius:8px; padding:10px; }
+  .composer textarea { width:100%; resize:vertical; border:0; min-height:68px; color:var(--ink); background:transparent; }
+  .composer small { color:var(--muted); }
+  .experiment { max-width:1320px; margin:0 auto 30px; padding:14px 18px; border-top:2px solid var(--ink); }
+  .experiment strong { display:block; margin-bottom:8px; }
+  .experiment-controls { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .experiment-controls label { display:flex; align-items:center; gap:5px; margin-left:8px; }
+  .prototype-state { margin-top:12px; color:var(--muted); overflow-wrap:anywhere; }
+  @media(max-width:1360px) { .app { margin:18px; } .experiment { margin-left:18px; margin-right:18px; } }
+  @media(max-width:760px) { .workspace { grid-template-columns:1fr; } .chat { display:none; } .prototype-intro { padding:12px 18px; } .app { margin:12px; } .experiment { margin:0 12px 20px; padding:12px 4px; } .work-header { padding-left:16px; } .tabs { padding:0 16px; gap:20px; } }
+  @media(max-width:430px) { .row,.columns { grid-template-columns:22px minmax(0,1fr) 48px 22px; gap:5px; padding-left:12px; padding-right:12px; } .modified { display:none; } .toolbar { padding:10px 12px; } .drop-overlay { inset:8px; padding:18px; } .drop-message strong { font-size:18px; } .actions { gap:3px; } .upload { font-size:12px; padding:5px 7px; } .experiment-controls label { margin-left:0; } }
+</style>
+<body>
+<header class="prototype-intro">
+  <strong>PROTOTYPE — NOT PRODUCTION</strong>
+  <p>A 方案：验证列表内蒙层能否让人看清松手区域与目标目录。所有接收仅作内存模拟，不读取文件内容，不执行真实上传。</p>
+</header>
+<main class="app">
+  <div class="work-header"><span class="back" aria-hidden="true">‹</span><span class="work-name">资料整理</span><span class="work-state" id="work-state">Running</span></div>
+  <nav class="tabs" aria-label="Work 区域"><span>Services</span><span class="active" aria-current="page">Files</span><span>Chat</span><span class="settings">Settings</span></nav>
+  <div class="workspace">
+    <section class="files" aria-label="Workspace files">
+      <div class="toolbar">
+        <div class="breadcrumbs"><button id="root-path">Workspace</button><span aria-hidden="true">/</span><span class="path-part" id="breadcrumb">reports</span></div>
+        <div class="actions"><button class="icon-button" id="refresh" aria-label="刷新列表"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-2 8M20 4v6h-6"/></svg></button><div class="menu-anchor"><button class="icon-button" id="more-button" aria-label="更多文件操作" aria-expanded="false" aria-controls="file-menu"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><div class="file-menu" id="file-menu" hidden><button class="upload" id="picker-button">Upload</button></div></div></div>
+      </div>
+      <div class="drop-area" id="drop-area">
+        <div id="listing"></div>
+        <div class="drop-overlay" id="drop-overlay" aria-hidden="true">
+          <div class="drop-message">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5h16v-5"/></svg>
+            <strong>松开以上传到</strong>
+            <span class="drop-path" id="drop-path">/reports</span>
+            <p>单个或多个文件</p>
+          </div>
+        </div>
+      </div>
+      <div class="result" id="result" role="status" aria-live="polite"></div>
+    </section>
+    <aside class="chat" aria-label="Chat 布局参照">
+      <div class="chat-title">Agent <span class="muted" aria-hidden="true">···</span></div>
+      <div class="messages"><p>文件已放在共享目录。</p><p class="muted">你可以在左侧 Files 查看资料，或继续在这里对话。</p></div>
+      <div class="composer"><textarea aria-label="聊天草稿" id="chat-draft">请整理刚才的资料。</textarea><small>Chat 区域不提交 Files 上传</small></div>
+    </aside>
+  </div>
+</main>
+<section class="experiment" aria-label="原型实验控件">
+  <strong>试用 A 的落点提示</strong>
+  <div class="experiment-controls">
+    <button id="simulate-enter">模拟拖入</button><button id="simulate-drop">模拟松手</button><button id="cancel-drag">移出或取消</button>
+    <button id="child-path">打开子目录</button><button id="long-path">长路径</button>
+    <label><input type="checkbox" id="empty-folder">空目录</label>
+    <label><input type="checkbox" id="unavailable">Work 已停止</label>
+    <label><input type="checkbox" id="busy">已有上传</label>
+  </div>
+  <p class="prototype-state" id="prototype-state" role="status">状态：未拖入 · 当前目录：/reports · 模拟接收批次：0</p>
+  <p class="muted">可从电脑拖入文件，也可用模拟按钮。试着拖过文件夹行、移出列表、切到空目录，再缩窄窗口。Upload 在此仅模拟选择文件后的接收。</p>
+</section>
+<input type="file" id="picker" multiple hidden>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const area = $('drop-area');
+  const state = { directory:'/reports', target:null, hovering:false, invalidated:false, empty:false, stopped:false, busy:false, batches:0 };
+  const folderIcon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v12H3zM3 6V4h6l2 2"/></svg>';
+  const fileIcon = '<svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h4"/></svg>';
+  function renderListing() {
+    $('breadcrumb').textContent = state.directory === '/' ? '' : state.directory.slice(1);
+    $('work-state').textContent = state.stopped ? 'Stopped' : 'Running';
+    $('listing').innerHTML = state.empty
+      ? '<div class="empty"><strong>此目录为空</strong><p>上传文件后，它们会显示在这里。</p><button id="empty-upload" class="upload">Upload</button></div>'
+      : '<div class="columns"><span></span><span>名称</span><span>大小</span><span class="modified">修改时间</span><span></span></div>' + [
+          ['drafts','文件夹','—',true], ['report.txt','文本文件','4 KB',false], ['data.csv','文件','28 KB',false]
+        ].map(([name,kind,size,folder]) => '<div class="row"><input type="checkbox" aria-label="选择 '+name+'"><button class="row-name" '+(folder?'data-directory="true"':'')+'>'+ (folder?folderIcon:fileIcon)+'<span>'+name+'<small>'+kind+'</small></span></button><span>'+size+'</span><span class="modified">今天 10:24</span><span aria-hidden="true">···</span></div>').join('');
+    $('empty-upload')?.addEventListener('click', () => $('picker').click());
+    $('listing').querySelector('[data-directory]')?.addEventListener('click', () => changeDirectory(state.directory === '/' ? '/drafts' : state.directory+'/drafts'));
+  }
+  function renderDrag() {
+    area.classList.toggle('is-dragging',state.hovering);
+    area.dataset.phase = state.invalidated ? 'invalidated' : state.hovering ? 'dragging' : 'idle';
+    $('drop-overlay').setAttribute('aria-hidden',String(!state.hovering));
+    $('drop-path').textContent = state.target || state.directory;
+    $('prototype-state').textContent = '状态：'+(state.invalidated?'原目标已变化':state.hovering?'可松手':state.stopped?'Work 已停止':state.busy?'已有上传':'未拖入')+' · 当前目录：'+state.directory+' · 模拟接收批次：'+state.batches;
+  }
+  function clearDrag() { state.hovering=false; state.target=null; state.invalidated=false; renderDrag(); }
+  function invalidate() { if(state.target) { state.hovering=false; state.target=null; state.invalidated=true; } renderDrag(); }
+  function beginDrag() {
+    if(state.stopped || state.busy || state.invalidated) return;
+    state.target ||= state.directory; state.hovering=true; renderDrag();
+  }
+  function message(text) { $('result').textContent=text; }
+  function changeDirectory(path) { invalidate(); state.directory=path; renderListing(); renderDrag(); }
+  function acceptFiles(files,target) {
+    if(state.stopped || state.busy || state.invalidated || target !== state.directory) {
+      const reason=state.stopped?'Work 已停止':state.busy?'已有上传待处理':'目标目录已变化';
+      clearDrag(); message('未提交：'+reason+'。'); return;
+    }
+    clearDrag();
+    if(!files.length) return;
+    state.batches++; renderDrag();
+    message('模拟已接收 '+files.length+' 个文件，目标 '+target+'：'+files.map(file=>file.name).join('、')+'。未执行真实上传。');
+  }
+  function hasFiles(event) { return Array.from(event.dataTransfer?.types || []).includes('Files'); }
+  area.addEventListener('dragenter',event=>{ if(hasFiles(event)) { event.preventDefault(); beginDrag(); } });
+  area.addEventListener('dragover',event=>{ if(hasFiles(event)) { event.preventDefault(); beginDrag(); event.dataTransfer.dropEffect=state.hovering?'copy':'none'; } });
+  area.addEventListener('dragleave',event=>{ if(!event.relatedTarget || !area.contains(event.relatedTarget)) clearDrag(); });
+  area.addEventListener('drop',event=>{
+    if(!hasFiles(event)) return;
+    event.preventDefault(); event.stopPropagation();
+    if(!state.target || state.stopped || state.busy || state.invalidated) { acceptFiles([],state.target); return; }
+    const items=Array.from(event.dataTransfer.items).filter(item=>item.kind==='file');
+    const entries=items.map(item=>{ try { return item.webkitGetAsEntry?.(); } catch { return null; } });
+    const files=items.map(item=>item.getAsFile());
+    if(!items.length || entries.some(entry=>!entry || !entry.isFile) || files.some(file=>!file)) {
+      clearDrag(); message('未提交：仅支持普通文件，不能包含文件夹或无法判定的条目。请使用 Upload 选择文件。'); return;
+    }
+    acceptFiles(files,state.target);
+  });
+  document.addEventListener('dragover',event=>{ if(hasFiles(event)) event.preventDefault(); });
+  document.addEventListener('drop',event=>{ if(hasFiles(event)) { event.preventDefault(); clearDrag(); message('此处不是 Files 上传落区，未提交。'); } });
+  document.addEventListener('dragend',clearDrag);
+  document.addEventListener('keydown',event=>{ if(event.key==='Escape') clearDrag(); });
+  window.addEventListener('blur',clearDrag);
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) clearDrag(); });
+  $('simulate-enter').onclick=()=>{ clearDrag(); beginDrag(); };
+  $('simulate-drop').onclick=()=>acceptFiles([new File([],'quarterly.csv'),new File([],'notes.txt')],state.target);
+  $('cancel-drag').onclick=clearDrag;
+  $('root-path').onclick=()=>changeDirectory('/');
+  $('child-path').onclick=()=>changeDirectory('/reports/drafts');
+  $('long-path').onclick=()=>changeDirectory('/reports/客户资料/季度交付/需要保留完整名称的文件目录/最终版本');
+  $('empty-folder').onchange=event=>{ clearDrag(); state.empty=event.target.checked; renderListing(); };
+  $('unavailable').onchange=event=>{ state.stopped=event.target.checked; invalidate(); renderListing(); renderDrag(); };
+  $('busy').onchange=event=>{ state.busy=event.target.checked; invalidate(); renderDrag(); };
+  $('refresh').onclick=()=>{ clearDrag(); message('模拟刷新：当前目录 '+state.directory+'。'); };
+  function closeMenu() { $('file-menu').hidden=true; $('more-button').setAttribute('aria-expanded','false'); }
+  $('more-button').onclick=()=>{ const open=$('file-menu').hidden; $('file-menu').hidden=!open; $('more-button').setAttribute('aria-expanded',String(open)); if(open) $('picker-button').focus(); };
+  document.addEventListener('click',event=>{ if(!event.target.closest('.menu-anchor')) closeMenu(); });
+  document.addEventListener('keydown',event=>{ if(event.key==='Escape' && !$('file-menu').hidden) { closeMenu(); $('more-button').focus(); } });
+  $('picker-button').onclick=()=>{ clearDrag(); closeMenu(); $('picker').click(); };
+  $('picker').onchange=event=>{ acceptFiles(Array.from(event.target.files || []),state.directory); event.target.value=''; };
+  renderListing(); renderDrag();
+</script>
+</body>
+</html>
