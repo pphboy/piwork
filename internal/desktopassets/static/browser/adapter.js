@@ -8,7 +8,7 @@ import { resultText, upsertTool } from './chat-projection.js';
 import { HistoryProjection } from './history-projection.js';
 import { LegacyHistoryProjection } from './legacy-history-projection.js';
 import { LiveMessageSources } from './live-message-sources.js';
-import { synchronizeConfiguration } from './configuration.js';
+import { editableConfiguration, synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -1921,7 +1921,7 @@ export class DesktopAdapter {
         try {
             const value = await this.request(`works/${part(id)}/configuration`);
             const raw = value.desired;
-            work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
+            work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: editableConfiguration(raw), agentImage: raw.agentImage ? structuredClone(raw.agentImage) : undefined, advancedDirty: false, validationError: '', pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
             (work.resourceChecked ??= {}).configuration = new Date().toISOString();
             if (work.resourceErrors)
                 delete work.resourceErrors.configuration;
@@ -3102,19 +3102,15 @@ export class DesktopAdapter {
         this.emit();
         return operation;
     }
-    async createWork(name, config, image) {
+    async createWork(name, config) {
         this.assertDefaultReady();
         const payload = { name };
-        if (image)
-            payload.baseImage = image;
         if (config.skills !== undefined)
             payload.skills = config.skills;
         if (config.packages !== undefined)
             payload.packages = config.packages.map(p => ({ name: p.name, enabled: p.enabled }));
         if (config.agents !== undefined)
             payload.agentsMd = config.agents;
-        if (config.advanced)
-            payload.configuration = JSON.parse(config.advanced);
         return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
     }
     async lifecycle(id, action) { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }

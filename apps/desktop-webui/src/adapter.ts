@@ -9,7 +9,7 @@ import { HistoryProjection } from './history-projection.js';
 import { LegacyHistoryProjection } from './legacy-history-projection.js';
 import { LiveMessageSources, type LiveTextUpdate } from './live-message-sources.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
-import { synchronizeConfiguration } from './configuration.js';
+import { editableConfiguration, synchronizeConfiguration } from './configuration.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES, type ImageMime } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -1291,7 +1291,7 @@ export class DesktopAdapter {
   }
   async loadConfiguration(id: string) {
     const work = this.getWork(id)!; (work.resourceLoading ??= {}).configuration = true; this.emit(); try { const value = await this.request(`works/${part(id)}/configuration`); const raw = value.desired;
-    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: JSON.stringify(raw, null, 2), pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
+    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: editableConfiguration(raw), agentImage: raw.agentImage ? structuredClone(raw.agentImage) : undefined, advancedDirty: false, validationError: '', pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
     (work.resourceChecked ??= {}).configuration = new Date().toISOString(); if (work.resourceErrors) delete work.resourceErrors.configuration; this.emit(); return work.config;
   } catch (error) { (work.resourceErrors ??= {}).configuration = errorText(error); throw error; } finally { work.resourceLoading.configuration = false; this.emit(); }}
   async loadPackages(id: string) { const work = this.getWork(id)!; (work.resourceLoading ??= {}).packages = true; this.emit(); try { const value = await this.request(`works/${part(id)}/packages`); if (!Array.isArray(value.packages)) throw failure('INVALID_RESPONSE','d.error.packageListingIncomplete'); (work.resourceChecked ??= {}).packages = new Date().toISOString(); work.packageEntries = value.packages; delete work.resourceErrors?.packages; } catch (error) { (work.resourceErrors ??= {}).packages = errorText(error); throw error; } finally { work.resourceLoading.packages = false; this.emit(); }}
@@ -1927,14 +1927,12 @@ export class DesktopAdapter {
     this.state.operations.unshift(operation); if (operation.snapshotId) this.state.snapshots.unshift({ id: operation.snapshotId, operationId: operation.id, workId, status: 'preparing', filename: `${workId}.work`, size: '' });
     this.scheduleOperationPoll(); this.emit(); return operation;
   }
-  async createWork(name: string, config: Partial<Configuration>, image?: string) {
+  async createWork(name: string, config: Pick<Partial<Configuration>, 'skills' | 'packages' | 'agents'>) {
     this.assertDefaultReady();
     const payload: Data = { name };
-    if (image) payload.baseImage = image;
     if (config.skills !== undefined) payload.skills = config.skills;
     if (config.packages !== undefined) payload.packages = config.packages.map(p => ({ name: p.name, enabled: p.enabled }));
     if (config.agents !== undefined) payload.agentsMd = config.agents;
-    if (config.advanced) payload.configuration = JSON.parse(config.advanced);
     return this.accepted(await this.request('works', 'POST', payload), '', 'Create Work'); // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
   }
   async lifecycle(id: string, action: 'start' | 'stop' | 'retry' | 'delete') { return this.accepted(await this.request(`works/${part(id)}/${action}`, 'POST'), id, `${action[0].toUpperCase()}${action.slice(1)} Work`); }

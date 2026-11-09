@@ -235,14 +235,24 @@ test('a pending picked image follows automatic initial Session discovery and fin
  await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(1);sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(0);await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
 });
 
-test('Create Work geometry stays stable during delayed feedback on a narrow viewport',async t=>{
+test('Create Work geometry stays stable while pending and long rejection stays reachable',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST',message:'A long rejected creation message '.repeat(30)}};}});
  await page.setViewportSize({width:360,height:800});await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Long work name '.repeat(7));
  const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');
  const waiting=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-waiting![key])<=1,`${key} moved`);
  await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Still waiting',{timeout:12000});const longWait=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-longWait![key])<=1,`${key} moved on long wait`);
- gate.resolve();await expect(button(page,'create-work')).toBeEnabled();const failed=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} moved on error`);
+ gate.resolve();
+ await expect(button(page,'create-work')).toBeEnabled();
+ await expect(button(page,'create-work')).toBeInViewport();
+ await expect(page.locator('.create-action-status')).toContainText('A long rejected creation message');
+ const failed=await button(page,'create-work').boundingBox();
+ for(const key of ['width','height'] as const) assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} changed on error`);
+ assert.ok(await page.locator('.create-action-status').evaluate(node => node.clientHeight <= 120 && node.scrollHeight > node.clientHeight));
+ if (process.env.PIWORK_TEST_SCREENSHOT_DIR) {
+   await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+   await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-long-rejection.png` });
+ }
  assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 });
 
@@ -318,12 +328,24 @@ for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (cons
  await button(page,'back-works').click();trigger=button(page,'retry-works');before=await trigger.boundingBox();neighbor=await page.locator('.work-row').first().boundingBox();held='works';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.work-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
 });
 
-test('Advanced Create Work keeps feedback visible and buttons stable when the result is unknown',async t=>{
+test('Advanced Create Work keeps feedback and controls reachable when the result is unknown',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {abort:true};}});
  await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Advanced creation');await button(page,'toggle-create-advanced').click();await page.locator('#create-agents').fill('Long advanced instructions\n'.repeat(80));
  const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');await expect(button(page,'create-work')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
- const after=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-after![key])<=1,`${key} moved`);await expect(button(page,'create-work')).toBeDisabled();assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+ const after=await button(page,'create-work').boundingBox();
+ for(const key of ['width','height'] as const) assert.ok(Math.abs(before![key]-after![key])<=1,`${key} changed`);
+ await expect(button(page,'create-work')).toBeInViewport();
+ await expect(button(page,'create-work')).toBeDisabled();
+ await expect(page.locator('.notice-host .notice').filter({ hasText: 'response was lost' })).toHaveCount(0);
+ assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+ if (process.env.PIWORK_TEST_SCREENSHOT_DIR) {
+   await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+   await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-expanded-unknown.png` });
+ }
+ await button(page,'close-modal').click();
+ await expect(page.locator('.notice-host .notice').filter({ hasText: 'response was lost' })).toHaveCount(1);
+ assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
 });
 
 test('About displays local version while Core is delayed and escapes embedded notes',async t=>{

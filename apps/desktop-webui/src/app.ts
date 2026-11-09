@@ -213,13 +213,11 @@ let view = {
   modalNameError: null as { name: string; message: string } | null,
   createName: "",
   createAdvanced: false,
-  createImage: "",
   createSkillMode: "defaults",
   createPackageMode: "defaults",
   createSkills: [] as string[],
   createPackages: [] as string[],
   createAgents: "",
-  createJson: "",
   importName: "",
   inspected: false,
   inspectFilename: "",
@@ -265,9 +263,12 @@ let modalTransfers: TransferResult[] = [];
 let uploadPickerTarget: { epoch: number; workId: string; directory: string } | undefined;
 let pendingUploadTarget: { epoch: number; workId: string; directory: string } | undefined;
 function resetCreateFields() {
-  view.createName = ''; view.createAdvanced = false; view.createImage = '';
+  view.createName = '';
+  view.createAdvanced = false;
   view.createSkillMode = 'defaults'; view.createPackageMode = 'defaults';
-  view.createSkills = []; view.createPackages = []; view.createAgents = ''; view.createJson = '';
+  view.createSkills = [];
+  view.createPackages = [];
+  view.createAgents = '';
 }
 type ObjectControl = { workId: string; serviceId?: string; action: string; phase: 'pending' | 'accepted' | 'unknown' | 'failed' | 'reviewed'; operationId?: string; error?: string };
 const workControls = new Map<string, ObjectControl>();
@@ -1048,6 +1049,9 @@ function syncNotices() {
   const actionOwnedOperations = new Set<string>();
   for (const record of actions.records.values()) {
     if (!actions.current(record)) continue;
+    // The open creation form owns its field/local errors. A closed form keeps
+    // the original record eligible for the normal recovery notice.
+    if (createFormOwnsFeedback(record)) continue;
     if (record.action === 'sign-in' && adapter.signInUnknown) record.notificationProjection = 'sign-in-owner';
     const alreadyFileOwned = fileReadNoticeOwners.has(record);
     if (fileReadNoticeOwners.owns(fileFeedback, record)) {
@@ -2530,9 +2534,9 @@ function modalMarkup() {
       break;
     case "new-work":
       title = t('works.newWork');
-      body = `<p>${t('create.body')}</p><label class="field">${t('workInfo.name')}<input id="create-name" placeholder="${esc(t('create.namePlaceholder'))}" value="${esc(view.createName)}" aria-label="${esc(t('workInfo.name'))}" ${currentNameError() ? 'aria-invalid="true" aria-describedby="create-name-error"' : ""} autofocus required maxlength="120">${nameFieldError("create-name-error")}</label><button class="advanced-toggle" data-action="toggle-create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} ${t('create.advanced')} <span>${t('create.optional')}</span></button>${
+      body = `<p>${t('create.body')}</p><label class="field">${t('workInfo.name')}<input id="create-name" placeholder="${esc(t('create.namePlaceholder'))}" value="${esc(view.createName)}" aria-label="${esc(t('workInfo.name'))}" ${currentNameError() ? 'aria-invalid="true" aria-describedby="create-name-error"' : ""} autofocus required maxlength="120">${nameFieldError("create-name-error")}</label><button class="advanced-toggle" data-action="toggle-create-advanced" aria-expanded="${view.createAdvanced}" aria-controls="create-advanced">${icon(view.createAdvanced ? "down" : "chevron", 14)} ${t('create.advanced')} <span>${t('create.optional')}</span></button>${
         view.createAdvanced
-          ? `<div class="advanced-form"><label class="field">${t('create.baseImage')}<input id="create-image" placeholder="${esc(t('create.useCoreDefault'))}" value="${esc(view.createImage)}"></label><label class="field">${t('create.skills')}<select id="create-skill-mode">${[
+          ? `<div id="create-advanced" class="advanced-form"><label class="field">${t('create.skills')}<select id="create-skill-mode">${[
               ["defaults", t('create.useDefaults')],
               ["choose", t('create.choose')],
               ["none", t('create.none')],
@@ -2570,9 +2574,9 @@ function modalMarkup() {
                     )
                     .join("")
                 : ""
-            }<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="${esc(t('create.agentsPlaceholder'))}">${esc(view.createAgents)}</textarea></label>${btn(t('create.importAgents'), "create-import-agents", "small")}<label class="field">${t('create.fullJson')}<textarea id="create-json" rows="4" class="mono" placeholder="${esc(t('create.jsonPlaceholder'))}">${esc(view.createJson)}</textarea></label></div>`
+            }<div class="create-agents-heading"><label for="create-agents">AGENTS.md</label>${btn(`${icon('upload', 13)} ${t('create.importAgents')}`, "create-import-agents", "small quiet")}</div><div class="field"><textarea id="create-agents" rows="3" aria-label="AGENTS.md" placeholder="${esc(t('create.agentsPlaceholder'))}">${textareaContent(view.createAgents)}</textarea></div></div>`
           : ""
-      }<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div>`;
+      }`;
       footer = `${cancel()}${btn(t('create.submit'), "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
       break;
     case "stop-work":
@@ -2920,7 +2924,7 @@ function modalMarkup() {
     return `<dialog id="modal" tabindex="-1" aria-modal="false" aria-labelledby="modal-title" class="modal anchored-overlay chat-response-settings compact-response-picker ${view.data.expanded === 'thinking' ? 'thinking-options' : 'model-options'}"><div id="modal-title" class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
   }
   const submissionError=view.modal==='chat-submission'?target?.sessions.find(s=>s.id===view.data.sessionId)?.messages.find(m=>m.submission?.key===view.data.submissionKey)?.submission?.error:undefined;
-  return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${view.modal==='sessions'?'session-picker':''} ${view.modal === 'service-picker' ? 'compact-service-picker' : view.modal === 'service-details' ? 'compact-service-details' : view.modal === 'connection' ? 'compact-info-pop' : ''} ${['chat-submission','chat-history-status'].includes(view.modal)?'chat-submission-popover':''} ${["new-work", "import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${view.modal === "sessions" ? btn(`${icon("plus",14)} ${t('sessions.newCompact')}`, "new-session", "session-new-compact", `aria-label="${esc(t('chat.newSession'))}"`) : ""}${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError!==submissionError && view.modal!=="new-work" && !(view.modal==='sessions' && view.modalError===target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+  return `<dialog id="modal" aria-modal="${role!=='modal' || view.modal==='export' || isRequestInspector() && innerWidth>=900 ? 'false':'true'}" aria-labelledby="modal-title" class="modal ${role==='popover'?'anchored-overlay selection-popover':role==='drawer'?'inspector-drawer':''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal==='new-folder' || view.modal==='file-transfer' && view.data.transfer==='rename' ? 'modal-name' : ''} ${view.modal==="new-work"?"modal-create":""} ${view.modal==='chat-response-settings'?'chat-response-settings':''} ${view.modal==='sessions'?'session-picker':''} ${view.modal === 'service-picker' ? 'compact-service-picker' : view.modal === 'service-details' ? 'compact-service-details' : view.modal === 'connection' ? 'compact-info-pop' : ''} ${['chat-submission','chat-history-status'].includes(view.modal)?'chat-submission-popover':''} ${["import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow',16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${view.modal === "sessions" ? btn(`${icon("plus",14)} ${t('sessions.newCompact')}`, "new-session", "session-new-compact", `aria-label="${esc(t('chat.newSession'))}"`) : ""}${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError!==submissionError && view.modal!=="new-work" && !(view.modal==='sessions' && view.modalError===target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal==="new-work"?"create-action-status":""}" data-action-status-slot>${view.modal==="new-work" && view.modalError?feedback(esc(view.modalError),"warning"):""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op: Operation) {
   const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
@@ -3699,17 +3703,6 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
         break;
       }
       const config: Partial<Configuration> = {};
-      if (view.createJson.trim()) {
-        let data;
-        try {
-          data = JSON.parse(view.createJson);
-        } catch {
-          throw Error(t('create.invalidJson'));
-        }
-        if (typeof data !== "object" || Array.isArray(data) || !data)
-          throw Error(t('create.jsonObject'));
-        config.advanced = JSON.stringify(data, null, 2);
-      }
       if (view.createSkillMode !== "defaults")
         config.skills =
           view.createSkillMode === "none" ? [] : [...view.createSkills];
@@ -3725,7 +3718,7 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
       if (view.createAgents) config.agents = view.createAgents;
       if (record) latestCreateToken = record.token;
       const token = createDraft.capture(), origin = ownedView(), epoch = adapter.identityEpoch;
-      const op = await adapter.createWork(view.createName.trim(), config, view.createImage);
+      const op = await adapter.createWork(view.createName.trim(), config);
       if (epoch !== adapter.identityEpoch) throw new ViewChanged();
       if (op.id && op.workId) createDraft.accept(token);
       if (record) { record.businessId = op.id;
@@ -4769,7 +4762,13 @@ async function copy(text: string, successMessage: string | LocalizedMessage = ne
   }
 }
 
+function createFormOwnsFeedback(record: Readonly<ActionRecord>) {
+  return view.modal === 'new-work' && record.action === 'create-work' &&
+    !!record.owner?.isConnected && !!record.owner.closest('#modal.modal-create');
+}
+
 function visibleActionRecord(record: ActionRecord) {
+  if (!record.pending && createFormOwnsFeedback(record) && (view.modalError || currentNameError())) return false;
   if (!signInActionFeedbackVisible(record, adapter.signInUnknown)) return false;
   if (record.notificationProjection === 'chat-submission-owner') return false;
   if (record.kind === 'read' && resourceReadOwnedActions.has(record)) return false;
@@ -5154,7 +5153,7 @@ root.addEventListener('focusin',positionMessageTooltip);
 root.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement | HTMLTextAreaElement;
   const value = input.value;
-  if (["create-name", "create-image", "create-agents", "create-json"].includes(input.id)) createDraft.edit();
+  if (["create-name", "create-agents"].includes(input.id)) createDraft.edit();
   switch (input.id) {
     case "search":
       view.search = value;
@@ -5174,14 +5173,8 @@ root.addEventListener("input", (e) => {
       if(save)save.disabled=!value.trim();
       break;
     }
-    case "create-image":
-      view.createImage = value;
-      break;
     case "create-agents":
       view.createAgents = value;
-      break;
-    case "create-json":
-      view.createJson = value;
       break;
     case "composer": {
       const work = current();

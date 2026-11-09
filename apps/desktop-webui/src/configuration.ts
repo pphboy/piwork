@@ -2,6 +2,20 @@ import type { Configuration } from './models.js';
 import { t } from './locale.js';
 
 type PublicConfiguration = Record<string, any>;
+export function editableConfiguration(value: PublicConfiguration): string {
+  const { agentImage: _image, ...editable } = value;
+  return JSON.stringify(editable, null, 2);
+}
+
+function validateImage(config: Configuration, value: PublicConfiguration) {
+  if (!Object.hasOwn(value, 'agentImage')) return;
+  const image = value.agentImage;
+  if (!config.agentImage || !image || typeof image !== 'object' || Array.isArray(image) ||
+    Object.keys(image).length !== 1 || image.catalogId !== config.agentImage.catalogId) {
+    throw new Error(t('d.config.imageReadOnly'));
+  }
+}
+
 function validate(value: unknown): asserts value is PublicConfiguration {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('d.config.objectRequired'));
   const raw = value as PublicConfiguration;
@@ -14,6 +28,8 @@ function validate(value: unknown): asserts value is PublicConfiguration {
 export function synchronizeConfiguration(config: Configuration): PublicConfiguration {
   const parsed: unknown = JSON.parse(config.advanced);
   validate(parsed);
+  validateImage(config, parsed);
+  delete parsed.agentImage;
   if (config.advancedDirty) {
     config.skills = [...(parsed.skills ?? [])];
     config.packages = (parsed.packages ?? []).map((p: any) => ({ ...p, source: 'Saved Work copy' })); // i18n-exempt: configuration protocol value, not display text
@@ -26,11 +42,16 @@ export function synchronizeConfiguration(config: Configuration): PublicConfigura
   config.advanced = JSON.stringify(parsed, null, 2);
   config.advancedDirty = false;
   config.validationError = '';
-  return parsed;
+  return { ...parsed, ...(config.agentImage ? { agentImage: { ...config.agentImage } } : {}) };
 }
 export function editAdvanced(config: Configuration, text: string) {
   config.advanced = text;
   config.advancedDirty = true;
-  try { const value: unknown = JSON.parse(text); validate(value); config.validationError = ''; }
+  try {
+    const value: unknown = JSON.parse(text);
+    validate(value);
+    validateImage(config, value);
+    config.validationError = '';
+  }
   catch (error) { config.validationError = error instanceof Error ? error.message : String(error); }
 }

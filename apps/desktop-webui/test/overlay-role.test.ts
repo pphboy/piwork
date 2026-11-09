@@ -121,7 +121,12 @@ test('active Run initial checking is neutral and send stays locked; idle unknown
  c.adapter.activeRuns.set('a',{confirmed:true,loading:true,visibleLoading:false,error:'',run:null});html=c.agent(work,false);assert.doesNotMatch(html,/Checking conversation status|Conversation status is not confirmed|data-action="check-active-run"/);assert.doesNotMatch(html,/data-action="send-message"[^>]*disabled/);
 });
 test('read feedback is bound to directory, navigation origin and Session; unknown writes stay visible',()=>{
- const {c,work}=rendererFixture();c.view.tab='Files';c.view.path='/current';c.view.file='';vm.runInContext(extract('visibleActionRecord'),c);
+ const {c,work}=rendererFixture();
+ c.view.tab='Files';
+ c.view.path='/current';
+ c.view.file='';
+ vm.runInContext(extract('createFormOwnsFeedback')+extract('visibleActionRecord'),c);
+
  assert.equal(c.visibleActionRecord({kind:'read',action:'refresh-files',work:'a',resource:'/old'}),false);
  assert.equal(c.visibleActionRecord({kind:'read',action:'file-path',work:'a',resource:'/denied',origin:'/current'}),true);
  c.view.path='/new';assert.equal(c.visibleActionRecord({kind:'read',action:'file-path',work:'a',resource:'/denied',origin:'/current'}),false);
@@ -141,14 +146,24 @@ test('model metadata failure cannot turn an unconfirmed first conversation into 
 });
 
 test('successful conversation retry cannot revive an older Sessions action error after inline feedback clears',()=>{
- const {c,work}=rendererFixture();c.view.session='s';work.sessions=[{id:'s',messages:[{}],checkedAt:'now'}];vm.runInContext(extract('visibleActionRecord'),c);
+ const {c,work}=rendererFixture();
+ c.view.session='s';
+ work.sessions=[{id:'s',messages:[{}],checkedAt:'now'}];
+ vm.runInContext(extract('createFormOwnsFeedback')+extract('visibleActionRecord'),c);
+
  const old={kind:'read',action:'sessions',work:'a',resource:'/',error:'Session list denied'};work.resourceErrors.agent=old.error;assert.equal(c.visibleActionRecord(old),true);
  delete work.resourceErrors.agent;assert.equal(c.visibleActionRecord(old),false);
  const retry={...old,action:'retry-conversation',resource:'s'};work.sessions[0].error=old.error;assert.equal(c.visibleActionRecord(retry),true);work.sessions[0].error='';assert.equal(c.visibleActionRecord(retry),false);
 });
 
 test('successful file refresh also retires the original tab read error without weakening write recovery',()=>{
- const {c,work}=rendererFixture();c.view.tab='Files';c.view.file='';c.view.path='/';vm.runInContext(extract('visibleActionRecord'),c);const old={kind:'read',action:'tab-Files',work:'a',resource:'/',error:'Files denied'};
+ const {c,work}=rendererFixture();
+ c.view.tab='Files';
+ c.view.file='';
+ c.view.path='/';
+ vm.runInContext(extract('createFormOwnsFeedback')+extract('visibleActionRecord'),c);
+ const old={kind:'read',action:'tab-Files',work:'a',resource:'/',error:'Files denied'};
+
  c.adapter.directories.set('a:/',{checkedAt:'',error:'Files denied'});assert.equal(c.visibleActionRecord(old),true);
  c.adapter.directories.set('a:/',{checkedAt:'now',error:''});assert.equal(c.visibleActionRecord(old),false);
  assert.equal(c.visibleActionRecord({...old,kind:'files',action:'save-file',blocked:true}),true);

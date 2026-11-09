@@ -18,11 +18,11 @@ test('New Work resets only on the next explicit open after reliable acceptance',
 test('rejected or unknown New Work keeps its exact draft and does not authorize a reset', () => {
   for (const outcome of ['rejected', 'unknown']) {
     const draft = new NewWorkDraftRevision();
-    const fields = { name: '  Original Work  ', json: '{"x": 1}', skills: ['one'], advanced: true };
+    const fields = { name: '  Original Work  ', agents: 'Instructions', skills: ['one'], advanced: true };
     const expected = structuredClone(fields);
     draft.open(); draft.edit();
     // Neither a known rejection nor a lost response calls accept.
-    if (draft.open()) Object.assign(fields, { name: '', json: '', skills: [], advanced: false });
+    if (draft.open()) Object.assign(fields, { name: '', agents: '', skills: [], advanced: false });
     assert.deepEqual(fields, expected, outcome);
   }
 });
