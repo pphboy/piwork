@@ -1,0 +1,13 @@
+{
+  "coreProcessPeakResidentBytes": 177856512,
+  "exportMs": 13346,
+  "imageCount": 2,
+  "importMs": 11293,
+  "inspectMs": 3326,
+  "jobTemporaryPeakBytes": 1434610056,
+  "logicalRestoreBytes": 827078371,
+  "physicalBytes": 219559318,
+  "uploadVerifyMs": 7099,
+  "scope": "isolated synthetic Agent + FastAPI Work; targeted acceptance, not full repository inventory",
+  "defaultPolicy": "SpeedDefault / 8 MiB / single concurrency"
+}

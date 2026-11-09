@@ -1,0 +1,377 @@
+diff --git a/piwork/docs/spec/index.md b/piwork/docs/spec/index.md
+index 740af3b..c317960 100644
+--- a/piwork/docs/spec/index.md
++++ b/piwork/docs/spec/index.md
+@@ -6,7 +6,7 @@ The unified Linux image set uses fixed release ID `0.0.7-62f2868cb8e2-d69916b528
+
+ | Area | Read here | Authoritative source |
+ | --- | --- | --- |
+-| Portable Work | [Work Spec](/spec/work) | [Package format](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md) and [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md) |
++| Portable Work | [Work Spec](/spec/work) | [Package format](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/README.md) and [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/README.md) |
+ | Managed capabilities | [Service Spec](/spec/service) | [work-services](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-services/spec.md) and [MCP tools](https://github.com/pphboy/piwork/blob/main/internal/servicemcp/tools.json) |
+ | Intelligent execution | [Harness Spec](/spec/harness) | [agent-conversation](https://github.com/pphboy/piwork/blob/main/openspec/specs/agent-conversation/spec.md) and [piwork-brain](https://github.com/pphboy/piwork/blob/main/openspec/specs/piwork-brain/spec.md) |
+
+diff --git a/piwork/docs/spec/work.md b/piwork/docs/spec/work.md
+index 0fee257..e6abaed 100644
+--- a/piwork/docs/spec/work.md
++++ b/piwork/docs/spec/work.md
+@@ -1,40 +1,148 @@
+ # Work Specification
+
+-## Current behavior
++**English** | [简体中文](/zh/spec/work)
+
+-A Work owns its configuration, private conversation history, shared workspace, Service definitions, and captured execution context. Core controls lifecycle and isolation.
++Work joins an Agent harness, Services and a persistent workspace. A **manifest** (the versioned Work Spec value) describes one complete cold snapshot. A **Work Package** is the manifest plus all referenced bytes in a `.work` file. An imported **Work Instance** has independent recipient ownership and mutable storage.
+
+-Export requires a **stopped Work**. Import validates the archive and target requirements, then publishes a new **stopped Work**. It assigns new Work, Service, volume, network, certificate, and control identities. The recipient starts it explicitly.
++This page describes V1 and the V2 format implemented in this source tree. V2 has not yet been released. Current behavior requirements, including V2, are defined in [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md) and [work-snapshots](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-snapshots/spec.md). Design and verification records are preserved in the archived [compress-work-packages]((https://github.com/pphboy/piwork/tree/main/openspec/changes/archive/2026-11-09-compress-work-packages/) change.
+
+-Changing desired configuration does not immediately replace active context. Pending settings require an explicit Apply. Import preserves active and desired configuration without silently applying pending changes.
++## Manifest and relationships
+
+-## Current format: `.work` v1
+
+-The MIME type is `application/vnd.piwork.work-package`. The snapshot kind is `cold-full`.
++| Field | Meaning |
++| --- | --- |
++| `formatVersion`, `snapshotKind` | Package encoding version (1/2), always `cold-full` |
++| `createdAt`, `sourceName` | Snapshot generation time and source name |
++| `compatibility` | Linux platform, agent protocol, history schema, storage layout and Pi package contract |
++| `contexts`, `activeContext`, `desiredContext` | Retained execution configurations; active may be null |
++| `piPackageArtifacts` | Complete prepared package trees and dependencies, keyed by content |
++| `services` | Service definitions, revisions, heads and retained tombstones |
++| `quotaReservations` | Captured persistent agent/service reservations |
++| `volumes` | Exactly agent-private and workspace trees and their logical references |
++| `images` | Fixed image configs and original layer digests, including offline bytes |
++| `bindings` | Nonsecret model requirements and external MCP secret dependencies |
++| `history` | Control history and declared source identity map blob references |
++| `blobs` | Digest-sorted unique content and its storage representation |
++
++Read the complete strict [V1 schema](https://github.com/pphboy/piwork/blob/main/internal/workpackage/schema/manifest-v1.schema.json) or [V2 schema](https://github.com/pphboy/piwork/blob/main/internal/workpackage/schema/manifest-v2.schema.json) for nested fields, enums and required keys. References use logical keys or original content SHA-256, never recipient authority. Every reference must resolve; unknown fields, duplicate keys, unsafe integers, missing data and unreferenced blob kinds are rejected. Empty collections are explicit. `kinds` can merge multiple uses of the same original bytes.
++
++## Byte layout
++
++```text
++8 bytes magic | uint64 big-endian manifest length | UTF-8 JSON | ordered blobs
++```
++
++The magic is ASCII `PIWORK1` plus LF for V1, or `PIWORK2` plus LF for V2 (eight bytes). JSON is uncompressed; there are no per-blob headers, offsets or trailing bytes. Blob order follows the manifest's ascending digest order. The first blob starts at byte `16 + manifestLength`.
++
++V1 blobs have exactly `digest`, `size`, `kinds` and store raw content. V2 blobs require two additional fields:
++
++```json
++{"digest":"<64 lowercase SHA-256 hex digits>","size":1000000,"kinds":["file"],"encoding":"zstd","storedSize":280000}
++```
++
++This fragment illustrates fields; it is not a complete valid package. `size` and `digest` always describe original decoded bytes. `storedSize` describes bytes in the package. `raw` requires both sizes equal; empty content uses raw and zero sizes. Each successful compression is retained only when smaller than the source. Encoding errors fail export.
++
++A `zstd` item is exactly one ordinary [Zstandard frame](https://www.rfc-editor.org/rfc/rfc8878.html), with no dictionary, skippable frame, concatenated frame or trailing bytes. Maximum decode window is 8 MiB, including single-segment semantics. Optional declared content size must match `size`; optional checksums are verified. Readers enforce the output length while decoding and verify the original SHA-256. Different encoders may produce different physical package bytes for the same original content.
++
++The next offset adds `storedSize` (V1: `size`). Physical package length is `16 + manifestLength + sum(storedSize)`. The physical package SHA-256 covers all bytes, including the header and encoded bodies. Image config identities and layer diff_ids continue to use original content digests. Compression level is an internal balanced policy, not a manifest field or setting.
++
++## Trees, history and completeness
+
+-| Bytes | Meaning |
++A tree blob lists entries and original file blob digests. POSIX byte paths are encoded as base64 segments. Files, empty directories, permissions, uid/gid, nanosecond mtime, symlink targets and within-tree hardlinks follow [storage rules](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-storage/spec.md#requirement-preserve-complete-cold-snapshot-storage-without-dereferencing-user-links). Links are saved as data and never followed during capture/restore. Unsupported special entries or metadata fail the whole snapshot; `security.selinux` belongs to the target host policy.
++
++All retained contexts, prepared packages, fixed images, configuration revisions, user files, caches, dependencies, business data, sessions and retained history remain included. Control-history payload strings are opaque historical text; managed identity fields follow the declared map. Private history must satisfy the exact supported [history schemas](https://github.com/pphboy/piwork/tree/main/internal/workhistory) and [Memory rules](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-memory/spec.md); imported historical requests do not regain execution authority. [Synthetic V1 packages and cases](https://github.com/pphboy/piwork/tree/main/internal/workpackage/testdata) provide complete examples; V2 tests exercise mixed encodings and standard Zstd interoperability.
++
++### Exact tree JSON
++
++Tree blobs use the same structure in V1 and V2. The top-level object has exactly `version` (integer `1`) and `entries` (a nonempty array). Unknown, missing or duplicate fields are rejected. Every entry has all six common fields:
++
++| Field | Type and constraints |
+ | --- | --- |
+-| Eight bytes `PIWORK1\n` | Format magic. |
+-| Unsigned 64-bit big-endian integer | UTF-8 JSON manifest length. |
+-| Manifest JSON | Strict format/version, compatibility, references, and blob metadata. |
+-| Ordered raw blobs | Each blob's declared byte length and SHA-256 digest. |
++| `segmentsBase64` | Array of canonical standard Base64 strings, one per raw POSIX path segment; `[]` denotes the tree root. |
++| `uid`, `gid` | Integers from 0 through 4294967295. |
++| `mode` | Integer from 0 through 4095 (`07777` octal): permission and special bits only, without file-type bits. |
++| `mtimeNs` | Unix epoch nanoseconds as a **JSON string**, at most 32 characters matching `^-?(?:0|[1-9][0-9]*)$`; restoration also requires a timestamp representable by the target filesystem. |
++| `type` | Exactly `directory`, `file`, `symlink` or `hardlink`. |
++
++In addition to those six fields, the following exact variants apply; fields from other variants are not allowed:
++
++| `type` | Additional required fields |
++| --- | --- |
++| `directory` | None. |
++| `file` | `blob`: original file SHA-256 referencing a manifest blob whose kinds include `file`; `size`: nonnegative safe integer equal to that blob's original `size`, including explicit zero. |
++| `symlink` | `targetBase64`: canonical standard Base64 of the complete original link-target bytes, not an array of segments. The decoded target is nonempty, has no NUL and is at most 4096 bytes; absolute and dangling targets are preserved as data. |
++| `hardlink` | `targetSegmentsBase64`: a path-segment array using the same encoding as `segmentsBase64`; it must name a `file` entry in this same tree, including a later entry, and have identical uid/gid/mode/mtimeNs. It cannot target another hardlink, symlink, directory or tree. |
++
++Decode Base64 with the standard alphabet and canonical padding, not URL-safe Base64. A path segment may contain arbitrary non-UTF-8 bytes, but cannot be empty, contain NUL or `/`, or equal `.` or `..`. Join decoded segments with byte `/`; the path is at most 4096 bytes and 128 segments. Sort entries strictly by the **decoded joined path bytes**, using unsigned byte order, not the Base64 text. Paths are unique. The first entry is the root directory (`[]`); every non-root parent must already be a directory entry. File contents are referenced, not embedded in this JSON; hardlinks add no separate file bytes.
++
++These are the general tree rules; prepared Pi Package trees also obey the existing [package compatibility rules](https://github.com/pphboy/piwork/blob/main/openspec/specs/online-pi-package-compatibility/spec.md), including their stricter dependency and link constraints. A valid generic tree alone does not prove a valid prepared package.
++
++This complete tree example contains the root, an empty `a.txt`, its hardlink `b.txt`, and a symlink `link` pointing to `a.txt`. The manifest must separately declare the empty file blob with the SHA-256 below, original size 0 and kind `file`. Hash the tree's own UTF-8 JSON bytes as a separate blob of kind `tree`.
++
++```json
++{
++  "version": 1,
++  "entries": [
++    {
++      "segmentsBase64": [],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 493,
++      "mtimeNs": "0",
++      "type": "directory"
++    },
++    {
++      "segmentsBase64": [
++        "YS50eHQ="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 420,
++      "mtimeNs": "0",
++      "type": "file",
++      "blob": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
++      "size": 0
++    },
++    {
++      "segmentsBase64": [
++        "Yi50eHQ="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 420,
++      "mtimeNs": "0",
++      "type": "hardlink",
++      "targetSegmentsBase64": [
++        "YS50eHQ="
++      ]
++    },
++    {
++      "segmentsBase64": [
++        "bGluaw=="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 511,
++      "mtimeNs": "0",
++      "type": "symlink",
++      "targetBase64": "YS50eHQ="
++    }
++  ]
++}
++```
+
+-There are no blob headers, compression, or trailing bytes. Core creates the manifest; users do not hand-author it. The archive includes fixed image content by immutable digest.
++The other structured history blobs use the existing named definitions `WorkControlHistorySchema` and `WorkSourceIdentityMapSchema` in the [native schema catalog](https://github.com/pphboy/piwork/blob/main/internal/contracts/schemas.json). `history.control` references the former; `history.sourceIdentityMap` references the latter. Their context/service/operation maps must match the manifest's complete logical keys and source scopes; ordinary archived payload strings remain opaque, while managed identity fields are remapped. These definitions are shared with V1 and are not a new V2 data model.
+
+-Included durable content covers the `agent-private` and `workspace` volume trees, Work-owned contexts, `AGENTS.md`, Skills, prepared Pi Package artifacts, Service/configuration revisions, and retained history. Logical references are remapped on import; original user files and SDK history bytes are retained.
++## Limits and validation
+
+-## Portability boundaries
++Physical package bytes, decoded package bytes (`16 + manifestLength + sum(size)`) and logical restore bytes are each bounded at 100 GiB. Logical restore counts repeated file references across trees and unique image layers; within-tree hardlinks count once. Each metadata JSON and the manifest are at most 64 MiB; cumulative metadata is at most 256 MiB. Limits include 1,000,000 file entries, 4096 path bytes and depth 128. All length arithmetic is checked. Compression does not bypass raw metadata or restore limits.
+
+-- Live processes, temporary container layers, anonymous volumes, tmpfs, and external services are excluded.
+-- Platform model API keys, user tokens, installation certificates, and global catalogs are excluded.
+-- User secrets in files and history are included because user content is not filtered.
+-- Target Core must have an enabled matching model, readable credentials, compatible platform/images, and enough quota.
+-- Offline inspection checks integrity and structure; it does not prove recipient compatibility or trust in embedded code.
++Validate framing/version agreement, exact schemas, all storage boundaries, original hashes and complete reference closure before publication. Invalid bytes/structure return `PACKAGE_INVALID`, unsupported versions/encodings `PACKAGE_FORMAT_UNSUPPORTED`, and resource excess `PACKAGE_LIMIT_EXCEEDED`. Offline inspect is side-effect-free: integrity is verified, installation compatibility is not. The target additionally checks static history semantics, models, platform, permissions and quota; neither inspection nor import executes package code.
+
+-V1 is Linux and protocol/layout specific. Current limits include 100 GiB package bytes, 100 GiB logical restore size, and one million tree entries. Unsupported special files, user xattrs, ACLs, or capabilities fail export. The host-assigned `security.selinux` label is excluded, and restore uses the target host's label.
++## Moving and compatibility
+
+-## Experimental and future direction
++Export requires a verified stopped Work. Import publishes a new stopped Work; explicit Start establishes new runtime identities. Active/desired differences are preserved. Registry access or dependency reinstallation is not required to restore captured content; matching target models and external services remain external requirements. Platform credentials are excluded, while user secrets stored in files/history are included unchanged.
+
+-The current portable format is version 1; it is not a generic host backup or cross-platform process checkpoint. Broader portability is future direction, not part of this format's guarantees.
++New readers accept strict V1 and V2, and new exports use V2. Old software cannot read V2. Existing V1 files and ready snapshot downloads are never rewritten; retries use the original package bytes/hash. Same content does not imply the same package digest across encodings. Compression reduces the transfer file; installed content size and application behavior follow the original contract.
+
+-For the complete strict manifest, tree encoding, history validation, and limits, use the authoritative [Work package format](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md), [portable-work spec](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md), and [snapshot guide](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-snapshots/spec.md).
++[V2 synthetic package / V2 合成包](https://github.com/pphboy/piwork/blob/main/internal/workpackage/testdata/golden-v2.work) · [V2 boundary and interoperability cases / V2 边界与互操作用例](https://github.com/pphboy/piwork/blob/main/internal/workpackage/compression_test.go)
+diff --git a/piwork/docs/zh/spec/index.md b/piwork/docs/zh/spec/index.md
+index 51c96e3..b94d671 100644
+--- a/piwork/docs/zh/spec/index.md
++++ b/piwork/docs/zh/spec/index.md
+@@ -6,7 +6,7 @@
+
+ | 范围 | 本站文档 | 权威来源 |
+ | --- | --- | --- |
+-| 可携带 Work | [Work 规范](/zh/spec/work) | [包格式](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md)与 [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md) |
++| 可携带 Work | [Work 规范](/zh/spec/work) | [包格式](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/README.zh-CN.md)与 [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/README.zh-CN.md) |
+ | 受管理能力 | [Service 规范](/zh/spec/service) | [work-services](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-services/spec.md)与 [MCP 工具](https://github.com/pphboy/piwork/blob/main/internal/servicemcp/tools.json) |
+ | 智能执行 | [Harness 规范](/zh/spec/harness) | [agent-conversation](https://github.com/pphboy/piwork/blob/main/openspec/specs/agent-conversation/spec.md)与 [piwork-brain](https://github.com/pphboy/piwork/blob/main/openspec/specs/piwork-brain/spec.md) |
+
+diff --git a/piwork/docs/zh/spec/work.md b/piwork/docs/zh/spec/work.md
+index 54fdc4b..51b8f61 100644
+--- a/piwork/docs/zh/spec/work.md
++++ b/piwork/docs/zh/spec/work.md
+@@ -1,40 +1,147 @@
+ # Work 规范
+
+-## 当前行为
++[English](/spec/work) | **简体中文**
+
+-Work 拥有配置、私有对话历史、共享工作空间、Service 定义和捕获的执行上下文。Core 控制生命周期和隔离。
++Work 将 Agent harness、Service 与持久工作区连接起来。**Manifest（版本化 Work Spec 值）**描述一次完整冷快照；**Work Package** 是清单及全部引用字节组成的 `.work` 文件；导入后的 **Work Instance** 使用接收者的独立身份与可变存储。
+
+-导出要求 Work **已停止**。导入会验证归档及目标要求，发布新的**已停止 Work**，并分配新的 Work、Service、卷、网络、证书和控制身份。接收方需要显式启动。
++本文说明 V1 和本源码树已实现、尚未发布的 V2。包含 V2 的当前行为约束见 [portable-work](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md) 和 [work-snapshots](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-snapshots/spec.md)；设计与验收记录保留在已归档的 [compress-work-packages]((https://github.com/pphboy/piwork/tree/main/openspec/changes/archive/2026-11-09-compress-work-packages/) 变更中。
+
+-修改期望配置不会立即替换当前运行上下文。待生效设置需要显式 Apply。导入保留当前和期望配置，不会自动应用待生效变更。
++## Manifest 与引用关系
+
+-## 当前格式：`.work` v1
++| 字段 | 含义 |
++| --- | --- |
++| `formatVersion`、`snapshotKind` | 包封装版本 1/2，快照种类 cold-full |
++| `createdAt`、`sourceName` | 快照生成时间与源名称 |
++| `compatibility` | Linux 平台、Agent 协议、历史 schema、存储布局与包契约 |
++| `contexts`、`activeContext`、`desiredContext` | 全部保留执行配置，active 可为 null |
++| `piPackageArtifacts` | 已准备的完整包树及依赖，按内容寻址 |
++| `services` | Service 定义、修订、heads 和保留 tombstone |
++| `quotaReservations` | Agent/Service 的持久资源预留 |
++| `volumes` | 恰好 private/workspace 两棵树及逻辑引用 |
++| `images` | 固定镜像 config 与原始层摘要及离线内容 |
++| `bindings` | 非秘密模型要求与外部 MCP secret 依赖 |
++| `history` | 控制历史与声明的源身份映射 blob 引用 |
++| `blobs` | 按摘要排序去重的内容与存储表示 |
++
++完整嵌套字段、枚举和必需项见严格 [V1 schema](https://github.com/pphboy/piwork/blob/main/internal/workpackage/schema/manifest-v1.schema.json)、[V2 schema](https://github.com/pphboy/piwork/blob/main/internal/workpackage/schema/manifest-v2.schema.json)。逻辑 key 与原始内容 SHA-256 构成引用，不能授予接收端权限。所有引用必须闭合；未知字段、重复 JSON key、不安全整数、缺失内容、未引用的 blob 用途均拒绝。空集合显式记录，相同内容合并 kinds 用途。
++
++## 字节布局
++
++```text
++8 bytes magic | uint64 big-endian manifest length | UTF-8 JSON | ordered blobs
++```
++
++V1 magic 为 ASCII PIWORK1 加 LF，V2 为 PIWORK2 加 LF，均八字节。JSON 不压缩，没有逐 blob header、offset 表或尾随字节。blob 按清单的摘要升序排列，首项偏移为 `16 + manifestLength`。
++
++V1 blob 只有 digest、size、kinds，存原始内容。V2 必需增加 encoding 和 storedSize：
++
++```json
++{"digest":"<64位小写SHA-256>","size":1000000,"kinds":["file"],"encoding":"zstd","storedSize":280000}
++```
++
++此片段仅说明字段，并非完整合法包。size/digest 始终描述解码后原始字节，storedSize 描述包内物理字节。raw 两种大小相等，空内容用 raw 且大小为零。一次成功试压后只保留更小的结果，否则选择 raw；编码失败整次导出失败。
++
++zstd 项恰好包含一个普通 [Zstandard 帧](https://www.rfc-editor.org/rfc/rfc8878.html)，无字典、skippable frame、拼接帧或尾随数据。最大解码窗口为 8 MiB，包含 single-segment 语义。可选的帧内容长度须匹配 size，可选 checksum 须验证；读取时限制输出长度并检查原始 SHA-256。不同编码器可为同一内容生成不同压缩字节。
++
++下项偏移增加 storedSize（V1 用 size）。物理包长度为 `16 + manifestLength + sum(storedSize)`；包 SHA-256 覆盖包括头、清单及编码内容的全部字节。镜像 config 身份和层 diff_ids 继续使用原始摘要。压缩等级属于内部均衡策略，不是清单字段或用户设置。
++
++## 目录树、历史与完整性
+
+-MIME 类型为 `application/vnd.piwork.work-package`，快照类型为 `cold-full`。
++树 blob 列举条目及原文件 blob 摘要；POSIX 字节路径编码为 base64 段。普通文件、空目录、权限、uid/gid、纳秒 mtime、symlink 原目标和同树硬链接遵循[存储规则](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-storage/spec.md#requirement-preserve-complete-cold-snapshot-storage-without-dereferencing-user-links)。链接只作为数据保存，不跟随采集或恢复。未支持类型/元数据导致整包失败；security.selinux 由目标宿主策略负责。
+
+-| 字节内容 | 含义 |
++全部保留 context、已准备包、固定镜像、配置修订、用户文件、缓存、依赖、业务数据、Session 和保留历史均包含。控制历史载荷字符串为不透明历史文本，受管身份字段按声明映射。私有历史必须符合精确支持的[历史 schema](https://github.com/pphboy/piwork/tree/main/internal/workhistory)及 [Memory 规则](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-memory/spec.md)，历史请求不会恢复 live 执行权限。[合成 V1 完整包与正反例](https://github.com/pphboy/piwork/tree/main/internal/workpackage/testdata)可用于实现；V2 测试覆盖混合编码和标准 Zstd 互操作。
++
++### 精确的 tree JSON
++
++V1/V2 的 tree blob 使用同一结构。顶层恰好包含 `version`（整数 `1`）和 `entries`（非空数组）；缺少、未知或重复字段均拒绝。每个条目都必须包含以下六个公共字段：
++
++| 字段 | 类型与约束 |
++| --- | --- |
++| `segmentsBase64` | 规范标准 Base64 字符串数组，每项编码一个原始 POSIX 路径段；`[]` 表示树根。 |
++| `uid`、`gid` | 0 至 4294967295 的整数。 |
++| `mode` | 0 至 4095 的整数（八进制 `07777`），仅含权限与特殊位，不含文件类型位。 |
++| `mtimeNs` | Unix epoch 纳秒的 **JSON 字符串**，长度至多 32，匹配 `^-?(?:0|[1-9][0-9]*)$`；恢复时还须能由目标文件系统表示。 |
++| `type` | 仅为 `directory`、`file`、`symlink` 或 `hardlink`。 |
++
++在六个公共字段之外，按 type 恰好增加以下必需字段，不能混入其他变体的字段：
++
++| `type` | 额外必需字段 |
+ | --- | --- |
+-| 八字节 `PIWORK1\n` | 格式标识。 |
+-| 无符号 64 位大端整数 | UTF-8 JSON manifest 的长度。 |
+-| Manifest JSON | 严格的格式、版本、兼容性、引用和 blob 元数据。 |
+-| 顺序排列的原始 blobs | 各 blob 声明的字节长度和 SHA-256 摘要。 |
++| `directory` | 无。 |
++| `file` | `blob`：原始文件 SHA-256，引用 manifest 中 kinds 包含 file 的 blob；`size`：非负安全整数，等于对应 blob 的原始 size，零值也必须显式写出。 |
++| `symlink` | `targetBase64`：完整原始链接目标字节的规范标准 Base64，不是路径段数组。解码后非空、无 NUL、至多 4096 字节；绝对和悬空目标按数据保留。 |
++| `hardlink` | `targetSegmentsBase64`：使用与 segmentsBase64 相同编码的路径段数组，指向同树中的 file 条目，可指向后面的条目；uid/gid/mode/mtimeNs 必须与目标完全一致，不能指向其他 hardlink、symlink、目录或另一棵树。 |
++
++Base64 使用标准字母表与规范 padding，不使用 URL-safe 编码。路径段可以包含非 UTF-8 的原始字节，但不能为空、包含 NUL 或 `/`，也不能等于 `.` 或 `..`。用字节 `/` 连接解码后的段，路径至多 4096 字节、128 段。条目按**解码后拼接路径的无符号字节序**严格递增，不按 Base64 文本排序，路径唯一。第一项必须是根目录（`[]`）；非根条目的父路径必须已作为 directory 出现。文件内容通过摘要引用，不内嵌于树 JSON；hardlink 不额外累计文件内容。
++
++以上为通用树规则；已准备 Pi Package 的树还须满足既有[包兼容规则](https://github.com/pphboy/piwork/blob/main/openspec/specs/online-pi-package-compatibility/spec.md)，包括更严格的依赖和链接约束。通过通用树校验不等于包制品整体有效。
++
++下面是完整树示例：根目录、空文件 `a.txt`、其硬链接 `b.txt`，以及指向 a.txt 的符号链接 `link`。manifest 必须另行声明下列空文件 SHA-256 的 blob，原始 size 为 0、kind 包含 file；树自身的 UTF-8 JSON 字节单独计算摘要，作为 kind=tree 的另一个 blob。
++
++```json
++{
++  "version": 1,
++  "entries": [
++    {
++      "segmentsBase64": [],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 493,
++      "mtimeNs": "0",
++      "type": "directory"
++    },
++    {
++      "segmentsBase64": [
++        "YS50eHQ="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 420,
++      "mtimeNs": "0",
++      "type": "file",
++      "blob": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
++      "size": 0
++    },
++    {
++      "segmentsBase64": [
++        "Yi50eHQ="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 420,
++      "mtimeNs": "0",
++      "type": "hardlink",
++      "targetSegmentsBase64": [
++        "YS50eHQ="
++      ]
++    },
++    {
++      "segmentsBase64": [
++        "bGluaw=="
++      ],
++      "uid": 10001,
++      "gid": 10001,
++      "mode": 511,
++      "mtimeNs": "0",
++      "type": "symlink",
++      "targetBase64": "YS50eHQ="
++    }
++  ]
++}
++```
+
+-没有 blob 头、压缩或尾随字节。Manifest 由 Core 生成，不需要用户手写。归档按不可变摘要包含固定镜像内容。
++其他结构化历史 blob 使用[原生 schema 清单](https://github.com/pphboy/piwork/blob/main/internal/contracts/schemas.json)中既有的 `WorkControlHistorySchema` 与 `WorkSourceIdentityMapSchema`：`history.control` 引用前者，`history.sourceIdentityMap` 引用后者。context/service/operation 映射须与 manifest 的完整逻辑 key、源归属一致；普通归档载荷字符串保持不透明，只有受管身份字段进行映射。这些结构与 V1 共用，不是新增的 V2 内容模型。
+
+-持久内容包括 `agent-private` 和 `workspace` 卷目录树、Work 上下文、`AGENTS.md`、Skills、准备好的 Pi Package 产物、Service / 配置修订和保留历史。导入会重新映射逻辑引用，同时保留原始用户文件和 SDK 历史字节。
++## 限制与校验
+
+-## 可携带边界
++物理包、解码包（`16 + manifestLength + sum(size)`）及恢复逻辑量各至多 100 GiB。恢复量跨树重复引用累计，镜像层去重累计，同树硬链接一次。manifest 及单份 JSON metadata 至多 64 MiB，metadata 累计至多 256 MiB；条目上限一百万，路径 4096 字节、深度 128。长度累计检查溢出，压缩不绕过原始 metadata 和恢复限制。
+
+-- 不包含活进程、容器临时层、匿名卷、tmpfs 和外部服务。
+-- 不包含平台模型 API Key、用户 token、实例证书和全局目录。
+-- 包含文件及历史中的用户密钥，因为用户内容不会被过滤。
+-- 目标 Core 需要启用匹配模型、可读取的凭据、兼容平台和镜像，以及足够配额。
+-- 离线检查验证完整性和结构，不代表接收方兼容，也不代表内嵌代码可信。
++发布前检查 magic/版本一致、严格 schema、精确区间、原始哈希与完整闭包。非法内容返回 PACKAGE_INVALID，未知版本/编码返回 PACKAGE_FORMAT_UNSUPPORTED，超限返回 PACKAGE_LIMIT_EXCEEDED。离线 inspect 无执行副作用，只证明 integrity，不证明目标安装兼容。目标还须静态验证历史语义、模型、平台、权限和配额；检查和导入不执行包内代码。
+
+-V1 依赖 Linux 和具体协议 / 布局。当前限制为 100 GiB 包字节、100 GiB 逻辑恢复大小和一百万个目录树条目。不支持的特殊文件、用户 xattrs、ACL 或 capabilities 会导致导出失败。主机分配的 `security.selinux` 标签不导出，恢复时使用目标主机标签。
++## 搬迁与兼容
+
+-## 实验性和未来方向
++导出要求实际确认 stopped；导入发布新的 stopped Work，显式 Start 才建立新运行身份。active/desired 差异保留，恢复捕获内容不需原 registry 或重新安装依赖；目标匹配模型和外部服务仍为外部依赖。平台凭证不复制，用户自行保存在文件/历史中的秘密原样保留。
+
+-当前可携带格式为版本 1，不是通用主机备份或跨平台进程检查点。更广泛的可携带性是未来方向，不属于当前格式保证。
++新版严格读取 V1/V2，新导出写 V2，旧版不能读 V2。已有 V1 文件和就绪快照不重写，下载重试保留原字节/摘要。同一原始内容在不同编码下不保证整包摘要相同。压缩缩小传输文件；安装内容占用和应用行为遵循原契约。
+
+-完整 manifest、目录树编码、历史验证和限制，见权威来源：[Work 包格式](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md)、[portable-work 规范](https://github.com/pphboy/piwork/blob/main/openspec/specs/portable-work/spec.md)和[快照指南](https://github.com/pphboy/piwork/blob/main/openspec/specs/work-snapshots/spec.md)。
++[V2 synthetic package / V2 合成包](https://github.com/pphboy/piwork/blob/main/internal/workpackage/testdata/golden-v2.work) · [V2 boundary and interoperability cases / V2 边界与互操作用例](https://github.com/pphboy/piwork/blob/main/internal/workpackage/compression_test.go)
