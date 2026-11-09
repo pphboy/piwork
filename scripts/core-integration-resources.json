@@ -165,6 +165,7 @@
     "piwork/internal/coreapp#TestNativeChatModelSelectionRunsThroughGoAndRealSDK",
     "piwork/internal/coreapp#TestNativeCoreAddsApplicationAwarenessOnRestart",
     "piwork/internal/coreapp#TestNativeCoreCrashAdoptsExistingAgent",
+    "piwork/internal/coreapp#TestNativeCompressedSnapshotPerformanceRoundTrip",
     "piwork/internal/coreapp#TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot",
     "piwork/internal/coreapp#TestNativeCoreFileCreateCancellationRetainsLateContainer",
     "piwork/internal/coreapp#TestNativeCoreFileJobPermissionsDurableCommitAndCleanup",

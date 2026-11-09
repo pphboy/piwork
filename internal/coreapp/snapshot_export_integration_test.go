@@ -9,10 +9,12 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/dockerengine"
 	"strings"
@@ -192,7 +194,7 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 			t.Fatal(err)
 		}
 		digest := hex.EncodeToString(hash.Sum(nil))
-		if digest != response.Header.Get("X-Piwork-SHA256") || digest != view["digest"] || float64(size) != view["size"] {
+		if digest != response.Header.Get("X-Piwork-SHA256") || digest != view["digest"] || float64(size) != view["size"] || response.ContentLength != size {
 			file.Close()
 			t.Fatal(digest, size, view)
 		}
@@ -202,31 +204,32 @@ func TestNativeCoreExportsCompleteStoppedWorkAndDownloadsSameSnapshot(t *testing
 				file.Close()
 				t.Fatal(err)
 			}
-			// .work V1 contains uncompressed manifest, metadata and blobs. Scan
-			// across buffer boundaries as well as the package's decoded contents.
-			marker := []byte(privateMarker)
-			buffer, tail := make([]byte, 64*1024+len(marker)-1), 0
-			for {
-				n, readErr := file.Read(buffer[tail:])
-				if bytes.Contains(buffer[:tail+n], marker) {
-					file.Close()
-					t.Fatal("private preparation record appeared in .work export")
+			// Inspect original blob streams, including compressed metadata and layers.
+			verified, err := workpackage.Read(ctx, io.NewSectionReader(file, 0, size), workpackage.ReadOptions{OnBlob: func(_ contracts.WorkBlob, source io.Reader) error {
+				marker := []byte(privateMarker)
+				buffer, tail := make([]byte, 64*1024+len(marker)-1), 0
+				for {
+					n, readErr := source.Read(buffer[tail:])
+					if bytes.Contains(buffer[:tail+n], marker) {
+						return errors.New("private preparation record appeared in decoded export")
+					}
+					total := tail + n
+					tail = min(total, len(marker)-1)
+					copy(buffer[:tail], buffer[total-tail:total])
+					if readErr == io.EOF {
+						return nil
+					}
+					if readErr != nil {
+						return readErr
+					}
 				}
-				total := tail + n
-				tail = min(total, len(marker)-1)
-				copy(buffer[:tail], buffer[total-tail:total])
-				if readErr == io.EOF {
-					break
-				}
-				if readErr != nil {
-					file.Close()
-					t.Fatal(readErr)
-				}
-			}
-			verified, err := workpackage.Read(ctx, io.NewSectionReader(file, 0, size), workpackage.ReadOptions{})
+			}})
 			if err != nil {
 				file.Close()
 				t.Fatal("native package", err)
+			}
+			if verified.Spec.FormatVersion != 2 || verified.Size != size {
+				t.Fatal("new export must be physical V2", verified.Spec.FormatVersion, verified.Size, size)
 			}
 			inspection, err := workpackage.Inspect(ctx, file, size)
 			if err != nil || !inspection.IntegrityVerified || inspection.InstallationValidated {
