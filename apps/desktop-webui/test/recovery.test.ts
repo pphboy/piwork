@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test, { before, after } from 'node:test';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { mkdir, readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawn, spawnSync } from 'node:child_process';
 import { chromium, expect, type Page, type Route } from '@playwright/test';
 
 let browser: Awaited<ReturnType<typeof chromium.launch>>;
@@ -17,7 +19,17 @@ const server = createServer(async (request, response) => {
   }
   catch { response.writeHead(404); response.end(); }
 });
-before(async () => { await new Promise<void>(done => server.listen(0, '127.0.0.1', done)); const address = server.address(); assert(address && typeof address !== 'string'); base = `http://127.0.0.1:${address.port}`; browser = await chromium.launch({ headless: true, ...(process.env.PIWORK_TEST_BROWSER_BIN?{executablePath:process.env.PIWORK_TEST_BROWSER_BIN}:{channel:'chromium'}) }); });
+before(async () => {
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const address = server.address();
+  assert(address && typeof address !== 'string');
+  base = `http://127.0.0.1:${address.port}`;
+  browser = await chromium.launch({
+    headless: process.env.PIWORK_TEST_NATIVE_DRAG !== '1',
+    ...(process.env.PIWORK_TEST_BROWSER_BIN ? { executablePath: process.env.PIWORK_TEST_BROWSER_BIN } : { channel: 'chromium' }),
+    ...(process.env.PIWORK_TEST_NATIVE_DRAG === '1' ? { args: ['--ozone-platform=x11', '--window-position=0,0'] } : {}),
+  });
+});
 after(async () => {
   try { await browser?.close(); }
   finally { if (server.listening) await new Promise<void>(done => server.close(() => done())); }
@@ -86,6 +98,566 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
 }
 const api = (page: Page, code: string): Promise<any> => page.evaluate(`(async () => { const { adapter } = await import('/desktop/browser/adapter.js'); ${code} })()`);
 const button = (page: Page, action: string) => page.locator(`[data-action="${action}"]:visible`).first();
+
+type DragFixture = { name: string; content?: string; directory?: boolean; unrecognized?: boolean };
+async function fileDrag(page: Page, type: string, selector: string, files: DragFixture[] = [{ name: 'dropped.txt', content: 'example' }], related?: string) {
+  return page.evaluate(({ type, selector, files, related }) => {
+    const transfer = new DataTransfer();
+    const items = files.map(spec => {
+      const file = new File([spec.content ?? ''], spec.name);
+      transfer.items.add(file);
+      return { kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => spec.unrecognized ? null : { isFile: !spec.directory, isDirectory: !!spec.directory } };
+    });
+    Object.defineProperty(transfer, 'items', { value: items });
+    const target = document.querySelector(selector);
+    if (!target) throw new Error(`Missing drag target ${selector}`);
+    const event = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: transfer,
+      relatedTarget: related ? document.querySelector(related) : null });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, { type, selector, files, related });
+}
+
+function dropListing(path = '/', withFolder = true) {
+  const basePath = '/_desktop/files/works/work-1/files/';
+  const parent = path === '/' ? '' : path.slice(1) + '/';
+  const folder = withFolder ? `<d:response><d:href>${basePath}${parent}folder/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>` : '';
+  return `<d:multistatus xmlns:d="DAV:">${folder}</d:multistatus>`;
+}
+
+test('Files drop uploads to the displayed directory without moving rows or changing chat draft', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/')) return { status: 207, body: dropListing() };
+    if (r.method === 'HEAD' && r.path.startsWith('/_desktop/files/')) return { status: 404 };
+    if (r.method === 'PUT' && r.path.startsWith('/_desktop/files/')) return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  const row = page.locator('[data-action=open-file][data-path="/folder"]');
+  await expect(row).toBeVisible();
+  const composer = page.locator('#composer');
+  if (await composer.isVisible()) await composer.fill('keep this draft');
+  const before = await row.boundingBox();
+  const files = [{ name: 'one.txt', content: 'one' }, { name: 'empty.txt', content: '' }];
+  await fileDrag(page, 'dragenter', '[data-action=open-file][data-path="/folder"]', files);
+  await expect(page.locator('[data-file-drop-overlay]')).toBeVisible();
+  await expect(page.locator('[data-file-drop-path]')).toHaveText('/');
+  assert.deepEqual(await row.boundingBox(), before);
+  if (await composer.isVisible()) await expect(composer).toHaveValue('keep this draft');
+  await fileDrag(page, 'drop', '[data-action=open-file][data-path="/folder"]', files);
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(2);
+  assert.deepEqual(requests.filter(r => r.method === 'PUT').map(r => [r.path, r.headers['if-none-match']]), [
+    ['/_desktop/files/works/work-1/files/one.txt', '*'], ['/_desktop/files/works/work-1/files/empty.txt', '*'],
+  ]);
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await expect(page.locator('#modal')).toHaveCount(0);
+});
+
+test('Files drop supports empty subdirectories and rejects folders before writing', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/')) return { status: 207, body: r.path.endsWith('/folder/') ? dropListing('/folder', false) : dropListing() };
+    if (r.method === 'HEAD' && r.path.startsWith('/_desktop/files/')) return { status: 404 };
+    if (r.method === 'PUT' && r.path.startsWith('/_desktop/files/')) return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action=open-file][data-path="/folder"]').click();
+  await expect(page.locator('.breadcrumbs [data-path="/folder"]')).toBeVisible();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const mixed = [{ name: 'good.txt' }, { name: 'folder', directory: true }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', mixed);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', mixed);
+  await expect(page.locator('.notice-host')).toContainText('folders and unreadable items are not supported');
+  assert.equal(requests.filter(r => r.method === 'HEAD' || r.method === 'PUT').length, 0);
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await expect(page.locator('[data-file-drop-path]')).toHaveText('/folder');
+  await fileDrag(page, 'drop', '[data-file-drop-area]');
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+  assert.equal(requests.find(r => r.method === 'PUT')?.path, '/_desktop/files/works/work-1/files/folder/dropped.txt');
+});
+
+test('Files drop cleans up on movement, Escape and target change and protects the outer page', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/')) return { status: 207, body: r.path.endsWith('/folder/') ? dropListing('/folder', false) : dropListing() };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-action=open-file][data-path="/folder"]')).toBeVisible();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await fileDrag(page, 'dragleave', '[data-action=open-file][data-path="/folder"]', undefined, '.file-head');
+  await expect(page.locator('[data-file-drop-overlay]')).toBeVisible();
+  await fileDrag(page, 'dragleave', '[data-file-drop-area]', undefined, '.files-toolbar');
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await page.evaluate(() => document.dispatchEvent(new DragEvent('dragend', { bubbles: true })));
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await page.locator('[data-action=open-file][data-path="/folder"]').click();
+  await expect(page.locator('.breadcrumbs [data-path="/folder"]')).toBeVisible();
+  await fileDrag(page, 'dragover', '[data-file-drop-area]');
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'drop', '[data-file-drop-area]');
+  await expect(page.locator('.notice-host')).toContainText('directory, or view changed');
+  assert.equal(requests.filter(r => r.method === 'HEAD' || r.method === 'PUT').length, 0);
+  assert.equal(await fileDrag(page, 'drop', '.work-header'), true);
+  assert.match(page.url(), /#\/work\/work-1/);
+  const textPrevented = await page.evaluate(() => {
+    const transfer = new DataTransfer();
+    transfer.setData('text/plain', 'hello');
+    const event = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer });
+    document.querySelector('[data-file-drop-area]')!.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(textPrevented, false);
+});
+
+test('Files drop keeps overwrite consent tied to the checked version', async t => {
+  let modified = mtime1;
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') return { status: 200, headers: { 'Last-Modified': modified } };
+    if (r.method === 'PUT') return { status: 204 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const files = [{ name: 'existing.txt', content: 'new' }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', files);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', files);
+  await expect(page.locator('#modal')).toContainText('/existing.txt');
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+  await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', files);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', files);
+  await expect(page.locator('#modal [data-upload-mode=overwrite]')).toBeVisible();
+  modified = mtime2;
+  await page.locator('#modal [data-upload-mode=overwrite]').click();
+  await expect(page.locator('#modal')).toContainText('Target changed since confirmation');
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+  await page.locator('#modal [data-upload-mode=overwrite]').click();
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+  assert.equal(requests.find(r => r.method === 'PUT')?.headers['if-unmodified-since'], mtime2);
+});
+
+test('Files drop rejects a second batch while a first upload is checking its target', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(async () => { release(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') {
+      if (r.path.endsWith('first.txt')) await gate;
+      return { status: 404 };
+    }
+    if (r.method === 'PUT') return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const first = [{ name: 'first.txt' }], second = [{ name: 'second.txt' }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', first);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', first);
+  await expect.poll(() => requests.filter(r => r.method === 'HEAD').length).toBe(1);
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', second);
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  await fileDrag(page, 'drop', '[data-file-drop-area]', second);
+  await expect(page.locator('.notice-host')).toContainText('another file action is in progress');
+  assert.deepEqual(requests.filter(r => r.method === 'HEAD').map(r => r.path), ['/_desktop/files/works/work-1/files/first.txt']);
+  release();
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+  assert.equal(requests.find(r => r.method === 'PUT')?.path, '/_desktop/files/works/work-1/files/first.txt');
+});
+
+test('Files drop shows existing upload progress while keeping selected files', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(async () => { release(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing() };
+    if (r.method === 'HEAD') {
+      await gate;
+      return { status: 404 };
+    }
+    if (r.method === 'PUT') return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  const selected = page.locator('[data-file-select="/folder"]');
+  await selected.check();
+  const before = await page.locator('.file-row').first().boundingBox();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await expect(selected).toBeChecked();
+  await fileDrag(page, 'drop', '[data-file-drop-area]');
+  await expect.poll(() => requests.filter(r => r.method === 'HEAD').length).toBe(1);
+  await expect(selected).toBeChecked();
+  const progress = page.locator('#file-add-trigger');
+  await expect(progress).toHaveAttribute('aria-busy', 'true');
+  await expect(progress).toHaveAttribute('aria-label', /Uploading.*dropped.txt/);
+  assert.deepEqual(await page.locator('.file-row').first().boundingBox(), before);
+  await progress.click();
+  await page.locator('.file-upload-details summary').click();
+  await expect(page.locator('.file-upload-details')).toContainText('dropped.txt');
+  release();
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+  await expect(selected).toBeChecked();
+});
+
+for (const language of ['en', 'zh-CN'] as const) test(`Files drop long path and localized overlay at 360px (${language})`, async t => {
+  const name = '客户资料季度交付需要完整显示的目录名称';
+  const basePath = '/_desktop/files/works/work-1/files/';
+  const listing = `<d:multistatus xmlns:d="DAV:"><d:response><d:href>${basePath}${encodeURIComponent(name)}/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`;
+  const { page } = await fixture(t, r => {
+    if (r.method === 'PROPFIND' && r.path.startsWith(basePath)) return { status: 207, body: r.path === basePath ? listing : dropListing('/folder', false) };
+  });
+  await page.setViewportSize({ width: 360, height: 900 });
+  if (language === 'zh-CN') await page.evaluate(async () => (await import(new URL('/desktop/browser/locale.js', location.href).href)).chooseLocale('zh-CN'));
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action=open-file]').filter({ hasText: name }).click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await expect(page.locator('[data-file-drop-overlay] strong')).toHaveText(language === 'en' ? 'Drop to upload to' : '松开以上传到');
+  await expect(page.locator('[data-file-drop-path]')).toHaveText('/' + name);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const path = await page.locator('[data-file-drop-path]').boundingBox();
+  const panel = await page.locator('#workspace-main').boundingBox();
+  assert.ok(path && panel && path.x >= panel.x && path.x + path.width <= panel.x + panel.width);
+});
+
+test('Files drop mixed results retain unknown writes and retry only explicitly failed files', async t => {
+  let failRefresh = false, blockedAttempts = 0;
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return failRefresh ? { status: 503 } : { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') return { status: 404 };
+    if (r.method === 'PUT') {
+      if (r.path.endsWith('unknown.txt')) {
+        failRefresh = true;
+        return { status: 502 };
+      }
+      if (r.path.endsWith('blocked.txt') && blockedAttempts++ === 0) return { status: 403 };
+      return { status: 201 };
+    }
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const files = [{ name: 'success.txt' }, { name: 'blocked.txt' }, { name: 'unknown.txt' }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', files);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', files);
+  const rows = page.locator('#modal .transfer-results .transfer-row');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.filter({ hasText: '/success.txt' })).toContainText('Confirmed');
+  await expect(rows.filter({ hasText: '/blocked.txt' })).toContainText('403');
+  await expect(rows.filter({ hasText: '/unknown.txt' })).toContainText('unknown');
+  await expect.poll(() => requests.filter(r => r.method === 'PROPFIND').length).toBeGreaterThan(1);
+  await page.locator('#modal [data-upload-mode=retry]').click();
+  await expect(rows.filter({ hasText: '/blocked.txt' })).toContainText('Confirmed');
+  assert.deepEqual(requests.filter(r => r.method === 'PUT').map(r => r.path.split('/').at(-1)), ['success.txt', 'blocked.txt', 'unknown.txt', 'blocked.txt']);
+  await expect(rows.filter({ hasText: '/unknown.txt' })).toContainText('unknown');
+  await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  const previousHeads = requests.filter(r => r.method === 'HEAD').length;
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', [{ name: 'unknown.txt' }]);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', [{ name: 'unknown.txt' }]);
+  assert.equal(requests.filter(r => r.method === 'HEAD').length, previousHeads);
+  assert.equal(requests.filter(r => r.method === 'PUT' && r.path.endsWith('unknown.txt')).length, 1);
+  failRefresh = false;
+  await button(page, 'refresh-files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  // A successful read is the existing explicit review of the unknown target.
+  assert.equal(requests.filter(r => r.method === 'PUT' && r.path.endsWith('unknown.txt')).length, 1);
+});
+
+test('Files drop cannot replace a pending overwrite confirmation with another batch', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') return { status: 200, headers: { 'Last-Modified': mtime1 } };
+    if (r.method === 'PUT') return { status: 204 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const first = [{ name: 'first.txt' }], second = [{ name: 'second.txt' }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', first);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', first);
+  await expect(page.locator('#modal')).toContainText('/first.txt');
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', second);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', second);
+  await expect(page.locator('#modal')).toContainText('/first.txt');
+  await expect(page.locator('#modal')).not.toContainText('/second.txt');
+  assert.deepEqual(requests.filter(r => r.method === 'HEAD').map(r => r.path.split('/').at(-1)), ['first.txt']);
+  await page.locator('#modal [data-upload-mode=overwrite]').click();
+  await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+  assert.equal(requests.find(r => r.method === 'PUT')?.path.split('/').at(-1), 'first.txt');
+});
+
+test('Files drop cannot replay an unknown target before explicit review', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') return { status: 404 };
+    if (r.method === 'PUT') return { status: 502 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  const files = [{ name: 'unknown.txt' }];
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', files);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', files);
+  await expect(page.locator('#modal .transfer-results')).toContainText('unknown');
+  await page.locator('#modal .modal-footer [data-action=close-modal]').click();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]', files);
+  await fileDrag(page, 'drop', '[data-file-drop-area]', files);
+  await expect(page.locator('.notice-host')).toContainText('The earlier result for /unknown.txt is unknown');
+  assert.equal(requests.filter(r => r.method === 'HEAD').length, 1);
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 1);
+});
+
+test('Files drop rechecks Work admission after a pending HEAD', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(async () => { release(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/stop' && r.method === 'POST') return { json: { operationId: 'stop-drop', workId: 'work-1' } };
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') {
+      await gate;
+      return { status: 404 };
+    }
+    if (r.method === 'PUT') return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await fileDrag(page, 'drop', '[data-file-drop-area]');
+  await expect.poll(() => requests.filter(r => r.method === 'HEAD').length).toBe(1);
+  await api(page, "await adapter.lifecycle('work-1', 'stop');");
+  release();
+  await expect.poll(() => api(page, "return adapter.transfersByWork.get('work-1')?.[0]?.notSubmitted === true;")).toBe(true);
+  assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+});
+
+for (const transition of ['identity', 'view'] as const) test(`Files drop late result remains with its original ${transition}`, async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(async () => { release(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') {
+      await gate;
+      return { status: 404 };
+    }
+    if (r.method === 'PUT') return { status: 201 };
+  });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  await fileDrag(page, 'dragenter', '[data-file-drop-area]');
+  await fileDrag(page, 'drop', '[data-file-drop-area]');
+  await expect.poll(() => requests.filter(r => r.method === 'HEAD').length).toBe(1);
+  if (transition === 'identity') {
+    await api(page, 'await adapter.signOut();');
+    await expect(page.getByRole('heading', { name: 'Connect to your Core', exact: true })).toBeVisible();
+  } else {
+    await button(page, 'back-works').click();
+    await expect(page.locator('.works-page')).toBeVisible();
+  }
+  release();
+  if (transition === 'identity') {
+    await expect.poll(() => api(page, 'return adapter.uploadProgress.size;')).toBe(0);
+    assert.equal(requests.filter(r => r.method === 'PUT').length, 0);
+  } else {
+    await expect.poll(() => requests.filter(r => r.method === 'PUT').length).toBe(1);
+    await expect(page.locator('.works-page')).toBeVisible();
+    await expect(page.locator('#modal')).toHaveCount(0);
+    assert.equal((await api(page, "return adapter.transfersByWork.get('work-1')?.[0]?.path;")), '/dropped.txt');
+  }
+});
+
+test('Files upload chooser remains keyboard accessible', async t => {
+  const { page } = await fixture(t, r => r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/') ? { status: 207, body: dropListing() } : undefined);
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('.file-row')).toHaveCount(1);
+  const trigger = page.locator('#file-add-trigger');
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#file-actions [data-action=upload]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(trigger).toBeFocused();
+});
+
+test('Files drop keeps its overlay visible within a scrolled long listing', async t => {
+  const basePath = '/_desktop/files/works/work-1/files/';
+  const listing = `<d:multistatus xmlns:d="DAV:">${Array.from({ length: 40 }, (_, i) => `<d:response><d:href>${basePath}file-${i}.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>0</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`).join('')}</d:multistatus>`;
+  const { page } = await fixture(t, r => r.method === 'PROPFIND' && r.path.startsWith(basePath) ? { status: 207, body: listing } : undefined);
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('.file-row')).toHaveCount(40);
+  const panel = page.locator('#workspace-main');
+  await panel.evaluate(el => { el.scrollTop = 500; });
+  await fileDrag(page, 'dragenter', '.file-row:nth-child(12)');
+  const overlay = page.locator('[data-file-drop-overlay]');
+  await expect(overlay).toBeVisible();
+  const box = await overlay.boundingBox(), clip = await panel.boundingBox();
+  assert.ok(box && clip && box.y >= clip.y && box.y + box.height <= clip.y + clip.height + 1);
+  await panel.evaluate(el => { el.scrollTop += 100; });
+  await expect.poll(async () => {
+    const visible = await overlay.boundingBox(), parent = await panel.boundingBox();
+    return !!visible && !!parent && visible.y >= parent.y && visible.y + visible.height <= parent.y + parent.height + 1;
+  }).toBe(true);
+});
+
+test('Files drop is not installed in a file preview or text editor', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/')) return { status: 207, body: listing('saved', mtime1) };
+    if (r.method === 'GET' && r.path.endsWith('/note.txt')) return { body: 'saved', headers: { 'Last-Modified': mtime1 } };
+  });
+  await button(page, 'tab-Files').click();
+  await page.locator('[data-action=open-file][data-path="/note.txt"]').click();
+  await page.locator('#file-editor').fill('unsaved draft');
+  await expect(page.locator('[data-file-drop-area]')).toHaveCount(0);
+  await fileDrag(page, 'dragenter', '#file-editor');
+  await fileDrag(page, 'drop', '#file-editor');
+  await expect(page.locator('#file-editor')).toHaveValue('unsaved draft');
+  assert.equal(requests.filter(r => r.method === 'HEAD' || r.method === 'PUT').length, 0);
+});
+
+test('Files view keeps Chat image drop independent of file upload', async t => {
+  const bytes = await readFile(new URL('../../../../fixtures/chat-images/png.png', import.meta.url));
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/chat-image-capabilities')) return { json: { profile: 'chat-images-v1', defaultModel: { modelRef: null, availability: 'supported' }, models: [] } };
+    if (r.method === 'PROPFIND' && r.path.startsWith('/_desktop/files/')) return { status: 207, body: dropListing('/', false) };
+  });
+  await button(page, 'tab-Files').click();
+  if (!await page.locator('.composer').isVisible()) await button(page, 'toggle-agent').click();
+  await expect(page.locator('.composer')).toBeVisible();
+  await page.evaluate(data => {
+    const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], 'image.png', { type: 'image/png' }));
+    document.querySelector('.composer')!.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+    document.querySelector('.composer')!.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+  }, bytes.toString('base64'));
+  await expect(page.locator('.chat-image-draft')).toHaveCount(1);
+  await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  assert.equal(requests.filter(r => r.method === 'HEAD' || r.method === 'PUT').length, 0);
+});
+
+test('Files native file-manager drag reaches the ordinary browser upload path', async t => {
+  if (process.env.PIWORK_TEST_NATIVE_DRAG !== '1') {
+    t.skip('requires an isolated X11 display and file manager');
+    return;
+  }
+  const source = await mkdtemp(join(tmpdir(), 'piwork-native-drag-'));
+  const settings = join(source, '.settings'), cache = join(source, '.cache');
+  await mkdir(settings);
+  await mkdir(cache);
+  await writeFile(join(source, 'native-file.txt'), 'native file manager bytes');
+  const fileManager = spawn('dbus-run-session', ['--', 'thunar', '--window', source], {
+    env: { ...process.env, GDK_BACKEND: 'x11', WAYLAND_DISPLAY: '', NO_AT_BRIDGE: '1', XDG_CONFIG_HOME: settings, XDG_CACHE_HOME: cache },
+    stdio: 'ignore', detached: true,
+  });
+  t.after(async () => {
+    if (fileManager.pid) { try { process.kill(-fileManager.pid, 'SIGTERM'); } catch {} }
+    await rm(source, { recursive: true, force: true });
+  });
+  const xdo = (...args: string[]) => {
+    const result = spawnSync('xdotool', args, { encoding: 'utf8', env: process.env });
+    if (result.status !== 0) throw new Error(`xdotool ${args[0]}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  t.after(async () => { release(); });
+  const { page, requests } = await fixture(t, async r => {
+    if (!r.path.startsWith('/_desktop/files/')) return;
+    if (r.method === 'PROPFIND') return { status: 207, body: dropListing('/', false) };
+    if (r.method === 'HEAD') {
+      await gate;
+      return { status: 404 };
+    }
+    if (r.method === 'PUT') return { status: 201 };
+  });
+  await page.setViewportSize({ width: 900, height: 800 });
+  await button(page, 'tab-Files').click();
+  await expect(page.locator('[data-file-drop-area] .empty')).toBeVisible();
+  let managerWindow = '';
+  await expect.poll(() => {
+    try {
+      managerWindow = xdo('search', '--onlyvisible', '--name', basename(source)).split('\n')[0] || '';
+      return !!managerWindow;
+    }
+    catch { return false; }
+  }).toBe(true);
+  const browserWindow = xdo('search', '--onlyvisible', '--name', 'Recovery Work').split('\n').at(-1)!;
+  xdo('windowmove', browserWindow, '0', '0');
+  xdo('windowmove', managerWindow, '1050', '0');
+  xdo('windowsize', managerWindow, '500', '700');
+  xdo('windowraise', browserWindow);
+  xdo('windowraise', managerWindow);
+  await page.evaluate(() => {
+    const events: unknown[] = [];
+    (window as any).__nativeDragEvents = events;
+    for (const type of ['dragenter', 'dragover', 'drop']) document.addEventListener(type, event => {
+      const drag = event as DragEvent;
+      if (type === 'dragover') return;
+      events.push({ type, trusted: drag.isTrusted, types: Array.from(drag.dataTransfer?.types ?? []),
+        items: Array.from(drag.dataTransfer?.items ?? []).map(item => ({ kind: item.kind, isFile: item.webkitGetAsEntry?.()?.isFile, name: item.getAsFile()?.name })) });
+    }, true);
+  });
+  const box = await page.locator('[data-file-drop-area]').boundingBox();
+  assert.ok(box);
+  const chrome = await page.evaluate(() => ({ x: window.screenX, y: window.screenY, top: window.outerHeight - window.innerHeight }));
+  const destination = { x: Math.round(chrome.x + box.x + Math.min(box.width / 2, 400)), y: Math.round(chrome.y + chrome.top + box.y + Math.min(box.height / 2, 200)) };
+  // A fresh Thunar configuration shows the sole visible file as the first icon.
+  xdo('mousemove', '--sync', '1288', '105');
+  xdo('mousedown', '1');
+  try {
+    await page.waitForTimeout(200);
+    xdo('mousemove', '--sync', '1250', '120');
+    await page.waitForTimeout(300);
+    xdo('mousemove', '--sync', '1000', '200');
+    await page.waitForTimeout(150);
+    xdo('mousemove', '--sync', '800', '300');
+    await page.waitForTimeout(150);
+    xdo('mousemove', '--sync', String(destination.x), String(destination.y));
+    await expect(page.locator('[data-file-drop-overlay]')).toBeVisible();
+  } catch (error) {
+    spawnSync('python3', ['-c', "from PIL import ImageGrab; ImageGrab.grab().save('dist/support-files-drag-upload/native-drag-debug.png')"], { env: process.env });
+    console.error('Native drag geometry:', JSON.stringify({ manager: xdo('getwindowgeometry', '--shell', managerWindow), browser: xdo('getwindowgeometry', '--shell', browserWindow), chrome, destination, events: await page.evaluate(() => (window as any).__nativeDragEvents) }));
+    throw error;
+  } finally { xdo('mouseup', '1'); }
+  await expect.poll(() => requests.filter(r => r.method === 'HEAD').length, { timeout: 20_000 }).toBe(1);
+  const previousEnters = await page.evaluate(() => (window as any).__nativeDragEvents.filter((event: any) => event.type === 'dragenter').length);
+  xdo('windowraise', managerWindow);
+  xdo('mousemove', '--sync', '1288', '105');
+  xdo('mousedown', '1');
+  try {
+    await page.waitForTimeout(200);
+    xdo('mousemove', '--sync', '1250', '120');
+    await page.waitForTimeout(300);
+    xdo('mousemove', '--sync', '1000', '200');
+    await page.waitForTimeout(150);
+    xdo('mousemove', '--sync', '800', '300');
+    await page.waitForTimeout(150);
+    xdo('mousemove', '--sync', String(destination.x), String(destination.y));
+    await expect.poll(() => page.evaluate(() => (window as any).__nativeDragEvents.filter((event: any) => event.type === 'dragenter').length)).toBeGreaterThan(previousEnters);
+    await expect(page.locator('[data-file-drop-overlay]')).toBeHidden();
+  } finally { xdo('mouseup', '1'); }
+  await expect(page.locator('.notice-host')).toContainText('another file action is in progress');
+  assert.equal(requests.filter(r => r.method === 'HEAD').length, 1);
+  release();
+  try { await expect.poll(() => requests.filter(r => r.method === 'PUT').length, { timeout: 20_000 }).toBe(1); }
+  catch (error) {
+    console.error('Native drag diagnostic:', JSON.stringify(await page.evaluate(() => ({ events: (window as any).__nativeDragEvents, notice: document.querySelector('.notice-host')?.textContent }))));
+    throw error;
+  }
+  assert.equal(requests.find(r => r.method === 'PUT')?.path, '/_desktop/files/works/work-1/files/native-file.txt');
+  assert.equal(requests.find(r => r.method === 'PUT')?.headers['if-none-match'], '*');
+  const events = await page.evaluate(() => (window as any).__nativeDragEvents);
+  assert.ok(events.some((event: any) => event.type === 'drop' && event.trusted && event.items.some((item: any) => item.isFile && item.name === 'native-file.txt')));
+});
 async function openWorkSettings(page: Page) {
   await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
   await page.locator('#modal [data-action="settings"]').click();

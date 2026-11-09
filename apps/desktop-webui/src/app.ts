@@ -30,6 +30,7 @@ import { restoreSelection, initialWorkArea, parentDirectory, missingFileTarget, 
 import { renameField, validLocalName, canSubmitName, canDismissLightModal, pointOutsideDialog, canCancelPiRequest, modalActionRelevant } from './control-rules.js';
 import { NewWorkDraftRevision, hasUnsentDrafts, createSubmissionBlocked } from './draft-revision.js';
 import { FileMutationResults, UnknownFileLocks, uploadReview, fileActionResource, confirmedDirectorySelection, type FileMutationTarget } from './file-results.js';
+import { droppedFiles, sameFileDropTarget, type FileDropTarget } from './file-drop.js';
 import { exportWorkConflict } from './export-admission.js';
 import { exportPanelModel, renderExportPanel, renderExportRecoveryPanel, type ExportPanelInput, type ExportPanelControlPort } from './export-panel.js';
 import { ExportFeedbackRegistry, exportFlowNotice, logExportNotice, logExportTargetAvailable, logExportReadRecovered } from './export-feedback.js';
@@ -59,6 +60,8 @@ onLocaleChange(render);
 const pendingAges = new Map<HTMLElement, { label: string; started: number }>();
 let lastAdmittedHTML = '', lastAdmittedView = '', coreWasBlocked = true, routeDeferredByCore = false;
 let pendingNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+let fileDropTarget: FileDropTarget | undefined;
+let fileDropInvalidated = false;
 const imageDrafts = new ImageDrafts(()=>render());
 const imageDraftErrors=new Map<string,{message:string}>();
 const textDraftRevisions=new Map<string,number>();
@@ -705,7 +708,7 @@ async function dispatchAction(el: HTMLElement, perform?: (record?: ActionRecord)
     throw error;
   }
   finally {
-    if (record.work && ['files', 'configuration'].includes(record.kind)) adapter.uploadProgress.delete(record.work);
+    if (record.work && actions.current(record) && ['files', 'configuration'].includes(record.kind)) adapter.uploadProgress.delete(record.work);
     // A read lock can blur its button. Restore only the still-selected original navigation.
     if(navigationFocus && focusEpoch===adapter.identityEpoch && actions.current(record) && current()?.id===record.work && !view.modal) {
       const active=document.activeElement,button=root.querySelector<HTMLButtonElement>(`.work-tabs [data-action="${action}"].active`);
@@ -787,6 +790,53 @@ function filesUploadState(): Record<string, any> | undefined {
   const work = current(); if (!work) return;
   const progress = adapter.uploadProgress.get(work.id);
   return progress?.scope === 'files' ? progress : undefined;
+}
+function currentFileDropTarget(): FileDropTarget | undefined {
+  const work = current();
+  if (!work || route()[0] !== 'work' || view.tab !== 'Files' || view.file || view.layout === 'chat-only') return;
+  return { epoch: adapter.identityEpoch, workId: work.id, directory: view.path, view: viewKey() };
+}
+function fileDropUnavailable(target: FileDropTarget): boolean {
+  const work = adapter.getWork(target.workId);
+  const directory = adapter.directories.get(`${target.workId}:${target.directory}`);
+  if (!work || !adapter.state.signedIn || adapter.coreGate.blocked || !adapter.project(work).usable ||
+      !directory?.checkedAt || !!directory.error || !!view.modal) return true;
+  return !!actions.conflict({ key: 'file-drop-check', action: 'upload-input', kind: 'files', work: target.workId,
+    resource: target.directory, label: '', target: '' });
+}
+function syncFileDropOverlay(): void {
+  const overlay = root.querySelector<HTMLElement>('[data-file-drop-overlay]');
+  if (!fileDropTarget) {
+    if (overlay) overlay.hidden = true;
+    return;
+  }
+  const currentTarget = currentFileDropTarget();
+  if (!currentTarget || !sameFileDropTarget(fileDropTarget, currentTarget) || fileDropUnavailable(currentTarget) || !overlay) {
+    fileDropTarget = undefined;
+    fileDropInvalidated = true;
+    if (overlay) overlay.hidden = true;
+    return;
+  }
+  const path = overlay.querySelector<HTMLElement>('[data-file-drop-path]');
+  if (path) path.textContent = fileDropTarget.directory;
+  // A long directory can extend well beyond the scrolling panel. Keep the
+  // message inside its visible portion instead of centering it far offscreen.
+  const area = overlay.closest<HTMLElement>('[data-file-drop-area]');
+  const panel = area?.closest<HTMLElement>('#workspace-main');
+  if (area && panel) {
+    const box = area.getBoundingClientRect(), viewport = panel.getBoundingClientRect();
+    const top = Math.max(0, viewport.top - box.top, -box.top) + 12;
+    const bottom = Math.max(0, box.bottom - Math.min(viewport.bottom, innerHeight)) + 12;
+    overlay.style.top = `${top}px`;
+    overlay.style.bottom = `${bottom}px`;
+  }
+  overlay.hidden = false;
+}
+function clearFileDrop(resetInvalidated = true): void {
+  fileDropTarget = undefined;
+  if (resetInvalidated) fileDropInvalidated = false;
+  const overlay = root.querySelector<HTMLElement>('[data-file-drop-overlay]');
+  if (overlay) overlay.hidden = true;
 }
 function uploadTriggerLabel(progress: Record<string, any> | undefined): string {
   if (!progress) return t('files.moreActions');
@@ -2239,9 +2289,10 @@ function files(w: Work) {
   const upload = filesUploadState();
   // Helpers stay out of the idle path: with no upload the trigger is the plain menu button.
   const uploadLabel = upload ? uploadTriggerLabel(upload) : t('files.moreActions');
+  const addAction = `<div class="file-add-anchor${upload ? ' uploading' : ''}">${btn(upload ? uploadTriggerMarkup(upload) : icon('more',16),'file-add','icon-button quiet',`id="file-add-trigger" aria-label="${esc(uploadLabel)}" title="${esc(uploadLabel)}" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions" ${upload ? 'aria-busy="true" data-pending-action="upload-input confirm-upload-overwrite confirm-install"' : ''}`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu compact-menu" role="menu" aria-label="${esc(t('files.actionsMenu'))}">${btn(`${icon('upload',16)} ${t('files.upload')}`,'upload','','role="menuitem" tabindex="-1"')}${btn(`${icon('folder',16)} ${t('files.newFolder')}`,'new-folder','','role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external',16)} ${t('files.connectWebdav')}`,'webdav','','role="menuitem" tabindex="-1"')}${upload ? `<div class="file-upload-detail" role="status" aria-live="polite" data-upload-detail>${uploadDetailMarkup(upload)}</div>` : ''}</div>` : ''}</div>`;
   const toolbarActions = view.selected.length
-    ? `<span class="selection-count" role="status">${t('files.selectedCount', { count: view.selected.length })}</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", `aria-label="${esc(t('files.copySelected'))}" title="${esc(t('files.copySelected'))}"`)}${btn(icon("move",16), "file-move", "icon-button quiet", `aria-label="${esc(t('files.moveSelected'))}" title="${esc(t('files.moveSelected'))}"`)}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", `aria-label="${esc(t('files.deleteSelected'))}" title="${esc(t('files.deleteSelected'))}"`)}${btn(icon("close",16), "clear-selection", "icon-button quiet", `aria-label="${esc(t('files.clearSelection'))}" title="${esc(t('files.clearSelection'))}"`)}`
-    : `${fileRefreshButton(w)}<div class="file-add-anchor${upload ? ' uploading' : ''}">${btn(upload ? uploadTriggerMarkup(upload) : icon('more',16),'file-add','icon-button quiet',`id="file-add-trigger" aria-label="${esc(uploadLabel)}" title="${esc(uploadLabel)}" aria-haspopup="menu" aria-expanded="${!!fileActionsContext}" aria-controls="file-actions" ${upload ? 'aria-busy="true" data-pending-action="upload-input confirm-upload-overwrite confirm-install"' : ''}`)}${fileActionsContext ? `<div id="file-actions" class="file-actions-menu compact-menu" role="menu" aria-label="${esc(t('files.actionsMenu'))}">${btn(`${icon('upload',16)} ${t('files.upload')}`,'upload','','role="menuitem" tabindex="-1"')}${btn(`${icon('folder',16)} ${t('files.newFolder')}`,'new-folder','','role="menuitem" tabindex="-1"')}<div class="file-actions-separator" role="separator"></div>${btn(`${icon('external',16)} ${t('files.connectWebdav')}`,'webdav','','role="menuitem" tabindex="-1"')}${upload ? `<div class="file-upload-detail" role="status" aria-live="polite" data-upload-detail>${uploadDetailMarkup(upload)}</div>` : ''}</div>` : ''}</div>`;
+    ? `<span class="selection-count" role="status">${t('files.selectedCount', { count: view.selected.length })}</span>${btn(icon("copy",16), "file-copy", "icon-button quiet", `aria-label="${esc(t('files.copySelected'))}" title="${esc(t('files.copySelected'))}"`)}${btn(icon("move",16), "file-move", "icon-button quiet", `aria-label="${esc(t('files.moveSelected'))}" title="${esc(t('files.moveSelected'))}"`)}${btn(icon("trash",16), "file-delete", "icon-button quiet danger", `aria-label="${esc(t('files.deleteSelected'))}" title="${esc(t('files.deleteSelected'))}"`)}${upload ? addAction : btn(icon("close",16), "clear-selection", "icon-button quiet", `aria-label="${esc(t('files.clearSelection'))}" title="${esc(t('files.clearSelection'))}"`)}`
+    : `${fileRefreshButton(w)}${addAction}`;
   return `${filesRestoreNotice ? feedback(esc(filesRestoreNotice), "warning") : ""}${filesError?readFailure(t('files.couldNotRead', { path: view.path }),filesError,"refresh-files",!!directory?.loading):""}<div class="files-toolbar"><div class="breadcrumbs"><button data-action="file-path" data-path="/">${icon("folder", 16)} ${t('files.workspace')}</button>${view.path
     .split("/")
     .filter(Boolean)
@@ -2251,7 +2302,7 @@ function files(w: Work) {
     )
     .join(
       "",
-    )}</div><div class="actions file-toolbar-actions">${toolbarActions}</div></div>${initialRead ? readPlaceholder(t('files.loadingPath', { path: view.path })) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>${t('files.colName')}</span><span>${t('files.colSize')}</span><span>${t('files.colModified')}</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="${esc(t('files.selectName', { name: f.name }))}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${busyIcon(fileReadPending(f.path), f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? t('files.kindSpecial') : f.kind === "directory" ? t('files.kindFolder') : f.preview?.kind === "text" ? t('files.kindText') : f.preview?.kind === "image" ? t('files.kindImage') : f.preview?.kind === "download-only" ? t('files.kindDownloadOnly') : t('files.kindFile')}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="${esc(t('files.actionsFor', { name: f.name }))}"`)}</div>`).join("")}</div>` : empty("folder", t('files.emptyTitle'), t('files.emptyBody'), btn(t('files.upload'), "upload", "primary"))}${transferResults()}`;
+    )}</div><div class="actions file-toolbar-actions">${toolbarActions}</div></div><div class="file-drop-area" data-file-drop-area>${initialRead ? readPlaceholder(t('files.loadingPath', { path: view.path })) : !directory?.checkedAt && filesError ? '' : list.length ? `<div class="file-table"><div class="file-head"><span></span><span>${t('files.colName')}</span><span>${t('files.colSize')}</span><span>${t('files.colModified')}</span><span></span></div>${list.map((f) => `<div class="file-row"><label class="file-select-hit"><input type="checkbox" aria-label="${esc(t('files.selectName', { name: f.name }))}" data-file-select="${esc(f.path)}" ${view.selected.includes(f.path) ? "checked" : ""}></label><button class="file-name" data-action="open-file" data-path="${esc(f.path)}">${busyIcon(fileReadPending(f.path), f.kind === "directory" ? "folder" : f.kind === "special" ? "terminal" : "file", 19)}<span>${esc(f.name)}<small>${f.kind === "special" ? t('files.kindSpecial') : f.kind === "directory" ? t('files.kindFolder') : f.preview?.kind === "text" ? t('files.kindText') : f.preview?.kind === "image" ? t('files.kindImage') : f.preview?.kind === "download-only" ? t('files.kindDownloadOnly') : t('files.kindFile')}</small></span></button><span>${f.kind === "directory" || f.kind === "special" ? "—" : size(f.size)}</span><span>${esc(f.modified)}</span>${btn(icon("more"), "file-menu", "icon-button quiet", `data-path="${esc(f.path)}" aria-label="${esc(t('files.actionsFor', { name: f.name }))}"`)}</div>`).join("")}</div>` : empty("folder", t('files.emptyTitle'), t('files.emptyBody'), btn(t('files.upload'), "upload", "primary"))}<div class="file-drop-overlay" data-file-drop-overlay aria-hidden="true" hidden>${icon("upload", 32)}<strong>${t('files.dropHere')}</strong><span class="file-drop-path" data-file-drop-path></span></div></div>${transferResults()}`;
 }
 function fileTargetBackLink(): string {
   return btn(`${icon("arrow", 16)}<span>${t('files.backToFiles')}</span>`, "close-file", "quiet small file-target-back", `aria-label="${esc(t('files.backToFiles'))}"`);
@@ -4839,7 +4890,7 @@ function closeFileActions(restore = false) {
   if(restore)root.querySelector<HTMLElement>('#file-add-trigger')?.focus({preventScroll:true});
 }
 function render() {
-  if(fileActionsContext && (fileActionsContext!==fileActionsKey() || view.modal || view.selected.length || !adapter.state.signedIn))fileActionsContext='';
+  if(fileActionsContext && (fileActionsContext!==fileActionsKey() || view.modal || view.selected.length && !filesUploadState() || !adapter.state.signedIn))fileActionsContext='';
   if (current()?.id === selectionWorkId) rememberWork();
   observeCurrentPage();
   if (view.config && !view.config.advancedDirty) synchronizeConfiguration(view.config);
@@ -4906,6 +4957,7 @@ function render() {
   // above the modal backdrop; the page-level banner covers every other view.
   const pageCleanup = view.modal === 'import' ? '' : [...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join('');
   reconcileHTML(root, `${html}${pageCleanup}${view.modal && (!gate.blocked || ["account","connection","switch-core","operation","operations","log-export","dirty-file","dirty-settings","about-piwork"].includes(view.modal)) ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+  syncFileDropOverlay();
   for (const child of [...root.children]) if (child instanceof HTMLElement && !['modal','toast','core-recovery-banner'].includes(child.id)) child.inert = !!retainedCoreView;
 
   syncNotices();
@@ -5363,6 +5415,26 @@ root.addEventListener("change", (e) => {
     });
   }
 });
+async function submitFilesUpload(files: File[], selected: NonNullable<typeof uploadPickerTarget>, valid: () => boolean, record?: ActionRecord) {
+  const w = current(), epoch = adapter.identityEpoch;
+  if (!w || selected.epoch !== epoch || selected.workId !== w.id || selected.directory !== view.path) throw new Error(t('upload.targetChangedDetailed'));
+  pendingUploadTarget = selected;
+  const directory = selected.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
+  assertFileAdmission(w.id, targets);
+  const rows = await adapter.upload(w.id, directory, files);
+  if (epoch !== adapter.identityEpoch) throw new ViewChanged();
+  const results = retainFileResults(w.id, targets, rows, record);
+  confirmFileAttempt(record, results);
+  if (record) void actions.refresh(record, () => adapter.loadDirectory(w.id, directory));
+  if (!valid()) throw new ViewChanged();
+  pendingUploadFiles = files.filter(file => results.some(result => result.path.endsWith("/" + file.name) && result.status !== "succeeded"));
+  if (pendingUploadFiles.length) {
+    openModal("upload-overwrite");
+    modalTransfers = results;
+  }
+  else if (!record && results.length && results.every(row => row.status === "succeeded")) toast(new LocalizedMessage('upload.complete'));
+  render();
+}
 async function handleFiles(input: HTMLInputElement, record?: ActionRecord) {
   const key = viewKey(), selection = fileSelections.get(input.id), epoch = adapter.identityEpoch;
   const valid = () => key === viewKey() && selection === fileSelections.get(input.id) && epoch === adapter.identityEpoch;
@@ -5371,19 +5443,8 @@ async function handleFiles(input: HTMLInputElement, record?: ActionRecord) {
   const w = current();
   if (input.id === "upload-input") {
     const selected = uploadPickerTarget; uploadPickerTarget = undefined;
-    if (!w || !selected || selected.epoch !== epoch || selected.workId !== w.id || selected.directory !== view.path) throw new Error(t('upload.targetChangedDetailed'));
-    pendingUploadTarget = selected;
-    const directory = selected.directory, targets = files.map(file => ({ source: joinPath(directory, file.name) }));
-    assertFileAdmission(w.id, targets);
-    const rows = await adapter.upload(w.id, directory, files);
-    if (epoch !== adapter.identityEpoch) throw new ViewChanged();
-    const results = retainFileResults(w.id, targets, rows, record); confirmFileAttempt(record, results);
-    if (record) void actions.refresh(record, () => adapter.loadDirectory(w.id, directory));
-    if (!valid()) throw new ViewChanged();
-    pendingUploadFiles = files.filter(file => results.some(result => result.path.endsWith("/" + file.name) && result.status !== "succeeded"));
-    if (pendingUploadFiles.length) { openModal("upload-overwrite"); modalTransfers = results; }
-    else if (!record && results.length && results.every(row => row.status === "succeeded")) toast(new LocalizedMessage('upload.complete'));
-    render();
+    if (!selected) throw new Error(t('upload.targetChangedDetailed'));
+    await submitFilesUpload(files, selected, valid, record);
   } else if (input.id === "work-file-input") {
     if (!files[0].name.endsWith(".work"))
       throw Error(t('import.chooseWorkExtension'));
@@ -5897,6 +5958,89 @@ root.addEventListener('keyup',composerCaret);
 root.addEventListener('paste',event=>{if(!(event.target as HTMLElement).closest('#composer'))return;const files=[...(event.clipboardData?.items ?? [])].filter(item=>item.kind==='file').map(item=>item.getAsFile()).filter((file):file is File=>!!file);if(!files.length)return;if(!event.clipboardData?.getData('text/plain'))event.preventDefault();void addChatImages(files);});
 root.addEventListener('dragover',event=>{if((event.target as HTMLElement).closest('.composer') && event.dataTransfer?.types.includes('Files'))event.preventDefault();});
 root.addEventListener('drop',event=>{if(!(event.target as HTMLElement).closest('.composer'))return;const files=[...(event.dataTransfer?.files ?? [])];if(files.length){event.preventDefault();void addChatImages(files);}});
+const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+const fileDropArea = (event: DragEvent) => event.target instanceof Element ? event.target.closest<HTMLElement>('[data-file-drop-area]') : null;
+function enterFileDrop(event: DragEvent): void {
+  if (!isFileDrag(event) || !fileDropArea(event)) return;
+  event.preventDefault();
+  const target = currentFileDropTarget();
+  if (!target || fileDropInvalidated || fileDropUnavailable(target)) {
+    if (fileDropTarget) {
+      fileDropTarget = undefined;
+      fileDropInvalidated = true;
+      syncFileDropOverlay();
+    }
+    // Keep the browser delivering drop so the user receives the rejection reason.
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    return;
+  }
+  if (fileDropTarget && !sameFileDropTarget(fileDropTarget, target)) {
+    fileDropTarget = undefined;
+    fileDropInvalidated = true;
+    syncFileDropOverlay();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    return;
+  }
+  fileDropTarget ||= target;
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  syncFileDropOverlay();
+}
+root.addEventListener('dragenter', enterFileDrop);
+root.addEventListener('dragover', enterFileDrop);
+root.addEventListener('dragleave', event => {
+  const area = fileDropArea(event);
+  if (!area || !isFileDrag(event)) return;
+  if (event.relatedTarget instanceof Node && area.contains(event.relatedTarget)) return;
+  const box = area.getBoundingClientRect();
+  if (event.clientX >= box.left && event.clientX < box.right && event.clientY >= box.top && event.clientY < box.bottom) return;
+  clearFileDrop(false);
+});
+root.addEventListener('drop', event => {
+  const area = fileDropArea(event);
+  if (!area || !isFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const target = fileDropTarget, currentTarget = currentFileDropTarget(), invalidated = fileDropInvalidated;
+  const files = droppedFiles(Array.from(event.dataTransfer?.items ?? []));
+  clearFileDrop();
+  if (invalidated || target && (!currentTarget || !sameFileDropTarget(target, currentTarget))) {
+    toast(new LocalizedMessage('files.dropTargetChanged'), 'warning');
+    return;
+  }
+  if (!target || !currentTarget || fileDropUnavailable(currentTarget)) {
+    toast(new LocalizedMessage('files.dropUnavailable'), 'warning');
+    return;
+  }
+  if (!files) {
+    toast(new LocalizedMessage('files.dropInvalid'), 'error');
+    return;
+  }
+  const work = adapter.getWork(target.workId);
+  const intent: ActionIntent = { key: `file-drop:${target.workId}:${++selectionRequest}`, action: 'upload-input', kind: 'files',
+    work: target.workId, resource: target.directory, label: t('actions.checkingUploadTargets'),
+    target: `${work?.name || target.workId} · ${target.directory}`, owner: area, view: location.hash, origin: target.directory, projected: true };
+  const valid = () => {
+    const now = currentFileDropTarget();
+    return !!now && sameFileDropTarget(target, now);
+  };
+  void dispatchAction(area, record => submitFilesUpload(files, target, valid, record), intent).catch(error => {
+    if (error instanceof ViewChanged || !valid()) return;
+    toast(() => describeError(error), 'error');
+  });
+});
+document.addEventListener('dragover', event => {
+  if (isFileDrag(event) && currentFileDropTarget() && root.querySelector('[data-file-drop-area]')) event.preventDefault();
+});
+document.addEventListener('drop', event => {
+  if (isFileDrag(event) && currentFileDropTarget() && root.querySelector('[data-file-drop-area]')) event.preventDefault();
+  clearFileDrop();
+});
+document.addEventListener('dragend', () => clearFileDrop());
+root.addEventListener('scroll', () => { if (fileDropTarget) syncFileDropOverlay(); }, true);
+window.addEventListener('resize', () => { if (fileDropTarget) syncFileDropOverlay(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') clearFileDrop(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) clearFileDrop(); });
+window.addEventListener('blur', () => clearFileDrop());
 root.addEventListener('change',event=>{const input=event.target as HTMLInputElement;if(input.id==='chat-image-input'){const files=[...(input.files ?? [])];input.value='';void addChatImages(files);}});
 window.addEventListener('pagehide',()=>{imageDrafts.clear();adapter.stopImageReads();imageObserver.disconnect();});
 

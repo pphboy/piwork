@@ -136,7 +136,9 @@ try {
   desktopOutput = capture(desktop);
   const launchUrl = await waitFor(() => desktopOutput().match(/http:\/\/desktop\.localhost:\d+\//)?.[0],
     'Go Desktop bootstrap URL', 10_000);
-  browser = await chromium.launch({ headless: true, executablePath: browserBinary });
+  const dropDisplay = process.env.PIWORK_TEST_FILE_DROP_DISPLAY;
+  browser = await chromium.launch({ headless: !dropDisplay, executablePath: browserBinary,
+    ...(dropDisplay ? { env: { ...process.env, DISPLAY: dropDisplay, WAYLAND_DISPLAY: '', GDK_BACKEND: 'x11' }, args: ['--ozone-platform=x11'] } : {}) });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   context.on('response', response => {
     const pathname = new URL(response.url()).pathname;
@@ -165,6 +167,10 @@ try {
   else if(process.env.PIWORK_TEST_CHAT_RECOVERY==='only'){const {chatRecoveryAcceptance}=await import('./chat-recovery-real-core.mjs');await chatRecoveryAcceptance({page,coreUrl,token,api,waitFor,dataDir});}
   else if(process.env.PIWORK_TEST_HISTORY==='only'){const {historyAcceptance}=await import('./history-real-core.mjs');await historyAcceptance({page,coreUrl,uiUrl:`http://127.0.0.1:${uiPort}`,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),dataDir});}
   else if(process.env.PIWORK_TEST_CHAT_CONTROLS==='only')await runChatControls();
+  else if(process.env.PIWORK_TEST_FILE_DROP==='only') {
+    const { fileDropAcceptance } = await import('./file-drop-real-core.mjs');
+    await fileDropAcceptance({ page, browser, coreUrl, uiUrl: `http://127.0.0.1:${uiPort}`, token, api, waitFor, fixtureRoot: root, screenshotDir });
+  }
   else {
   const lifecycleRequests = [];
   page.on('request', request => { const path = new URL(request.url()).pathname; if (request.method() === 'POST' && (/\/_desktop\/api\/works(?:$|\/[^/]+\/(?:start|stop|retry|delete)$)/).test(path)) lifecycleRequests.push(path); });
