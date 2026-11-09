@@ -218,6 +218,9 @@ func (a *archive) applyLayer(l layer, diffID, architecture string, state *layerS
 		defer gz.Close()
 		reader = gz
 	}
+	return a.applyLayerStream(reader, diffID, architecture, state, budget)
+}
+func (a *archive) applyLayerStream(reader io.Reader, diffID, architecture string, state *layerState, budget *layerBudget) error {
 	guard := &rawTarGuard{ctx: a.ctx, source: reader, budget: budget}
 	hash := sha256.New()
 	stream := io.TeeReader(guard, hash)

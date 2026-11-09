@@ -953,6 +953,18 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "PortableWorkSpecV1Schema":
+				value, err := Decode[PortableWorkSpecV1](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "PortableWorkSpecV2Schema":
+				value, err := Decode[PortableWorkSpecV2](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "ProductBuildSchema":
 				value, err := Decode[ProductBuild](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

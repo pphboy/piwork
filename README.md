@@ -54,6 +54,8 @@ A **Work** is a self-contained AI workspace connecting three things:
 
 Together, they let AI work with real applications, not just produce text or code.
 
+[Work Spec](openspec/specs/portable-work/README.md)
+
 ## Quick Start
 
 Download and run the Piwork MicroVM GUI binary for your platform:

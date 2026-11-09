@@ -1,0 +1,14 @@
+{
+  "candidateBytes": 219210324,
+  "encodeVerifyMs": 1263,
+  "goVersion": "go1.25.5",
+  "heapSys": 65994752,
+  "inspectMs": 3161,
+  "jobBytesAtSeal": 438445470,
+  "originalBytes": 797636325,
+  "peakResident": "VmHWM:\t   57528 kB",
+  "prepareMs": 3322,
+  "restoredBytes": 797798808,
+  "strategy": "SpeedDefault/8MiB/concurrency1",
+  "v2Bytes": 219235146
+}

@@ -151,48 +151,53 @@ func TestExportObservationTimeoutRetainsSnapshotWithoutResubmitting(t *testing.T
 }
 
 func TestSnapshotDownloadVerifiesAndPublishesAtomically(t *testing.T) {
-	source, err := os.ReadFile(filepath.Join("..", "workpackage", "testdata", "golden-native-pi-package.work"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash := sha256.Sum256(source)
-	digest := hex.EncodeToString(hash[:])
-	requests := 0
-	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/work-snapshots/snapshot-1":
-			json.NewEncoder(w).Encode(map[string]any{"workId": "work-1", "snapshotId": "snapshot-1", "operationId": "operation-1", "state": "succeeded", "digest": digest, "size": len(source)})
-		case "/api/v1/work-snapshots/snapshot-1/content":
-			requests++
-			if r.Header.Get("Range") != "" {
-				t.Error("CLI sent Range")
+	for _, fixture := range []string{"golden-native-pi-package.work", "golden-v2.work"} {
+		t.Run(fixture, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("..", "workpackage", "testdata", fixture))
+			if err != nil {
+				t.Fatal(err)
 			}
-			w.Header().Set("Content-Type", workPackageMIME)
-			w.Header().Set("X-Piwork-Sha256", digest)
-			w.Header().Set("Content-Length", strconv.Itoa(len(source)))
-			w.Write(source)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer core.Close()
-	credential := filepath.Join(t.TempDir(), "credentials", "client.json")
-	t.Setenv("PIWORK_CONFIG_PATH", credential)
-	if err := (client.CredentialStore{Path: credential}).Save(client.Credential{Version: 1, CoreURL: core.URL + "/", Token: "token",
-		ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}); err != nil {
-		t.Fatal(err)
-	}
-	output := filepath.Join(t.TempDir(), "download.work")
-	var out, diagnostic bytes.Buffer
-	if code := runUser([]string{"work", "snapshot", "download", "snapshot-1", "--output", output}, &out, &diagnostic); code != 0 {
-		t.Fatal(code, diagnostic.String())
-	}
-	got, err := os.ReadFile(output)
-	if err != nil || !bytes.Equal(got, source) || requests != 1 {
-		t.Fatal("download contents or identity changed", err, requests)
-	}
-	if code := runUser([]string{"work", "snapshot", "download", "snapshot-1", "--output", output}, &out, &diagnostic); code == 0 || requests != 1 {
-		t.Fatal("existing destination overwritten", code, requests)
+			hash := sha256.Sum256(source)
+			digest := hex.EncodeToString(hash[:])
+			requests := 0
+			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/work-snapshots/snapshot-1":
+					json.NewEncoder(w).Encode(map[string]any{"workId": "work-1", "snapshotId": "snapshot-1", "operationId": "operation-1", "state": "succeeded", "digest": digest, "size": len(source)})
+				case "/api/v1/work-snapshots/snapshot-1/content":
+					requests++
+					if r.Header.Get("Range") != "" {
+						t.Error("CLI sent Range")
+					}
+					w.Header().Set("Content-Type", workPackageMIME)
+					w.Header().Set("X-Piwork-Sha256", digest)
+					w.Header().Set("Content-Length", strconv.Itoa(len(source)))
+					w.Write(source)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer core.Close()
+			credential := filepath.Join(t.TempDir(), "credentials", "client.json")
+			t.Setenv("PIWORK_CONFIG_PATH", credential)
+			if err := (client.CredentialStore{Path: credential}).Save(client.Credential{Version: 1, CoreURL: core.URL + "/", Token: "token",
+				ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}); err != nil {
+				t.Fatal(err)
+			}
+			output := filepath.Join(t.TempDir(), "download.work")
+			var out, diagnostic bytes.Buffer
+			if code := runUser([]string{"work", "snapshot", "download", "snapshot-1", "--output", output}, &out, &diagnostic); code != 0 {
+				t.Fatal(code, diagnostic.String())
+			}
+			got, err := os.ReadFile(output)
+			if err != nil || !bytes.Equal(got, source) || requests != 1 {
+				t.Fatal("download contents or identity changed", err, requests)
+			}
+			if code := runUser([]string{"work", "snapshot", "download", "snapshot-1", "--output", output}, &out, &diagnostic); code == 0 || requests != 1 {
+				t.Fatal("existing destination overwritten", code, requests)
+			}
+
+		})
 	}
 }
 
@@ -255,57 +260,62 @@ func TestSnapshotInterruptedDownloadRetriesOriginalIDWithoutPublishingPartial(t 
 }
 
 func TestOfflineInspectPrecedesUploadAndImport(t *testing.T) {
-	source := filepath.Join("..", "workpackage", "testdata", "golden-native-pi-package.work")
-	raw, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hash := sha256.Sum256(raw)
-	digest := hex.EncodeToString(hash[:])
-	uploads, imports := 0, 0
-	core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/v1/work-packages":
-			uploads++
-			if r.Header.Get("X-Piwork-Sha256") != digest || r.Header.Get("Content-Type") != workPackageMIME {
-				t.Error("upload identity missing")
+	for _, fixture := range []string{"golden-native-pi-package.work", "golden-v2.work"} {
+		t.Run(fixture, func(t *testing.T) {
+			source := filepath.Join("..", "workpackage", "testdata", fixture)
+			raw, err := os.ReadFile(source)
+			if err != nil {
+				t.Fatal(err)
 			}
-			body, _ := io.ReadAll(r.Body)
-			if !bytes.Equal(body, raw) {
-				t.Error("uploaded package differs")
+			hash := sha256.Sum256(raw)
+			digest := hex.EncodeToString(hash[:])
+			uploads, imports := 0, 0
+			core := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/work-packages":
+					uploads++
+					if r.Header.Get("X-Piwork-Sha256") != digest || r.Header.Get("Content-Type") != workPackageMIME {
+						t.Error("upload identity missing")
+					}
+					body, _ := io.ReadAll(r.Body)
+					if !bytes.Equal(body, raw) {
+						t.Error("uploaded package differs")
+					}
+					json.NewEncoder(w).Encode(map[string]any{"packageId": "package-1", "digest": digest, "size": len(raw)})
+				case "/api/v1/work-imports":
+					imports++
+					var input map[string]string
+					if json.NewDecoder(r.Body).Decode(&input) != nil || input["packageId"] != "package-1" || input["name"] != "Restored" || input["idempotencyKey"] != "stable-import" {
+						t.Error("wrong import request", input)
+					}
+					w.WriteHeader(202)
+					json.NewEncoder(w).Encode(map[string]string{"workId": "work-new", "operationId": "operation-1", "name": "Restored"})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer core.Close()
+			credential := filepath.Join(t.TempDir(), "credentials", "client.json")
+			t.Setenv("PIWORK_CONFIG_PATH", credential)
+			if err := (client.CredentialStore{Path: credential}).Save(client.Credential{Version: 1, CoreURL: core.URL + "/", Token: "token",
+				ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}); err != nil {
+				t.Fatal(err)
 			}
-			json.NewEncoder(w).Encode(map[string]any{"packageId": "package-1", "digest": digest, "size": len(raw)})
-		case "/api/v1/work-imports":
-			imports++
-			var input map[string]string
-			if json.NewDecoder(r.Body).Decode(&input) != nil || input["packageId"] != "package-1" || input["name"] != "Restored" || input["idempotencyKey"] != "stable-import" {
-				t.Error("wrong import request", input)
+			var out, diagnostic bytes.Buffer
+			if code := runUser([]string{"work", "import", source, "--name", "Restored", "--idempotency-key", "stable-import"}, &out, &diagnostic); code != 0 {
+				t.Fatal(code, diagnostic.String())
 			}
-			w.WriteHeader(202)
-			json.NewEncoder(w).Encode(map[string]string{"workId": "work-new", "operationId": "operation-1", "name": "Restored"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer core.Close()
-	credential := filepath.Join(t.TempDir(), "credentials", "client.json")
-	t.Setenv("PIWORK_CONFIG_PATH", credential)
-	if err := (client.CredentialStore{Path: credential}).Save(client.Credential{Version: 1, CoreURL: core.URL + "/", Token: "token",
-		ExpiresAt: "2099-01-01T00:00:00Z", User: client.Identity{ID: "user-1", Account: "owner", Role: "user"}}); err != nil {
-		t.Fatal(err)
-	}
-	var out, diagnostic bytes.Buffer
-	if code := runUser([]string{"work", "import", source, "--name", "Restored", "--idempotency-key", "stable-import"}, &out, &diagnostic); code != 0 {
-		t.Fatal(code, diagnostic.String())
-	}
-	if uploads != 1 || imports != 1 {
-		t.Fatal("import sequence wrong", uploads, imports)
-	}
-	out.Reset()
-	diagnostic.Reset()
-	legacy := filepath.Join("..", "workpackage", "testdata", "golden.work")
-	if code := runUser([]string{"work", "import", legacy}, &out, &diagnostic); code == 0 || uploads != 1 || imports != 1 {
-		t.Fatal("invalid package reached Core", code, uploads, imports)
+			if uploads != 1 || imports != 1 {
+				t.Fatal("import sequence wrong", uploads, imports)
+			}
+			out.Reset()
+			diagnostic.Reset()
+			legacy := filepath.Join("..", "workpackage", "testdata", "golden.work")
+			if code := runUser([]string{"work", "import", legacy}, &out, &diagnostic); code == 0 || uploads != 1 || imports != 1 {
+				t.Fatal("invalid package reached Core", code, uploads, imports)
+			}
+
+		})
 	}
 }

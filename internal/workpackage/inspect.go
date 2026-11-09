@@ -47,12 +47,20 @@ type SecretRequirement struct {
 }
 
 func (verified Verified) Open(reader io.ReaderAt) OpenBlob {
-	return func(blob contracts.WorkBlob) (io.ReadCloser, error) {
+	// Read has already verified strict digest ordering. Resolve storage from
+	// the source manifest, even when a caller is encoding another wire version.
+	blobs := verified.Spec.Blobs
+	return func(request contracts.WorkBlob) (io.ReadCloser, error) {
+		index := sort.Search(len(blobs), func(i int) bool { return blobs[i].Digest >= request.Digest })
+		if index == len(blobs) || blobs[index].Digest != request.Digest {
+			return nil, invalid("blob.reference")
+		}
+		blob := blobs[index]
 		offset, ok := verified.Offsets[string(blob.Digest)]
-		if !ok || int64(blob.Size) > verified.Size-offset {
+		if !ok || storedSize(blob) > verified.Size-offset {
 			return nil, invalid("blob.offset")
 		}
-		return io.NopCloser(io.NewSectionReader(reader, offset, int64(blob.Size))), nil
+		return openDecoded(io.NewSectionReader(reader, offset, storedSize(blob)), blob)
 	}
 }
 
@@ -86,6 +94,7 @@ func ImageEnvironments(ctx context.Context, verified Verified, source io.ReaderA
 	return result, err
 }
 func inspectImages(ctx context.Context, verified Verified, source io.ReaderAt, environments map[string]contracts.PiPackagePreparedEnvironment) error {
+	open := verified.Open(source)
 	agents := map[string]bool{}
 	for _, c := range verified.Spec.Contexts {
 		agents[string(c.ImageKey)] = true
@@ -102,7 +111,9 @@ func inspectImages(ctx context.Context, verified Verified, source io.ReaderAt, e
 			if !ok {
 				return invalid("image.layer")
 			}
-			layers = append(layers, imagestatic.PortableLayer{Reader: io.NewSectionReader(source, offset, int64(blob.Size)), Size: int64(blob.Size)})
+			_ = offset
+			layerBlob := blob
+			layers = append(layers, imagestatic.PortableLayer{Open: func() (io.ReadCloser, error) { return open(layerBlob) }, Size: int64(blob.Size)})
 		}
 		variant, _ := nullableText(image.Platform.Variant)
 		capabilities, err := imagestatic.InspectPortableImage(ctx, verified.Metadata[string(image.Config)], layers, imagestatic.Identity{ID: string(image.ImageId), OS: image.Platform.Os, Architecture: image.Platform.Architecture, Variant: variant}, agents[string(image.Key)])
