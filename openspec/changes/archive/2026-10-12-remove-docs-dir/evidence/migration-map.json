@@ -6948,7 +6948,8 @@
         },
         {
           "kind": "spec",
-          "path": "openspec/specs/serve-ui-packages/spec.md",
+          "ownerChange": "serve-admin-console",
+          "artifactPath": "specs/serve-ui-packages/spec.md",
           "requirement": "SUI-PKG-004"
         },
         {

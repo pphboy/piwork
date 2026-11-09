@@ -226,6 +226,7 @@ export const adapterStrings = {
 
     // Configuration validation (configuration.ts)
     'd.config.objectRequired': 'Configuration JSON must be an object.',
+    'd.config.imageReadOnly': 'agentImage cannot be changed here. Remove that field to keep this Work’s saved image.',
     'd.config.skillsShape': 'skills must be an array of names.',
     'd.config.packagesShape': 'packages must contain a name and enabled boolean.',
     'd.config.agentsMdText': 'agentsMd must be text.',
@@ -602,6 +603,7 @@ export const adapterStrings = {
     'd.session.defaultTitle': 'Session {id}',
 
     'd.config.objectRequired': '配置 JSON 必须是对象。',
+    'd.config.imageReadOnly': '不能在此修改 agentImage。请移除该字段，保留此 Work 已保存的镜像。',
     'd.config.skillsShape': 'skills 必须是名称数组。',
     'd.config.packagesShape': 'packages 必须包含 name 和 enabled 布尔值。',
     'd.config.agentsMdText': 'agentsMd 必须是文本。',

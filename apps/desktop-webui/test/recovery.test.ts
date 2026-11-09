@@ -12,7 +12,7 @@ let base = '';
 let nativeDownloadHandler: ((request: IncomingMessage, response: ServerResponse) => Promise<boolean>) | undefined;
 const server = createServer(async (request, response) => {
   if (nativeDownloadHandler && await nativeDownloadHandler(request, response)) return;
-  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : request.url === '/piwork-logo.png' ? 'piwork-logo.png' : 'index.html');
+  const path = request.url?.startsWith('/desktop/browser/') ? '../browser/' + request.url.slice('/desktop/browser/'.length) : '../public/' + (request.url === '/style.css' ? 'style.css' : request.url?.endsWith('/piwork-logo.png') ? 'piwork-logo.png' : 'index.html');
   try {
     response.setHeader('Content-Type', path.endsWith('.js') ? 'application/javascript' : path.endsWith('.css') ? 'text/css' : path.endsWith('.png') ? 'image/png' : 'text/html');
     response.end(await readFile(new URL(path, import.meta.url)));
@@ -662,6 +662,89 @@ async function openWorkSettings(page: Page) {
   await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
   await page.locator('#modal [data-action="settings"]').click();
 }
+
+for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) {
+  test(`New Work compact defaults and optional drafts ${width} ${locale}`, async t => {
+    const selectedPackage = width === 360 && locale === 'zh-CN' ? 'long-package-name-'.repeat(12) : 'new-pkg';
+    const { page, requests } = await fixture(t, r => {
+      if (r.path === 'works' && r.method === 'POST') return { status: 202, json: { operationId: 'compact-create', workId: 'created-work' } };
+      if (r.path === 'packages') return { json: { packages: [{ name: 'pkg' }, { name: selectedPackage }] } };
+    });
+    await page.setViewportSize({ width, height: width === 360 ? 640 : 900 });
+    if (process.env.PIWORK_TEST_SCREENSHOT_DIR) await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+    await page.evaluate(async language => {
+      const localeURL = '/desktop/browser/locale.js';
+      const { chooseLocale } = await import(localeURL);
+      chooseLocale(language);
+    }, locale);
+    await button(page, 'back-works').click();
+    await button(page, 'new-work').click();
+    await expect(button(page, 'toggle-create-advanced')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#create-agents')).toHaveCount(0);
+    await expect(page.locator('#create-image,#create-json,#operation-query,.merge-summary')).toHaveCount(0);
+    const box = await page.locator('#modal').boundingBox();
+    assert.ok(box && box.width <= 480 && box.height < 340, JSON.stringify({box, parts: await page.locator('#modal > div').evaluateAll(nodes => nodes.map(node => ({class: node.className, height: node.getBoundingClientRect().height, text: node.textContent?.slice(0, 80)})))}));
+    await page.locator('#create-name').fill('Compact creation');
+    if (process.env.PIWORK_TEST_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-${width}-${locale}-collapsed.png` });
+    await button(page, 'toggle-create-advanced').click();
+    await page.locator('#create-skill-mode').selectOption('none');
+    await page.locator('#create-package-mode').selectOption('choose');
+    await page.locator(`[data-create-package="${selectedPackage}"]`).check();
+    if (width === 1440 && locale === 'en') {
+      await page.locator('#create-agents-input').setInputFiles({ name: 'AGENTS.md', mimeType: 'text/plain', buffer: Buffer.from('Instructions retained while folded.') });
+      await expect(page.locator('#create-agents')).toHaveValue('Instructions retained while folded.');
+    } else await page.locator('#create-agents').fill('Instructions retained while folded.');
+    await button(page, 'toggle-create-advanced').click();
+    await button(page, 'toggle-create-advanced').click();
+    await expect(page.locator('#create-agents')).toHaveValue('Instructions retained while folded.');
+    assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 0);
+    if (process.env.PIWORK_TEST_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-${width}-${locale}-expanded.png` });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await button(page, 'create-work').click();
+    await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
+    const payload = JSON.parse(requests.find(r => r.path === 'works' && r.method === 'POST')!.body);
+    assert.deepEqual(payload, { name: 'Compact creation', skills: [], packages: [{ name: selectedPackage, enabled: true }], agentsMd: 'Instructions retained while folded.' });
+  });
+}
+
+test('New Work default create omits image, full configuration and inherited fields after reload', async t => {
+  const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST'
+    ? { status: 202, json: { operationId: 'default-create', workId: 'created-work' } } : undefined);
+  await button(page, 'back-works').click();
+  await button(page, 'new-work').click();
+  await button(page, 'toggle-create-advanced').click();
+  await page.reload();
+  await button(page, 'new-work').click();
+  await expect(button(page, 'toggle-create-advanced')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#create-name').fill('Default creation');
+  await button(page, 'create-work').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
+  assert.deepEqual(JSON.parse(requests.find(r => r.path === 'works' && r.method === 'POST')!.body), { name: 'Default creation' });
+});
+
+test('Settings protected image rejects JSON replacement and preserves desired on ordinary save', async t => {
+  const desired = { agentImage: { catalogId: 'owned-desired' }, skills: [], packages: [], agentsMd: 'original', modelRef: 'original', mcpServers: [], resources: { cpuMillis: 2000 }, tools: {} };
+  const { page, requests } = await fixture(t, r => r.path === 'works/work-1/configuration'
+    ? { json: { desired, active: { ...desired, agentImage: { catalogId: 'owned-active' } }, pendingApply: true, runtime: { state: 'ready' } } } : undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Advanced"]').click();
+  const editor = page.locator('#advanced-editor');
+  const editable = JSON.parse(await editor.inputValue());
+  assert.equal(Object.hasOwn(editable, 'agentImage'), false);
+  const imported = JSON.stringify({ ...editable, agentImage: { catalogId: 'replacement' }, agentsMd: 'keep input' });
+  await page.locator('#json-input').setInputFiles({ name: 'configuration.json', mimeType: 'application/json', buffer: Buffer.from(imported) });
+  await expect(editor).toHaveValue(imported);
+  await button(page, 'save-config').click();
+  await expect(page.locator('.settings-content')).toContainText('agentImage cannot be changed here');
+  await expect(editor).toHaveValue(imported);
+  assert.equal(requests.filter(r => r.method === 'PUT' || r.path.endsWith('/apply')).length, 0);
+  await editor.fill(JSON.stringify({ ...editable, agentsMd: 'corrected', modelRef: 'changed' }));
+  await button(page, 'save-config').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration' && r.method === 'PUT').length).toBe(1);
+  const saved = JSON.parse(requests.find(r => r.path === 'works/work-1/configuration' && r.method === 'PUT')!.body).configuration;
+  assert.deepEqual(saved, { ...desired, agentsMd: 'corrected', modelRef: 'changed' });
+  assert.equal(requests.filter(r => r.path.endsWith('/apply')).length, 0);
+});
 async function openFullscreenOptions(page: Page) {
   if(await button(page,'service-fullscreen').isVisible())return;
   const serviceMenu=page.locator('.service-toolbar [data-action="service-menu"]:visible').first();
@@ -2664,9 +2747,7 @@ test('Work naming: creation conflict is local to Name, keeps advanced drafts and
       const name = '<img src=x onerror="alert(1)">';
       await page.locator('#create-name').fill(name);
       await button(page, 'toggle-create-advanced').click();
-      await page.locator('#create-image').fill('fixture/image:one');
       await page.locator('#create-agents').fill('Keep these instructions');
-      await page.locator('#create-json').fill('{"agentsMd":"Keep this JSON"}');
       await button(page, 'create-work').focus(); await button(page, 'create-work').press('Enter');
       if (code === 'WORK_NAME_CONFLICT') {
         await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
@@ -2680,10 +2761,14 @@ test('Work naming: creation conflict is local to Name, keeps advanced drafts and
         await expect(page.locator('#create-name')).not.toHaveAttribute('aria-invalid', 'true');
       }
       await expect(page.locator('#create-name')).toHaveValue(name);
-      await expect(page.locator('#create-image')).toHaveValue('fixture/image:one');
+      await expect(page.locator('#create-image,#create-json')).toHaveCount(0);
       await expect(page.locator('#create-agents')).toHaveValue('Keep these instructions');
-      await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep this JSON"}');
       await expect(page.locator('#modal img')).toHaveCount(0);
+      await page.locator('#create-name').click();
+      if (process.env.PIWORK_TEST_SCREENSHOT_DIR) {
+        await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-name-error-${code}.png` });
+      }
       assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       if (code === 'WORK_NAME_CONFLICT') {
@@ -2719,7 +2804,7 @@ test('Work naming: delayed creation conflict identifies the submitted name witho
   const name = page.locator('#create-name');
   await name.fill(` ${submitted} `);
   await button(page, 'toggle-create-advanced').click();
-  await page.locator('#create-json').fill('{"agentsMd":"Keep this draft"}');
+  await page.locator('#create-agents').fill('Keep this draft');
   await button(page, 'create-work').click();
   await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
   await expect(name).toBeEnabled(); await name.fill('New available draft');
@@ -2731,7 +2816,7 @@ test('Work naming: delayed creation conflict identifies the submitted name witho
   await expect(page.locator('#modal .feedback.warning[role=status]')).toHaveCount(1);
   await expect(page.locator('[data-action-status]')).toHaveCount(0);
   await expect(page.locator('#modal img')).toHaveCount(0);
-  await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep this draft"}');
+  await expect(page.locator('#create-agents')).toHaveValue('Keep this draft');
   const posts = requests.filter(r => r.path === 'works' && r.method === 'POST');
   assert.equal(posts.length, 1); assert.equal(JSON.parse(posts[0]!.body).name, submitted);
   await name.fill('Final available draft');
@@ -2759,7 +2844,7 @@ test('Work naming: older creation rejection cannot clear the newer name conflict
   await name.fill('A taken'); await button(page, 'create-work').click();
   await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(1);
   await name.fill('B taken'); await button(page, 'toggle-create-advanced').click();
-  await page.locator('#create-json').fill('{"agentsMd":"Keep B draft"}');
+  await page.locator('#create-agents').fill('Keep B draft');
   await button(page, 'create-work').click();
   await expect.poll(() => requests.filter(r => r.path === 'works' && r.method === 'POST').length).toBe(2);
   releaseB();
@@ -2775,10 +2860,10 @@ test('Work naming: older creation rejection cannot clear the newer name conflict
   await expect(page.locator('#create-name-error')).toContainText('Choose a different name.');
   await expect(page.locator('#modal [role=alert]')).toHaveCount(1);
   await expect(page.locator('#modal')).not.toContainText('The request for Work name "A taken" was rejected.');
-  await expect(page.locator('#create-json')).toHaveValue('{"agentsMd":"Keep B draft"}');
+  await expect(page.locator('#create-agents')).toHaveValue('Keep B draft');
   const posts = requests.filter(r => r.path === 'works' && r.method === 'POST').map(r => JSON.parse(r.body));
   assert.deepEqual(posts.map(post => post.name), ['A taken', 'B taken']);
-  assert.equal(posts[1].configuration.agentsMd, 'Keep B draft');
+  assert.equal(posts[1].agentsMd, 'Keep B draft');
 });
 
 test('Work naming: delayed Import conflict preserves a cleared name until the user explicitly submits again', async t => {
@@ -4166,11 +4251,14 @@ test('B accepted New Work defaults reset only on the next explicit New Work', as
   const { page, requests } = await fixture(t, r => r.path === 'works' && r.method === 'POST' ? { status: 202, json: { operationId: 'create-a', workId: 'new-a' } } : undefined);
   await button(page, 'back-works').click();
   await button(page, 'new-work').click(); await page.locator('#create-name').fill('A');
-  await button(page, 'toggle-create-advanced').click(); await page.locator('#create-image').fill('synthetic/image');
+  await button(page, 'toggle-create-advanced').click();
+  await page.locator('#create-skill-mode').selectOption('none');
   await page.locator('#create-agents').fill('only A'); await button(page, 'create-work').click();
   await expect(page.locator('#modal')).toContainText('create-a'); await button(page, 'close-modal').click();
   await button(page, 'new-work').click(); await expect(page.locator('#create-name')).toHaveValue('');
-  await button(page, 'toggle-create-advanced').click(); await expect(page.locator('#create-image')).toHaveValue('');
+  await expect(button(page, 'toggle-create-advanced')).toHaveAttribute('aria-expanded', 'false');
+  await button(page, 'toggle-create-advanced').click();
+  await expect(page.locator('#create-skill-mode')).toHaveValue('defaults');
   await expect(page.locator('#create-agents')).toHaveValue('');
   assert.equal(requests.filter(r => r.path === 'works' && r.method === 'POST').length, 1);
 });

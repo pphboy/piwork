@@ -54,13 +54,15 @@ Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、
 
 阶段展示 SHALL 根据真实 `packagePhase` 映射并以所选界面语言呈现（以下为英文版本）：`queued` 为 Accepted、`source` 为 Resolving、`prepare` 为 Preparing、`validate` 为 Validating、`publish` 为 Publishing、`succeeded` 为 Published。SHALL 保留可读取的原始阶段值，阶段条明确当前步骤；仅提交接受时可显示 Submission accepted，但不能捏造 Core 尚未报告的 packagePhase。终态以真实 state 为准，失败或被取代不能标记后续发布步骤成功；`cleanup-pending` 显示 Cleanup pending 及安全说明，不视为 Published。未知阶段 SHALL 显示所选界面语言的未识别提示及原值，按真实 state 决定是否继续观察，不猜测完成比例或成功。
 
+网页 SHALL 不提供输入 Operation ID 的查找页或辅助表单。已知任务入口及受理后取得的详情 URL SHALL 继续可用，详情提供原任务的刷新/观察恢复和返回 Packages；只有一个 ID 而没有已保存详情 URL 或已知任务入口时，网页不承诺找回。不得为替代已移除查找页而新增全局历史、跨设备发现或新的任务存储。原 Operation 查询 API 和权限边界保持。
+
 #### Scenario: 响应丢失后恢复接受
 - **WHEN** Core 已接受但浏览器未收到 acceptance，当前页面仍保留原提交信息
 - **THEN** 用户显式恢复提交使用同一 key 和语义来源，取得原 Operation 且不再次安装
 
 #### Scenario: 停止观察
 - **WHEN** 已取得 ID 后关闭页面或网络中断
-- **THEN** Core 继续任务，面板再次按 ID 查询显示同一任务的持久状态
+- **THEN** Core 继续任务，管理员通过已保存的详情 URL 或现有已知任务入口恢复同一任务的持久状态，不重新提交安装
 
 #### Scenario: 准备失败后显式重试
 - **WHEN** Operation failed，管理员返回表单并重新提交
@@ -77,20 +79,6 @@ Packages 页 SHALL 列出 enabled 和 disabled 的 Core package，显示 name、
 #### Scenario: 接受后尚无阶段或返回未知阶段
 - **WHEN** 仅收到 acceptance，或后续查询返回 UI 尚未识别的阶段
 - **THEN** 前者只确认提交已接受，后者保留原值并说明未识别；均不伪造发布成功，非终态仍按原 Operation ID 观察
-
-### Requirement: 按 ID 找回 Core 包操作
-
-**Identifier:** SUI-PKG-004
-
-“Find Operation”页 SHALL 接受 Operation ID，查询 Core package Operation 并复用同一详情视图。空或格式无效 ID SHALL 在本地提示；不存在及属于 Work scope 的 ID SHALL 返回相同不可用提示。任一启用管理员可以查询已知 ID 的 Core package 操作，包括其他管理员或 operator 创建的操作，不读取其上传内容。查询非终态可恢复轮询，终态停止轮询。复制功能失败时 SHALL 提供可选中文本。页面 SHALL 不宣称能自动找回未保存的 ID，也不维护跨设备最近任务列表。
-
-#### Scenario: 在另一台设备恢复查询
-- **WHEN** 管理员在另一浏览器登录后粘贴保存的 Core Operation ID
-- **THEN** 显示持久状态，进行中任务继续观察，完成任务显示原结果
-
-#### Scenario: 尝试查询 Work Operation
-- **WHEN** 输入 Work Operation ID 或不存在的 ID
-- **THEN** 两者显示相同不可用结果，不泄露 Work 身份、内容或包元数据
 
 ### Requirement: 控制 Core package 状态与默认关联
 

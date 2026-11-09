@@ -145,6 +145,8 @@ export interface Configuration {
   packages: { name: string; enabled: boolean; source: string }[];
   agents: string;
   advanced: string;
+  /** Last confirmed desired image; excluded from the editable JSON. */
+  agentImage?: { catalogId: string };
   advancedDirty?: boolean;
   validationError?: string;
   revision: number;

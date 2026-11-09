@@ -822,7 +822,7 @@ test('first Users read failure stays unavailable through bounded retries and loc
   await expect(page.locator('main').getByRole('heading', { name: '数据不可用', exact: true })).toBeVisible();
   await expect(page.locator('main table')).toHaveCount(0);
   await expect(page.locator('.notice-host')).toContainText('用户 ·');
-  await page.locator('#account-trigger').click();
+  if (await page.locator('#account-trigger').getAttribute('aria-expanded') !== 'true') await page.locator('#account-trigger').click();
   await page.locator('#account-dropdown [data-action="language"]').click();
   await page.locator('.language-picker [data-locale="en"]').click();
   await expect(page.locator('.notice-host')).toContainText('Users ·');

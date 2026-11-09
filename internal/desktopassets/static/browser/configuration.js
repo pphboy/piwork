@@ -1,4 +1,17 @@
 import { t } from './locale.js';
+export function editableConfiguration(value) {
+    const { agentImage: _image, ...editable } = value;
+    return JSON.stringify(editable, null, 2);
+}
+function validateImage(config, value) {
+    if (!Object.hasOwn(value, 'agentImage'))
+        return;
+    const image = value.agentImage;
+    if (!config.agentImage || !image || typeof image !== 'object' || Array.isArray(image) ||
+        Object.keys(image).length !== 1 || image.catalogId !== config.agentImage.catalogId) {
+        throw new Error(t('d.config.imageReadOnly'));
+    }
+}
 function validate(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
         throw new Error(t('d.config.objectRequired'));
@@ -15,6 +28,8 @@ function validate(value) {
 export function synchronizeConfiguration(config) {
     const parsed = JSON.parse(config.advanced);
     validate(parsed);
+    validateImage(config, parsed);
+    delete parsed.agentImage;
     if (config.advancedDirty) {
         config.skills = [...(parsed.skills ?? [])];
         config.packages = (parsed.packages ?? []).map((p) => ({ ...p, source: 'Saved Work copy' })); // i18n-exempt: configuration protocol value, not display text
@@ -28,7 +43,7 @@ export function synchronizeConfiguration(config) {
     config.advanced = JSON.stringify(parsed, null, 2);
     config.advancedDirty = false;
     config.validationError = '';
-    return parsed;
+    return { ...parsed, ...(config.agentImage ? { agentImage: { ...config.agentImage } } : {}) };
 }
 export function editAdvanced(config, text) {
     config.advanced = text;
@@ -36,6 +51,7 @@ export function editAdvanced(config, text) {
     try {
         const value = JSON.parse(text);
         validate(value);
+        validateImage(config, value);
         config.validationError = '';
     }
     catch (error) {

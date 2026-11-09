@@ -907,20 +907,6 @@ progress {
 .phase-step.current:before {
   background: var(--accent);
 }
-.lookup-row {
-  display: flex;
-  gap: 8px;
-  max-width: 720px;
-}
-.lookup-row input {
-  min-width: 0;
-  flex: 1;
-}
-.lookup-help {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 12px;
-}
 .empty-state {
   text-align: center;
   padding: 32px 20px;
@@ -1517,12 +1503,6 @@ dialog::backdrop {
   .source-option:nth-child(-n + 2) {
     border-bottom: 1px solid var(--border);
   }
-  .lookup-row {
-    flex-direction: column;
-  }
-  .lookup-row .btn {
-    align-self: flex-start;
-  }
   .phase-list {
     padding-left: 12px;
     padding-right: 12px;
@@ -1597,18 +1577,6 @@ dialog::backdrop {
 }
 .task-shell .nav a {
   font-size: 13px;
-}
-.operation-utility {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.operation-utility.active {
-  color: var(--accent);
 }
 .task-shell .nav {
   flex: 0 1 auto;
@@ -2403,10 +2371,6 @@ dialog::backdrop {
   .task-shell .topbar-inner {
     gap: 15px;
   }
-  .operation-utility {
-    font-size: 11px;
-    margin-left: 0;
-  }
   .task-shell .account-menu {
     margin-left: 0;
   }
@@ -2483,13 +2447,6 @@ dialog::backdrop {
   }
   .task-shell .topbar-inner {
     gap: 9px;
-  }
-  .operation-utility {
-    font-size: 10px;
-    gap: 5px;
-  }
-  .operation-utility svg {
-    width: 12px;
   }
   .task-shell .mobile-menu {
     font-size: 11px;
@@ -2837,7 +2794,6 @@ dialog::backdrop {
  .quick-setup-section { padding:20px; }
  .task-shell .topbar-inner { column-gap:8px; }
  .task-shell .workbench-link { margin-left:auto; }
- .task-shell .operation-utility { order:3; }
  .task-shell .account-button > svg { display:none; }
 }
 
@@ -2845,7 +2801,6 @@ dialog::backdrop {
 @media(max-width:760px) {
  .task-shell .topbar-account { margin-left:auto;gap:6px; }
  .task-shell .mobile-menu { order:3; }
- .task-shell .operation-utility { order:3;margin-left:auto; }
  .task-shell .nav { order:4; }
 }
 
@@ -2897,19 +2852,9 @@ dialog::backdrop {
     gap: 6px;
   }
   .task-shell .account-button > svg,
-  .task-shell .mobile-menu,
-  .task-shell .operation-utility > span {
+  .task-shell .mobile-menu {
     display: none;
   }
-  .task-shell .operation-utility {
-    grid-area: 1 / 2;
-    justify-self: center;
-    margin: 0;
-    width: 28px;
-    height: 32px;
-    justify-content: center;
-  }
-  .task-shell .operation-utility svg { width: 18px; }
   .task-shell .nav,
   .task-shell .nav.open {
     position: static;

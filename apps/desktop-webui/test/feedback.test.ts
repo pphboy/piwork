@@ -235,14 +235,24 @@ test('a pending picked image follows automatic initial Session discovery and fin
  await page.locator('#chat-image-input').setInputFiles({name:'early.png',mimeType:'image/png',buffer:bytes});await expect(page.locator('.chat-image-draft')).toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(1);sessions.resolve();await expect(page.locator('.messages')).toContainText('original prompt');await page.evaluate(()=>(window as any).releaseImageRead());await expect(page.locator('.chat-image-drafts')).not.toContainText('Checking');await expect(page.locator('.chat-image-draft .pending-dots')).toHaveCount(0);await button(page,'send-message').click();await expect.poll(()=>submitted?.sessionId).toBe('session-1');assert.equal(requests.filter(r=>r.path==='works/work-1/sessions'&&r.method==='POST').length,0);
 });
 
-test('Create Work geometry stays stable during delayed feedback on a narrow viewport',async t=>{
+test('Create Work geometry stays stable while pending and long rejection stays reachable',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {status:400,json:{code:'INVALID_REQUEST',message:'A long rejected creation message '.repeat(30)}};}});
  await page.setViewportSize({width:360,height:800});await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Long work name '.repeat(7));
  const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');
  const waiting=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-waiting![key])<=1,`${key} moved`);
  await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Still waiting',{timeout:12000});const longWait=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-longWait![key])<=1,`${key} moved on long wait`);
- gate.resolve();await expect(button(page,'create-work')).toBeEnabled();const failed=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} moved on error`);
+ gate.resolve();
+ await expect(button(page,'create-work')).toBeEnabled();
+ await expect(button(page,'create-work')).toBeInViewport();
+ await expect(page.locator('.create-action-status')).toContainText('A long rejected creation message');
+ const failed=await button(page,'create-work').boundingBox();
+ for(const key of ['width','height'] as const) assert.ok(Math.abs(before![key]-failed![key])<=1,`${key} changed on error`);
+ assert.ok(await page.locator('.create-action-status').evaluate(node => node.clientHeight <= 120 && node.scrollHeight > node.clientHeight));
+ if (process.env.PIWORK_TEST_SCREENSHOT_DIR) {
+   await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+   await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-long-rejection.png` });
+ }
  assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 });
 
@@ -318,12 +328,24 @@ for (const width of [1440, 360]) for (const locale of ['en', 'zh-CN']) for (cons
  await button(page,'back-works').click();trigger=button(page,'retry-works');before=await trigger.boundingBox();neighbor=await page.locator('.work-row').first().boundingBox();held='works';gate=deferred();await trigger.click();await expect(trigger).toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);assert.deepEqual(await page.locator('.work-row').first().boundingBox(),neighbor);gate.resolve();held='';await expect(trigger).not.toHaveAttribute('aria-busy','true');assert.deepEqual(await trigger.boundingBox(),before);
 });
 
-test('Advanced Create Work keeps feedback visible and buttons stable when the result is unknown',async t=>{
+test('Advanced Create Work keeps feedback and controls reachable when the result is unknown',async t=>{
  const gate=deferred();t.after(()=>gate.resolve());
  const {page,requests}=await fixture(t,async r=>{if(r.path==='works'&&r.method==='POST'){await gate.promise;return {abort:true};}});
  await button(page,'back-works').click();await button(page,'new-work').first().click();await page.locator('#create-name').fill('Advanced creation');await button(page,'toggle-create-advanced').click();await page.locator('#create-agents').fill('Long advanced instructions\n'.repeat(80));
  const before=await button(page,'create-work').boundingBox();await button(page,'create-work').click();await expect(button(page,'create-work').locator('[role="status"]')).toContainText('Creating Work');await expect(button(page,'create-work')).toBeInViewport();gate.resolve();await expect(page.locator('.create-action-status')).toContainText(/unknown|lost|not confirmed/i);
- const after=await button(page,'create-work').boundingBox();for(const key of ['x','y','width','height'] as const)assert.ok(Math.abs(before![key]-after![key])<=1,`${key} moved`);await expect(button(page,'create-work')).toBeDisabled();assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+ const after=await button(page,'create-work').boundingBox();
+ for(const key of ['width','height'] as const) assert.ok(Math.abs(before![key]-after![key])<=1,`${key} changed`);
+ await expect(button(page,'create-work')).toBeInViewport();
+ await expect(button(page,'create-work')).toBeDisabled();
+ await expect(page.locator('.notice-host .notice').filter({ hasText: 'response was lost' })).toHaveCount(0);
+ assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
+ if (process.env.PIWORK_TEST_SCREENSHOT_DIR) {
+   await mkdir(process.env.PIWORK_TEST_SCREENSHOT_DIR, { recursive: true });
+   await page.screenshot({ path: `${process.env.PIWORK_TEST_SCREENSHOT_DIR}/new-work-expanded-unknown.png` });
+ }
+ await button(page,'close-modal').click();
+ await expect(page.locator('.notice-host .notice').filter({ hasText: 'response was lost' })).toHaveCount(1);
+ assert.equal(requests.filter(r=>r.path==='works'&&r.method==='POST').length,1);
 });
 
 test('About displays local version while Core is delayed and escapes embedded notes',async t=>{
@@ -767,10 +789,10 @@ test('D10 unknown preview preserves iframe; popup blocking offers protected link
   assert.doesNotMatch(await button(page, 'copy-local').getAttribute('data-copy') || '', /ticket|token/);
 });
 
-for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'settings', 'services', 'files', 'sessions', 'new-session', 'select-session', 'catalog', 'refresh-config', 'lookup', 'snapshot', 'check-operation', 'resume-operation'] as const) test(`D01/D04–D06/D14–D15/D20 ${entry} waits visibly for its own request`, async t => {
+for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'settings', 'services', 'files', 'sessions', 'new-session', 'select-session', 'catalog', 'refresh-config', 'snapshot', 'check-operation', 'resume-operation'] as const) test(`D01/D04–D06/D14–D15/D20 ${entry} waits visibly for its own request`, async t => {
   const gate = deferred(); t.after(async () => gate.resolve()); let armed = false;
   const operation = { id: 'op-read', workId: 'work-1', kind: 'Operation', state: 'running', phase: 'running', scope: 'http://core.test · owner' };
-  const endpoint: Record<string, string> = { connection:'status', readiness:'status', 'retry-works':'works', 'open-work':'works/work-1', settings:'works/work-1/configuration', services:'works/work-1/services', sessions:'works/work-1/sessions', 'new-session':'works/work-1/sessions', 'select-session':'works/work-1/sessions/session-2', catalog:'skills', 'refresh-config':'works/work-1/configuration', known:'known-operations', lookup:'operations/op-read', snapshot:'work-snapshots/snap-read', 'check-operation':'operations/op-read', 'resume-operation':'operations/op-read', clear:'known-operations/op-read', files:'/_desktop/files/works/work-1/files/' };
+  const endpoint: Record<string, string> = { connection:'status', readiness:'status', 'retry-works':'works', 'open-work':'works/work-1', settings:'works/work-1/configuration', services:'works/work-1/services', sessions:'works/work-1/sessions', 'new-session':'works/work-1/sessions', 'select-session':'works/work-1/sessions/session-2', catalog:'skills', 'refresh-config':'works/work-1/configuration', known:'known-operations', snapshot:'work-snapshots/snap-read', 'check-operation':'operations/op-read', 'resume-operation':'operations/op-read', clear:'known-operations/op-read', files:'/_desktop/files/works/work-1/files/' };
   const { page, requests } = await fixture(t, async r => {
     if (armed && r.path === endpoint[entry]) await gate.promise;
     if (r.path.startsWith('/_desktop/files/')) return { status:207, body:listing('original',mtime1) };
@@ -800,8 +822,10 @@ for (const entry of ['connection', 'readiness', 'retry-works', 'open-work', 'set
   else {
     await api(page,`adapter.state.operations.push(${JSON.stringify(operation)})`);
     if (entry==='snapshot') await findPreviousExport(page); else await workTasks(page);
-    if(entry==='lookup') {await page.locator('#operation-query').fill('op-read');trigger='lookup-operation';}
-    else if(entry==='snapshot') {await page.locator('#snapshot-query').fill('snap-read');trigger='lookup-snapshot';}
+    if(entry==='snapshot') {
+      await page.locator('#snapshot-query').fill('snap-read');
+      trigger='lookup-snapshot';
+    }
     else {await button(page,'operation').click(); if(entry==='resume-operation') await button(page,'pause-operation').click(); trigger=entry;}
   }
   armed = true; const before = requests.filter(r=>r.path===endpoint[entry]).length;
@@ -1236,10 +1260,9 @@ test('W2 unrelated or unidentified Operations cannot unlock unknown Start; only 
   });
   await button(page, 'start-work').click(); await expect(button(page, 'start-work')).toBeDisabled();
   for (const id of ['other-work', 'same-work', 'no-work']) {
-    await workTasks(page); await page.locator('#operation-query').fill(id); await button(page, 'lookup-operation').click();
-    if (id === 'same-work') { await expect(page.locator('#modal')).toContainText(id); await button(page, 'check-operation').click(); await expect(button(page, 'check-operation')).toBeEnabled(); }
-    else await expect(page.locator('#modal')).toContainText('belongs to another Work');
-    await button(page, 'close-modal').click();
+    const result = await api(page, `try { await adapter.checkOperation(${JSON.stringify(id)}, true, 'work-1'); return 'checked'; } catch (error) { return error.message; }`);
+    if (id === 'same-work') assert.equal(result, 'checked');
+    else assert.match(result, /belongs to another Work/);
     await expect(button(page, 'start-work')).toBeDisabled();
     await button(page, 'start-work').evaluate((el: HTMLButtonElement) => el.click());
     assert.equal(requests.filter(r => r.path === 'works/work-1/start').length, 1);
@@ -1295,7 +1318,8 @@ test('DWUI-016/017 Create and Stop during preparation converge in list and detai
   }, true);
   await page.getByLabel('Account', { exact: true }).fill('owner'); await page.getByLabel('Password').fill('password'); await button(page, 'sign-in').click();
   await button(page, 'new-work').first().click(); await page.locator('#create-name').fill('Recovery Work'); await button(page, 'create-work').click();
-  await expect(page.locator('#modal')).toContainText('op-created'); await expect(page.locator('#modal')).toContainText('automatic recovery after reload is not guaranteed');
+  await expect(page.locator('#modal')).toContainText('op-created');
+  await expect(page.locator('#modal')).toContainText('recovery after reload is not guaranteed');
   await button(page, 'close-modal').click(); await expect(page.locator('.work-row')).toContainText('Preparing');
   await page.locator('[data-action="open-work"]').first().click(); await expect(page.locator('.work-state')).toContainText('Preparing');
   await button(page, 'work-menu').click(); await button(page, 'stop-work').click(); await button(page, 'confirm-stop').click(); await expect(page.locator('#modal')).toContainText('op-stop'); await button(page, 'close-modal').click();
@@ -1421,7 +1445,8 @@ test('DWUI-OPREC-001 a converged successful Work task leaves the row while its o
   await button(page, 'back-works').click();
   await expect(page.locator('.work-row .object-control-progress')).toHaveCount(0);
   await expect(page.locator('.work-row .object-control-state')).toHaveCount(0);
-  await workTasks(page); await page.locator('#operation-query').fill('finished-start'); await button(page, 'lookup-operation').click();
+  await workTasks(page);
+  await page.locator('[data-action="operation"][data-id="finished-start"]').click();
   await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('finished-start');
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
@@ -1576,22 +1601,12 @@ for (const suspended of [false, true]) test(`DWUI-OPREC-002 an unknown Import re
   assert.equal(requests.filter(r => r.method === 'POST' && r.path === 'work-imports').length, 0);
 });
 
-test('DWUI-OPREC-002 create can find a copied original ID without a saved record or Work', async t => {
-  const { page, requests } = await fixture(t, r => {
-    if (r.path === 'operations/wrong-kind') return { json: { operationId: 'wrong-kind', workId: 'work-other', kind: 'import-work', state: 'running' } };
-    if (r.path === 'operations/original-no-record') return { json: { operationId: 'original-no-record', workId: 'work-unpublished', kind: 'create-work', state: 'failed', error: { message: 'Original task failed' } } };
-  });
+test('DWUI-OPREC-002 New Work has no manual original-ID recovery entry', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
   await page.setViewportSize({ width: 360, height: 900 });
   await button(page, 'back-works').click(); await button(page, 'new-work').click();
-  await page.locator('.original-task-lookup > summary').click();
+  await expect(page.locator('#operation-query,.original-task-lookup')).toHaveCount(0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await page.locator('#operation-query').fill('wrong-kind'); await button(page, 'lookup-create-operation').click();
-  await expect(page.locator('#modal')).toContainText('does not match the original action');
-  assert.equal(await api(page, "return !!adapter.getOperation('wrong-kind')"), false);
-  if (!await page.locator('.original-task-lookup').evaluate(el => el.hasAttribute('open'))) await page.locator('.original-task-lookup > summary').click();
-  await page.locator('#operation-query').fill('original-no-record'); await button(page, 'lookup-create-operation').click();
-  await expect(page.locator('#modal')).toContainText('Original task failed');
-  await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('original-no-record');
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
 
@@ -1685,7 +1700,7 @@ test('DWUI-OPREC-001 a new Apply remains in Settings after acceptance', async t 
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/configuration/apply')).length, 1);
 });
 
-test('DWUI-OPREC-001 an unsaved Apply record stays visible and points to its copyable original ID', async t => {
+test('DWUI-OPREC-001 an unsaved Apply record explains reload limits and retains its original details', async t => {
   const { page, requests } = await fixture(t, r => {
     if (r.path === 'works/work-1/configuration') return { json: { desired: { skills: [], packages: [], agentsMd: 'saved', mcp: { servers: [] } }, active: {}, pendingApply: true, runtime: { state: 'ready' } } };
     if (r.path === 'works/work-1/configuration/apply') return { json: { operationId: 'unsaved-apply', workId: 'work-1', localRecordSaved: false } };
@@ -1695,7 +1710,7 @@ test('DWUI-OPREC-001 an unsaved Apply record stays visible and points to its cop
   await button(page, 'apply-config').click();
   await expect(page.locator('.settings-page')).toContainText('The record was not saved');
   await page.locator('.settings-page [data-action="operation"][data-id="unsaved-apply"]').click();
-  await expect(page.locator('#modal')).toContainText('automatic recovery after reload is not guaranteed');
+  await expect(page.locator('#modal')).toContainText('recovery after reload is not guaranteed');
   await page.locator('.operation-technical > summary').click(); await expect(page.locator('.operation-technical')).toContainText('unsaved-apply');
   assert.equal(requests.filter(r => r.method === 'POST' && r.path.endsWith('/configuration/apply')).length, 1);
 });
@@ -1826,7 +1841,7 @@ for (const width of [360, 1440]) test(`DWUI-OPREC-004 task recovery remains usab
   assert.equal(requests.filter(r => r.method === 'POST').length, 0);
 });
 
-test('DWUI-017 closed Start details still recover Ready and original lookup without reload or replay', async t => {
+test('DWUI-017 closed Start details still recover Ready and original details without reload or replay', async t => {
   let accepted = false, offline = false;
   const fact = () => ({ id: 'work-1', name: 'Recovery Work', desiredState: accepted ? 'running' : 'stopped', observedState: accepted ? 'ready' : 'stopped', controlVersion: accepted ? 2 : 1 });
   const { page, requests } = await fixture(t, r => {
@@ -1840,7 +1855,7 @@ test('DWUI-017 closed Start details still recover Ready and original lookup with
   await page.locator('#modal [data-action="operation"][data-id="cleared-start"]').click(); await expect(page.locator('#modal')).toContainText('cleared-start');
   await api(page, "await adapter.checkOperation('cleared-start'); await adapter.refreshWorkStatus('work-1').catch(() => {}); await adapter.listWorks().catch(() => {})");
   await button(page, 'close-modal').click(); await workTasks(page);
-  await page.locator('#operation-query').fill('cleared-start'); await button(page, 'lookup-operation').click();
+  await page.locator('[data-action="operation"][data-id="cleared-start"]').click();
   await expect(page.locator('#modal')).toContainText('cleared-start'); await button(page, 'check-operation').click();
   await expect(page.locator('#modal')).toContainText('succeeded'); await button(page, 'close-modal').click();
   offline = false;
@@ -3845,20 +3860,19 @@ test('deep Work bootstrap collection failure recovers through the canonical Work
   assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
 });
 
-test('startup original-record failure retains copied-ID recovery and never claims an empty confirmed list', async t => {
+test('startup original-record failure retains record recovery without manual ID input and never claims an empty confirmed list', async t => {
   let failed = true;
   const { page, requests } = await fixture(t, r => failed && r.path === 'known-operations' ? { status: 503, json: { message: 'Original record read unavailable' } } : undefined, false, false, undefined, true);
   const notice = page.locator('.notice-error').filter({ hasText: 'Original record read unavailable' });
   await expect(notice).toHaveCount(1);
   await notice.getByRole('button', { name: 'Details', exact: true }).click();
-  await expect(page.locator('#operation-query')).toBeVisible();
-  await page.locator('#operation-query').fill('copied-original-operation');
+  await expect(page.locator('#operation-query')).toHaveCount(0);
   await expect(page.locator('#modal')).toContainText('Original record read unavailable');
   await expect(page.locator('#modal .operation-list')).toBeEmpty();
   failed = false;
   await button(page, 'retry-known-operations').click();
   await expect(notice).toHaveCount(0);
-  await expect(page.locator('#operation-query')).toHaveValue('copied-original-operation');
+  await expect(page.locator('#operation-query')).toHaveCount(0);
   assert.equal(requests.some(r => r.method === 'POST' || r.method === 'PUT'), false);
 });
 
@@ -4194,7 +4208,7 @@ test('Save unknown HTTP receipt keeps the original draft locked without a false 
   assert.equal(requests.filter(r => ['POST', 'PATCH', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
 });
 
-test('original Operation lookup shares an in-flight automatic observation without replaying a write', async t => {
+test('known Operation details shares an in-flight automatic observation without replaying a write', async t => {
   const operation = deferred();
   t.after(async () => { operation.resolve(); });
   let operationStarted = false;
@@ -4210,8 +4224,7 @@ test('original Operation lookup shares an in-flight automatic observation withou
   await button(page, 'work-menu').click();
   await button(page, 'work-info').click();
   await button(page, 'find-work-task').click();
-  await page.locator('#operation-query').fill('original-polled-start');
-  await button(page, 'lookup-operation').click();
+  await page.locator('[data-action="operation"][data-id="original-polled-start"]').click();
   operation.resolve();
   await expect(page.locator('#modal .operation-technical > summary')).toBeVisible();
   await page.locator('#modal .operation-technical > summary').click();
@@ -4220,7 +4233,7 @@ test('original Operation lookup shares an in-flight automatic observation withou
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
 });
 
-test('original Operation lookup survives late ready-Work Service hydration without replaying a write', async t => {
+test('known Operation details survives late ready-Work Service hydration without replaying a write', async t => {
   const services = deferred(), operation = deferred();
   t.after(async () => {
     services.resolve();
@@ -4228,6 +4241,7 @@ test('original Operation lookup survives late ready-Work Service hydration witho
   });
   let servicesStarted = false, operationStarted = false;
   const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'original-ready-start', workId: 'work-1', type: 'Start Work' }] } };
     if (r.path === 'works/work-1/services') {
       servicesStarted = true;
       await services.promise;
@@ -4243,11 +4257,11 @@ test('original Operation lookup survives late ready-Work Service hydration witho
   await button(page, 'work-menu').click();
   await button(page, 'work-info').click();
   await button(page, 'find-work-task').click();
-  await page.locator('#operation-query').fill('original-ready-start');
-  await button(page, 'lookup-operation').click();
+  await page.locator('[data-action="operation"][data-id="original-ready-start"]').click();
   await expect.poll(() => operationStarted).toBe(true);
   services.resolve();
-  await expect(page.locator('#modal #operation-query')).toHaveValue('original-ready-start');
+  await expect(page.locator('#modal-title')).toBeVisible();
+  await expect(page.locator('#operation-query')).toHaveCount(0);
   operation.resolve();
   await expect(page.locator('#modal .operation-technical > summary')).toBeVisible();
   await page.locator('#modal .operation-technical > summary').click();
@@ -4256,7 +4270,7 @@ test('original Operation lookup survives late ready-Work Service hydration witho
   assert.equal(requests.filter(r => r.method !== 'GET').length, 0);
 });
 
-test('original Operation lookup survives late stopped-Work Service hydration without replaying a write', async t => {
+test('known Operation details survives late stopped-Work Service hydration without replaying a write', async t => {
   const services = deferred(), operation = deferred();
   t.after(async () => {
     services.resolve();
@@ -4265,6 +4279,7 @@ test('original Operation lookup survives late stopped-Work Service hydration wit
   let servicesStarted = false, operationStarted = false;
   const work = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped', controlVersion: 2 };
   const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'original-stop', workId: 'work-1', type: 'Stop Work' }] } };
     if (r.path === 'works') return { json: { works: [work] } };
     if (r.path === 'works/work-1') return { json: work };
     if (r.path === 'works/work-1/services') {
@@ -4282,12 +4297,12 @@ test('original Operation lookup survives late stopped-Work Service hydration wit
   await button(page, 'work-menu').click();
   await button(page, 'work-info').click();
   await button(page, 'find-work-task').click();
-  await page.locator('#operation-query').fill('original-stop');
-  await button(page, 'lookup-operation').click();
+  await page.locator('[data-action="operation"][data-id="original-stop"]').click();
   await expect.poll(() => operationStarted).toBe(true);
   services.resolve();
   await expect(page.locator('.work-read-feedback')).toHaveCount(0);
-  await expect(page.locator('#modal #operation-query')).toHaveValue('original-stop');
+  await expect(page.locator('#modal-title')).toBeVisible();
+  await expect(page.locator('#operation-query')).toHaveCount(0);
   operation.resolve();
   await expect(page.locator('#modal .operation-technical > summary')).toBeVisible();
   await page.locator('#modal .operation-technical > summary').click();
