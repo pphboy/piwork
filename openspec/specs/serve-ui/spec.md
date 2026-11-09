@@ -62,7 +62,7 @@ Core bearer SHALL 仅留在面板服务端，浏览器会话使用随机不透�
 
 **Identifier:** SUI-004
 
-面板 SHALL 采用用户交付的三个顶层工作区：`Overview`、`User access`、`Work setup`。`Overview` SHALL 使用 `/admin`，运行时配置 SHALL 保留 `/admin/runtime` 并可从 Overview 进入；`User access` SHALL 使用 `/admin/users`；`Work setup` SHALL 将 `/admin/default-work`、`/admin/skills`、`/admin/packages` 分别组织为 `Starting point`、`Skills`、`Packages`。`Find operation` SHALL 保留 `/admin/operations` 和已有 Operation 详情深链接，作为辅助导航，不声称提供全局操作历史。旧管理深链接 SHALL 映射到对应管理前缀；新路由 SHALL 继续支持直接打开、刷新及浏览器前进后退；窄屏 SHALL 通过可操作的导航菜单提供相同入口。
+面板 SHALL 采用用户交付的三个顶层工作区：`Overview`、`User access`、`Work setup`。`Overview` SHALL 使用 `/admin`，运行时配置 SHALL 保留 `/admin/runtime` 并可从 Overview 进入；`User access` SHALL 使用 `/admin/users`；`Work setup` SHALL 将 `/admin/default-work`、`/admin/skills`、`/admin/packages` 分别组织为 `Starting point`、`Skills`、`Packages`。网页 SHALL 移除 Find operation 辅助导航、手动 Operation ID 查询页及所有指向该页的入口。既有 `/admin/operations/<id>` 详情深链接 SHALL 保留，用于查看已知 Core package 任务；详情与任务不可用页 SHALL 提供返回 Packages 的入口，不返回已移除的查找页。原 `/admin/operations` 查找页面按既有未找到页面规则处理。旧管理深链接 SHALL 映射到对应管理前缀；新路由 SHALL 继续支持直接打开、刷新及浏览器前进后退；窄屏 SHALL 通过可操作的导航菜单提供相同入口。
 
 UI 自有文字 SHALL 在简体中文和英文间随用户选择显示；用户内容、资源名称、技术标识和错误码保持原样。管理页面 SHALL 仅显示当前功能所需的公开数据，所有服务器返回文本 SHALL 按纯文本显示。列表 SHALL 区分加载、空集合、成功和失败；错误 SHALL 提供所选界面语言的可执行提示及可复制 correlationId（如有）。表单 SHALL 在提交中禁用重复提交，验证失败保留非敏感草稿并定位字段；成功后显示 Core 确认结果并刷新相关数据。
 
@@ -88,7 +88,7 @@ UI 自有文字 SHALL 在简体中文和英文间随用户选择显示；用户�
 
 #### Scenario: 深链接与移动导航
 - **WHEN** 管理员直接打开任意既有管理路由、刷新或使用浏览器前进后退
-- **THEN** 页面保持对应功能及当前会话检查，窄屏菜单能进入三个工作区和 Operation 查询
+- **THEN** 页面保持对应功能及当前会话检查，窄屏菜单能进入三个工作区；已知 Operation 详情仍可通过原任务入口或保存的详情 URL 打开，不提供手输 ID 的查询页
 
 #### Scenario: 高风险变更经确认
 - **WHEN** 管理员禁用账号、重置密码或移除资源
@@ -99,6 +99,10 @@ UI 自有文字 SHALL 在简体中文和英文间随用户选择显示；用户�
 - **THEN** 正文及交互节点保持，不整页闪白或重置选择；只更新有效状态，未保存草稿、焦点、展开和滚动保持，旧数据与新确认可区分
 
 普通临时动作结果 SHALL 使用 UIL-NOTICE-001 的单一浮动通知，不插入推动表单/列表的Alert；字段错误、首次读取失败、连接/准入原因和未知恢复保留所属无框内容与入口。Admin Header 的 Workbench 为直接真实链接，Desktop Administration 只在全局账号菜单提供；不改变权限校验。
+
+#### Scenario: 移除查找页面但保留任务详情
+- **WHEN** 管理员在桌面或窄屏查看导航、打开旧查找页或已保存的 Operation 详情 URL
+- **THEN** 导航不含 Find operation，旧查找页不再展示查询表单；详情 URL 仍执行原授权与状态读取，返回 Packages 的链接可用
 
 ### Requirement: 管理员手动动作与文件预检有明确等待反馈
 
@@ -250,7 +254,7 @@ Core 健康读取 SHALL 有界完成；会话已验证后发生的健康读取�
 
 **Identifier:** SUI-V13-STATE-001
 
-Serve SHALL 按来源矩阵 S01–S12 及实际登录/会话/初始壳覆盖 Overview、用户、Default Work、Skills、Packages、模型列表/配置/测试、Runtime、按ID查Operation、About、托管Quick setup与准备的全部可观察状态；原型未含完整登录/独立表单或稀有错误不是延期理由。首读/确认空/失败/旧数据刷新及未知写入各自可辨；相同对象读请求协调去重，迟到结果不替换新路由/草稿、不清理新Key、不解除新动作锁。
+Serve SHALL 按来源矩阵 S01–S12 及实际登录/会话/初始壳覆盖 Overview、用户、Default Work、Skills、Packages、模型列表/配置/测试、Runtime、已知 Operation 详情、About、托管Quick setup与准备的全部可观察状态；原型未含完整登录/独立表单或稀有错误不是延期理由。首读/确认空/失败/旧数据刷新及未知写入各自可辨；相同对象读请求协调去重，迟到结果不替换新路由/草稿、不清理新Key、不解除新动作锁。
 
 保存确认、显式Test、准备与readiness SHALL 相互独立。模型Test不保存/启停资源，其未运行/成功/失败不成为Save、Enable或选择模型的通用前置门槛；编辑后旧测试结果标为过期。Runtime/Defaults保存返回配置/确认而非通用Operation，不为其捏造Package任务。Quick setup的Ready仍要求当前status与preparation均ready、全部六组件ready且无当前读取错误；未知/失败停止误导动效。Package未知受理只在既有同actor/source/稳定key协议允许时显式Resume，Check/普通通知不自动重放。
 
