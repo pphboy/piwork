@@ -211,7 +211,7 @@ test('delivered workspaces retain every management deep link, mobile layout, and
       await expect(page.getByRole('link',{name:'Overview',exact:true})).toBeVisible();
       await expect(page.getByRole('link',{name:'Users',exact:true})).toBeVisible();
       await expect(page.getByRole('link',{name:'Setup',exact:true})).toBeVisible();
-      for(const path of ['/users','/runtime','/default-work','/skills','/packages','/operations']) {
+      for(const path of ['/users','/runtime','/default-work','/skills','/packages']) {
         await page.goto(base+path); await expect(page.locator('h1')).toBeVisible();
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),path).toBe(true);
       }
@@ -325,7 +325,7 @@ test('R6 actual Core phase enums drive progress and raw details, including readb
       await expect(page.locator('dt').filter({hasText:'Package phase'}).locator('+ dd')).toHaveText(raw);
       await assertNoInventedProgressOrCancel();
     }
-    // Find Operation / full reload uses the raw API enum, without a new install.
+    // Known Operation detail / full reload uses the raw API enum, without a new install.
     await page.reload(); await expect(page.locator('.phase-step.current')).toHaveText('Publishing');
     operationPhase = 'future-phase'; await page.getByRole('button',{name:'Refresh',exact:true}).click();
     await expect(page.getByRole('heading',{name:'Unrecognized phase: future-phase'})).toBeVisible(); await expect(page.locator('.phase-step.current')).toHaveCount(0);

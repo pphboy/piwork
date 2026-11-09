@@ -53,7 +53,6 @@ const modules = [
     ["term.defaultWork", "/default-work"],
     ["module.skills", "/skills"],
     ["module.packages", "/packages"],
-    ["module.findOperation", "/operations"],
 ];
 const moduleTitle = (value, fallback) => {
     const entry = modules.find(([, url]) => url === value);
@@ -362,7 +361,7 @@ function shell(body) {
         [t('shell.navSetupShort'), "/default-work", workSetup, 'admin-setup'],
         [t('shell.navModelsShort'), "/models", path === '/models' || path.startsWith('/models/'), 'admin-models'],
     ];
-    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><a href="/operations" data-nav class="operation-utility ${path.startsWith("/operations") ? "active" : ""}" aria-label="${t('shell.findOperation')}">${icon("search", 18)}<span>${t('shell.findOperation')}</span></a><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown compact-menu" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
+    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown compact-menu" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
     if (preserve)
         reconcileConsoleHTML(app, html);
     else
@@ -687,7 +686,7 @@ function recoveryActions(e) {
         if (e.code === "DEFAULT_REFERENCE")
             return NavLink(t('recovery.openDefaultWork'), "/default-work", "btn secondary");
         if (e.code === "PACKAGE_BUSY")
-            return (NavLink(t('module.findOperation'), "/operations", "btn secondary") +
+            return (NavLink(t('module.packages'), "/packages", "btn secondary") +
                 " " +
                 Button(t('recovery.refreshEntry'), "refresh"));
         if (e.code === "RESULT_UNKNOWN")
@@ -1159,8 +1158,6 @@ function renderPage() {
         body = workSetupTabs() + setupJourneyBanner() + packagesPage();
     else if (path.startsWith("/packages/"))
         body = workSetupTabs() + packageDetails();
-    else if (path === "/operations")
-        body = findOperationPage();
     else if (path.startsWith("/operations/"))
         body = operationPage();
     else
@@ -1577,19 +1574,10 @@ function missingPage(kind, url) {
         feedback +
         Section(t('missing.sectionTitle'), "", Empty(emptyTitle, t('missing.emptyDetail'), NavLink(back, url, "btn secondary"))));
 }
-function findOperationPage() {
-    return (PageHeader(t('operation.findTitle'), t('operation.findDetail')) +
-        feedback +
-        (rememberedOperation
-            ? `<div class="journey-notice"><span>${icon("clock", 17)}</span><div><strong>${t('operation.alreadyOpened')}</strong><p>${esc(rememberedOperation.packageName)} · ${esc(rememberedOperation.packagePhase)} · <code>${esc(rememberedOperation.id)}</code></p></div>${NavLink(t('operation.continue'), "/operations/" + encodeURIComponent(rememberedOperation.id), "btn secondary")}</div>`
-            : "") +
-        Section(t('operation.lookupTitle'), t('operation.lookupDetail'), `<div class="section-body"><form id="operation-find"><label for="operation-id" class="small-label">${t('operation.idLabel')}</label><div class="lookup-row" data-layout="layout-role-6">${Input("operation-id", "", 'class="mono" required placeholder="op_…" autocomplete="off"')}<button type="submit" class="btn primary">${icon("search", 15)} ${t('operation.find')}</button></div><p class="lookup-help">${t('operation.lookupHelp')}</p></form></div>`) +
-        Section(t('operation.resumeTitle'), "", `<div class="section-body"><div class="scope-note" data-layout="layout-role-8">${icon("clock", 18)}<span>${t('operation.resumeNote')}</span></div><p class="help">${t('operation.noHistory')}</p></div>`));
-}
 let interruptedOperation = null;
 function operationPage() {
     if (!operation)
-        return (PageHeader(t('operation.unavailable'), t('operation.unavailableDetail'), Button(t('common.refresh'), "refresh"), NavLink(t('module.findOperation'), "/operations")) + feedback);
+        return (PageHeader(t('operation.unavailable'), t('operation.unavailableDetail'), Button(t('common.refresh'), "refresh"), NavLink(t('module.packages'), "/packages")) + feedback);
     const o = operation;
     const running = o.state === "running";
     const interrupted = interruptedOperation === o.id;
@@ -1603,7 +1591,7 @@ function operationPage() {
     const phases = packageSteps;
     const phase = packagePhaseView(o.packagePhase, o.state);
     const idx = phase.index;
-    return (PageHeader(t('operation.packageTitle'), t('operation.packageDetail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh-operation"), NavLink(t('module.findOperation'), "/operations") + " / " + t('common.details')) +
+    return (PageHeader(t('operation.packageTitle'), t('operation.packageDetail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh-operation"), NavLink(t('module.packages'), "/packages") + " / " + t('common.details')) +
         feedback + (phase.cleanupPending ? Feedback(t('operation.cleanupPending'), "warning") : "") +
         Section(t('operation.statusTitle'), "", `<div class="operation-state"><span class="system-icon ${o.state === "failed" || o.state === "superseded" ? "warning" : ""}">${running && !interrupted && !phase.cleanupPending ? pendingDots() : icon(o.state === "succeeded" ? "check" : "warning", 20)}</span><div><h3>${o.state === "succeeded" ? t('operation.published') : o.state === "failed" ? t('operation.failed') : o.state === "superseded" ? t('operation.superseded') : esc(phase.label)}</h3><p>${esc(o.packageName)}</p><div data-layout="layout-role-7">${StatusLabel(o.state, tone)}</div></div></div><div class="phase-list">${phases.map((p, i) => `<div class="phase-step ${i < idx ? "done" : i === idx ? "current" : ""}">${esc(p)}</div>`).join("")}</div><div class="section-footer"><span>${running ? (interrupted ? t('operation.observationPaused') : t('operation.checkingEvery')) : t('operation.finalState')}</span><span>${t('operation.lastConfirmed', { date: date(o.updatedAt) })}</span></div>`) +
         Section(t('operation.detailsTitle'), t('operation.detailsDetail'), `<div class="section-body"><dl class="summary-list"><dt>${t('operation.id')}</dt><dd class="inline-id"><code>${esc(o.id)}</code>${Copy(o.id)}</dd><dt>${t('operation.package')}</dt><dd>${esc(o.packageName)}</dd><dt>${t('operation.packagePhase')}</dt><dd>${esc(o.packagePhase || t('operation.phaseNotReported'))}</dd><dt>${t('operation.created')}</dt><dd>${date(o.createdAt)}</dd><dt>${t('operation.updated')}</dt><dd>${date(o.updatedAt)}</dd><dt>${t('operation.result')}</dt><dd>${esc(o.result || t('operation.noResult'))}</dd></dl>${o.diagnostic ? `<div data-layout="layout-role-4">${Feedback(o.diagnostic.message, "error")}<p class="help mono">${esc(o.diagnostic.stage)} / ${esc(o.diagnostic.code)}</p></div>` : ""}</div><div class="section-footer"><span>${t('operation.continuesNote')}</span>${o.state === "succeeded" ? NavLink(t('operation.viewPackage'), "/packages/" + encodeURIComponent(o.packageName), "btn secondary") : !running ? Button(t('operation.startNew'), "retry-operation", "secondary", `data-id="${o.id}"`) : Button(t('operation.copyId'), "copy", "secondary", `data-value="${o.id}"`)}</div>`) +
@@ -1932,7 +1920,7 @@ function catalogActionDialog(kind, name, action, recovery) {
             dialogFeedback(err(e), "error", e instanceof ConsoleError && e.code === "DEFAULT_REFERENCE"
                 ? Button(t('catalog.reviewReference'), "resolve-default-reference", "secondary")
                 : e instanceof ConsoleError && e.code === "PACKAGE_BUSY"
-                    ? NavLink(t('module.findOperation'), "/operations", "btn secondary")
+                    ? NavLink(t('module.packages'), "/packages", "btn secondary")
                     : "", e);
             const submit = document.querySelector("#dialog-submit");
             if (submit)
@@ -2720,13 +2708,6 @@ document.addEventListener("submit", async (event) => {
         await tracked({ key: 'save-runtime', kind: 'configuration', resource: 'runtime', label: t('intent.saving'), target: t('term.runtime'), anchor: '#runtime-form', view: path }, async () => { await saveRuntime(new FormData(form)); });
     if (form.id === "defaults-form")
         await tracked({ key: 'save-defaults', kind: 'configuration', resource: 'defaults', label: t('intent.saving'), target: t('term.defaultWork'), anchor: '#defaults-form', view: path }, async () => { await saveDefaults(); });
-    if (form.id === "operation-find") {
-        const id = String(new FormData(form).get("operation-id") || "").trim();
-        if (id) {
-            interruptedOperation = null;
-            navigate("/operations/" + encodeURIComponent(id));
-        }
-    }
 });
 document.addEventListener("click", async (event) => {
     const element = event.target;

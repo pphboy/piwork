@@ -230,7 +230,6 @@ let view = {
   formName: "",
   formDestination: "/",
   formOverwrite: false,
-  operationQuery: "",
   snapshotQuery: "",
   coreAddress: adapter.state.core.address,
   authAccount: '',
@@ -406,7 +405,7 @@ function orphanTasksEntry(): string {
   const { count } = orphanTaskRows();
   if (!count && !adapter.operationRecords.error) return '';
   const label = adapter.operationRecords.error ? t('recovery.pendingTasks') : t('works.taskEntry', { count });
-  const ariaLabel = adapter.operationRecords.error ? t('ops.findOperation') : t('works.taskEntryAria', { count });
+  const ariaLabel = adapter.operationRecords.error ? t('recovery.pendingTasks') : t('works.taskEntryAria', { count });
   return `<div class="works-task-entry">${btn(`${icon('clock', 15)} <span>${label}</span>`, 'works-tasks', 'quiet small', `aria-haspopup="dialog" aria-expanded="${view.modal === 'works-tasks'}" aria-label="${esc(ariaLabel)}"`)}</div>`;
 }
 function orphanTaskList(): string {
@@ -605,7 +604,7 @@ const actionLabels: Record<string, string> = {
   'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'refresh-packages': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
   'confirm-install': 'actions.submittingPackage', 'confirm-remove-package': 'actions.removingPackage', 'confirm-import': 'actions.submittingImport', 'prepare-export': 'actions.preparingExport',
   'export': 'actions.preparingExport', 'view-snapshot': 'actions.checkingSnapshot', 'save-export-file': 'actions.checkingOriginalDownload', 'check-export-flow': 'actions.checkingExport', 'resume-export-flow': 'actions.resumingExport',
-  'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'check-task-operation': 'actions.checkingOperation', 'lookup-operation': 'actions.readingOperation', 'lookup-create-operation': 'actions.readingOperation', 'lookup-import-operation': 'actions.readingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
+  'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'check-task-operation': 'actions.checkingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
   'resume-operation': 'actions.resumingObservation', 'check-inspection-import': 'actions.checkingTransfer', 'retry-inspection-cleanup': 'actions.releasingLocalTransfer',
 };
 const serviceControlKeys: Record<string, string> = { start: 'action.startService', stop: 'action.stopService', restart: 'action.restartService', retry: 'action.retryService', remove: 'action.removeService' };
@@ -1535,7 +1534,7 @@ function coreStartupPage() {
   return `${topbar()}<main class="core-startup-page"><section class="core-startup-state" aria-labelledby="core-startup-title"><div class="core-startup-symbol ${starting ? 'is-starting' : ''}">${starting ? '<span class="core-startup-blocks" aria-hidden="true"><i></i><i></i><i></i><i></i></span>' : icon(checking ? 'clock' : 'info', 28)}</div><h1 id="core-startup-title">${t('coreGate.title.' + phase)}</h1><p>${t('coreGate.body.' + phase)}</p>${starting ? `<p class="core-startup-wait" role="status"><i class="core-starting-spinner" aria-hidden="true"></i>${t('coreGate.autoChecking')}</p>` : checking ? `<p role="status">${pendingDots()} ${t('conn.checking')}</p>` : `<p class="core-startup-reason">${esc(adapter.connectionCheck.error || adapter.status.readiness?.error || adapter.status.health?.error || adapter.status.readiness?.value?.reason || '')}</p>`}<div class="core-startup-actions">${!starting && !checking ? btn(t('coreGate.checkAgain'),'check-connection','primary') : ''}${btn(t('coreGate.viewStatus'),'connection','text-button')}</div><p class="core-startup-hint">${t('coreGate.hint')}</p></section></main>`;
 }
 function coreSafeAction(action: string) {
-  return ['account','connection','check-connection','retry-known-operations','retry-session','retry-sign-in','sign-out','switch-core','confirm-switch-core','read-default-core','save-default-core','clear-default-core','close-modal','back-works','back-work','language','choose-language','copy','log-export','check-log-export','download-log-export','operation','check-operation','lookup-operation','work-history','work-current-tasks','history-filter','find-work-task','check-work','check-work-progress','check-task-operation','cancel-navigation','discard-navigation','dirty-discard','dirty-config-discard','copy-local','about-piwork','refresh-about','export-logs','export-logs-again','retry-log-export'].includes(action) || action.startsWith('locale-');
+  return ['account','connection','check-connection','retry-known-operations','retry-session','retry-sign-in','sign-out','switch-core','confirm-switch-core','read-default-core','save-default-core','clear-default-core','close-modal','back-works','back-work','language','choose-language','copy','log-export','check-log-export','download-log-export','operation','check-operation','work-history','work-current-tasks','history-filter','find-work-task','check-work','check-work-progress','check-task-operation','cancel-navigation','discard-navigation','dirty-discard','dirty-config-discard','copy-local','about-piwork','refresh-about','export-logs','export-logs-again','retry-log-export'].includes(action) || action.startsWith('locale-');
 }
 function coreRecoveryHTML() {
   // Keep editor nodes and drafts, but cached markup never preserves a revoked application.
@@ -2573,7 +2572,7 @@ function modalMarkup() {
                 : ""
             }<label class="field">AGENTS.md<textarea id="create-agents" rows="4" placeholder="${esc(t('create.agentsPlaceholder'))}">${esc(view.createAgents)}</textarea></label>${btn(t('create.importAgents'), "create-import-agents", "small")}<label class="field">${t('create.fullJson')}<textarea id="create-json" rows="4" class="mono" placeholder="${esc(t('create.jsonPlaceholder'))}">${esc(view.createJson)}</textarea></label></div>`
           : ""
-      }<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div><details class="original-task-lookup"><summary>${t('recovery.findCreate')}</summary><label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), 'lookup-create-operation')}</div></label></details>`;
+      }<div class="merge-summary"><strong>${t('create.summaryTitle')}</strong><span>${t('create.summaryImage', { value: esc(view.createImage || t('create.coreDefault')) })}</span><span>${t('create.summarySkills', { value: view.createSkillMode === "defaults" ? t('create.coreDefaults') : view.createSkillMode === "none" ? t('create.none') : esc(view.createSkills.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.summaryPackages', { value: view.createPackageMode === "defaults" ? t('create.coreDefaults') : view.createPackageMode === "none" ? t('create.none') : esc(view.createPackages.join(", ") || t('create.noneChosen')) })}</span><span>${t('create.overrideNote')}</span></div>`;
       footer = `${cancel()}${btn(t('create.submit'), "create-work", "primary", createSubmissionBlocked(actions.records.values(), view.createName) ? "disabled" : "")}`;
       break;
     case "stop-work":
@@ -2887,7 +2886,7 @@ function modalMarkup() {
       );
       const records = adapter.operationRecords;
       const recordsError = records.error ? `<p class="action-recovery" role="status">${esc(records.error)}</p>` : '';
-      body = `${recordsError}${view.data.history ? `<p class="operation-history-summary">${t('history.explanation')}</p><div class="operation-history-filters">${[['all','history.all'],['current','history.current'],['history','history.completed']].map(([filter,key])=>btn(t(key),'history-filter','small quiet',`data-filter="${filter}" aria-pressed="${(view.data.filter || 'all') === filter}"`)).join('')}</div>` : `<p>${t('recovery.workTasksBody')}</p>`}<label class="field">${t('ops.findOperation')}<div class="input-action"><input id="operation-query" value="${esc(view.operationQuery)}" placeholder="op-…">${btn(t('quick.checkStatus'), "lookup-operation")}</div></label><div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${esc(op.id)}"><span>${icon("clock", 17)}<span><strong>${esc(operationAction(op))}</strong></span></span>${badge(op.terminalHint?.state || op.state)}<small class="history-record-meta">${esc(formatDateTime(op.created) || op.created)} · ${esc(op.id)}${op.terminalHint ? ` · ${t("history.previousResult")}` : ""}</small></button>`).join("") : records.error ? '' : records.reading && !records.receipt ? readPlaceholder(t('quick.checkStatus'), 'list') : records.receipt ? `<p class="muted">${t('recovery.noWorkTasks')}</p>` : ''}</div>`;
+      body = `${recordsError}${view.data.history ? `<p class="operation-history-summary">${t('history.explanation')}</p><div class="operation-history-filters">${[['all','history.all'],['current','history.current'],['history','history.completed']].map(([filter,key])=>btn(t(key),'history-filter','small quiet',`data-filter="${filter}" aria-pressed="${(view.data.filter || 'all') === filter}"`)).join('')}</div>` : `<p>${t('recovery.workTasksBody')}</p>`}<div class="operation-list">${operations.length ? operations.map((op) => `<button data-action="operation" data-id="${esc(op.id)}"><span>${icon("clock", 17)}<span><strong>${esc(operationAction(op))}</strong></span></span>${badge(op.terminalHint?.state || op.state)}<small class="history-record-meta">${esc(formatDateTime(op.created) || op.created)} · ${esc(op.id)}${op.terminalHint ? ` · ${t("history.previousResult")}` : ""}</small></button>`).join("") : records.error ? '' : records.reading && !records.receipt ? readPlaceholder(t('quick.checkStatus'), 'list') : records.receipt ? `<p class="muted">${t('recovery.noWorkTasks')}</p>` : ''}</div>`;
       footer = `${close()}${records.error || !records.receipt ? btn(`<span class="button-pending-content${records.reading ? ' is-pending' : ''}"><span>${t('common.retry')}</span>${records.reading ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'retry-known-operations', 'quiet', records.reading ? 'disabled aria-busy="true"' : '') : ''}`;
       break;
     }
@@ -4624,28 +4623,6 @@ async function handleAction(action: string, el: HTMLElement, record?: ActionReco
     case "check-operation":
       reviewOperation(await stay(adapter.checkOperation(el.dataset.id!)), record);
       break;
-    case 'lookup-create-operation':
-    case 'lookup-import-operation': {
-      const kind = action === 'lookup-create-operation' ? 'work:create' : 'transfer:import';
-      const op = await stay(adapter.checkOperation(view.operationQuery.trim(), true, undefined, kind));
-      reviewOperation(op, record); openModal('operation', { id: op.id });
-      break;
-    }
-    case "lookup-operation": {
-      if (!view.data.workId || !adapter.getWork(view.data.workId)) throw Error(t('ops.lookupMissing'));
-      const owner = {
-        identity: adapter.identityEpoch, route: location.hash, currentWorkId: current()?.id,
-        modal: view.modal, choice: modalChoice, workId: view.data.workId, query: view.operationQuery.trim(),
-      };
-      const op = await adapter.checkOperation(owner.query, true, owner.workId);
-      if (owner.identity !== adapter.identityEpoch || owner.route !== location.hash || owner.currentWorkId !== current()?.id ||
-        owner.modal !== view.modal || owner.choice !== modalChoice || owner.workId !== view.data.workId ||
-        owner.query !== view.operationQuery.trim() || record && !actions.current(record)) throw new ViewChanged();
-      if (op) { reviewOperation(op, record); openModal("operation", { id: op.id }); }
-      else
-        throw Error(t('ops.lookupMissing'));
-      break;
-    }
     case "lookup-snapshot": {
       const workId = el.dataset.workId || view.data.workId || view.data.id;
       if (!workId) throw new Error(t('export.snapshotMismatch'));
@@ -5245,9 +5222,6 @@ root.addEventListener("input", (e) => {
       view.importName = value;
       clearNameFieldError();
       break;
-    case "operation-query":
-      view.operationQuery = value;
-      break;
     case "snapshot-query":
       view.snapshotQuery = value;
       break;
@@ -5633,7 +5607,34 @@ async function restoreRuntimePanel(work: Work) {
     await openFile(work, routeTarget.path).catch(() => undefined);
   if (epoch === adapter.identityEpoch && origin === location.hash) render();
 }
-adapter.subscribe(() => { exportFlows.update(); if (lastIdentity !== adapter.identityEpoch) { lastIdentity = adapter.identityEpoch; lastAdmittedHTML = ''; lastAdmittedView = ''; routeDeferredByCore = false; actions.clear(); createDraft.clear(); resetCreateFields(); unknownFiles.clear(); fileAttempt = undefined; modalTransfers = []; uploadPickerTarget = undefined; pendingUploadTarget = undefined; pendingUploadFiles = []; sourceGuardReturn = undefined; pendingNav = null; workControls.clear(); serviceControls.clear(); importStarts.clear(); workSelections.clear(); selectionWorkId = ''; fileChoice++; filesRestoreNotice = ''; workReadErrors.clear(); view.serviceOpenError = ""; view.operationQuery = ''; view.snapshotQuery = '';
+adapter.subscribe(() => {
+  exportFlows.update();
+  if (lastIdentity !== adapter.identityEpoch) {
+    lastIdentity = adapter.identityEpoch;
+    lastAdmittedHTML = '';
+    lastAdmittedView = '';
+    routeDeferredByCore = false;
+    actions.clear();
+    createDraft.clear();
+    resetCreateFields();
+    unknownFiles.clear();
+    fileAttempt = undefined;
+    modalTransfers = [];
+    uploadPickerTarget = undefined;
+    pendingUploadTarget = undefined;
+    pendingUploadFiles = [];
+    sourceGuardReturn = undefined;
+    pendingNav = null;
+    workControls.clear();
+    serviceControls.clear();
+    importStarts.clear();
+    workSelections.clear();
+    selectionWorkId = '';
+    fileChoice++;
+    filesRestoreNotice = '';
+    workReadErrors.clear();
+    view.serviceOpenError = "";
+    view.snapshotQuery = '';
     expandedComposerDrafts.clear();
     view.config = null; view.configDirty = false; view.drafts = {};textDraftRevisions.clear();imageDrafts.clear();pendingImageSubmissions.clear();chatDraftSnapshots.clear();imageDraftErrors.clear();resetWorkspaceFocus();workspacePanels.clear();chatReading.clear();expandedActivity.clear();activityLayouts.clear();pendingWebCommand=undefined; fileSelections.clear(); runtimeAvailability.clear(); fileSourceReturn = undefined; clearFileTarget();
     // Name and file identity are cleared where a transfer is actually abandoned

@@ -300,13 +300,13 @@ for (const status of ['unknown', 'failed'] as const) test(`Save ${status} receip
   } finally { actions.clear(); }
 });
 
-for (const kind of ['Operation', 'snapshot'] as const) {
-  for (const change of ['service hydration', 'session hydration', 'Works-row hydration', 'identity', 'route', 'Work', 'modal', 'modal choice', 'query', 'scope', 'record', ...(kind === 'snapshot' ? ['fallback scope' as const] : [])] as const) {
+for (const kind of ['snapshot'] as const) {
+  for (const change of ['service hydration', 'session hydration', 'Works-row hydration', 'identity', 'route', 'Work', 'modal', 'modal choice', 'query', 'scope', 'record', 'fallback scope'] as const) {
     test(`original ${kind} lookup owns its original dialog rather than workspace hydration: ${change}`, async () => {
       const { c } = fixture(), gate = deferred();
-      const queryField = kind === 'Operation' ? 'operationQuery' : 'snapshotQuery';
-      const originalId = kind === 'Operation' ? 'original-operation' : 'original-snapshot';
-      Object.assign(c.view, { modal: kind === 'Operation' ? 'operations' : 'export-recovery', data: { workId: 'one', id: 'one' }, [queryField]: ` ${originalId} `, service: '', port: 0 });
+      const queryField = 'snapshotQuery';
+      const originalId = 'original-snapshot';
+      Object.assign(c.view, { modal: 'export-recovery', data: { workId: 'one', id: 'one' }, [queryField]: ` ${originalId} `, service: '', port: 0 });
       if (change === 'fallback scope') delete c.view.data.workId;
       // Match the current app's full view key; the legacy assembly fixture's
       // shorter navigation key cannot reproduce this independent hydration race.
@@ -321,7 +321,7 @@ for (const kind of ['Operation', 'snapshot'] as const) {
       const opened: unknown[] = [];
       c.reviewOperation = () => {};
       c.openModal = (name: string, data: unknown) => opened.push({ name, data });
-      c.adapter[kind === 'Operation' ? 'checkOperation' : 'fetchSnapshot'] = async (id: string, explicit: boolean, workId: string) => {
+      c.adapter.fetchSnapshot = async (id: string, explicit: boolean, workId: string) => {
         assert.equal(id, originalId);
         assert.equal(explicit, true);
         assert.equal(workId, 'one');
@@ -329,7 +329,7 @@ for (const kind of ['Operation', 'snapshot'] as const) {
         return { id, workId };
       };
       vm.runInContext(extract(['handleAction']), c);
-      const lookup = c.handleAction(kind === 'Operation' ? 'lookup-operation' : 'lookup-snapshot', { dataset: {} }, record);
+      const lookup = c.handleAction('lookup-snapshot', { dataset: {} }, record);
       if (change === 'service hydration' || change === 'Works-row hydration') {
         c.view.service = 'service-arrived';
         c.view.port = 80;
@@ -348,7 +348,7 @@ for (const kind of ['Operation', 'snapshot'] as const) {
       if (change.endsWith('hydration')) {
         await lookup;
         assert.equal(opened.length, 1);
-        assert.equal(JSON.stringify(opened), JSON.stringify([kind === 'Operation' ? { name: 'operation', data: { id: originalId } } : { name: 'export-recovery', data: { id: 'one', snapshotId: originalId } }]));
+        assert.equal(JSON.stringify(opened), JSON.stringify([{ name: 'export-recovery', data: { id: 'one', snapshotId: originalId } }]));
       } else {
         await assert.rejects(lookup, c.ViewChanged);
         assert.equal(opened.length, 0);

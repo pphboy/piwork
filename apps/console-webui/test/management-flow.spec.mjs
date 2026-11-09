@@ -412,3 +412,27 @@ test('S10 explicit model Test explains a ten-second wait in the open dialog and 
     await page.getByRole('button',{name:'View test result',exact:true}).click();gate.resolve();await expect(page.getByRole('dialog')).toContainText('The provider did not respond');await expect(page.getByRole('dialog').locator('.pending-dots')).toHaveCount(0);expect(calls).toBe(1);
   }finally{gate.resolve();}
 });
+
+for (const width of [1440, 360]) test(`manual Operation lookup is removed while known details survive ${width}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 800 });
+  const { requests } = await fixture(page, '/operations');
+  await expect(page.locator('#operation-find,#operation-id,.operation-utility')).toHaveCount(0);
+  await expect(page.locator('a[href="/operations"]')).toHaveCount(0);
+  await expect(page.locator('h1')).not.toHaveText('Find Operation');
+  await page.goto(base + '/operations/op-one');
+  await expect(page.getByRole('heading', { name: 'Package operation', exact: true })).toBeVisible();
+  await expect(page.locator('#operation-id,.operation-utility')).toHaveCount(0);
+  await expect(page.locator('a[href="/packages"]').first()).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Package operation', exact: true })).toBeVisible();
+  await page.locator('[data-action="refresh-operation"]').click();
+  await expect.poll(() => requests.filter(r => r.path === 'admin/operations/op-one').length).toBeGreaterThan(1);
+  await page.evaluate(async () => {
+    const moduleURL = '/browser/locale.js';
+    const { chooseLocale } = await import(moduleURL);
+    chooseLocale('zh-CN');
+  });
+  await expect(page.locator('#operation-id,.operation-utility,a[href="/operations"]')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(requests.filter(r => r.method !== 'GET')).toHaveLength(0);
+});
