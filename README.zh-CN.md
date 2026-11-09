@@ -54,6 +54,8 @@ AI 可以生成应用。但要运行应用、集成现有工具、持续修改�
 
 它们让 AI 能够操作真实应用，而不只是输出文字或代码。
 
+[Work Spec](openspec/specs/portable-work/README.zh-CN.md)
+
 ## 快速开始
 
 下载并运行对应平台的 Piwork MicroVM GUI 二进制：

@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"syscall"
 	"testing"
 
@@ -413,5 +415,41 @@ func TestEncoderPreservesSourceEOFProbeError(t *testing.T) {
 	}, io.Discard)
 	if !errors.Is(err, sentinel) {
 		t.Fatal("EOF probe failure was hidden", err)
+	}
+}
+
+func TestPublishedTreeExamplesMatchReader(t *testing.T) {
+	for _, name := range []string{"README.md", "README.zh-CN.md"} {
+		t.Run(name, func(t *testing.T) {
+			text, err := os.ReadFile("../../openspec/specs/portable-work/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fences := regexp.MustCompile("(?s)```json\\n(.*?)\\n```").FindAllSubmatch(text, -1)
+			empty := sha256.Sum256(nil)
+			digest := hex.EncodeToString(empty[:])
+			blobs := map[string]contracts.WorkBlob{digest: {Digest: contracts.WorkBlobDigest(digest), Size: 0, Kinds: []string{"file"}}}
+			count := 0
+			for _, fence := range fences {
+				var shape map[string]json.RawMessage
+				if err = json.Unmarshal(fence[1], &shape); err != nil {
+					t.Fatal("published JSON", err)
+				}
+				if _, ok := shape["version"]; !ok {
+					continue
+				}
+				count++
+				tree, err := ValidateTree(fence[1], blobs, DefaultLimits)
+				if err != nil {
+					t.Fatal("published tree", err)
+				}
+				if len(tree.Tree.Entries) != 4 || tree.FileBytes != 0 {
+					t.Fatal("tree example changed", tree.FileBytes, len(tree.Tree.Entries))
+				}
+			}
+			if count != 1 {
+				t.Fatal("expected one complete tree example", count)
+			}
+		})
 	}
 }
