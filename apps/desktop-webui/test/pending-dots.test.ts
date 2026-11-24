@@ -41,7 +41,6 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
     } catch { res.writeHead(404); res.end(); }
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  server.unref();
   const address = server.address(); assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}`;
   const browser = await chromium.launch(process.env.PIWORK_TEST_BROWSER_BIN
@@ -340,7 +339,12 @@ test('shared Pending browser contract: opacity, fixed slot, terminal states and 
       assert.deepEqual(result, { firstDots:1, secondDots:1, genericKeys:[] });
     });
   } finally {
-    await browser.close();
-    await new Promise<void>(resolve => server.close(() => resolve()));
+    // TestContext owns the nested tests: their lifetime can outlive this
+    // callback on supported Node 24 versions. Keep shared resources alive
+    // until every child has finished rather than closing them in JS finally.
+    t.after(async () => {
+      await browser.close();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    });
   }
 });

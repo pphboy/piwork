@@ -153,7 +153,7 @@ func (a *Application) publishWorkPackage(ctx context.Context, job corestore.Pack
 			return err
 		}
 		now := packageNow()
-		published, err := a.buildWorkContext(ctx, workID, *state.DesiredContextID, false, config, imageID, now, &source)
+		published, err := a.buildWorkContext(ctx, workID, *state.DesiredContextID, false, config, imageID, now, &source, nil, nil)
 		if err != nil {
 			return err
 		}

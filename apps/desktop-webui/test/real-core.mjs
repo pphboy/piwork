@@ -4,9 +4,9 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
 const repositoryRoot = resolve(import.meta.dirname, '../../..');
@@ -67,6 +67,16 @@ function capture(child) {
   child.stderr?.on('data', (chunk) => { output += chunk.toString(); });
   return () => output.slice(-6000);
 }
+function spawnCoreFixture(args) {
+  // Core creates 0755/0644 synthetic package-helper inputs for UID 10001.
+  // Normalize this fixture child's umask without changing the test process's
+  // private output policy or any product startup/authorization behavior.
+  const previous = process.umask(0o022);
+  try {
+    return spawn(coreBinary, args, { stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: '/nonexistent', DISPLAY: '', WAYLAND_DISPLAY: '' } });
+  } finally { process.umask(previous); }
+}
 function docker(args) {
   const result = spawnSync('docker', args, { encoding: 'utf8' });
   assert.equal(result.status, 0, `docker ${args[0]} failed: ${result.stderr}`);
@@ -104,7 +114,7 @@ try {
   const [corePort, uiPort, desktopPort] = await Promise.all([freePort(), freePort(), freePort()]);
   const coreUrl = `http://127.0.0.1:${corePort}`;
   if(!process.env.PIWORK_TEST_NATIVE_CORE)coreBinary=buildNativeTestServer(join(root,'bin'),{agent:image,packageHelper:image,fileHelper:fileImage,snapshotHelper:snapshotImage});
-  core=spawn(coreBinary,['--data-dir',dataDir,'--ui-port',String(uiPort),'--core-port',String(corePort)],{stdio:['ignore','pipe','pipe'],env:{...process.env,PATH:'/nonexistent',DISPLAY:'',WAYLAND_DISPLAY:''}});
+  core=spawnCoreFixture(['--data-dir',dataDir,'--ui-port',String(uiPort),'--core-port',String(corePort)]);
   coreOutput = capture(core);
   await waitFor(async () => (await fetch(`${coreUrl}/healthz`)).ok, 'Go Core health');
   const control=await operatorAPI(coreUrl,dataDir);
@@ -118,6 +128,12 @@ try {
     }
     return true;
   }, 'Go Core readiness');
+  const skillSource = join(root, 'skills', 'real-editor-skill');
+  await mkdir(join(skillSource, 'references'), { recursive: true });
+  await writeFile(join(skillSource, 'SKILL.md'), '---\nname: real-editor-skill\ndescription: Verify Work-owned Skill editing\n---\n# Real editor skill v1\nSupporting file: references/note.txt\n');
+  await writeFile(join(skillSource, 'references', 'note.txt'), 'note v1\n');
+  const editorSkill = basename(skillSource);
+  await control('POST', 'skills', { path: skillSource });
   const login = await api(coreUrl, '', 'POST', '/api/v1/login',
     { account: 'admin', password: 'real-browser-admin-password' });
   assert.equal(login.status, 200, JSON.stringify(login.data));
@@ -550,14 +566,37 @@ try {
   await page.screenshot({ path: join(screenshotDir, '03-files.png'), fullPage: true });
   await page.locator('.work-header').getByRole('button', { name: 'Work options', exact: true }).click();
   await page.locator('#modal').getByRole('menuitem', { name: 'Settings', exact: true }).click();
-  await page.locator('.configuration-compact').getByText('Configuration in use', { exact: true }).waitFor();
+  await page.locator('.configuration-compact').getByText('Applied', { exact: true }).waitFor();
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.locator(`#modal input[data-add-skill="${editorSkill}"]`).check();
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await page.locator(`[data-action="settings-skill"][data-skill="${editorSkill}"]`).waitFor();
+  await page.locator(`[data-action="settings-skill"][data-skill="${editorSkill}"]`).click();
+  await page.locator('[data-action="settings-file"][data-path="SKILL.md"]').waitFor();
+  await page.locator('#skill-file-editor').fill('---\nname: real-editor-skill\ndescription: Edited Work Skill\n---\n# Real skill edited\n');
   await page.getByRole('button', { name: 'AGENTS.md', exact: true }).click();
   await page.locator('#agents-editor').fill('# Real browser Work\nUse the shared workspace.\n');
-  await page.getByRole('button', { name: 'Save changes', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Save all changes', exact: true }).first().click();
   await page.locator('.configuration-state').getByText('Saved changes are not active yet.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Apply changes', exact: true }).click();
   await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`)).data.pendingApply === false, 'configuration apply', 180_000);
   console.log('Real Desktop: configuration applied');
+  const editedRead = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/configuration/editor/read`, { files: [{ skillName: editorSkill, path: 'SKILL.md' }] });
+  assert.equal(editedRead.status, 200, JSON.stringify(editedRead.data));
+  assert.equal(editedRead.data.files?.[0]?.text, '---\nname: real-editor-skill\ndescription: Edited Work Skill\n---\n# Real skill edited\n');
+  const appliedConfig = await api(coreUrl, token, 'GET', `/api/v1/works/${workId}/configuration`);
+  assert.equal(appliedConfig.status, 200, JSON.stringify(appliedConfig.data));
+  assert.ok(appliedConfig.data.desired.skills.includes(editorSkill), JSON.stringify(appliedConfig.data.desired.skills));
+  assert.ok(appliedConfig.data.active.skills.includes(editorSkill), JSON.stringify(appliedConfig.data.active.skills));
+  const stopped = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/stop`, { idempotencyKey: 'editor-stop' });
+  assert.equal(stopped.status, 202, JSON.stringify(stopped.data));
+  await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`)).data.observedState === 'stopped', 'editor Work stopped', 180_000);
+  const restarted = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/start`, { idempotencyKey: 'editor-start' });
+  assert.equal(restarted.status, 202, JSON.stringify(restarted.data));
+  await waitFor(async () => (await api(coreUrl, token, 'GET', `/api/v1/works/${workId}`)).data.observedState === 'ready', 'editor Work restarted', 180_000);
+  const afterRestart = await api(coreUrl, token, 'POST', `/api/v1/works/${workId}/configuration/editor/read`, { files: [{ skillName: editorSkill, path: 'SKILL.md' }] });
+  assert.equal(afterRestart.status, 200, JSON.stringify(afterRestart.data));
+  assert.equal(afterRestart.data.files?.[0]?.text, '---\nname: real-editor-skill\ndescription: Edited Work Skill\n---\n# Real skill edited\n');
   await expect(page.locator('#modal')).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to Work', exact: true }).click();
   // Apply changes the active context, not the Session's eligibility to continue.
@@ -849,7 +888,7 @@ try {
   const download = await downloadEvent; const exportedPath = join(root, 'browser-export.work'); await download.saveAs(exportedPath); assert.equal(await download.failure(), null);
   assert.equal(download.suggestedFilename(), 'Real Browser Work.work');
   const exportedBytes = await readFile(exportedPath);
-  assert.equal(exportedBytes.subarray(0,8).toString(), 'PIWORK1\n', 'export is not a real archive');
+  assert.equal(exportedBytes.subarray(0,8).toString(), 'PIWORK2\n', 'export is not a real archive');
   const readyResponse = await preparationResponse; assert.equal(readyResponse.status(), 200);
   const ready = await readyResponse.json();
   assert.equal(ready.ready, true); assert.equal(ready.workId, workId); assert.equal(ready.snapshotId, acceptance.snapshotId);
@@ -913,6 +952,9 @@ try {
   await expect(page.locator('#modal')).not.toContainText('Operation ID');
   await page.screenshot({ path: join(screenshotDir, '03-import-automatic-name.png'), fullPage: true });
   const imported = await waitFor(async () => (await api(coreUrl, token, 'GET', '/api/v1/works')).data.works?.find(item => item.name === 'Real Browser Work-2'), 'imported Work', 180_000);
+  const importedRead = await api(coreUrl, token, 'POST', `/api/v1/works/${imported.id}/configuration/editor/read`, { files: [{ skillName: editorSkill, path: 'SKILL.md' }] });
+  assert.equal(importedRead.status, 200, JSON.stringify(importedRead.data));
+  assert.equal(importedRead.data.files?.[0]?.text, '---\nname: real-editor-skill\ndescription: Edited Work Skill\n---\n# Real skill edited\n');
   assert.notEqual(imported.id, workId); assert.equal(imported.observedState, 'stopped');
   await recoverOnNewPage('Real Browser Work-2', importAccepted.operationId, 'operation');
   // The other page proves recovery, not this page's observation. Returning and
@@ -1006,7 +1048,7 @@ try {
   try {
     await stop(desktop); await stop(core);
     console.log('Real Desktop: source Core stopped; importing into a second Core');
-    coreB = spawn(coreBinary, ['--data-dir', dataDirB, '--ui-port', String(uiPortB), '--core-port', String(corePortB)], { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PATH: '/nonexistent', DISPLAY: '', WAYLAND_DISPLAY: '' } });
+    coreB = spawnCoreFixture(['--data-dir', dataDirB, '--ui-port', String(uiPortB), '--core-port', String(corePortB)]);
     await waitFor(async () => (await fetch(`${coreBUrl}/healthz`)).ok, 'second Core health', 90_000);
     const controlB = await operatorAPI(coreBUrl, dataDirB);
     await controlB('POST', 'admin/bootstrap', { account: 'admin', password: 'real-browser-admin-password' });

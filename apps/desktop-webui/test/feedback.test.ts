@@ -39,7 +39,6 @@ async function findPreviousExport(page: Page) {
   await button(page, 'find-previous-export').click();
 
 }
-/** Tasks without a visible Work live behind the Works header entry, not in front of the list. */
 async function openWorksTasks(page: Page) {
   // Reload restores the original tasks asynchronously; wait for the fixed entry.
   const entry = page.locator('[data-action="works-tasks"]').first();
@@ -107,6 +106,19 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
       else if (r.path === 'packages') reply = { json: { packages: [{ name: 'pkg' }, { name: 'new-pkg' }] } };
       else if (r.path === 'known-operations') reply = { json: { operations: [] } };
       else if (r.path === 'works/work-1/configuration') { if (r.method === 'PUT') desired = JSON.parse(r.body).configuration; reply = { json: { desired, active: desired, pendingApply: false, runtime: { state: 'ready' } } }; }
+      else if (r.path === 'works/work-1/configuration/editor/read') reply = { json: { desired, active: desired, pendingApply: false, skillFiles: [], files: [] } };
+      else if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') {
+        const patch = JSON.parse(r.body);
+        if (Array.isArray(patch.addSkills)) {
+          const skills = [...desired.skills];
+          for (const name of patch.addSkills) if (!skills.includes(name)) skills.push(name);
+          desired = { ...desired, skills };
+        }
+        if (Array.isArray(patch.removeSkills)) desired = { ...desired, skills: desired.skills.filter((name: string) => !patch.removeSkills.includes(name)) };
+        if (typeof patch.agentsMd === 'string') desired = { ...desired, agentsMd: patch.agentsMd };
+        if (Array.isArray(patch.packageFlags)) desired = { ...desired, packages: desired.packages.map((item: any) => ({ ...item, enabled: patch.packageFlags.find((flag: any) => flag.name === item.name)?.enabled ?? item.enabled })) };
+        reply = { json: { desired, active: desired, pendingApply: true } };
+      }
       else if (r.path.endsWith('/services')) reply = { json: { services: [] } };
       else if (r.path.endsWith('/packages')) reply = { json: { packages: [] } };
       else if (r.path.endsWith('/models')) reply = {json:{models:[{modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'}],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one'},availability:'available',checkedAt:new Date().toISOString()}};
@@ -169,6 +181,18 @@ const button = (page: Page, action: string) => page.locator(`[data-action="${act
 async function openWorkSettings(page: Page) {
   await page.locator('.work-header [data-action="work-menu"][data-menu-scope="work-header"]').click();
   await page.locator('#modal [data-action="settings"]').click();
+}
+/** The v5 prototype adds through a selectable catalog dialog, not a persistent list. */
+async function chooseAddSkill(page: Page, id: string) {
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.locator(`#modal input[data-add-skill="${id}"]`).check();
+}
+async function confirmAddSkill(page: Page) {
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+}
+async function addSkillFromCatalog(page: Page, id: string) {
+  await chooseAddSkill(page, id);
+  await confirmAddSkill(page);
 }
 async function openRequests(page: Page, scope: 'work' | 'service' = 'work') {
   if (!await page.locator('#pi-service-filter').isVisible()) await button(page, 'agent-menu').click();
@@ -542,23 +566,459 @@ for (const action of ['start', 'retry', 'stop', 'delete', 'create'] as const) te
 });
 
 test('D14 configuration confirms before failed refresh and preserves newer edits', async t => {
-  const save = deferred(), readback = deferred(); t.after(async () => { save.resolve(); readback.resolve(); });
+  const save = deferred(), readback = deferred();
+  t.after(async () => {
+    save.resolve();
+    readback.resolve();
+  });
   let submitted = false;
   const { page, requests } = await fixture(t, async r => {
-    if (r.path === 'works/work-1/configuration' && r.method === 'PUT') { await save.promise; submitted = true; return { json: {} }; }
+    if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') {
+      await save.promise;
+      submitted = true;
+      return { json: { desired: { skills: [], packages: [], agentsMd: 'submitted' }, pendingApply: true } };
+    }
     if (r.path === 'works/work-1/configuration' && submitted) { await readback.promise; return { status: 503, json: { message: 'readback offline' } }; }
   });
-  await button(page, 'work-menu').click(); await page.locator('#modal [data-action="settings"]').click();
+  await button(page, 'work-menu').click();
+  await page.locator('#modal [data-action="settings"]').click();
   await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
-  await page.locator('#agents-editor').fill('submitted'); await button(page, 'save-config').click();
+  await page.locator('#agents-editor').fill('submitted');
+  await button(page, 'save-config').click();
   await expect(button(page, 'save-config').locator('[role="status"]')).toContainText('Saving settings');
   await expect(page.locator('[data-action="save-config"] .pending-dots')).toHaveCount(1);
-  await page.locator('#agents-editor').fill('newer unsaved draft'); save.resolve();
-  await expect(page.locator('.notice-success').filter({ hasText: 'Settings saved' })).toHaveCount(1);
+  await page.locator('#agents-editor').fill('newer unsaved draft');
+  save.resolve();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unsaved');
+  await expect(page.locator('.notice-success').filter({ hasText: 'Settings saved' })).toHaveCount(0);
   await expect(page.locator('[data-action-status]').filter({ hasText: 'Settings saved' })).toHaveCount(0);
   await expect(page.locator('#agents-editor')).toHaveValue('newer unsaved draft');
-  readback.resolve(); await expect(page.locator('[data-action-status]').filter({hasText:'refresh not confirmed'})).toBeVisible();
-  assert.equal(requests.filter(r => r.method === 'PUT').length, 1);
+  readback.resolve();
+  await expect(page.locator('[data-action-status]').filter({hasText:'refresh not confirmed'})).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'PATCH' && r.path === 'works/work-1/configuration/editor').length, 1);
+});
+
+test('D20 adding a Skill saves only the new name and preserves other drafts', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep this draft');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await addSkillFromCatalog(page, 'new');
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH').length).toBe(1);
+  const patch = JSON.parse(requests.find(r => r.path === 'works/work-1/configuration/editor')!.body);
+  assert.deepEqual(patch, { addSkills: ['new'] });
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toBeVisible();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep this draft');
+  await expect(page.locator('[data-action="save-config"]')).toBeVisible();
+});
+
+test('D21 removing a Skill is a local draft with undo and no namespace deletion', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-skill"][data-skill="saved"]').click();
+  await page.locator('.skill-menu > summary').click();
+  await page.locator('[data-action="remove-skill"][data-id="saved"]').click();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="undo-remove-skill"]')).toBeVisible();
+  await page.locator('[data-action="undo-remove-skill"]').click();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).toBeVisible();
+  assert.equal(requests.filter(r => r.method === 'DELETE' || r.path === 'works/work-1/configuration/editor').length, 0);
+  assert.equal(requests.filter(r => r.method === 'DELETE').length, 0);
+});
+
+test('D22 Skill menu keeps explicit target and Arrow/Home/End/Escape focus ownership', async t => {
+  const { page, requests } = await fixture(t, () => undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-skill"][data-skill="saved"]').click();
+  const summary = page.locator('.skill-menu > summary');
+  await summary.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('[data-action="skill-detail"]')).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.locator('[data-action="remove-skill"]')).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(page.locator('[data-action="skill-detail"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(summary).toBeFocused();
+  assert.equal(await page.locator('.skill-menu').evaluate((node: HTMLDetailsElement) => node.open), false);
+  await summary.press('Enter');
+  await expect(page.locator('[data-action="skill-detail"]')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#modal')).toBeVisible();
+  await expect(page.locator('.skill-menu')).not.toHaveAttribute('open', '');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(summary).toBeFocused();
+  assert.equal(requests.filter(r => r.method === 'PATCH' || r.method === 'DELETE').length, 0);
+});
+
+test('D23 Skill file selector keeps per-file drafts and blocks non-text files', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (Array.isArray(body.files)) return { json: { files: body.files.map((file: any) => ({ ...file, text: '# Review' })) } };
+      return { json: { skillFiles: [
+        { skillName: 'saved', path: 'SKILL.md', size: 8, editable: true, reason: null },
+        { skillName: 'saved', path: 'asset.bin', size: 3, editable: false, reason: 'binary' },
+      ], files: [] } };
+    }
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') return { json: { desired: { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' }, pendingApply: true } };
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#settings-file-selector')).toHaveValue('SKILL.md');
+  await expect(page.locator('#settings-file-selector option[value="asset.bin"]')).toBeDisabled();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Review');
+  await page.locator('#skill-file-editor').fill('# Changed');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Changed');
+  await button(page, 'save-config').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH').length).toBe(1);
+  const patch = JSON.parse(requests.find(r => r.path === 'works/work-1/configuration/editor')!.body);
+  assert.deepEqual(patch.skillFiles, [{ skillName: 'saved', path: 'SKILL.md', text: '# Changed' }]);
+});
+
+test('D24 adding a Skill shows one local wait and keeps the background draft', async t => {
+  let release!: () => void;
+  const gate = new Promise<void>(done => { release = done; });
+  t.after(() => release());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') {
+      await gate;
+      return { json: { desired: { skills: ['saved', 'new'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' }, pendingApply: true } };
+    }
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('draft before add');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await addSkillFromCatalog(page, 'new');
+  const dialog = page.locator('#modal:modal');
+  await expect(dialog.locator('[data-action="confirm-add-skill"]')).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.getByRole('status').filter({hasText: 'Adding Skill'})).toHaveCount(1);
+  await expect(dialog.locator('.modal-head [data-action=close-modal]')).toBeDisabled();
+  await expect(dialog.getByRole('button', {name: 'Cancel'})).toBeDisabled();
+  await expect(dialog.locator('[data-action=choose-skill-directory]')).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  release();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH').length).toBe(1);
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toBeVisible();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('draft before add');
+  assert.deepEqual(JSON.parse(requests.find(r => r.path === 'works/work-1/configuration/editor')!.body), { addSkills: ['new'] });
+});
+
+test('D25 failed Skill add keeps every local draft and target', async t => {
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') return { status: 400, json: { code: 'INVALID_CONFIGURATION', message: 'Skill could not be added', field: 'skills' } };
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep on failure');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await addSkillFromCatalog(page, 'new');
+  await expect(page.locator('#modal')).toContainText('Skill could not be added');
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toHaveCount(0);
+  await button(page, 'close-modal').click();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep on failure');
+});
+
+for (const [width, height] of [[1440, 680], [360, 580]] as const) test(`Settings Add Skill stays centered over a scrolled page at ${width}px`, async t => {
+  const { page } = await fixture(t, r => r.path === 'skills'
+    ? { json: { skills: Array.from({ length: 24 }, (_, i) => ({ name: `candidate-${i}` })) } } : undefined);
+  await page.setViewportSize({ width, height });
+  await openWorkSettings(page);
+  await page.addStyleTag({ content: '.settings-page { min-height: 140vh; padding-top: 140px; }' });
+  const launcher = page.locator('[data-action="open-add-skill"]:visible').first();
+  await launcher.scrollIntoViewIfNeeded();
+  await page.evaluate(() => scrollTo(0, 100));
+  const scroll = await page.evaluate(() => scrollY);
+  assert(scroll > 0);
+  await launcher.click();
+  const dialog = page.locator('#modal:modal');
+  await expect(dialog).toBeVisible();
+  const bounds = (await dialog.boundingBox())!;
+  const footer = (await dialog.locator('.modal-footer').boundingBox())!;
+  assert(Math.abs(bounds.y + bounds.height / 2 - height / 2) <= 1);
+  assert(footer.y + footer.height <= height);
+  assert(await dialog.locator('.modal-body').evaluate(el => el.scrollHeight > el.clientHeight));
+  assert.equal(await page.evaluate(() => scrollY), scroll);
+  await dialog.getByRole('button', { name: 'Cancel' }).focus();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Shift+Tab');
+  assert(await dialog.evaluate(el => el.contains(document.activeElement)));
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(launcher).toBeFocused();
+  assert.equal(await page.evaluate(() => scrollY), scroll);
+});
+
+test('Settings Package Details changes from a side panel to a full-screen modal', async t => {
+  const { page } = await fixture(t, () => undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  const launcher = page.locator('[data-action="package-detail"][data-id="pkg"]');
+  await launcher.click();
+  const dialog = page.locator('#modal');
+  await expect(dialog).toHaveAttribute('aria-modal', 'false');
+  await page.setViewportSize({ width: 360, height: 580 });
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  assert.equal(await dialog.evaluate(el => el.matches(':modal')), true);
+  assert.deepEqual(await dialog.boundingBox(), { x: 0, y: 0, width: 360, height: 580 });
+  await dialog.locator('[data-action="refresh-package-detail"]').focus();
+  await page.keyboard.press('Tab');
+  assert(await dialog.evaluate(el => el.contains(document.activeElement)));
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(launcher).toBeFocused();
+});
+
+test('D26 the add dialog imports one local Skill directory without a Core catalog', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'skills') return { json: { skills: [] } };
+    if (r.path === 'works/work-1/configuration/skills/import' && r.method === 'POST') {
+      return { json: { workId: 'work-1', desired: { skills: ['saved', 'code-review'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' }, active: null, pendingApply: true } };
+    }
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (body.skillName === 'code-review') return { json: { skillFiles: ['README.md', 'SKILL.md'].map(path => ({ skillName: 'code-review', path, size: 8, editable: true, reason: null })), files: [] } };
+      return { json: { skillFiles: [], files: (body.files ?? []).map((file: any) => ({ ...file, text: file.path === 'README.md' ? '# Readme' : '# Review' })), desired: { skills: ['saved', 'code-review'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' }, pendingApply: true } };
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('[data-action="add-skill"][data-id]')).toHaveCount(0);
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await expect(page.locator('#modal')).toContainText('No Core Skills are available');
+  await expect(page.locator('#modal [data-action="choose-skill-directory"]')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/skills/import')).length, 0);
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#skill-directory-input')!;
+    const transfer = new DataTransfer();
+    const files: [string, string][] = [['code-review/README.md', '# Readme'], ['code-review/SKILL.md', '# Review'], ['code-review/references/checklist.md', 'check']];
+    for (const [relative, text] of files) {
+      const file = new File([text], relative.split('/').pop()!, { type: 'text/markdown' });
+      Object.defineProperty(file, 'webkitRelativePath', { value: relative });
+      transfer.items.add(file);
+    }
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(page.locator('#modal')).toContainText('code-review · 3 files');
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="code-review"]')).toBeVisible();
+  await expect(page.locator('#settings-file-selector')).toHaveValue('SKILL.md');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Review');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'saved');
+  const upload = requests.find(r => r.path === 'works/work-1/configuration/skills/import')!;
+  const raw = upload.bytes?.toString('utf8') || upload.body;
+  assert.equal(upload.method, 'POST');
+  assert.match(raw, /name="directoryName"/);
+  assert.match(raw, /code-review/);
+  assert.match(raw, /references%2Fchecklist\.md/);
+});
+
+test('D27 the add dialog submits the selected Core candidates together', async t => {
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'skills') return { json: { skills: [{ name: 'saved' }, { name: 'new' }, { name: 'other' }] } };
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (body.skillName === 'new') return { json: { skillFiles: [{ skillName: 'new', path: 'SKILL.md', size: 7, editable: true, reason: null }], files: [] } };
+      return { json: { skillFiles: [], files: (body.files ?? []).map((file: any) => ({ ...file, text: '# File' })) } };
+    }
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await expect(page.locator('#modal input[data-add-skill="new"]')).toBeFocused();
+  await page.locator('#modal input[data-add-skill="new"]').check();
+  await page.locator('#modal input[data-add-skill="other"]').check();
+  await expect(page.locator('#modal [data-action="confirm-add-skill"]')).toHaveText('Add 2 Skills');
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH').length).toBe(1);
+  assert.deepEqual(JSON.parse(requests.find(r => r.path === 'works/work-1/configuration/editor')!.body), { addSkills: ['new', 'other'] });
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toBeVisible();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="other"]')).toBeVisible();
+});
+
+test('D28 a rejected directory import keeps the dialog and its selection', async t => {
+  let imports = 0;
+  const { page } = await fixture(t, r => {
+    if (r.path === 'skills') return { json: { skills: [] } };
+    if (r.path === 'works/work-1/configuration/skills/import' && r.method === 'POST') {
+      imports++;
+      return { status: 409, json: { code: 'SKILL_ALREADY_EXISTS' } };
+    }
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#skill-directory-input')!;
+    const transfer = new DataTransfer();
+    const file = new File(['# Saved'], 'SKILL.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'saved/SKILL.md' });
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await expect(page.locator('#modal')).toBeVisible();
+  await expect(page.locator('#modal')).toContainText('saved · 1 file');
+  await expect(page.locator('#modal').getByText('Skill directory upload failed.', { exact: true })).toHaveCount(1);
+  assert.equal(imports, 1);
+  await page.locator('#modal [data-action="close-modal"]').first().click();
+  assert.equal(imports, 1);
+});
+
+test('D29 an invalid local directory is rejected before any upload', async t => {
+  const { page, requests } = await fixture(t, r => r.path === 'skills' ? { json: { skills: [] } } : undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#skill-directory-input')!;
+    const transfer = new DataTransfer();
+    const file = new File(['note'], 'notes.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'code-review/notes.md' });
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(page.locator('#modal')).toContainText('must contain SKILL.md');
+  await expect(page.locator('#modal [data-action="confirm-add-skill"]')).toBeDisabled();
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/skills/import')).length, 0);
+});
+
+test('D30 a directory upload waits in place and keeps other drafts', async t => {
+  const gate = deferred(); t.after(() => gate.resolve());
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path === 'skills') return { json: { skills: [] } };
+    if (r.path === 'works/work-1/configuration/skills/import' && r.method === 'POST') {
+      await gate.promise;
+      return { json: { workId: 'work-1', desired: { skills: ['saved', 'code-review'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' }, active: null, pendingApply: true } };
+    }
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (body.skillName === 'code-review') return { json: { skillFiles: [{ skillName: 'code-review', path: 'SKILL.md', size: 8, editable: true, reason: null }], files: [] } };
+      return { json: { skillFiles: [], files: (body.files ?? []).map((file: any) => ({ ...file, text: '# Review' })) } };
+    }
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep during upload');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#skill-directory-input')!;
+    const transfer = new DataTransfer();
+    const file = new File(['# Review'], 'SKILL.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'code-review/SKILL.md' });
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await expect(page.locator('#modal [data-action="confirm-add-skill"]')).toHaveAttribute('aria-busy', 'true');
+  gate.resolve();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="code-review"]')).toBeVisible();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep during upload');
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/skills/import')).length, 1);
+});
+
+test('D31 an unknown directory upload stays unconfirmed when the current Skill name matches', async t => {
+  let imports = 0;
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'skills') return { json: { skills: [] } };
+    if (r.path === 'works/work-1/configuration/skills/import' && r.method === 'POST') {
+      imports++;
+      return { abort: true };
+    }
+    if (imports && r.path === 'works/work-1/configuration/editor/read') {
+      return { json: {
+        workId: 'work-1',
+        desired: { skills: ['saved', 'code-review'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' },
+        active: null, pendingApply: true, skillFiles: [], files: [],
+      } };
+    }
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep my draft');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await page.locator('[data-action="open-add-skill"]').first().click();
+  await page.evaluate(() => {
+    const input = document.querySelector<HTMLInputElement>('#skill-directory-input')!;
+    const transfer = new DataTransfer();
+    const file = new File(['# Review'], 'SKILL.md', { type: 'text/markdown' });
+    Object.defineProperty(file, 'webkitRelativePath', { value: 'code-review/SKILL.md' });
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.locator('#modal [data-action="confirm-add-skill"]').click();
+  await expect(page.locator('#modal')).toContainText('add result was not confirmed');
+  await expect(page.locator('#modal [data-action="confirm-add-skill"]')).toBeDisabled();
+  assert.equal(await page.locator('[data-action="settings-skill"][data-skill="code-review"]').count(), 0);
+  await page.keyboard.press('Escape');
+  const checked = requests.length;
+  await button(page, 'refresh-config').click();
+  await expect(page.getByText('This Work has a Skill named code-review. This import is still unconfirmed.')).toBeVisible();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="code-review"]')).toBeVisible();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unknown');
+  await expect(button(page, 'save-config')).toBeDisabled();
+  await expect(page.locator('[data-action="open-add-skill"]').first()).toBeDisabled();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep my draft');
+  assert.equal(imports, 1);
+  const readbacks = requests.slice(checked).filter(r => r.path === 'works/work-1/configuration/editor/read');
+  assert.deepEqual(readbacks.map(r => [r.method, JSON.parse(r.body)]), [['POST', { files: [] }]]);
+});
+
+test('D32 Work object search and the narrow selector stay separate from the catalog', async t => {
+  const desired = { skills: ['saved', 'other'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' };
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired, active: desired, pendingApply: false, runtime: { state: 'ready' } } };
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      return { json: { skillFiles: [{ path: 'SKILL.md', size: 5, editable: true, reason: null }], files: (body.files ?? []).map((file: any) => ({ ...file, text: '# File' })) } };
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).toBeVisible();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="other"]')).toBeVisible();
+  await page.locator('#settings-skill-search').fill('oth');
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).toBeHidden();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="other"]')).toBeVisible();
+  await page.locator('#settings-skill-search').fill('zzz');
+  await expect(page.locator('[data-skill-no-match]')).toBeVisible();
+  await expect(page.locator('[data-skill-objects] [data-skill-name]')).toHaveCount(0);
+  await expect(page.locator('[data-skill-objects]')).not.toContainText('No Skills in this Work');
+  await page.locator('#settings-skill-search').fill('');
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).toBeVisible();
+  await page.setViewportSize({ width: 360, height: 720 });
+  await expect(page.locator('#settings-skill-selector')).toBeVisible();
+  await page.locator('#settings-skill-selector').selectOption('other');
+  await expect(page.locator('.settings-editor .section-heading h2')).toHaveText('other');
+});
+
+test('D33 an empty Work keeps a clickable add action and the dialog', async t => {
+  const empty = { skills: [], packages: [], agentsMd: '' };
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired: empty, active: empty, pendingApply: false, runtime: { state: 'ready' } } };
+    if (r.path === 'skills') return { json: { skills: [] } };
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('.empty [data-action="open-add-skill"]')).toBeVisible();
+  await expect(page.locator('.empty')).toContainText('No Skills in this Work');
+  await page.locator('.empty [data-action="open-add-skill"]').click();
+  await expect(page.locator('#modal')).toContainText('No Core Skills are available');
+  await expect(page.locator('#modal [data-action="confirm-add-skill"]')).toBeDisabled();
 });
 
 test('D19 close preserves one automatic original download and a manual same-transfer fallback', async t => {
@@ -955,6 +1415,7 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
   await openWorkSettings(page);
   await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
   await button(page,update?'update-package':'install-package').click();await page.locator('#install-type').selectOption(source);
+  if (source !== 'Core') await expect(button(page, 'confirm-install')).toBeDisabled();
   if(source==='npm'||source==='Git')await page.locator('#install-source').fill(source==='npm'?'pkg@1.0.0':'https://example.test/pkg.git');
   else if(source==='ZIP')await page.locator('#package-zip-input').setInputFiles({name:'pkg.zip',mimeType:'application/zip',buffer:Buffer.from('original ZIP fixture bytes')});
   else if(source==='Local directory')await page.evaluate(()=>{const transfer=new DataTransfer();const file=new File(['{"name":"pkg"}'],'package.json');Object.defineProperty(file,'webkitRelativePath',{value:'pkg/package.json'});transfer.items.add(file);const input=document.querySelector<HTMLInputElement>('#package-directory-input')!;input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));});
@@ -966,7 +1427,7 @@ for (const source of ['Core','npm','Git','Local directory','ZIP'] as const) for 
   readback.resolve();
 });
 
-for(const action of ['apply','skill-copy','remove-package'])test(`D14/D16 ${action} confirmation does not wait for configuration readback`,async t=>{
+for(const action of ['apply','remove-package'])test(`D14/D16 ${action} confirmation does not wait for configuration readback`,async t=>{
   const gate=deferred(),read=deferred();t.after(async()=>{gate.resolve();read.resolve();});let accepted=false;
   const endpoint=action==='apply'?'works/work-1/configuration/apply':action==='skill-copy'?'works/work-1/configuration/skills':'works/work-1/packages/pkg';
   const {page,requests}=await fixture(t,async r=>{
@@ -1012,17 +1473,19 @@ test('D10 user gesture reserves an opener-isolated window; failed async authoriz
   gate.resolve();await expect.poll(()=>page.evaluate(()=>(window as any).prepared.closed)).toBe(true);await expect(page.locator('body')).toContainText('authorization denied');assert.equal(requests.filter(r=>r.path.endsWith('/stop')).length,0);
 });
 
-for(const type of ['agents-input','json-input','create-agents-input'])test(`D15 ${type} shows local read and discards a replaced selection or a closed view`,async t=>{
+for(const type of ['agents-input','create-agents-input'])test(`D15 ${type} shows local read and discards a replaced selection or a closed view`,async t=>{
   const {page}=await fixture(t,()=>undefined);
   if(type==='create-agents-input'){await button(page,'back-works').click();await button(page,'new-work').click();await button(page,'toggle-create-advanced').click();}
   else{await openWorkSettings(page);
-  await page.locator(`[data-action="settings-section"][data-tab="${type==='json-input'?'Advanced':'AGENTS.md'}"]`).click();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
   }
   await page.evaluate(()=>{const read=File.prototype.arrayBuffer;(window as any).releaseRead=()=>{};File.prototype.arrayBuffer=function(){if(this.name==='slow.txt')return new Promise<ArrayBuffer>(resolve=>{(window as any).releaseRead=()=>resolve(new TextEncoder().encode('stale file').buffer)});return read.call(this);};});
   await page.locator('#'+type).setInputFiles({name:'slow.txt',mimeType:'text/plain',buffer:Buffer.from('old')});await expect(page.locator('[data-action-status][aria-busy="true"]')).toContainText('Reading selected file');
-  const text=type==='json-input'?'{}':'new file';await page.locator('#'+type).setInputFiles({name:'new.txt',mimeType:'text/plain',buffer:Buffer.from(text)});
+  const text='new file';
+  await page.locator('#'+type).setInputFiles({name:'new.txt',mimeType:'text/plain',buffer:Buffer.from(text)});
   await page.evaluate(()=>(window as any).releaseRead());
-  const field=type==='json-input'?'#advanced-editor':type==='create-agents-input'?'#create-agents':'#agents-editor';await expect(page.locator(field)).toHaveValue(text);
+  const field=type==='create-agents-input'?'#create-agents':'#agents-editor';
+  await expect(page.locator(field)).toHaveValue(text);
 });
 
 for(const entry of ['login','logout','switch'] as const)test(`D01 ${entry} first paint uses current identity and does not claim remote revocation`,async t=>{
@@ -1814,7 +2277,7 @@ for (const source of ['service', 'apply'] as const) test(`DWUI-OPREC-003 ${sourc
   await expect(page.locator('#modal')).toContainText('Logs access denied');
   assert.ok(requests.some(r => r.method === 'GET' && r.path === 'works/work-1/services/svc-a/logs'));
   assert.equal(requests.filter(r => r.path === 'works/work-1/services/svc-b/logs').length, 0);
-  assert.equal(requests.filter(r => r.method === 'POST').length, 0);
+  assert.equal(requests.filter(r => r.method === 'POST' && !r.path.endsWith('/configuration/editor/read')).length, 0);
 });
 
 for (const width of [360, 1440]) test(`DWUI-OPREC-004 task recovery remains usable at ${width}px with reduced motion and long values`, async t => {
@@ -3974,12 +4437,13 @@ test('FS52-E-save fresh configuration GET retires only the confirmed Save readba
   let desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'original', mcp: { servers: [] } };
   const active = structuredClone(desired);
   const { page, requests } = await fixture(t, r => {
-    if (r.path !== 'works/work-1/configuration') return;
-    if (r.method === 'PUT') {
-      desired = JSON.parse(r.body).configuration;
+    if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') {
+      const patch = JSON.parse(r.body);
+      if (typeof patch.agentsMd === 'string') desired = { ...desired, agentsMd: patch.agentsMd };
       failRead = true;
-      return { json: {} };
+      return { json: { desired, active, pendingApply: true } };
     }
+    if (r.path !== 'works/work-1/configuration') return;
     return failRead ? { status: 503, json: { message: 'FS52 original configuration read unavailable' } }
       : { json: { desired, active, pendingApply: desired.agentsMd !== active.agentsMd, runtime: { state: 'ready' } } };
   });
@@ -3995,7 +4459,7 @@ test('FS52-E-save fresh configuration GET retires only the confirmed Save readba
   await expect(button(page, 'apply-config')).toBeEnabled();
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(0);
   await expect(page.locator('[data-action-status]').filter({ hasText: 'FS52 original configuration read unavailable' })).toHaveCount(0);
-  assert.equal(requests.filter(r => r.path === 'works/work-1/configuration' && r.method === 'PUT').length, 1);
+  assert.equal(requests.filter(r => r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH').length, 1);
   assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply')).length, 0);
 });
 
@@ -4019,8 +4483,8 @@ test('FS52-E-apply failed configuration read cannot authorize Apply from stale p
   await expect(page.locator('.configuration-state')).toContainText('Not confirmed');
   failRead = false;
   await button(page, 'refresh-config').click();
-  await expect(page.locator('.configuration-compact')).toContainText('Configuration in use');
-  await expect(button(page, 'apply-config')).toHaveCount(0);
+  await expect(page.locator('.configuration-compact')).toContainText('Applied');
+  await expect(button(page, 'apply-config')).toBeDisabled();
   assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply') && r.method === 'POST').length, 1);
 });
 
@@ -4070,7 +4534,7 @@ test('sticky file read failure leaves narrow Work options and Settings pointer-a
   await page.locator('#modal [data-action="settings"]').click();
   await expect(page.locator('.settings-page')).toBeVisible();
   await expect(page.locator('.notice-host .notice-error')).toHaveCount(1);
-  assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method)).length, 0);
+  assert.equal(requests.filter(r => ['POST', 'PUT', 'DELETE', 'COPY', 'MOVE', 'MKCOL'].includes(r.method) && !r.path.endsWith('/configuration/editor/read')).length, 0);
 });
 
 test('sticky directory read failure leaves narrow File More and New folder pointer-accessible', async t => {
@@ -4606,7 +5070,7 @@ test('compact Desktop surfaces preserve targets, unique entries and native chrom
   await page.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
   const leadingDraft = '\nKeep the first empty line.\n';
   await page.locator('#agents-editor').fill(leadingDraft);
-  await page.locator('[data-action=settings-section][data-tab=Advanced]').click();
+  await page.locator('[data-action=settings-section][data-tab="Skills"]').click();
   await page.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
   await expect(page.locator('#agents-editor')).toHaveValue(leadingDraft);
   await button(page, 'back-works').click();
@@ -4649,4 +5113,515 @@ test('compact Desktop surfaces preserve targets, unique entries and native chrom
   await page.locator('.works-empty [data-action=new-work]').click();
   await expect(page.locator('#modal')).not.toHaveClass(/compact-menu/);
   await expect(page.locator('#create-name')).toBeVisible();
+});
+
+function editorReadReply(body: any, text: string, pendingApply = true) {
+  const desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' };
+  return { json: { desired, active: desired, pendingApply,
+    skillFiles: [{ path: 'SKILL.md', size: 10, editable: true, reason: null }, { path: 'references/note.txt', size: 10, editable: true, reason: null }],
+    files: (body.files ?? []).map((file: any) => ({ ...file, text: file.path === 'SKILL.md' ? text : 'support' })) } };
+}
+
+test('Settings shows unsaved plus Core pending even with equal active JSON, independently of current file', async t => {
+  const desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'works/work-1/configuration') return { json: { desired, active: desired, pendingApply: true } };
+    if (r.path.endsWith('/configuration/editor/read')) return editorReadReply(JSON.parse(r.body), '# Original');
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'pending');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  assert.equal(requests.filter(r => r.path.endsWith('/editor/read') && JSON.parse(r.body).files?.some((file: any) => file.path === 'references/note.txt')).length, 0);
+  await page.locator('#settings-file-selector').selectOption('references/note.txt');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('support');
+  await page.locator('#skill-file-editor').fill('support draft');
+  await page.locator('#settings-file-selector').selectOption('SKILL.md');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await expect(page.locator('[data-file-state]')).toHaveAttribute('data-file-state', 'saved');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unsaved');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'pending');
+  await expect(button(page, 'apply-config')).toBeDisabled();
+  await expect(page.locator('[data-action="settings-skill"] .dirty-dot')).toHaveCount(1);
+  await page.locator('#settings-file-selector').selectOption('references/note.txt');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('support draft');
+});
+
+for (const mode of ['matching-bytes', 'different-bytes', 'read-failed'] as const) test(`unknown Settings save reads original bytes without replay: ${mode}`, async t => {
+  let saved = '# Original';
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') {
+      if (mode === 'matching-bytes') saved = JSON.parse(r.body).skillFiles[0].text;
+      return { abort: true };
+    }
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (mode === 'read-failed' && body.files && saved === '# check') return { status: 503, json: { code: 'RUNTIME_UNAVAILABLE', message: 'Original file read unavailable' } };
+      return editorReadReply(body, saved);
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await page.locator('#skill-file-editor').fill('# Submitted');
+  await button(page, 'save-config').click();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unknown');
+  await page.locator('#skill-file-editor').fill('# Later draft');
+  if (mode === 'read-failed') saved = '# check';
+  await button(page, 'refresh-config').click();
+  const lastRead = () => requests.filter(r => r.path.endsWith('/configuration/editor/read')).at(-1)!;
+  await expect.poll(() => JSON.parse(lastRead().body).files).toEqual([{ skillName: 'saved', path: 'SKILL.md' }]);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Later draft');
+  if (mode === 'matching-bytes') {
+    await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unsaved');
+    await expect(button(page, 'save-config')).toBeEnabled();
+    await expect(page.locator('.notice-unknown')).toHaveCount(0);
+    await button(page, 'discard-config').click();
+    await expect(page.locator('#skill-file-editor')).toHaveValue('# Submitted');
+  } else {
+    await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unknown');
+    await expect(button(page, 'save-config')).toBeDisabled();
+    await expect(button(page, 'apply-config')).toBeDisabled();
+  }
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/editor') && r.method === 'PATCH').length, 1);
+});
+
+test('withdrawing a rejected file save retires its feedback while preserving unrelated drafts', async t => {
+  const { page } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration/editor/read')) return editorReadReply(JSON.parse(r.body), '# Original');
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') return { status: 400, json: { code: 'INVALID_CONFIGURATION', message: 'Rejected file edit' } };
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await page.locator('#skill-file-editor').fill('# Rejected');
+  await button(page, 'save-config').click();
+  await expect(page.locator('.notice-host')).toContainText('Rejected file edit');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('unrelated draft');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await page.locator('#skill-file-editor').fill('# Original');
+  await expect(page.locator('[data-action-status]').filter({ hasText: 'Rejected file edit' })).toHaveCount(0);
+  await expect(page.locator('.notice-host')).not.toContainText('Rejected file edit');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unsaved');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('unrelated draft');
+});
+
+for (const locale of ['en', 'zh-CN']) for (const width of [1440, 360]) test(`Settings compact states and menu remain stable at ${width}px ${locale}`, async t => {
+  const { page } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration/editor/read')) return editorReadReply(JSON.parse(r.body), '# Original');
+  });
+  await page.setViewportSize({ width, height: 600 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(`import('/desktop/browser/locale.js').then(locale => locale.chooseLocale('${locale}'))`);
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await expect(page.locator('.configuration-compact')).toHaveCount(1);
+  await expect(page.locator('.configuration-state')).toHaveCount(0);
+  await expect(page.locator('.settings-heading h1')).toHaveCount(1);
+  await expect(page.locator('.settings-heading [data-action="back-work"]')).toHaveCount(1);
+  await expect(page.locator('.settings-savebar')).toHaveCount(1);
+  await expect(button(page, 'apply-config')).toBeDisabled();
+  await expect(button(page, 'save-config')).toBeDisabled();
+  const saveBox = await button(page, 'save-config').boundingBox();
+  const applyBox = await button(page, 'apply-config').boundingBox();
+  assert.equal(saveBox!.y, applyBox!.y);
+  await page.locator('#skill-file-editor').scrollIntoViewIfNeeded();
+  const before = await page.locator('.settings-layout').evaluate(node => (node as HTMLElement).offsetTop);
+  await page.locator('#skill-file-editor').fill('# Changed');
+  const after = await page.locator('.settings-layout').evaluate(node => (node as HTMLElement).offsetTop);
+  assert.equal(after, before, 'status change moved settings content');
+  await page.locator('.skill-menu > summary').click();
+  await expect(page.locator('.settings-menu-target')).toContainText('saved');
+  await expect(page.locator('.settings-menu-target')).toContainText('Recovery Work');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const shots = process.env.PIWORK_TEST_SCREENSHOT_DIR;
+  if (shots) {
+    await mkdir(shots, { recursive: true });
+    await page.screenshot({ path: `${shots}/settings-${width}-${locale}.png`, fullPage: true });
+  }
+});
+
+
+test('unknown Skill add checks only its original name and retains the AGENTS draft', async t => {
+  let added = false;
+  const desired = () => ({ skills: added ? ['saved', 'new'] : ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') {
+      added = true;
+      return { abort: true };
+    }
+    if (r.path.endsWith('/configuration/editor/read')) return { json: { desired: desired(), active: { ...desired(), skills: ['saved'] }, pendingApply: added, files: [], skillFiles: [] } };
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep after unknown add');
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await addSkillFromCatalog(page, 'new');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unknown');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await button(page, 'refresh-config').click();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toBeVisible();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'unsaved');
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'pending');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep after unknown add');
+  const writes = requests.filter(r => r.path.endsWith('/configuration/editor') && r.method === 'PATCH');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(JSON.parse(writes[0]!.body), { addSkills: ['new'] });
+});
+
+test('confirmed stopped Work allows validation Apply while old runtime loaded flags stay unavailable', async t => {
+  const desired = { skills: ['saved'], packages: [], agentsMd: 'saved agents' };
+  const raw = { id: 'work-1', name: 'Recovery Work', observedState: 'stopped', desiredState: 'stopped' };
+  const { page } = await fixture(t, r => {
+    if (r.path === 'works') return { json: { works: [raw] } };
+    if (r.path === 'works/work-1') return { json: raw };
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: true,
+      runtime: { state: 'ready', skills: [{ name: 'saved', loaded: true, modelVisible: true }] } } };
+  });
+  await openWorkSettings(page);
+  await expect(button(page, 'apply-config')).toBeEnabled();
+  await expect(page.locator('.settings-editor > .section-heading')).toContainText('Work stopped');
+  await expect(page.locator('.settings-editor > .section-heading')).not.toContainText('Loaded');
+});
+
+test('configuration refresh cannot release an unknown original Apply', async t => {
+  const desired = { skills: [], packages: [], agentsMd: 'saved' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'old-finished', workId: 'work-1', type: 'Apply Work configuration' }] } };
+    if (r.path === 'operations/old-finished') return { json: { operationId: 'old-finished', workId: 'work-1', kind: 'apply-work-configuration', state: 'succeeded' } };
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: true, runtime: { state: 'ready' } } };
+    if (r.path.endsWith('/configuration/apply')) return { abort: true };
+  });
+  await openWorkSettings(page);
+  await button(page, 'apply-config').click();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'unknown');
+  await expect(page.locator('.settings-status [data-action="check-task-operation"]')).toHaveCount(0);
+  await expect(page.locator('.settings-status [data-action="operation"]')).toHaveCount(0);
+  await button(page, 'refresh-config').click();
+  await expect.poll(() => requests.filter(r => r.path.endsWith('/configuration') && r.method === 'GET').length).toBeGreaterThan(1);
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'unknown');
+  await expect(button(page, 'apply-config')).toBeDisabled();
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply') && r.method === 'POST').length, 1);
+});
+
+test('saving removal retires Undo and detached file dirtiness after the atomic save', async t => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  let saving = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/configuration/editor/read')) return editorReadReply(JSON.parse(r.body), '# Original');
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') {
+      saving = true;
+      await gate.promise;
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await page.locator('#skill-file-editor').fill('# Detached draft');
+  await page.locator('.skill-menu > summary').click();
+  await page.locator('[data-action="remove-skill"]').click();
+  await expect(button(page, 'undo-remove-skill')).toBeEnabled();
+  await button(page, 'save-config').click();
+  await expect.poll(() => saving).toBe(true);
+  await expect(button(page, 'undo-remove-skill')).toBeDisabled();
+  gate.resolve();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'saved');
+  await expect(button(page, 'undo-remove-skill')).toHaveCount(0);
+  await expect(button(page, 'save-config')).toBeDisabled();
+  const patch = JSON.parse(requests.find(r => r.path.endsWith('/configuration/editor') && r.method === 'PATCH')!.body);
+  assert.deepEqual(patch, { removeSkills: ['saved'] });
+});
+
+test('valid constructor Skill and special file paths remain isolated editable text', async t => {
+  const desired = { skills: ['constructor'], packages: [], agentsMd: '' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: false } };
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      return { json: { desired, active: desired, pendingApply: false,
+        skillFiles: ['SKILL.md', 'constructor', '__proto__'].map(path => ({ path, size: 12, editable: true, reason: null })),
+        files: (body.files ?? []).map((file: any) => ({ ...file, text: 'body ' + file.path })) } };
+    }
+    if (r.path.endsWith('/configuration/editor')) return { json: { desired, active: desired, pendingApply: true } };
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('body SKILL.md');
+  await page.locator('#settings-file-selector').selectOption('constructor');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('body constructor');
+  await page.locator('#skill-file-editor').fill('edited constructor');
+  await page.locator('#settings-file-selector').selectOption('__proto__');
+  await expect(page.locator('#skill-file-editor')).toHaveValue('body __proto__');
+  await page.locator('#skill-file-editor').fill('edited proto');
+  await button(page, 'save-config').click();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'saved');
+  const patch = JSON.parse(requests.find(r => r.path.endsWith('/configuration/editor') && r.method === 'PATCH')!.body);
+  assert.deepEqual(patch.skillFiles.map((file: any) => file.path).sort(), ['__proto__', 'constructor']);
+  assert.equal(await page.evaluate(() => Object.hasOwn(Object, 'SKILL.md')), false);
+});
+
+
+test('Settings keeps the latest accepted Apply in its own status controls with older failures reachable', async t => {
+  let accepted = false;
+  const desired = { skills: [], packages: [], agentsMd: 'saved' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'old-apply', workId: 'work-1', type: 'Apply Work configuration' }] } };
+    if (r.path === 'operations/old-apply') return { json: { operationId: 'old-apply', workId: 'work-1', kind: 'apply-work-configuration', state: 'failed', error: { message: 'Older Apply failure' } } };
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: true, runtime: { state: 'ready' } } };
+    if (r.path.endsWith('/configuration/apply')) {
+      accepted = true;
+      return { json: { workId: 'work-1', operationId: 'latest-apply' } };
+    }
+    if (r.path === 'operations/latest-apply') return { json: { operationId: 'latest-apply', workId: 'work-1', kind: 'apply-work-configuration', state: 'running' } };
+  });
+  await api(page, "await adapter.checkOperation('old-apply')");
+  await openWorkSettings(page);
+  await button(page, 'apply-config').click();
+  await expect.poll(() => accepted).toBe(true);
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'applying');
+  await expect(page.locator('.settings-status [data-action="operation"]')).toHaveAttribute('data-id', 'latest-apply');
+  await expect(page.locator('.settings-status')).not.toContainText('Older Apply failure');
+  await expect(page.locator('.settings-task[data-operation-id="old-apply"]')).toContainText('Older Apply failure');
+  const oldReads = requests.filter(r => r.path === 'operations/old-apply').length;
+  await page.locator('.settings-status [data-action="check-task-operation"]').click();
+  await expect.poll(() => requests.filter(r => r.path === 'operations/latest-apply').length).toBeGreaterThan(0);
+  assert.equal(requests.filter(r => r.path === 'operations/old-apply').length, oldReads);
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply') && r.method === 'POST').length, 1);
+});
+
+for (const kind of ['Apply Work configuration', 'apply-work-configuration']) test(`Settings recovers ${kind} through the actual page`, async t => {
+  const desired = { skills: [], packages: [], agentsMd: 'saved' };
+  const { page, requests } = await fixture(t, r => {
+    if (r.path === 'known-operations') return { json: { operations: [{ operationId: 'recovered-apply', workId: 'work-1', type: kind }] } };
+    if (r.path === 'operations/recovered-apply') return { json: { operationId: 'recovered-apply', workId: 'work-1', kind, state: 'running' } };
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: true } };
+  });
+  await api(page, "await adapter.checkOperation('recovered-apply')");
+  await openWorkSettings(page);
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-application-state', 'applying');
+  await expect(page.locator('.settings-status [data-action="operation"]')).toHaveAttribute('data-id', 'recovered-apply');
+  await expect(button(page, 'apply-config')).toBeDisabled();
+  const before = requests.filter(r => r.path === 'operations/recovered-apply').length;
+  await page.locator('.settings-status [data-action="check-task-operation"]').click();
+  await expect.poll(() => requests.filter(r => r.path === 'operations/recovered-apply').length).toBeGreaterThan(before);
+  assert.equal(requests.filter(r => r.method === 'POST' && !r.path.endsWith('/configuration/editor/read')).length, 0);
+});
+
+
+test('delayed Skill selection retires the previous editor before any further input', async t => {
+  const metadata = deferred(), text = deferred();
+  t.after(() => {
+    metadata.resolve();
+    text.resolve();
+  });
+  const desired = { skills: ['saved', 'other'], packages: [], agentsMd: 'saved agents' };
+  let otherTextRequested = false;
+  const { page, requests } = await fixture(t, async r => {
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: false } };
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body);
+      if (body.skillName === 'other') await metadata.promise;
+      if (body.files?.[0]?.skillName === 'other') {
+        otherTextRequested = true;
+        await text.promise;
+      }
+      return { json: { skillFiles: [{ path: 'SKILL.md', size: 10, editable: true, reason: null }],
+        files: (body.files ?? []).map((file: any) => ({ ...file, text: 'body ' + file.skillName })) } };
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('body saved');
+  await page.locator('#skill-file-editor').fill('keep saved draft');
+  const state = await page.locator('[data-action="settings-skill"][data-skill="other"]').evaluate(node => {
+    (node as HTMLElement).focus();
+    (node as HTMLElement).click();
+    return { editor: !!document.querySelector('#skill-file-editor'), selected: document.querySelector<HTMLElement>('.object-item[aria-current="true"]')?.dataset.skill };
+  });
+  assert.deepEqual(state, { editor: false, selected: 'other' });
+  await expect(page.locator('[data-action="settings-skill"][data-skill="other"]')).toBeDisabled();
+  await expect(page.locator('[data-action="settings-skill"][data-skill="saved"]')).not.toBeFocused();
+  metadata.resolve();
+  await expect.poll(() => otherTextRequested).toBe(true);
+  await expect(page.locator('#skill-file-editor')).toHaveCount(0);
+  text.resolve();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('body other');
+  await page.locator('[data-action="settings-skill"][data-skill="saved"]').click();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('keep saved draft');
+  assert.equal(requests.filter(r => r.method === 'PATCH').length, 0);
+});
+
+test('a late file read cannot replace the confirmed saved cache used by Discard', async t => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  let saved = '# Original', reads = 0;
+  const desired = { skills: ['saved'], packages: [{ name: 'pkg', enabled: true }], agentsMd: 'saved agents' };
+  const { page } = await fixture(t, async r => {
+    if (r.path.endsWith('/configuration')) return { json: { desired, active: desired, pendingApply: false } };
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body = JSON.parse(r.body), captured = saved;
+      if (body.files && ++reads === 2) await gate.promise;
+      return editorReadReply(body, captured);
+    }
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') {
+      saved = JSON.parse(r.body).skillFiles[0].text;
+      return { json: { desired, active: desired, pendingApply: true } };
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Original');
+  await api(page, "window.settingsLateRead = adapter.readWorkSkillTexts('work-1', [{skillName:'saved',path:'SKILL.md'}]); return true");
+  await expect.poll(() => reads).toBe(2);
+  await page.locator('#skill-file-editor').fill('# Confirmed new');
+  await button(page, 'save-config').click();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'saved');
+  gate.resolve();
+  await api(page, 'await window.settingsLateRead');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('discard this only');
+  await button(page, 'discard-config').click();
+  await page.locator('[data-action="settings-section"][data-tab="Skills"]').click();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Confirmed new');
+});
+
+test('confirmed Skill addition stays saved when its subsequent file read fails', async t => {
+  let added = false, readFails = true;
+  const desired = () => ({ skills: added ? ['saved', 'new'] : ['saved'], packages: [], agentsMd: 'saved agents' });
+  const { page, requests } = await fixture(t, r => {
+    if (r.path.endsWith('/configuration')) return { json: { desired: desired(), active: desired(), pendingApply: added } };
+    if (r.path.endsWith('/configuration/editor') && r.method === 'PATCH') {
+      added = true;
+      return { json: { desired: desired(), active: desired(), pendingApply: true } };
+    }
+    if (readFails && r.path.endsWith('/configuration/editor/read') && JSON.parse(r.body).skillName === 'new') return { status: 503, json: { code: 'RUNTIME_UNAVAILABLE', message: 'Added Skill file read unavailable' } };
+    if (r.path.endsWith('/configuration/editor/read')) return { json: { skillFiles: [{path:'SKILL.md',size:12,editable:true,reason:null}], files: (JSON.parse(r.body).files ?? []).map((file: any) => ({...file,text:'# Added copy'})) } };
+  });
+  await openWorkSettings(page);
+  await addSkillFromCatalog(page, 'new');
+  await expect(page.locator('[data-action="settings-skill"][data-skill="new"]')).toBeVisible();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state', 'saved');
+  await expect(page.locator('[data-action-status]').filter({ hasText: 'refresh not confirmed' })).toBeVisible();
+  readFails = false;
+  await page.locator('.settings-file-empty [data-action="settings-file"]').click();
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# Added copy');
+  await expect(page.locator('[data-action-status]').filter({ hasText: 'refresh not confirmed' })).toHaveCount(0);
+  await expect(page.locator('.notice-host')).not.toContainText('Added Skill file read unavailable');
+  assert.equal(requests.filter(r => r.path.endsWith('/configuration/editor') && r.method === 'PATCH').length, 1);
+});
+
+
+test('refreshing a dirty Settings form preserves external untouched fields on Save all', async t => {
+  let current = { skills:['saved'], packages:[{name:'pkg',enabled:true}], agentsMd:'original instructions' };
+  let submitted: any;
+  const {page} = await fixture(t,r => {
+    if (r.path==='works/work-1/configuration') return {json:{desired:current,active:current,pendingApply:false,runtime:{state:'ready'}}};
+    if (r.path.endsWith('/configuration/editor/read')) {
+      const body=JSON.parse(r.body);
+      return {json:{desired:current,active:current,pendingApply:false,
+        skillFiles:[{path:'SKILL.md',size:12,editable:true,reason:null}],
+        files:(body.files??[]).map((file: any)=>({...file,text:'# original'}))}};
+    }
+    if (r.path.endsWith('/configuration/editor')&&r.method==='PATCH') {
+      submitted=JSON.parse(r.body);
+      current={ ...current, agentsMd:submitted.agentsMd ?? current.agentsMd,
+        packages:current.packages.map(item=>({...item,enabled:submitted.packageFlags?.find((flag: any)=>flag.name===item.name)?.enabled ?? item.enabled})) };
+      return {json:{desired:current,active:current,pendingApply:true}};
+    }
+  });
+  await openWorkSettings(page);
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# original');
+  await page.locator('#skill-file-editor').fill('# local edit');
+  current={...current,agentsMd:'external instructions',packages:[{name:'pkg',enabled:false}]};
+  const refreshed=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/configuration'));
+  await button(page,'refresh-config').click();
+  await refreshed;
+  await expect(page.locator('#skill-file-editor')).toHaveValue('# local edit');
+  await button(page,'save-config').click();
+  await expect.poll(()=>!!submitted).toBe(true);
+  assert.deepEqual(Object.keys(submitted),['skillFiles']);
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state','saved');
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('external instructions');
+  assert.equal(current.packages[0]!.enabled,false);
+});
+
+
+test('keyboard Settings entry preserves editor focus during delayed loading in the normal layout', async t => {
+  const gate=deferred();
+  t.after(()=>gate.resolve());
+  let reading=false;
+  const {page,requests}=await fixture(t,async r=>{
+    if(r.path.endsWith('/configuration/editor/read') && JSON.parse(r.body).skillName){
+      reading=true;
+      await gate.promise;
+    }
+  });
+  await page.locator('.work-header [data-action="work-menu"]').focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#modal [data-action="settings"]').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(()=>reading).toBe(true);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#agents-editor').fill('keyboard draft');
+  gate.resolve();
+  await expect(page.locator('#agents-editor')).toBeFocused();
+  await expect(page.locator('#agents-editor')).toHaveValue('keyboard draft');
+  await expect(page.locator('#app')).not.toHaveClass(/service-focused/);
+  assert.equal(requests.filter(r=>r.method==='PATCH'||r.path.endsWith('/configuration/apply')).length,0);
+});
+
+
+test('Core package catalog opens the existing explicit install flow and preserves other drafts', async t => {
+  const gate=deferred();
+  t.after(()=>gate.resolve());
+  const desired={skills:['saved'],packages:[{name:'pkg',enabled:true}],agentsMd:'saved agents'};
+  const {page,requests}=await fixture(t,async r=>{
+    if(r.path==='works/work-1/packages'&&r.method==='POST'){
+      await gate.promise;
+      return {json:{workId:'work-1',operationId:'core-catalog-install'}};
+    }
+    if(r.path==='operations/core-catalog-install')return {json:{operationId:'core-catalog-install',workId:'work-1',kind:'pi-package-install',state:'running'}};
+    if(r.path==='works/work-1/configuration')return {json:{desired,active:desired,pendingApply:false}};
+  });
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await page.locator('#agents-editor').fill('keep this local draft');
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  await expect(page.locator('[data-action="install-core-package"][data-id="pkg"]')).toHaveCount(0);
+  await button(page,'install-package').click();
+  await page.locator('#install-type').selectOption('Git');
+  await button(page,'close-modal').click();
+  const entry=page.locator('[data-action="install-core-package"][data-id="new-pkg"]');
+  await expect(entry).toHaveAttribute('data-work-id','work-1');
+  await entry.click();
+  await expect(page.locator('#install-type')).toHaveValue('Core');
+  await expect(page.locator('#install-name')).toHaveValue('new-pkg');
+  assert.equal(requests.filter(r=>r.method==='PATCH'||r.path==='works/work-1/packages'&&r.method==='POST').length,0);
+  await button(page,'confirm-install').click();
+  await expect(button(page,'confirm-install')).toBeDisabled();
+  const install=requests.filter(r=>r.path==='works/work-1/packages'&&r.method==='POST');
+  assert.equal(install.length,1);
+  assert.deepEqual(JSON.parse(install[0]!.body),{source:{kind:'core',name:'new-pkg'}});
+  gate.resolve();
+  await expect(page.locator('#modal')).toHaveCount(0);
+  await expect(page.locator('[data-operation-id="core-catalog-install"]')).toBeVisible();
+  await page.locator('[data-action="settings-section"][data-tab="AGENTS.md"]').click();
+  await expect(page.locator('#agents-editor')).toHaveValue('keep this local draft');
+  assert.equal(requests.filter(r=>r.path.endsWith('/configuration/editor')||r.path.endsWith('/configuration/apply')).length,0);
+});
+
+test('Packages exposes supported per-package edits without the obsolete selection controls', async t => {
+  const {page,requests}=await fixture(t,()=>undefined);
+  await openWorkSettings(page);
+  await page.locator('[data-action="settings-section"][data-tab="Pi Packages"]').click();
+  for(const action of ['clear-packages','select-package','unselect-package'])await expect(page.locator(`[data-action="${action}"]`)).toHaveCount(0);
+  await expect(page.locator('.package-capability')).toHaveCount(1);
+  await page.locator('[data-action="toggle-package"][data-id="pkg"]').click();
+  await button(page,'save-config').click();
+  await expect(page.locator('.settings-status')).toHaveAttribute('data-save-state','saved');
+  await expect(page.locator('.package-capability')).toHaveCount(1);
+  const patches=requests.filter(r=>r.path.endsWith('/configuration/editor')&&r.method==='PATCH');
+  assert.equal(patches.length,1);
+  assert.deepEqual(JSON.parse(patches[0]!.body),{packageFlags:[{name:'pkg',enabled:false}]});
+  assert.equal(await api(page,"return adapter.getWork('work-1').config.packages[0].enabled"),false);
 });

@@ -9,7 +9,7 @@ import { HistoryProjection } from './history-projection.js';
 import { LegacyHistoryProjection } from './legacy-history-projection.js';
 import { LiveMessageSources, type LiveTextUpdate } from './live-message-sources.js';
 import type { Work, Operation, Snapshot, Configuration, WorkspaceFile, FilePreview, RunStatus, RunModel, Session, Run, Service, ServiceDiagnostic, TemporaryCleanup } from './models.js';
-import { editableConfiguration, synchronizeConfiguration } from './configuration.js';
+import { settingsPatchBudgetProblem, type SettingsPatch } from './settings-draft.js';
 import { parseEntries, mutationResults } from './files.js';
 import { detectImageMime, imageDimensions, imageWithinLimits, FILE_IMAGE_MAX_BYTES, type ImageMime } from './image-content.js';
 import { lifecycleAction, projectWork, terminalOperation, workState } from './lifecycle.js';
@@ -98,7 +98,7 @@ function errorFeedback(error: unknown): string | LocalizedMessage {
 }
 const part = encodeURIComponent;
 const runStates: RunStatus[] = ['interrupted', 'accepted', 'running', 'cancelling', 'succeeded', 'failed', 'cancelled', 'interrupted'];
-const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', advanced: '{}', revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
+const blankConfig = (): Configuration => ({ skills: [], packages: [], agents: '', files: {}, baselines: {}, fileInfo: {}, revision: 0, activeRevision: 0, loaded: false, modelVisible: false });
 // The runtime value may be an interned LocalizedMessage; the cast keeps existing
 // model fields (typed string) and String/esc interpolation working unchanged.
 const errorText = (error: unknown) => errorFeedback(error) as unknown as string;
@@ -644,6 +644,7 @@ export class DesktopAdapter {
     this.terminalEvidence.set(operation.id, { operation: { ...operation }, generation: previous?.generation ?? (intent?.operationId === operation.id ? intent.sequence : this.workMutations.get(operation.workId) || 0) });
   }
   getSkills() { const copies = this.state.works.flatMap(work => work.config.skills).filter((name, i, all) => all.indexOf(name) === i && !this.skills.some(s => s.id === name)); return [...this.skills, ...copies.map(name => ({ id: name, name, description: 'Saved Work copy; unavailable in current Core catalog', version: null, loaded: null, modelVisible: null }))]; } // i18n-exempt: app.ts 用作本地占位 Skill 的比较哨兵
+  getCoreSkills() { return this.skills; }
   getPackages() { return this.packages; }
   getSnapshot(id: string) { return this.state.snapshots.find(snapshot => snapshot.id === id); }
 
@@ -1291,7 +1292,7 @@ export class DesktopAdapter {
   }
   async loadConfiguration(id: string) {
     const work = this.getWork(id)!; (work.resourceLoading ??= {}).configuration = true; this.emit(); try { const value = await this.request(`works/${part(id)}/configuration`); const raw = value.desired;
-    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', advanced: editableConfiguration(raw), agentImage: raw.agentImage ? structuredClone(raw.agentImage) : undefined, advancedDirty: false, validationError: '', pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
+    work.config = { ...work.config, skills: raw.skills ?? [], packages: (raw.packages ?? []).map((p: Data) => ({ name: p.name, enabled: p.enabled, source: 'Saved Work copy' })), agents: raw.agentsMd ?? '', files: work.config.files ?? {}, baselines: work.config.baselines ?? {}, fileInfo: work.config.fileInfo ?? {}, pendingApply: value.pendingApply, runtime: value.runtime, active: value.active, loaded: value.runtime?.state === 'ready', modelVisible: false }; // i18n-exempt: Pi Package source 协议值，不是显示文案
     (work.resourceChecked ??= {}).configuration = new Date().toISOString(); if (work.resourceErrors) delete work.resourceErrors.configuration; this.emit(); return work.config;
   } catch (error) { (work.resourceErrors ??= {}).configuration = errorText(error); throw error; } finally { work.resourceLoading.configuration = false; this.emit(); }}
   async loadPackages(id: string) { const work = this.getWork(id)!; (work.resourceLoading ??= {}).packages = true; this.emit(); try { const value = await this.request(`works/${part(id)}/packages`); if (!Array.isArray(value.packages)) throw failure('INVALID_RESPONSE','d.error.packageListingIncomplete'); (work.resourceChecked ??= {}).packages = new Date().toISOString(); work.packageEntries = value.packages; delete work.resourceErrors?.packages; } catch (error) { (work.resourceErrors ??= {}).packages = errorText(error); throw error; } finally { work.resourceLoading.packages = false; this.emit(); }}
@@ -2903,8 +2904,94 @@ export class DesktopAdapter {
       return results;
     } finally { if (epoch === this.epoch) { this.uploadProgress.delete(id); publish(); } }
   }
-  async saveConfiguration(id: string, config: Configuration) { const raw = synchronizeConfiguration(config); await this.request(`works/${part(id)}/configuration`, 'PUT', { configuration: raw }); this.getWork(id)!.config = structuredClone(config); this.emit(); }
-  async replaceSkill(id: string, name: string) { const work = this.getWork(id)!; const skills = Array.from(new Set([...work.config.skills, name])); await this.request(`works/${part(id)}/configuration/skills`, 'PUT', { skills }); work.config = { ...work.config, skills }; this.emit(); }
+  async readWorkSkill(id: string, skillName: string) {
+    const savedConfig = this.getWork(id)?.config;
+    const value = await this.request(`works/${part(id)}/configuration/editor/read`, 'POST', { skillName });
+    const work = this.getWork(id);
+    if (work && work.config === savedConfig && Array.isArray(value.skillFiles)) work.config.fileInfo[skillName] = value.skillFiles.map((file: Data) => ({ path: String(file.path), size: Number(file.size), editable: file.editable === true, reason: file.reason ?? null }));
+    return value;
+  }
+  async readWorkSkillTexts(id: string, files: { skillName: string; path: string }[]) {
+    const savedConfig = this.getWork(id)?.config;
+    const value = await this.request(`works/${part(id)}/configuration/editor/read`, 'POST', { files });
+    const texts = Array.isArray(value.files) ? value.files : [];
+    // A confirmed save/read owns a new baseline; an older request cannot
+    // backfill its captured bytes into that newer saved configuration.
+    if (this.getWork(id)?.config === savedConfig) this.rememberWorkSkillTexts(id, texts);
+    return texts;
+  }
+  private rememberWorkSkillTexts(id: string, files: { skillName: string; path: string; text: string }[]) {
+    const work = this.getWork(id);
+    if (work) for (const file of files) {
+      work.config.files[file.skillName] = { ...work.config.files[file.skillName], [file.path]: file.text };
+      work.config.baselines[file.skillName] = { ...work.config.baselines[file.skillName], [file.path]: file.text };
+    }
+  }
+  private acceptWorkSettingsState(id: string, value: Data) {
+    const desired = value.desired;
+    if (!desired || !Array.isArray(desired.skills) || !Array.isArray(desired.packages) || typeof desired.agentsMd !== 'string' || typeof value.pendingApply !== 'boolean' || value.workId !== undefined && value.workId !== id) {
+      throw failure('INVALID_RESPONSE', 'd.error.settingsResponseIncomplete');
+    }
+    const work = this.getWork(id);
+    if (!work) throw failure('NOT_FOUND', 'd.error.originalWorkUnavailable');
+    work.config = { ...work.config,
+      skills: [...desired.skills],
+      packages: desired.packages.map((item: Data) => ({ name: item.name, enabled: item.enabled, source: work.config.packages.find((entry) => entry.name === item.name)?.source ?? 'Saved Work copy' })), // i18n-exempt: Pi Package source 协议值
+      agents: desired.agentsMd, pendingApply: value.pendingApply,
+      active: Object.hasOwn(value, 'active') ? value.active : work.config.active };
+    (work.resourceChecked ??= {}).configuration = new Date().toISOString();
+    delete work.resourceErrors?.configuration;
+  }
+  async readWorkSettings(id: string, files: { skillName: string; path: string }[]) {
+    const value: Data = await this.request(`works/${part(id)}/configuration/editor/read`, 'POST', { files });
+    if (!Array.isArray(value.files) || value.files.some((file: Data) => typeof file.skillName !== 'string' || typeof file.path !== 'string' || typeof file.text !== 'string')) throw failure('INVALID_RESPONSE', 'd.error.settingsResponseIncomplete');
+    this.acceptWorkSettingsState(id, value);
+    this.rememberWorkSkillTexts(id, value.files);
+    this.emit();
+    return value;
+  }
+  async saveWorkSettings(id: string, patch: SettingsPatch) {
+    const problem = settingsPatchBudgetProblem(patch);
+    if (problem) throw failure('INVALID_REQUEST', `d.error.settingsBudget.${problem}`);
+    const value: Data = await this.request(`works/${part(id)}/configuration/editor`, 'PATCH', patch) ?? {};
+    this.acceptWorkSettingsState(id, value);
+    this.rememberWorkSkillTexts(id, patch.skillFiles ?? []);
+    this.emit();
+    return value;
+  }
+  async addWorkSkills(id: string, names: string[]) {
+    return await this.saveWorkSettings(id, { addSkills: names });
+  }
+  /** One complete local Skill tree submitted as multipart. Core owns the tree
+   * rules and duplicate-name rejection; this only forwards the selected files. */
+  async importWorkSkill(id: string, directory: { name: string; files: { file: File; path: string }[] }) {
+    this.assertCoreReady();
+    const form = new FormData();
+    form.set('directoryName', directory.name);
+    for (const item of directory.files) form.append('files', item.file, encodeURIComponent(item.path));
+    const epoch = this.epoch;
+    this.uploadProgress.set(id, { workId: id, scope: 'skill', path: directory.name, phase: t('d.action.uploadingSkill') });
+    this.emit();
+    try {
+      const response = await this.uploadResponse(`/_desktop/api/works/${part(id)}/configuration/skills/import`, 'POST', form, { 'X-Piwork-Csrf': this.csrf }, (sent, total, sentAll) => {
+        const progress = this.uploadProgress.get(id);
+        if (epoch === this.epoch && progress) {
+          Object.assign(progress, sentAll ? { phase: t('d.action.validatingSkill') } : { phase: t('d.action.uploadingSkill'), transferred: sent, total });
+          this.emit();
+        }
+      });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok) throw failure(typeof value.code === 'string' && value.code ? value.code : 'SKILL_UPLOAD_FAILED', 'd.error.skillUploadFailed', undefined, response.status, undefined, typeof value.message === 'string' && value.message ? value.message : undefined);
+      this.acceptWorkSettingsState(id, value);
+      this.emit();
+      return value;
+    } finally {
+      if (epoch === this.epoch) {
+        this.uploadProgress.delete(id);
+        this.emit();
+      }
+    }
+  }
   async applyConfiguration(id: string) { return this.accepted(await this.request(`works/${part(id)}/configuration/apply`, 'POST'), id, 'Apply configuration'); } // i18n-exempt: Operation kind 协议值，app.ts 按英文比较
   async installPackage(id: string, name: string, sourceLabel: string, files?: File[], updateTarget?: string) {
     this.assertCoreReady();

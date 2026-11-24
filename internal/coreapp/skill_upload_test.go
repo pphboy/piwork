@@ -97,6 +97,9 @@ func TestAdminSkillContentUploadAndPathSafety(t *testing.T) {
 		{{"SKILL.md", "# Invalid"}, {"SKILL.md", "duplicate"}},
 		{{"SKILL.md", "# Invalid"}, {"folder", "file"}, {"folder%2Fchild", "conflict"}},
 	}
+	if status, result := upload("/api/v1/admin/skills/uploaded-skill", "PUT", "wrong-name", badPaths[0]); status != 400 || result["code"] != "SKILL_NAME_MISMATCH" {
+		t.Fatal("update did not reject a mismatched directoryName before checking file paths", status, result)
+	}
 	for _, bad := range badPaths {
 		if status, result := upload("/api/v1/admin/skills/uploaded-skill", "PUT", "uploaded-skill", bad); status != 400 || result["code"] != "SKILL_UPLOAD_INVALID" {
 			t.Fatal("unsafe upload path was accepted", status, result)

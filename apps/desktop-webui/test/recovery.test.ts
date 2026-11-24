@@ -75,6 +75,19 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }, handler:
       else if (r.path === 'packages') reply = { json: { packages: [{ name: 'pkg' }, { name: 'new-pkg' }] } };
       else if (r.path === 'known-operations') reply = { json: { operations: [] } };
       else if (r.path === 'works/work-1/configuration') { if (r.method === 'PUT') desired = JSON.parse(r.body).configuration; reply = { json: { desired, active: desired, pendingApply: false, runtime: { state: 'ready' } } }; }
+      else if (r.path === 'works/work-1/configuration/editor/read') reply = { json: { desired, active: desired, pendingApply: false, skillFiles: [], files: [] } };
+      else if (r.path === 'works/work-1/configuration/editor' && r.method === 'PATCH') {
+        const patch = JSON.parse(r.body);
+        if (Array.isArray(patch.addSkills)) {
+          const skills = [...desired.skills];
+          for (const name of patch.addSkills) if (!skills.includes(name)) skills.push(name);
+          desired = { ...desired, skills };
+        }
+        if (Array.isArray(patch.removeSkills)) desired = { ...desired, skills: desired.skills.filter((name: string) => !patch.removeSkills.includes(name)) };
+        if (typeof patch.agentsMd === 'string') desired = { ...desired, agentsMd: patch.agentsMd };
+        if (Array.isArray(patch.packageFlags)) desired = { ...desired, packages: desired.packages.map((item: any) => ({ ...item, enabled: patch.packageFlags.find((flag: any) => flag.name === item.name)?.enabled ?? item.enabled })) };
+        reply = { json: { desired, active: desired, pendingApply: true } };
+      }
       else if (r.path.endsWith('/services')) reply = { json: { services: [] } };
       else if (r.path.endsWith('/packages')) reply = { json: { packages: [] } };
       else if (r.path.endsWith('/models')) reply = { json: {models:[{modelRef:'model-test-0000000001',label:'Test model',provider:'fixture',model:'one'}],defaultModel:{modelRef:null,label:'Work model',provider:'fixture',model:'one'},checkedAt:new Date().toISOString(),availability:'available'} };
@@ -722,29 +735,6 @@ test('New Work default create omits image, full configuration and inherited fiel
   assert.deepEqual(JSON.parse(requests.find(r => r.path === 'works' && r.method === 'POST')!.body), { name: 'Default creation' });
 });
 
-test('Settings protected image rejects JSON replacement and preserves desired on ordinary save', async t => {
-  const desired = { agentImage: { catalogId: 'owned-desired' }, skills: [], packages: [], agentsMd: 'original', modelRef: 'original', mcpServers: [], resources: { cpuMillis: 2000 }, tools: {} };
-  const { page, requests } = await fixture(t, r => r.path === 'works/work-1/configuration'
-    ? { json: { desired, active: { ...desired, agentImage: { catalogId: 'owned-active' } }, pendingApply: true, runtime: { state: 'ready' } } } : undefined);
-  await openWorkSettings(page);
-  await page.locator('[data-action="settings-section"][data-tab="Advanced"]').click();
-  const editor = page.locator('#advanced-editor');
-  const editable = JSON.parse(await editor.inputValue());
-  assert.equal(Object.hasOwn(editable, 'agentImage'), false);
-  const imported = JSON.stringify({ ...editable, agentImage: { catalogId: 'replacement' }, agentsMd: 'keep input' });
-  await page.locator('#json-input').setInputFiles({ name: 'configuration.json', mimeType: 'application/json', buffer: Buffer.from(imported) });
-  await expect(editor).toHaveValue(imported);
-  await button(page, 'save-config').click();
-  await expect(page.locator('.settings-content')).toContainText('agentImage cannot be changed here');
-  await expect(editor).toHaveValue(imported);
-  assert.equal(requests.filter(r => r.method === 'PUT' || r.path.endsWith('/apply')).length, 0);
-  await editor.fill(JSON.stringify({ ...editable, agentsMd: 'corrected', modelRef: 'changed' }));
-  await button(page, 'save-config').click();
-  await expect.poll(() => requests.filter(r => r.path === 'works/work-1/configuration' && r.method === 'PUT').length).toBe(1);
-  const saved = JSON.parse(requests.find(r => r.path === 'works/work-1/configuration' && r.method === 'PUT')!.body).configuration;
-  assert.deepEqual(saved, { ...desired, agentsMd: 'corrected', modelRef: 'changed' });
-  assert.equal(requests.filter(r => r.path.endsWith('/apply')).length, 0);
-});
 async function openFullscreenOptions(page: Page) {
   if(await button(page,'service-fullscreen').isVisible())return;
   const serviceMenu=page.locator('.service-toolbar [data-action="service-menu"]:visible').first();
@@ -795,6 +785,8 @@ async function uiuxEvidence(page: Page, name: string) {
 }
 const chatWrites = (requests: RequestRecord[]) => requests.filter(r => r.method === 'PATCH' || r.method === 'POST' && /\/(sessions|runs)$/.test(r.path));
 function listing(body: string, modified: string) { return `<d:multistatus xmlns:d="DAV:"><d:response><d:href>/_desktop/files/works/work-1/files/note.txt</d:href><d:propstat><d:prop><d:resourcetype/><d:getcontentlength>${Buffer.byteLength(body)}</d:getcontentlength><d:getlastmodified>${modified}</d:getlastmodified></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`; }
+
+async function beginExpiredRun(page: Page) { await api(page, `const w=adapter.getWork('work-1'); w.run={id:'original-run',sessionId:'session-1',status:'running',cursor:77,created:''}; return adapter.resumeRun('work-1');`); }
 
 test('R1 editor binds the original version; dirty refresh and 412 readback never write or discard draft', async t => {
   let body = 'original', modified = mtime1;
@@ -856,35 +848,6 @@ test('R1 serial upload preserves File bytes and confirmation version across crea
   assert.deepEqual(await api(page, `return [...new Uint8Array(await window.uploadFile.arrayBuffer())];`), [0,255,1,2]); assert.deepEqual([...puts[1]!.bytes!], [0,255,1,2]);
 });
 
-test('R2 Advanced and simple forms share a complete draft; empty values, last edit and invalid JSON survive tabs', async t => {
-  const { page, requests } = await fixture(t, () => undefined);
-  await openWorkSettings(page);
-  await page.locator('[data-tab="Advanced"]').click();
-  const draft = { skills: ['new'], packages: [], agentsMd: '', modelRef: 'edited', mcp: { servers: [{ name: 'retained' }] } };
-  await page.locator('#advanced-editor').fill(JSON.stringify(draft)); await page.locator('[data-tab="Skills"]').click(); await expect(page.locator('[data-skill="new"]')).toBeChecked();
-  await button(page, 'save-config').click(); assert.deepEqual(JSON.parse(requests.find(r => r.method === 'PUT')!.body).configuration, draft);
-  await page.locator('[data-skill="new"]').uncheck(); await page.locator('[data-tab="AGENTS.md"]').click(); await page.locator('#agents-editor').fill('latest agents');
-  await page.locator('[data-tab="Advanced"]').click(); const raw = JSON.parse(await page.locator('#advanced-editor').inputValue()); assert.deepEqual(raw.skills, []); assert.equal(raw.agentsMd, 'latest agents'); assert.deepEqual(raw.mcp, draft.mcp);
-  raw.agentsMd = 'JSON wins'; await page.locator('#advanced-editor').fill(JSON.stringify(raw)); await page.locator('[data-tab="AGENTS.md"]').click(); await expect(page.locator('#agents-editor')).toHaveValue('JSON wins'); await page.locator('#agents-editor').fill('form wins'); await button(page, 'save-config').click();
-  assert.equal(JSON.parse(requests.filter(r => r.method === 'PUT').at(-1)!.body).configuration.agentsMd, 'form wins');
-  await page.locator('[data-tab="Advanced"]').click(); await page.locator('#advanced-editor').fill('{invalid'); await page.locator('[data-tab="Skills"]').click(); await expect(page.locator('#advanced-editor')).toHaveValue('{invalid');
-  const count = requests.filter(r => r.method === 'PUT').length; await button(page, 'save-config').click(); assert.equal(requests.filter(r => r.method === 'PUT').length, count); assert.equal(requests.filter(r => r.path.endsWith('/apply')).length, 0);
-  await button(page, 'discard-config').click(); await expect(page.locator('#advanced-editor')).not.toHaveValue('{invalid');
-});
-
-test('R2 failed and unknown saves retain the whole JSON draft, including imported explicit empties', async t => {
-  let lost = false;
-  const { page, requests } = await fixture(t, r => r.path === 'works/work-1/configuration' && r.method === 'PUT' ? lost ? { abort: true } : { status: 422, json: { message: 'invalid model' } } : undefined);
-  await openWorkSettings(page);
-  await page.locator('[data-tab="Advanced"]').click();
-  const draft = { skills: [], packages: [], agentsMd: '', modelRef: 'keep-on-error', tools: { mode: 'retained' } };
-  await page.locator('#json-input').setInputFiles({ name: 'config.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(draft)) });
-  await button(page, 'save-config').click(); assert.deepEqual(JSON.parse(await page.locator('#advanced-editor').inputValue()), draft);
-  lost = true; await page.locator('[data-tab="Skills"]').click(); await button(page, 'save-config').click(); await page.locator('[data-tab="Advanced"]').click(); assert.deepEqual(JSON.parse(await page.locator('#advanced-editor').inputValue()), draft);
-  assert.equal(requests.filter(r => r.path.endsWith('/apply')).length, 0);
-});
-
-async function beginExpiredRun(page: Page) { await api(page, `const w=adapter.getWork('work-1'); w.run={id:'original-run',sessionId:'session-1',status:'running',cursor:77,created:''}; return adapter.resumeRun('work-1');`); }
 test('R3 expired cursor terminal readback replaces history exactly once and never reconnects or resubmits', async t => {
   const { page, requests } = await fixture(t, (r): Reply | undefined => {
     if (r.path.endsWith('/events')) return { status: 410 };
@@ -998,9 +961,15 @@ test('R7 catalog errors recover independently, reject malformed arrays, accept e
   // catalog key both remain inspectable across the browser boundary.
   const feedbackText = (value: any): string => typeof value === 'string' ? value : value?.raw || value?.key || '';
   let facts = await api(page, `return {catalog:adapter.catalog,scenario:adapter.state.scenario,skills:adapter.getSkills()};`); assert.match(feedbackText(facts.catalog.skills.error), /skills offline/); assert.equal(feedbackText(facts.catalog.packages.error), ''); assert.equal(facts.scenario, 'env-not-ready'); assert.equal(facts.skills.length, 2);
-  await page.locator('[data-tab="Skills"]').click(); await expect(page.locator('[data-action="core-skill-copy"]').first()).toBeDisabled();
+  await page.locator('[data-tab="Skills"]').click();
+  await expect(page.locator('[data-action="open-add-skill"]').first()).toBeVisible();
   skillReply = { json: {} }; await api(page, `return adapter.checkCatalog();`); assert.match(feedbackText(await api(page, `return adapter.catalog.skills.error;`)), /incomplete/i);
-  skillReply = { json: { skills: [{ name: 'saved' }, { name: 'new' }] } }; packageReply = { json: { packages: 'bad' } }; await button(page, 'check-catalog').click(); await expect(page.locator('[data-action="core-skill-copy"]').first()).toBeEnabled(); assert.equal(feedbackText(await api(page, `return adapter.catalog.skills.error;`)), ''); assert.match(feedbackText(await api(page, `return adapter.catalog.packages.error;`)), /incomplete/i);
+  skillReply = { json: { skills: [{ name: 'saved' }, { name: 'new' }] } };
+  packageReply = { json: { packages: 'bad' } };
+  await button(page, 'check-catalog').click();
+  await expect(page.locator('[data-action="open-add-skill"]').first()).toBeVisible();
+  assert.equal(feedbackText(await api(page, `return adapter.catalog.skills.error;`)), '');
+  assert.match(feedbackText(await api(page, `return adapter.catalog.packages.error;`)), /incomplete/i);
   await page.locator('[data-tab="AGENTS.md"]').click(); await expect(page.locator('#agents-editor')).toHaveValue('dirty instructions');
   packageReply = { json: { packages: [] } }; skillReply = { json: { skills: [] } }; await api(page, `return adapter.checkCatalog();`); facts = await api(page, `return {catalog:adapter.catalog,scenario:adapter.state.scenario,packages:adapter.getPackages()};`); assert.equal(facts.catalog.skills.error, ''); assert.equal(facts.catalog.packages.error, ''); assert.equal(facts.scenario, 'env-not-ready'); assert.deepEqual(facts.packages, []); await api(page, `adapter.acceptSession({state:'authenticated',generation:1,csrf:'local-session-csrf',coreUrl:'http://core.test',user:{account:'owner',role:'user'}});`); assert.equal(await api(page, `return adapter.state.scenario;`), 'env-not-ready');
   await api(page, `adapter.state.scenario='core-offline'; return adapter.checkCatalog();`); assert.equal(await api(page, `return adapter.state.scenario;`), 'core-offline');
@@ -3760,30 +3729,6 @@ test('Reconcile history: 410 readback remains bound to the original Run beside a
   assert.equal(chatWrites(requests).length, 0);
 });
 
-test('Reconcile configuration: delayed Save confirms only its captured draft and preserves later Advanced edits', async t => {
-  let submitted: any, release!: () => void;
-  const gate = new Promise<void>(done => release = done); t.after(() => release());
-  const { page, requests } = await fixture(t, async r => {
-    if (r.path.endsWith('/configuration') && r.method === 'PUT') {
-      submitted = JSON.parse(r.body).configuration; await gate;
-      return { json: { desired: submitted, active: submitted, pendingApply: false } };
-    }
-  });
-  await openWorkSettings(page);
-  await page.locator('[data-tab="Advanced"]').click();
-  const original = { skills: [], packages: [], agentsMd: '', modelRef: 'preserved-extra', mcp: { servers: [] } };
-  await page.locator('#advanced-editor').fill(JSON.stringify(original));
-  await button(page, 'save-config').click(); await expect.poll(() => !!submitted).toBe(true);
-  const later = { ...original, agentsMd: 'Later unsaved instructions', modelRef: 'later-extra' };
-  await page.locator('#advanced-editor').fill(JSON.stringify(later)); release();
-  await expect(page.locator('[data-action-status][aria-busy="true"]')).toHaveCount(0);
-  assert.deepEqual(submitted, original);
-  assert.deepEqual(JSON.parse(await page.locator('#advanced-editor').inputValue()), later);
-  await expect(page.locator('.settings-page')).toContainText('Unsaved changes');
-  assert.equal(requests.filter(r => r.path.endsWith('/configuration') && r.method === 'PUT').length, 1);
-  assert.equal(requests.filter(r => r.path.endsWith('/configuration/apply')).length, 0);
-});
-
 test('Reconcile import: anonymous Inspect survives login, a name conflict and a lost acceptance without another upload', async t => {
   let imports = 0, transfer = '', phase = 'ready';
   const { page, requests } = await fixture(t, r => {
@@ -4358,7 +4303,7 @@ test('B native beforeunload Settings positive control cancels without saving', a
   const confirmation = await dialog; assert.equal(confirmation.type(), 'beforeunload');
   await confirmation.dismiss(); await navigation;
   await expect(page.locator('#agents-editor')).toHaveValue('unsaved Settings positive control');
-  assert.equal(requests.filter(r => r.method === 'PUT' || r.method === 'POST').length, 0);
+  assert.equal(requests.filter(r => (r.method === 'PUT' || r.method === 'POST') && !r.path.endsWith('/configuration/editor/read')).length, 0);
 });
 
 test('B independent app preserves an invalid requested port instead of opening default 3000', async t => {

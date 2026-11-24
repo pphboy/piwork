@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 const { ReadFeedbackEpisodes } = await import(new URL('../browser/read-feedback.js', import.meta.url).href);
 const { WorkReadFeedback, workReadMatches } = await import(new URL('../browser/work-read-feedback.js', import.meta.url).href);
-const { SettingsReadFeedback, settingsReadMatches } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
+const { SettingsReadFeedback, settingsReadMatches, settingsStatus, settingsApplyFailureResolved } = await import(new URL('../browser/settings-read-feedback.js', import.meta.url).href);
 const { ServiceReadFeedback, serviceReadMatches } = await import(new URL('../browser/service-read-feedback.js', import.meta.url).href);
 const { NoticeStore } = await import(new URL('../browser/notices.js', import.meta.url).href);
 const { LocalizedMessage, chooseLocale } = await import(new URL('../browser/locale.js', import.meta.url).href);
@@ -337,4 +337,45 @@ test('Service log read identity never adopts Service writes, entry checks or mis
   }
   assert.equal(serviceLogReadIdentity('refresh-logs', undefined, 'service-a'), undefined);
   assert.equal(serviceLogReadIdentity('refresh-logs', 'one', undefined), undefined);
+});
+
+const settingsFacts = (changes = {}) => ({ dirty: false, confirmed: true, configurationError: false,
+  pendingApply: false, activeNull: false, saving: false, saveUnknown: false, applying: false,
+  applyWaiting: false, applyUnknown: false, applyFailed: false, runtimeFailed: false, ...changes });
+
+test('Settings save and application facts remain independent', () => {
+  const mixed = settingsStatus(settingsFacts({ dirty: true, pendingApply: true }));
+  assert.equal(mixed.save, 'unsaved');
+  assert.equal(mixed.application, 'pending');
+  assert.equal(mixed.canApply, false);
+  // JSON equality is not an input; authoritative pendingApply remains pending.
+  const saved = settingsStatus(settingsFacts({ pendingApply: true }));
+  assert.equal(saved.save, 'saved');
+  assert.equal(saved.application, 'pending');
+  assert.equal(saved.canApply, true);
+  assert.equal(settingsStatus(settingsFacts({ activeNull: true, pendingApply: true })).application, 'never-applied');
+});
+
+test('Settings unknown writes and failed reads cannot imply configured or unlock Apply', () => {
+  const unknown = settingsStatus(settingsFacts({ dirty: true, saveUnknown: true, pendingApply: true }));
+  assert.equal(unknown.save, 'unknown');
+  assert.equal(unknown.application, 'pending');
+  assert.equal(unknown.canApply, false);
+  const unconfirmed = settingsStatus(settingsFacts({ configurationError: true, pendingApply: true }));
+  assert.equal(unconfirmed.application, 'unconfirmed');
+  assert.equal(unconfirmed.canApply, false);
+  assert.equal(settingsStatus(settingsFacts({ applying: true, applyWaiting: true })).application, 'waiting');
+  assert.equal(settingsStatus(settingsFacts({ applyUnknown: true, pendingApply: true })).canApply, false);
+  assert.equal(settingsStatus(settingsFacts({ runtimeFailed: true })).steady, false);
+  assert.equal(settingsStatus(settingsFacts({ applyFailed: true })).steady, false);
+});
+
+test('only fresh healthy Apply facts retire an old known failure', () => {
+  const facts = { originalFailed: true, unknown: false, pendingApply: false, configurationError: false,
+    workFailed: false, runtimeReady: true, originalStarted: 1, checkedAt: new Date(2).toISOString() };
+  assert.equal(settingsApplyFailureResolved(facts), true);
+  for (const change of [{ unknown: true }, { pendingApply: true }, { configurationError: true }, { workFailed: true },
+    { runtimeReady: false }, { checkedAt: new Date(0).toISOString() }, { originalFailed: false }]) {
+    assert.equal(settingsApplyFailureResolved({ ...facts, ...change }), false);
+  }
 });

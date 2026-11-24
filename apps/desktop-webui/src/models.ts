@@ -1,3 +1,5 @@
+import type { SettingsFacts } from './settings-draft.js';
+
 /** Browser view models mapped from the existing Go Desktop API. */
 export type WorkStatus =
   | "Preparing"
@@ -141,14 +143,17 @@ export interface Run {
   errorRetryable?: boolean;
 }
 export interface Configuration {
+  /** Present only on the local Settings form, never submitted to Core. */
+  fieldBaseline?: SettingsFacts;
   skills: string[];
   packages: { name: string; enabled: boolean; source: string }[];
   agents: string;
-  advanced: string;
-  /** Last confirmed desired image; excluded from the editable JSON. */
-  agentImage?: { catalogId: string };
-  advancedDirty?: boolean;
-  validationError?: string;
+  /** Loaded editable text keyed by Skill then relative path. */
+  files: Record<string, Record<string, string>>;
+  /** Confirmed saved text for loaded files; later edits stay dirty until saved. */
+  baselines: Record<string, Record<string, string>>;
+  /** Editor file metadata from the latest read. */
+  fileInfo: Record<string, { path: string; size: number; editable: boolean; reason: string | null }[]>;
   revision: number;
   activeRevision: number;
   active?: Record<string, any> | null;

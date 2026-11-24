@@ -159,7 +159,7 @@ for(const entry of ['search toolbar','no matching Works'])test(`Clear search fro
  await c.handleAction('clear-search',{dataset:{origin:entry}});assert.equal(c.view.search,'');assert.equal(focused,1);
 });
 
-for(const action of ['tab-Services','tab-Files','tab-Chat','settings'])test(`${action} keeps its own keyboard focus when no Focus layout is active`,async()=>{
+for(const action of ['tab-Services','tab-Files','tab-Chat'])test(`${action} keeps its own keyboard focus when no Focus layout is active`,async()=>{
  const {c,work}=fixture();c.view.layout='workspace';work.services=[];work.config={};c.root={};c.document={fullscreenElement:null};c.structuredClone=structuredClone;c.consumeWebSelection=()=>{};
  let focused=action;c.restoreLayoutFocus=()=>{focused='tab-Services';};c.adapter.loadServices=async()=>{};c.adapter.loadDirectory=async()=>{};c.adapter.loadConfiguration=async()=>{};
  vm.runInContext(extract(['resetWorkspaceFocus','exitWorkspaceFocus','handleAction']),c);

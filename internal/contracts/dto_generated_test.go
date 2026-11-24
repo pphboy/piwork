@@ -1523,6 +1523,54 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "WorkSettingsFactsSchema":
+				value, err := Decode[WorkSettingsFacts](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsFileTextSchema":
+				value, err := Decode[WorkSettingsFileText](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsPatchSchema":
+				value, err := Decode[WorkSettingsPatch](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsReadRequestSchema":
+				value, err := Decode[WorkSettingsReadRequest](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsReadResponseSchema":
+				value, err := Decode[WorkSettingsReadResponse](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsSkillFileSchema":
+				value, err := Decode[WorkSettingsSkillFile](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsSkillSelectionSchema":
+				value, err := Decode[WorkSettingsSkillSelection](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "WorkSettingsStateSchema":
+				value, err := Decode[WorkSettingsState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "WorkSkillStateSchema":
 				value, err := Decode[WorkSkillState](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

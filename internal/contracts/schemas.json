@@ -37169,6 +37169,616 @@
     },
     "additionalProperties": false
   },
+  "WorkSettingsFactsSchema": {
+    "type": "object",
+    "required": [
+      "skills",
+      "packages",
+      "agentsMd"
+    ],
+    "properties": {
+      "skills": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        },
+        "maxItems": 128,
+        "uniqueItems": true
+      },
+      "packages": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "enabled"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 214,
+              "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 64,
+        "uniqueItems": true
+      },
+      "agentsMd": {
+        "type": "string",
+        "maxLength": 262144
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsFileTextSchema": {
+    "type": "object",
+    "required": [
+      "skillName",
+      "path",
+      "text"
+    ],
+    "properties": {
+      "skillName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+      },
+      "text": {
+        "type": "string",
+        "maxLength": 1048576
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsPatchSchema": {
+    "type": "object",
+    "properties": {
+      "addSkills": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        },
+        "maxItems": 128,
+        "uniqueItems": true
+      },
+      "removeSkills": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        },
+        "maxItems": 128,
+        "uniqueItems": true
+      },
+      "skillFiles": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "skillName",
+            "path",
+            "text"
+          ],
+          "properties": {
+            "skillName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 64
+      },
+      "agentsMd": {
+        "type": "string",
+        "maxLength": 262144
+      },
+      "packageFlags": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "name",
+            "enabled"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 214,
+              "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 64,
+        "uniqueItems": true
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsReadRequestSchema": {
+    "type": "object",
+    "properties": {
+      "skillName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "skillName",
+            "path"
+          ],
+          "properties": {
+            "skillName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 64
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsReadResponseSchema": {
+    "type": "object",
+    "required": [
+      "workId",
+      "desired",
+      "active",
+      "pendingApply",
+      "skillFiles",
+      "files"
+    ],
+    "properties": {
+      "workId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9-]+$"
+      },
+      "desired": {
+        "type": "object",
+        "required": [
+          "skills",
+          "packages",
+          "agentsMd"
+        ],
+        "properties": {
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "enabled"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 214,
+                  "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "agentsMd": {
+            "type": "string",
+            "maxLength": 262144
+          }
+        },
+        "additionalProperties": false
+      },
+      "active": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "skills",
+              "packages",
+              "agentsMd"
+            ],
+            "properties": {
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+                },
+                "maxItems": 128,
+                "uniqueItems": true
+              },
+              "packages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "enabled"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 214,
+                      "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "agentsMd": {
+                "type": "string",
+                "maxLength": 262144
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pendingApply": {
+        "type": "boolean"
+      },
+      "skillFiles": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "skillName",
+            "path",
+            "size",
+            "editable",
+            "reason"
+          ],
+          "properties": {
+            "skillName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            },
+            "editable": {
+              "type": "boolean"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "const": "binary"
+                },
+                {
+                  "type": "string",
+                  "const": "invalid-utf8"
+                },
+                {
+                  "type": "string",
+                  "const": "too-large"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 2048
+      },
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "skillName",
+            "path",
+            "text"
+          ],
+          "properties": {
+            "skillName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 1048576
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 64
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsSkillFileSchema": {
+    "type": "object",
+    "required": [
+      "skillName",
+      "path",
+      "size",
+      "editable",
+      "reason"
+    ],
+    "properties": {
+      "skillName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+      },
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "pattern": "^(?:(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))(?:/(?:(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)|\\.(?:[^./\\\\\\x00-\\x1f][^/\\\\\\x00-\\x1f]*)?))*$"
+      },
+      "size": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 8388608
+      },
+      "editable": {
+        "type": "boolean"
+      },
+      "reason": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "string",
+            "const": "binary"
+          },
+          {
+            "type": "string",
+            "const": "invalid-utf8"
+          },
+          {
+            "type": "string",
+            "const": "too-large"
+          }
+        ]
+      }
+    },
+    "additionalProperties": false
+  },
+  "WorkSettingsSkillSelectionSchema": {
+    "type": "array",
+    "items": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+    },
+    "maxItems": 128,
+    "uniqueItems": true
+  },
+  "WorkSettingsStateSchema": {
+    "type": "object",
+    "required": [
+      "workId",
+      "desired",
+      "active",
+      "pendingApply"
+    ],
+    "properties": {
+      "workId": {
+        "type": "string",
+        "minLength": 16,
+        "maxLength": 128,
+        "pattern": "^[a-zA-Z0-9-]+$"
+      },
+      "desired": {
+        "type": "object",
+        "required": [
+          "skills",
+          "packages",
+          "agentsMd"
+        ],
+        "properties": {
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+            },
+            "maxItems": 128,
+            "uniqueItems": true
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "enabled"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 214,
+                  "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "maxItems": 64,
+            "uniqueItems": true
+          },
+          "agentsMd": {
+            "type": "string",
+            "maxLength": 262144
+          }
+        },
+        "additionalProperties": false
+      },
+      "active": {
+        "anyOf": [
+          {
+            "type": "object",
+            "required": [
+              "skills",
+              "packages",
+              "agentsMd"
+            ],
+            "properties": {
+              "skills": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+                },
+                "maxItems": 128,
+                "uniqueItems": true
+              },
+              "packages": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "enabled"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 214,
+                      "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "agentsMd": {
+                "type": "string",
+                "maxLength": 262144
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "pendingApply": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
   "WorkSkillStateSchema": {
     "type": "object",
     "required": [

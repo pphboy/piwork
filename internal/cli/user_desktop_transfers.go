@@ -307,7 +307,8 @@ func (d *nativeDesktop) serveTransfer(w http.ResponseWriter, r *http.Request, se
 	parts := strings.Split(path, "/")
 	transferPath := path == "work-packages" || path == "work-imports" ||
 		len(parts) >= 2 && (parts[0] == "work-packages" || parts[0] == "downloads") ||
-		len(parts) == 3 && (parts[0] == "work-snapshots" && parts[2] == "downloads" || parts[0] == "works" && parts[2] == "package-uploads")
+		len(parts) == 3 && (parts[0] == "work-snapshots" && parts[2] == "downloads" || parts[0] == "works" && parts[2] == "package-uploads") ||
+		len(parts) == 5 && parts[0] == "works" && parts[2] == "configuration" && parts[3] == "skills" && parts[4] == "import"
 	if !transferPath {
 		return false
 	}
@@ -335,6 +336,8 @@ func (d *nativeDesktop) serveTransfer(w http.ResponseWriter, r *http.Request, se
 		d.prepareDesktopDownload(w, r, session, t, parts[1])
 	case len(parts) == 3 && parts[0] == "works" && parts[2] == "package-uploads" && desktopIDPattern.MatchString(parts[1]) && r.Method == http.MethodPost:
 		d.uploadDesktopPiPackage(w, r, session, t, parts[1])
+	case len(parts) == 5 && parts[0] == "works" && parts[2] == "configuration" && parts[3] == "skills" && parts[4] == "import" && desktopIDPattern.MatchString(parts[1]) && r.Method == http.MethodPost:
+		d.importDesktopWorkSkill(w, r, t, parts[1])
 	default:
 		desktopTransferError(w, 404, "TRANSFER_NOT_FOUND")
 	}

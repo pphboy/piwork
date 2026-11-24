@@ -128,7 +128,7 @@ func (a *Application) createWork(ctx context.Context, actor identity.Principal, 
 	contextSpan := diagnostics.BeginPerformance(ctx, "context-capture")
 	a.skillMu.Lock()
 	defer a.skillMu.Unlock()
-	published, err := a.buildWorkContext(ctx, workID, "", true, configuration, imageID, now, nil)
+	published, err := a.buildWorkContext(ctx, workID, "", true, configuration, imageID, now, nil, nil, nil)
 	contextSpan.End(err)
 	if err != nil {
 		_ = workcontext.RemoveUnaccepted(a.Store, workID)
