@@ -31,6 +31,7 @@
 
 - Console 构建和 13 项定向 Playwright 测试通过。`management-flow.spec.mjs` 在 1440px、360px 实测能力库与新 Work 默认之间的导航边界一致，当前项的字体、颜色及指示样式与管理顶栏一致。截图保存在 `dist/server-ui-core-flow/management/`。
 - 内嵌资源检查、`make build-go`、UI 语言及仓库边界检查通过。按用户要求将本地构建更新到 17891 预览并复用原数据目录。已核对运行二进制与构建一致，UI 健康、Core READY，三个管理入口均按现有会话规则跳转登录。
+- 管理员头像的右对齐用例在修复前复现 1440px 顶栏留白，修复后 1440px 与 360px 均通过。20 项定向 Playwright 用例通过，17891 预览回读的样式与 Console 内嵌产物一致，Core READY。
 
 ## 环境处理
 
