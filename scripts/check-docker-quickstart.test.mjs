@@ -230,6 +230,10 @@ test('server website sync preserves editorial pages, desktop downloads and histo
   for (const prefix of ['', 'zh/']) {
     const installation = readFileSync(join(website, 'docs', prefix, 'guide/installation.md'), 'utf8');
     assert(!installation.includes('undefined'));
+    for (const name of ['docker-compose.yml', 'single-host-compose.yml']) {
+      assert(installation.includes(`](/install/${release.releaseId}/${name})`));
+    }
+    assert(!installation.includes('](/piwork/install/'));
     assert.deepEqual(codeBlocks(section(installation, 'docker-quickstart')), codeBlocks(section(readFileSync(join(base, 'deploy/docker/README.md'), 'utf8'), 'docker-quickstart')));
     const source = readFileSync(join(website, 'docs', prefix, 'guide/source-installation.md'), 'utf8');
     assert.equal(section(source, 'native-quickstart').trim(), nativeQuickStart(prefix ? 'zh' : 'en').trim());

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 export function syncWebsite(website, metadata, base = root) {
 const published = metadata.state === 'published';
 if (published && (metadata.controlPlanePort !== 17891 || metadata.corePort !== 17871)) throw new Error('The published image does not support the current port layout; prepare candidate materials.');
-const download = `/piwork/install/${metadata.releaseId}/docker-compose.yml`;
+const download = `/install/${metadata.releaseId}/docker-compose.yml`;
 const write = (name, contents) => writeFileSync(join(website, name), contents);
 const read = name => readFileSync(join(website, name), 'utf8');
 const block = (marker, body) => `<!-- ${marker}:start -->\n\n${body}\n<!-- ${marker}:end -->`;
