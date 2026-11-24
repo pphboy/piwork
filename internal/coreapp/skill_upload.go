@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"piwork/internal/contracts"
 	"piwork/internal/identity"
@@ -207,21 +206,8 @@ func decodeSkillUploadPath(encoded string) (string, error) {
 		return "", errors.New("invalid uploaded path")
 	}
 	decoded, err := url.PathUnescape(encoded)
-	if err != nil || !utf8.ValidString(decoded) || encodeURIComponent(decoded) != encoded || len(decoded) > 4096 || strings.HasPrefix(decoded, "/") || strings.ContainsRune(decoded, '\\') || len(strings.Split(decoded, "/")) > 64 {
+	if err != nil || encodeURIComponent(decoded) != encoded || !skillartifact.ValidRelativePath(decoded) {
 		return "", errors.New("invalid uploaded path")
-	}
-	if len(decoded) >= 2 && (decoded[0] >= 'A' && decoded[0] <= 'Z' || decoded[0] >= 'a' && decoded[0] <= 'z') && decoded[1] == ':' {
-		return "", errors.New("invalid uploaded path")
-	}
-	for _, part := range strings.Split(decoded, "/") {
-		if part == "" || part == "." || part == ".." {
-			return "", errors.New("invalid uploaded path")
-		}
-		for _, r := range part {
-			if r < 0x20 || r == 0x7f {
-				return "", errors.New("invalid uploaded path")
-			}
-		}
 	}
 	return decoded, nil
 }

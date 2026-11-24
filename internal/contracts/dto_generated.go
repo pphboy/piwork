@@ -146,6 +146,32 @@ type AdminRuntimeSelection struct {
 
 type AdminRuntimeView = json.RawMessage
 
+type AdminSkillFileEntry struct {
+	Path string `json:"path"`
+	Size int64  `json:"size"`
+}
+
+type AdminSkillFileList struct {
+	Files []AdminSkillFileEntry `json:"files"`
+}
+
+type AdminSkillFileSaved struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
+
+type AdminSkillFileSave struct {
+	Path            string `json:"path"`
+	Content         string `json:"content"`
+	ExpectedVersion string `json:"expectedVersion"`
+}
+
+type AdminSkillFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Version string `json:"version"`
+}
+
 type AdminSkills struct {
 	Skills []OperatorSkill `json:"skills"`
 }

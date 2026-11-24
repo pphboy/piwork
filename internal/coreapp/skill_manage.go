@@ -39,12 +39,19 @@ func (a *Application) importSkill(ctx context.Context, actor identity.Principal,
 }
 
 func (a *Application) publishSkillSnapshot(ctx context.Context, actor identity.Principal, snapshot skillartifact.Snapshot, update bool) (contracts.OperatorSkill, error) {
-	var zero contracts.OperatorSkill
 	if err := a.Identity.AuthorizeAdministrator(ctx, actor); err != nil {
-		return zero, err
+		return contracts.OperatorSkill{}, err
 	}
 	a.skillMu.Lock()
 	defer a.skillMu.Unlock()
+	return a.publishSkillSnapshotLocked(ctx, actor, snapshot, update)
+}
+
+// publishSkillSnapshotLocked publishes a complete snapshot and switches the
+// catalog pointer while the caller holds skillMu. The catalog transaction
+// rechecks the administrator identity at its commit boundary.
+func (a *Application) publishSkillSnapshotLocked(ctx context.Context, actor identity.Principal, snapshot skillartifact.Snapshot, update bool) (contracts.OperatorSkill, error) {
+	var zero contracts.OperatorSkill
 	defer func() {
 		if skillartifact.CleanupOrphans(a.Store) != nil {
 			log.Print("piwork: Skill artifact cleanup is pending")

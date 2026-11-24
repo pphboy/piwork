@@ -12,6 +12,7 @@ import * as sessionManagementSchemas from "../packages/contracts/dist/session-ma
 import * as onboardingSchemas from "../packages/contracts/dist/web-onboarding.js";
 import * as productSchemas from "../packages/contracts/dist/product-info.js";
 import * as logExportSchemas from "../packages/contracts/dist/log-export.js";
+import * as skillContentSchemas from "../packages/contracts/dist/skill-content.js";
 import { SubmitRunInputSchema, AgentRequestRetryQuerySchema, AgentRequestRetrySubmissionSchema } from "../packages/contracts/dist/work-feedback.js";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 
@@ -29,6 +30,7 @@ Object.assign(schemas, Object.fromEntries(Object.entries(historySchemas).filter(
 Object.assign(schemas, Object.fromEntries(Object.entries(sessionManagementSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(productSchemas).filter(([name])=>name.endsWith("Schema"))));
 Object.assign(schemas, Object.fromEntries(Object.entries(logExportSchemas).filter(([name])=>name.endsWith("Schema"))));
+Object.assign(schemas, Object.fromEntries(Object.entries(skillContentSchemas).filter(([name])=>name.endsWith("Schema"))));
 schemas.SubmitRunInputSchema = SubmitRunInputSchema;
 schemas.AgentRequestRetryQuerySchema = AgentRequestRetryQuerySchema;
 schemas.AgentRequestRetrySubmissionSchema = AgentRequestRetrySubmissionSchema;

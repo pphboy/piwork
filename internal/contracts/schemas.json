@@ -1597,6 +1597,134 @@
       }
     ]
   },
+  "AdminSkillFileEntrySchema": {
+    "type": "object",
+    "required": [
+      "path",
+      "size"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^/\\\\\\x00-\\x1f\\x7f][^\\\\\\x00-\\x1f\\x7f]*$"
+      },
+      "size": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 8388608
+      }
+    },
+    "additionalProperties": false
+  },
+  "AdminSkillFileListSchema": {
+    "type": "object",
+    "required": [
+      "files"
+    ],
+    "properties": {
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "path",
+            "size"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096,
+              "pattern": "^[^/\\\\\\x00-\\x1f\\x7f][^\\\\\\x00-\\x1f\\x7f]*$"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8388608
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 2048
+      }
+    },
+    "additionalProperties": false
+  },
+  "AdminSkillFileSavedSchema": {
+    "type": "object",
+    "required": [
+      "path",
+      "version"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^/\\\\\\x00-\\x1f\\x7f][^\\\\\\x00-\\x1f\\x7f]*$"
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "additionalProperties": false
+  },
+  "AdminSkillFileSaveSchema": {
+    "type": "object",
+    "required": [
+      "path",
+      "content",
+      "expectedVersion"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^/\\\\\\x00-\\x1f\\x7f][^\\\\\\x00-\\x1f\\x7f]*$"
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 67108864
+      },
+      "expectedVersion": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "additionalProperties": false
+  },
+  "AdminSkillFileSchema": {
+    "type": "object",
+    "required": [
+      "path",
+      "content",
+      "version"
+    ],
+    "properties": {
+      "path": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096,
+        "pattern": "^[^/\\\\\\x00-\\x1f\\x7f][^\\\\\\x00-\\x1f\\x7f]*$"
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 67108864
+      },
+      "version": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "additionalProperties": false
+  },
   "AdminSkillsSchema": {
     "type": "object",
     "required": [

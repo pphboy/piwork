@@ -167,6 +167,36 @@ func TestGeneratedDTOWireRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				target = value
+			case "AdminSkillFileEntrySchema":
+				value, err := Decode[AdminSkillFileEntry](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AdminSkillFileListSchema":
+				value, err := Decode[AdminSkillFileList](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AdminSkillFileSavedSchema":
+				value, err := Decode[AdminSkillFileSaved](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AdminSkillFileSaveSchema":
+				value, err := Decode[AdminSkillFileSave](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
+			case "AdminSkillFileSchema":
+				value, err := Decode[AdminSkillFile](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target = value
 			case "AdminSkillsSchema":
 				value, err := Decode[AdminSkills](strings.NewReader(fixture.JSON), fixture.Schema, 2<<20)
 				if err != nil {

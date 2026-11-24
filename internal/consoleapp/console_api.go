@@ -159,6 +159,14 @@ func consoleAllowedAdmin(method, path string) bool {
 			return method == "GET"
 		}
 	}
+	if len(parts) == 3 && parts[0] == "skills" {
+		switch parts[2] {
+		case "files":
+			return method == "GET"
+		case "file":
+			return method == "GET" || method == "PUT"
+		}
+	}
 	if len(parts) == 3 && method == "POST" {
 		switch parts[0] {
 		case "model-providers":
@@ -183,7 +191,10 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 		return
 	}
 	api, _ := c.client(c.options.coreURL, session.token)
-	multipart := strings.HasPrefix(path, "/skills") && (r.Method == "POST" && path == "/skills" || r.Method == "PUT")
+	contentFiles := strings.HasPrefix(path, "/skills/") && strings.HasSuffix(path, "/files") && r.Method == http.MethodGet
+	contentFile := strings.HasPrefix(path, "/skills/") && strings.HasSuffix(path, "/file")
+	contentRead := contentFile && r.Method == http.MethodGet
+	multipart := !contentFile && strings.HasPrefix(path, "/skills") && (r.Method == "POST" && path == "/skills" || r.Method == "PUT")
 	limit := int64(2 << 20)
 	timeout := 120 * time.Second
 	if multipart {
@@ -193,6 +204,12 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 			consoleFailure(w, 415, "UNSUPPORTED_MEDIA_TYPE")
 			return
 		}
+	}
+	if contentFiles || contentFile {
+		// Content routes use a bounded JSON envelope for escaped text; Core
+		// still enforces the 8 MiB file and 32 MiB tree limits after decoding.
+		limit = 64 << 20
+		timeout = 30 * time.Minute
 	}
 	if r.ContentLength > limit {
 		consoleFailure(w, 413, "REQUEST_TOO_LARGE")
@@ -239,6 +256,15 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 		r.Body = io.NopCloser(strings.NewReader(string(raw)))
 		r.ContentLength = int64(len(raw))
 	}
+	upstream := "/api/v1/admin" + path
+	if contentRead {
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil || len(query) != 1 || len(query["path"]) != 1 || query["path"][0] == "" {
+			consoleFailure(w, 400, "INVALID_REQUEST")
+			return
+		}
+		upstream += "?path=" + url.QueryEscape(query["path"][0])
+	}
 	var body io.Reader
 	if r.Method != "GET" && r.Method != "DELETE" {
 		body = io.LimitReader(r.Body, limit+1)
@@ -247,7 +273,7 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 	if body != nil {
 		headers.Set("Content-Type", r.Header.Get("Content-Type"))
 	}
-	response, err := api.Binary(ctx, r.Method, "/api/v1/admin"+path, headers, body, r.ContentLength)
+	response, err := api.Binary(ctx, r.Method, upstream, headers, body, r.ContentLength)
 	if err != nil {
 		consoleFailure(w, 502, "CORE_UNAVAILABLE")
 		return
@@ -257,10 +283,17 @@ func (c *nativeConsole) admin(w http.ResponseWriter, r *http.Request, sessionID 
 		w.WriteHeader(204)
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
-	if err != nil || len(raw) > 1<<20 || !json.Valid(raw) {
+	responseLimit := int64(1 << 20)
+	if contentFiles || contentFile {
+		responseLimit = 64 << 20
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
+	if err != nil || int64(len(raw)) > responseLimit || !json.Valid(raw) {
 		consoleFailure(w, 502, "CORE_INVALID_RESPONSE")
 		return
+	}
+	if (contentFiles || contentFile) && response.StatusCode == http.StatusOK {
+		w.Header().Set("Cache-Control", "no-store")
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(response.StatusCode)

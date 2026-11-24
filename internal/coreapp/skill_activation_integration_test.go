@@ -100,7 +100,15 @@ func TestNativeSkillsUseIndependentCopiesAndExplicitReselection(t *testing.T) {
 	publish("COPY_A", "POST")
 	selectSkills(workA, []string{"owned-skill"})
 	mutate(workA, "configuration/apply", "apply-A")
-	publish("COPY_B", "PUT")
+	// A single-file Core edit publishes a new complete artifact without
+	// touching the Work-owned copy captured by apply-A.
+	_, current, _ := contentCall(t, base, "/api/v1/admin/skills/owned-skill/file?path=support.txt", "GET", auth, nil)
+	status, saved, _ := contentCall(t, base, "/api/v1/admin/skills/owned-skill/file", "PUT", auth, map[string]any{
+		"path": "support.txt", "content": "COPY_B", "expectedVersion": current["version"],
+	})
+	if status != 200 {
+		t.Fatal(status, saved)
+	}
 	status, created := packageHTTPCall(t, base, "/api/v1/works", "POST", auth, map[string]any{"name": "独立 Skill B", "skills": []string{"owned-skill"}, "idempotencyKey": "create-B"})
 	if status != 202 {
 		t.Fatal(status, created)

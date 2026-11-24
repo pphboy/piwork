@@ -383,6 +383,16 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		}
 		parts[1], allowed = name, "GET, PUT, DELETE"
 	}
+	if len(parts) == 3 && parts[0] == "skills" && (parts[2] == "files" || parts[2] == "file") {
+		name, ok := skillPathName(parts[1])
+		if !ok {
+			return contracts.NewError("NOT_FOUND", "")
+		}
+		parts[1], allowed = name, "GET"
+		if parts[2] == "file" {
+			allowed = "GET, PUT"
+		}
+	}
 	if len(parts) == 3 && parts[0] == "skills" && (parts[2] == "enable" || parts[2] == "disable") {
 		name, ok := skillPathName(parts[1])
 		if !ok {
@@ -603,6 +613,15 @@ func (a *Application) control(w http.ResponseWriter, r *http.Request, actor iden
 		}
 		w.WriteHeader(204)
 		return nil
+	}
+	if len(parts) == 3 && parts[0] == "skills" && parts[2] == "files" && r.Method == http.MethodGet {
+		return a.adminSkillFiles(w, r, actor, parts[1])
+	}
+	if len(parts) == 3 && parts[0] == "skills" && parts[2] == "file" {
+		if r.Method == http.MethodGet {
+			return a.adminSkillFileRead(w, r, actor, parts[1])
+		}
+		return a.adminSkillFileSave(w, r, actor, parts[1])
 	}
 	if len(parts) == 3 && parts[0] == "skills" && (parts[2] == "enable" || parts[2] == "disable") && r.Method == "POST" {
 		if err := readEmptyAction(r, admin); err != nil {

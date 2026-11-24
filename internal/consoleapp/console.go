@@ -60,7 +60,8 @@ func (c *nativeConsole) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	quickPreparation := r.URL.Path == "/setup" && r.URL.RawQuery == "step=prepare"
-	if (r.URL.RawQuery != "" && !quickPreparation) || r.URL.Fragment != "" {
+	contentRead := r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/console/api/admin/skills/") && strings.HasSuffix(r.URL.Path, "/file")
+	if (r.URL.RawQuery != "" && !quickPreparation && !contentRead) || r.URL.Fragment != "" {
 		consoleFailure(w, 404, "NOT_FOUND")
 		return
 	}
