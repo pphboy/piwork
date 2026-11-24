@@ -23,6 +23,7 @@ import { preferenceFeedback, sessionFeedback, signInFeedback, signInActionFeedba
 import { ChatRunFeedback, type ChatRunTarget } from './chat-run-feedback.js';
 import { menuCommands, workHeaderModel, workHeaderStatusPresentation, serviceToolbarModel, type MenuScope } from './work-chrome.js';
 import { renderChatMarkdown } from './chat-markdown.js';
+import { chatFormMessage, readChatForm, renderChatForm, type ChatForm, type ChatFormAnswers } from './chat-form.js';
 import { overlayRole, anchoredOverlay, overlayAnchorBounds, overlayPlacement, menuDestination, overlayForAction } from './overlay-role.js';
 import { WorkspacePanelsStore, splitGeometry, keyboardSplit, executionAnchors } from './workspace-layout.js';
 import { workCompletionReady, serviceCompletionReady, importCanStart } from './completion-exits.js';
@@ -55,6 +56,7 @@ import {
   type FilePreview,
   type Operation,
   type Run,
+  type Session,
 } from "./models.js";
 import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
 import { t, stateText, onLocaleChange, chooseLocale, languageChoices, currentLocale, applyDocumentTitle, LocalizedMessage, formatTime, formatDateTime, formatNumber, formatBytes, formatPercent } from './locale.js';
@@ -632,7 +634,7 @@ function actionIntent(el: HTMLElement, action = el.dataset.action || ''): Action
     label = serviceControlKeys[control] ? t(serviceControlKeys[control]!) : control ? t('action.controlServiceNamed', { control }) : t('action.controlService');
   }
   const w = targetWork(el); let kind: ActionIntent['kind'] = 'read';
-  if(action==='send-message' && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
+  if(action==='send-message' && !el.closest('[data-chat-form]') && w && !imageDrafts.get(draftKey(w)).length && !view.literalSlash && /^\/(model|thinking)\s*$/.test((view.drafts[draftKey(w)] || '').trim())) return;
   if (['sign-in', 'sign-out', 'confirm-switch-core'].includes(action)) kind = 'identity';
   else if (['create-work', 'start-work', 'start-import-open', 'confirm-stop', 'confirm-delete'].includes(action)) kind = 'lifecycle';
   else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'upload-input'].includes(action)) kind = 'files';
@@ -1931,7 +1933,7 @@ function agent(w: Work, focus: boolean) {
   // A reply status belongs to the last message of its own Run. A Run with
   // no messages yet gets a standalone slot in the conversation.
   const replySlot = replyRun && session && !session.messages.some(message => message.runId === replyRun.id) ? replyStatusMarkup(w,session.id,replyRun) : '';
-  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon('spark', 17)}<span class="session-identity" title="${esc(sessionDisplayName(w, session))}">${readingSessions && !session ? '<i class="session-name-skeleton skeleton-fill" aria-hidden="true"></i>' : esc(sessionDisplayName(w, session))}</span></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation || readingSessions ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation || readingSessions ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${conversationError?readFailure(t('agent.conversationReadFailed'),conversationLimit?`${conversationError} ${conversationLimit}`:conversationError,'retry-conversation',readingConversation):''}${session ? conversationHistoryControls(w,session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages,replyRun)}${replySlot}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${replacement?.phase==='failed'?feedback(t('sessions.replacementFailed'),'warning',btn(t('sessions.newCompact'),'new-session','small')):''}${deleting?feedback(t('sessions.deleteChecking'),"warning"):""}${session?.legacy ? feedback(`${t('chat.legacyContext')} ${t('chat.sessionsHint')}`, 'warning') : ''}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer${composerExpanded ? ' expanded' : ''}">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<div class="composer-text-wrap"><textarea id="composer" data-draft-key="${esc(composerKey)}" rows="2" ${deleting ? 'readonly aria-readonly="true"' : ''} placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${textareaContent(draft)}</textarea>${btn(icon(composerExpanded ? "composer-collapse" : "composer-expand",18),"toggle-composer-editor","icon-button quiet composer-expand",`title="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-label="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-expanded="${composerExpanded}" aria-controls="composer"`)}</div>${composerExpanded ? `<div class="composer-expand-hint"><span>${t('chat.composerLines', { count: draft.split("\n").length })}</span><span>${t('chat.editorHint')}</span></div>` : ''}<div class="composer-bottom"><div class="composer-options">${btn(icon("composer-attachment",18),"add-chat-images","icon-button quiet",`title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}" ${deleting ? 'disabled' : ''}`)}${modelComposer(w,session?.id || "")}</div><div class="composer-actions">${btn(icon("more",16),"chat-input-options","icon-button quiet chat-input-options",`title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || deleting || imageWaiting || !webDraft && (!draft.trim()&&!draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && webSubmissionBlocked ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption${draft.trimStart().startsWith("/") ? ' slash-mode' : ''}" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?t('chat.commandMode'):t('chat.sendAsText'),"toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
+  return `<section class="agent-panel ${focus ? "focused" : ""}"><div class="agent-header"><span class="agent-title">${icon('spark', 17)}<span class="session-identity" title="${esc(sessionDisplayName(w, session))}">${readingSessions && !session ? '<i class="session-name-skeleton skeleton-fill" aria-hidden="true"></i>' : esc(sessionDisplayName(w, session))}</span></span><div>${btn(icon("clock", 16), "sessions", "icon-button quiet", `id="sessions-trigger" aria-label="${esc(t('agent.sessions'))}" title="${readingConversation || readingSessions ? esc(t('agent.readingConversations')) : esc(t('agent.sessions'))}" ${readingConversation || readingSessions ? 'aria-busy="true" data-read-busy="true"' : ''}`)}${agentLayoutControls(w)}${btn(icon("more", 17), "agent-menu", "icon-button quiet", `aria-label="${esc(t('agent.options'))}"`)}</div></div>${(view.layout==="chat-only" || view.layout==='service-chat' && innerWidth<900) && view.fullscreenError?feedback(esc(view.fullscreenError),"warning"):""}<div class="messages" id="messages" data-reading-key="${esc(draftKey(w,session?.id || ""))}">${conversationError?readFailure(t('agent.conversationReadFailed'),conversationLimit?`${conversationError} ${conversationLimit}`:conversationError,'retry-conversation',readingConversation):''}${session ? conversationHistoryControls(w,session) : ''}${initialConversation ? readPlaceholder(t('agent.loadingConversation'), 'conversation') : !session?.messages.length && conversationError ? '' : !session?.messages.length ? `<div class="chat-welcome"><span class="chat-symbol">${icon("spark", 28)}</span><h2>${t('chat.welcomeTitle')}</h2><p>${t('chat.welcomeBody')}</p><button data-action="suggest-message">${t('chat.suggestBuild')} ${icon("chevron", 15)}</button><button data-action="suggest-files">${t('chat.suggestFiles')} ${icon("chevron", 15)}</button></div>` : messageMarkup(w,session.id,session.messages,replyRun,messageFormRenderer(w,session))}${replySlot}${session ? unmatchedExecutions(w,session.id,session.messages) : ""}${view.tab === "Chat" && view.layout === "workspace" && w.services.some(s => s.observed === "Ready" && s.ports.length) ? btn(`${icon("grid", 15)} ${t('chat.openService')}`, "tab-Services", "service-shortcut") : ""}</div><div class="composer-wrap">${view.scrollPinned ? "" : btn(`${icon("down", 14)} ${t('chat.backToLatest')}`, "scroll-bottom", "back-latest")}${submissionMarkup(w)}${replacement?.phase==='failed'?feedback(t('sessions.replacementFailed'),'warning',btn(t('sessions.newCompact'),'new-session','small')):''}${deleting?feedback(t('sessions.deleteChecking'),"warning"):""}${session?.legacy ? feedback(`${t('chat.legacyContext')} ${t('chat.sessionsHint')}`, 'warning') : ''}${activeUnconfirmed && !checkingActive ? feedback(esc(observed?.error || t('chat.statusUnconfirmed')), observed?.error ? "warning" : "info", btn(t('chat.checkStatus'), "check-active-run", "small")) : ""}${busy ? feedback(activeRun.source?.kind === "service" ? t('chat.runFromService', { name: esc(activeRun.source.serviceName || "") }) : t('chat.runOtherSession'), "warning", btn(t('chat.viewActiveRun'), "active-run", "small", `data-run-id="${esc(activeRun.id)}"`)) : ""}<div class="composer${composerExpanded ? ' expanded' : ''}">${imageDraftMarkup(w,draftKey(w,session?.id || ""))}<div class="composer-text-wrap"><textarea id="composer" data-draft-key="${esc(composerKey)}" rows="2" ${deleting ? 'readonly aria-readonly="true"' : ''} placeholder="${esc(t('chat.composerPlaceholder'))}" aria-label="${esc(t('chat.composerAria'))}" ${session?.legacy ? 'aria-describedby="composer-help"' : ""}>${textareaContent(draft)}</textarea>${btn(icon(composerExpanded ? "composer-collapse" : "composer-expand",18),"toggle-composer-editor","icon-button quiet composer-expand",`title="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-label="${esc(t(composerExpanded ? 'chat.collapseEditor' : 'chat.expandEditor'))}" aria-expanded="${composerExpanded}" aria-controls="composer"`)}</div>${composerExpanded ? `<div class="composer-expand-hint"><span>${t('chat.composerLines', { count: draft.split("\n").length })}</span><span>${t('chat.editorHint')}</span></div>` : ''}<div class="composer-bottom"><div class="composer-options">${btn(icon("composer-attachment",18),"add-chat-images","icon-button quiet",`title="${esc(t('chat.addImages'))}" aria-label="${esc(t('chat.addImages'))}" ${deleting ? 'disabled' : ''}`)}${modelComposer(w,session?.id || "")}</div><div class="composer-actions">${btn(icon("more",16),"chat-input-options","icon-button quiet chat-input-options",`title="${esc(t('chat.inputOptions'))}" aria-label="${esc(t('chat.inputOptions'))}" aria-haspopup="dialog" aria-expanded="${view.modal==='chat-input-options'}"`)}${stopControl}${btn(stopAndSend ? icon('stop-send', 18) : checkingActive ? pendingDots() : icon("send", 18), "send-message", `send-button${stopAndSend ? " stop-and-send" : ""}${checkingActive ? " is-reading" : ""}`, `aria-label="${checkingActive ? esc(t('chat.checkingStatus')) : stopAndSend ? esc(t('chat.stopAndSend')) : esc(t('chat.sendMessage'))}" ${checkingActive ? `aria-busy="true" data-read-busy="true" title="${esc(t('chat.checkingStatusEllipsis'))}"` : ''} ${stopAndSend ? `data-cancel-run-id="${esc(activeRun.id)}" title="${esc(t('chat.stopAndSend'))}"` : ""} ${!adapter.project(w).usable || deleting || imageWaiting || !webDraft && (!draft.trim()&&!draftImages.length || activeUnconfirmed || active && !stopAndSend || session?.legacy || !modelReady) || webDraft && webSubmissionBlocked ? "disabled" : ""}`)}</div>${commandPalette(w,draft)}</div></div>${modelFeedback(w,session?.id || "")}<div class="composer-caption${draft.trimStart().startsWith("/") ? ' slash-mode' : ''}" id="composer-help">${draft.trimStart().startsWith("/")?btn(view.literalSlash?t('chat.commandMode'):t('chat.sendAsText'),"toggle-slash-mode","text-button",`aria-pressed="${view.literalSlash}"`):""}${draft.trimStart().startsWith("/") && !view.literalSlash ? t('chat.commandHint') : t('chat.enterHint')}</div></div></section>`;
 }
 function modelComposer(w: Work, sessionId: string) {
   const { name, thinking, state, initialLoading } = chatSettings(w, sessionId);
@@ -2245,7 +2247,50 @@ function messageHistoryMarkup(sessionId:string,message:import('./models.js').Mes
  const label=t('chat.historyStatus');
  return btn(icon('send-unknown',16),'chat-history-status','icon-button quiet message-history-status',`data-id="${esc(message.id || '')}" data-session="${esc(sessionId)}" data-run-id="${esc(message.runId || '')}" aria-label="${esc(label)}" title="${esc(label)}" aria-haspopup="dialog"`);
 }
-function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Message[],replyRun?:Run) {
+type ChatFormSource = { id: string; draftKey: string; workId: string; sessionId: string; text: string; canSend: boolean };
+const chatFormDrafts = new Map<string, { id: string; answers: ChatFormAnswers }>();
+let renderedChatForm: { source: ChatFormSource; fields: ChatForm } | undefined;
+
+function eligibleChatFormMessage(w: Work, sessionId: string, message: import('./models.js').Message) {
+  if (message.role !== 'assistant' || message.tool || !message.historyStored || !message.id || !message.runId
+    || message.historyIncomplete || message.historyOrderUnconfirmed || message.historyRecoveryUnconfirmed) return false;
+  const run = w.run?.id === message.runId ? w.run : w.sessions.find(session => session.id === sessionId)?.runs?.find(item => item.id === message.runId);
+  return run?.sessionId === sessionId && run.status === 'succeeded';
+}
+
+function chatFormSource(w: Work, sessionId: string): ChatFormSource | undefined {
+  const session = w.sessions.find(item => item.id === sessionId);
+  const message = session?.messages.at(-1);
+  if (view.session !== sessionId || !session || session.legacy || !session.checkedAt || session.loading || session.error
+    || !message || !eligibleChatFormMessage(w, sessionId, message)) return;
+  const operation = adapter.sessionManagement.operation(w.id, sessionId);
+  if (operation?.kind === 'delete' && operation.phase !== 'failed') return;
+  const supported = adapter.cancelAndSendCapabilities.get(w.id) === 1;
+  const observation = adapter.activeRuns.get(w.id);
+  const active = supported ? observation?.run : w.run;
+  const idle = (!supported || !!observation?.confirmed && !observation.error)
+    && (!active || !['accepted', 'running', 'cancelling'].includes(active.status));
+  const id = `chat-form-${encodeURIComponent(JSON.stringify([adapter.identityEpoch, w.id, sessionId, message.runId, message.id]))}`;
+  const canSend = idle && !adapter.coreGate.blocked && adapter.project(w).usable && adapter.modelReady(w.id, sessionId)
+    && !adapter.chatSubmissions.has(w.id);
+  return { id, draftKey: draftKey(w, sessionId), workId: w.id, sessionId, text: message.text, canSend };
+}
+
+function messageFormRenderer(w: Work, session: Session) {
+  const source = chatFormSource(w, session.id);
+  const latest = session.messages.at(-1);
+  return (message: import('./models.js').Message) => {
+    if (!eligibleChatFormMessage(w, session.id, message)) return;
+    return (fields: ChatForm) => {
+      if (!source || message !== latest) return renderChatForm(fields, esc);
+      renderedChatForm = { source, fields };
+      const draft = chatFormDrafts.get(source.draftKey);
+      return renderChatForm(fields, esc, { ...source, answers: draft?.id === source.id ? draft.answers : undefined });
+    };
+  };
+}
+
+function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Message[],replyRun?:Run, formForMessage?: ReturnType<typeof messageFormRenderer>) {
  const scope=`${adapter.identityEpoch}:${w.id}:${sessionId}`;
  const groups=activityGroups(messages,activityLayouts.get(scope)),anchors=executionAnchors(groups),seenAuthors=new Set<string>();
  activityLayouts.set(scope,groups.filter(group=>group.activity));
@@ -2262,7 +2307,8 @@ function messageMarkup(w:Work,sessionId:string,messages:import('./models.js').Me
  return `<details class="activity" data-message-key="${esc(key)}" data-activity-key="${esc(key)}" ${expandedActivity.get(key)?'open':''} aria-busy="${busy}"><summary>${icon('terminal',14)} ${summary}${busy&&failures.length?t('activity.stillRunning'):''}${toolWait===index?wait:''}${failures.length?`${t('activity.failedCount',{count:failures.length})}<small class="activity-error">${esc(failures[0]?.tool?.content?.slice(0,160)||t('activity.toolFailed'))}</small>`:''}</summary>${group.messages.map(m=>{const toolKey=`${scope}:tool:${JSON.stringify([m.runId??null,m.tool?.id??m.id])}`,rawKey=`${toolKey}:raw`;return `<details class="tool-event" data-message-key="${esc(toolKey)}" data-activity-key="${esc(toolKey)}" ${expandedActivity.get(toolKey)?'open':''}><summary>${esc(m.tool?.name)} · ${esc(toolStatusText(m.tool?.status))}</summary>${m.historyIncomplete?`<small class="history-partial">${t('activity.partialResult')}</small>`:''}<div class="tool-result-preview">${esc((m.tool?.content || '').slice(0,600))}${(m.tool?.content?.length || 0)>600?'…':''}</div><details class="tool-raw" data-activity-key="${esc(rawKey)}" ${expandedActivity.get(rawKey)?'open':''}><summary>${t('chat.rawToolResult')}</summary><pre>${esc(m.tool?.content)}</pre></details></details>`;}).join('')}</details>${messageHistoryMarkup(sessionId,group.messages.find(m=>m.historyIncomplete||m.historyOrderUnconfirmed||m.historyRecoveryUnconfirmed) || group.messages[0]!)}${execution}`;}
  return group.messages.map((m,messageIndex)=>{
  const author=m.role==='assistant'&&(!m.runId||!seenAuthors.has(m.runId));if(m.runId&&m.role==='assistant')seenAuthors.add(m.runId);
- let body=m.role==='assistant'&&!m.historyIncomplete?renderChatMarkdown(m.text,{workId:w.id}):esc(m.text);
+ const form = formForMessage?.(m);
+ let body=m.role==='assistant'&&!m.historyIncomplete?renderChatMarkdown(m.text,{workId:w.id, form}):esc(m.text);
  if(textWait===index&&messageIndex===group.messages.length-1)body=inlineReplyTail(body,wait);
  const readingSource = messageReadingSource(m);
  return `<div class="message ${m.role}" data-message-key="${esc(key)}"${readingSource?` data-source-key="${esc(readingSource)}"`:''}>${author?`<div class="message-author">${icon('spark',14)} piwork</div>`:''}<div class="message-text${m.role==='assistant'?' chat-markdown':''}">${body}</div>${m.images?.length?`<div class="chat-message-images">${m.images.map(image=>historyImageMarkup(w,sessionId,m.runId!,image)).join('')}</div>`:''}${m.pendingImages?.length?`<div class="chat-message-images">${m.pendingImages.map(image=>`<img class="pending-chat-image" src="data:${esc(image.mimeType)};base64,${esc(image.data)}" alt="${esc(t('imagePreview.alt'))}">`).join('')}</div>`:''}${messageSubmissionMarkup(w,m)}${messageHistoryMarkup(sessionId,m)}${m.source?`<button class="source-chip" data-action="open-source" data-path="${esc(m.source)}">${busyIcon(fileReadPending(m.source), "file", 13)} ${esc(m.source)}</button>`:''}</div>`;
@@ -5222,6 +5268,7 @@ function closeFileActions(restore = false) {
   if(restore)root.querySelector<HTMLElement>('#file-add-trigger')?.focus({preventScroll:true});
 }
 function render() {
+  renderedChatForm = undefined;
   if(fileActionsContext && (fileActionsContext!==fileActionsKey() || view.modal || view.selected.length && !filesUploadState() || !adapter.state.signedIn))fileActionsContext='';
   if (current()?.id === selectionWorkId) rememberWork();
   observeCurrentPage();
@@ -5598,8 +5645,52 @@ function positionMessageTooltip(event:Event){
 }
 root.addEventListener('pointerover',positionMessageTooltip);
 root.addEventListener('focusin',positionMessageTooltip);
+root.addEventListener('submit', event => {
+  const form = event.target;
+  if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-chat-form')) return;
+  event.preventDefault();
+  const w = current();
+  const declaration = renderedChatForm;
+  const source = w && chatFormSource(w, view.session);
+  const button = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (!form.isConnected || !button || !source?.canSend || !declaration || source.id !== form.id
+    || source.id !== declaration.source.id || source.text !== declaration.source.text || form.closest('[inert]')) return;
+  const answer = chatFormMessage(declaration.fields, readChatForm(form));
+  if (!answer.text) {
+    const field = form.querySelectorAll('fieldset')[answer.missing ?? 0]?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input,textarea');
+    field?.setCustomValidity(t(answer.missing === undefined ? 'chat.formEmpty' : 'chat.formAnswerRequired'));
+    field?.reportValidity();
+    return;
+  }
+  const snapshot = answer.text;
+  const epoch = adapter.identityEpoch;
+  void dispatchAction(button, async record => {
+    // Use the ordinary text path and the form's Session. The composer draft
+    // and any attached images belong to its separate Send action.
+    const sending = adapter.send(source.workId, source.sessionId, snapshot, false, 'text');
+    const submissionKey = adapter.chatSubmissions.get(source.workId)?.key;
+    if (record && submissionKey) {
+      record.businessId = `submission:${submissionKey}`;
+      record.notificationProjection = 'chat-submission-owner';
+    }
+    const runId = await sending;
+    retainAcceptedChatRun(source.workId, source.sessionId, runId, epoch);
+    if (chatFormDrafts.get(source.draftKey)?.id === source.id) chatFormDrafts.delete(source.draftKey);
+    if (record) {
+      record.businessId = runId;
+      record.successFeedback = 'owner';
+    }
+  }, actionIntent(button, 'send-message')).catch(() => undefined).finally(render);
+});
 root.addEventListener("input", (e) => {
   const input = e.target as HTMLInputElement | HTMLTextAreaElement;
+  const form = input.closest<HTMLFormElement>('[data-chat-form]');
+  const formSource = renderedChatForm?.source;
+  if (form && form.id === formSource?.id) {
+    chatFormDrafts.set(formSource.draftKey, { id: form.id, answers: readChatForm(form) });
+    for (const field of form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input,textarea')) field.setCustomValidity('');
+    return;
+  }
   const value = input.value;
   if (["create-name", "create-agents"].includes(input.id)) createDraft.edit();
   switch (input.id) {
@@ -6095,6 +6186,7 @@ adapter.subscribe(() => {
   exportFlows.update();
   if (lastIdentity !== adapter.identityEpoch) {
     lastIdentity = adapter.identityEpoch;
+    chatFormDrafts.clear();
     lastAdmittedHTML = '';
     lastAdmittedView = '';
     routeDeferredByCore = false;

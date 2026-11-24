@@ -1,0 +1,166 @@
+import assert from 'node:assert/strict';
+import { expect } from '@playwright/test';
+
+export async function chatFormsAcceptance({ page, coreUrl, token, api, waitFor }) {
+  const call = async (method, path, body, status = 200) => {
+    const result = await api(coreUrl, token, method, path, body);
+    assert.equal(result.status, status, JSON.stringify(result.data));
+    return result.data;
+  };
+  const defaults = await call('GET', '/api/v1/admin/default-work');
+  await page.getByRole('button', { name: 'New Work', exact: true }).first().click();
+  await page.locator('#create-name').fill('Chat forms acceptance');
+  const createResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/_desktop/api/works' && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Create Work', exact: true }).click();
+  const receipt = await createResponse;
+  assert.equal(receipt.status(), 202);
+  const input = receipt.request().postDataJSON();
+  assert.equal(input.baseImage, undefined);
+  assert.equal(input.configuration, undefined);
+  const created = await receipt.json();
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await waitFor(async () => {
+    const operation = await call('GET', `/api/v1/operations/${created.operationId}`);
+    return operation.state === 'succeeded';
+  }, 'fixture Work ready');
+  const path = `/api/v1/works/${created.workId}`;
+  const configuration = await call('GET', `${path}/configuration`);
+  assert.deepEqual(configuration.active.agentImage, defaults.configuration.agentImage, 'New Work captures the current default image');
+  const makeSession = async key => (await call('POST', `${path}/sessions`, { idempotencyKey: key }, 201)).sessionId;
+  const session = await makeSession('chat-forms-main');
+  const other = await makeSession('chat-forms-other');
+  const settled = runId => waitFor(async () => (await call('GET', `${path}/runs/${runId}`)).state === 4, 'fixture reply succeeded');
+  const run = (sessionId, prompt, key) => call('POST', `${path}/runs`, { sessionId, prompt, submissionKey: key, inputMode: 'text' }, 202);
+  const prompt = '帮我安排本周工作。需要我补充什么就直接问。';
+  await page.evaluate(id => { location.hash = `/work/${id}`; }, created.workId);
+  await page.getByRole('button', { name: 'Chat', exact: true }).click();
+  const select = async id => {
+    await page.locator('#sessions-trigger').click();
+    await page.locator(`[data-action="select-session"][data-id="${id}"]`).click();
+    await expect(page.locator('#messages')).toHaveAttribute('data-reading-key', new RegExp(id + '$'));
+  };
+  await select(session);
+  const composer = page.locator('#composer');
+  const send = page.getByRole('button', { name: 'Send message', exact: true });
+  const form = page.locator('form[data-chat-form]');
+  const confirm = form.getByRole('button', { name: /Confirm and send|确认并发送/ });
+  const note = form.getByRole('textbox', { name: '还有什么时间限制？' });
+  const posts = [];
+  const runPath = `/_desktop/api/works/${created.workId}/runs`;
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === runPath) posts.push(request.postDataJSON());
+  });
+  await composer.fill(prompt);
+  await send.click();
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  const choices = form.locator('.chat-form-options').first();
+  const optionTops = await choices.locator('label').evaluateAll(options => options.map(option => option.getBoundingClientRect().top));
+  assert.equal(new Set(optionTops).size, 1, 'short options share one line');
+  assert.equal(await form.evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+  assert.equal(posts[0].sessionId, session);
+  await confirm.click();
+  assert.equal(posts.length, 1, 'required fields prevent submission');
+  await form.getByRole('radio', { name: '整理方案' }).check();
+  await page.keyboard.press('ArrowUp');
+  await expect(form.getByRole('radio', { name: '完成原型' })).toBeChecked();
+  await expect(form.getByRole('radio', { name: '整理方案' })).not.toBeChecked();
+  await form.getByRole('checkbox', { name: '评审' }).check();
+  await form.getByRole('checkbox', { name: '写文档' }).check();
+  await form.getByRole('checkbox', { name: '访谈' }).check();
+  await form.getByRole('checkbox', { name: '写文档' }).uncheck();
+  await note.fill('周三下午留空');
+  await page.setViewportSize({ width: 440, height: 900 });
+  await expect(note).toHaveValue('周三下午留空');
+  await expect(note).toBeFocused();
+  assert.ok(await form.evaluate(node => node.scrollWidth <= node.clientWidth));
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await select(other);
+  await expect(form).toHaveCount(0);
+  await select(session);
+  await expect(note).toHaveValue('周三下午留空');
+  const busy = (await run(other, 'wait for abort: chat form busy', 'chat-forms-busy')).run;
+  await expect(confirm).toBeDisabled({ timeout: 20_000 });
+  await call('POST', `${path}/runs/${busy.runId}/cancel`, { idempotencyKey: 'chat-forms-cancel-busy' });
+  await expect(confirm).toBeEnabled({ timeout: 20_000 });
+
+  await page.evaluate(async () => {
+    const localeModule = '/desktop/browser/locale.js';
+    const { chooseLocale } = await import(localeModule);
+    chooseLocale('zh-CN');
+  });
+  await expect(confirm).toHaveText('确认并发送');
+  await composer.fill('保留独立草稿');
+  const png = await page.evaluate(() => document.createElement('canvas').toDataURL('image/png').split(',')[1]);
+  await page.locator('#chat-image-input').setInputFiles({
+    name: 'form-fixture.png', mimeType: 'image/png',
+    buffer: Buffer.from(png, 'base64'),
+  });
+  const attachment = page.locator('.composer .chat-image-draft');
+  await expect(attachment).toHaveCount(1);
+  const expected = '本周最重要的目标是什么？ 完成原型\n哪些任务要排进去？ 访谈、评审\n还有什么时间限制？ 周三下午留空';
+  const routePattern = `**${runPath}`;
+  await page.route(routePattern, route => route.fulfill({ status: 400, json: { code: 'INVALID_REQUEST' } }), { times: 1 });
+  await confirm.dblclick();
+  const rejected = page.locator('.message-submission.failed button');
+  await expect(rejected).toBeVisible();
+  assert.equal(posts.length, 2, 'double confirmation submitted once');
+  assert.equal(posts.at(-1).prompt, expected);
+  assert.equal(posts.at(-1).sessionId, session);
+  assert.equal(posts.at(-1).inputMode, 'text');
+  assert.equal(posts.at(-1).images?.length ?? 0, 0);
+  assert.equal(posts.at(-1).cancelRunId ?? '', '');
+  let accepted;
+  await page.route(routePattern, async route => {
+    const response = await route.fetch();
+    assert.equal(response.status(), 202, await response.text());
+    accepted = (await response.json()).run;
+    await route.abort('failed');
+  }, { times: 1 });
+  await rejected.click();
+  await page.locator('#modal [data-action="retry-chat-submission"]').click();
+  const unknown = page.locator('.message-submission.unknown button');
+  await expect(unknown).toBeVisible();
+  assert.equal(posts.length, 3);
+  assert.equal(posts.at(-1).prompt, expected, 'retry uses the original answer snapshot');
+  assert.notEqual(posts.at(-1).submissionKey, posts.at(-2).submissionKey);
+  await unknown.click();
+  await page.locator('#modal [data-action="check-chat-submission"]').click();
+  await expect(unknown).toHaveCount(0);
+  assert.equal(posts.length, 3, 'checking an ambiguous submission is read only');
+  assert.equal(accepted?.sessionId, session);
+  await settled(accepted.runId);
+  const answer = page.locator('.message.user .message-text').filter({ hasText: '周三下午留空' });
+  await expect(answer).toHaveCount(1);
+  await expect(page.locator('.message.assistant').filter({ hasText: '收到以下回复' }).first()).toContainText('周三下午留空');
+  await expect(composer).toHaveValue('保留独立草稿');
+  await expect(attachment).toHaveCount(1);
+  await page.reload();
+  await select(session);
+  await expect(answer).toHaveCount(1);
+  await expect(page.locator('.message.assistant').filter({ hasText: '收到以下回复' })).toHaveCount(1);
+  await expect(form).toHaveCount(0);
+
+  await select(other);
+  await composer.fill(prompt);
+  const localizedSend = page.locator('[data-action="send-message"]');
+  await localizedSend.click();
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await form.getByRole('radio', { name: '完成原型' }).check();
+  await composer.fill('计划改了，先只安排周一');
+  await localizedSend.click();
+  await expect(page.locator('.message.assistant').filter({ hasText: '收到以下回复' }).first()).toContainText('计划改了，先只安排周一');
+  assert.equal(posts.at(-1).prompt, '计划改了，先只安排周一');
+  assert.equal(posts.at(-1).sessionId, other);
+  await expect(form).toHaveCount(0);
+  await composer.fill(prompt);
+  await localizedSend.click();
+  await expect(confirm).toBeEnabled({ timeout: 30_000 });
+  await form.getByRole('radio', { name: '完成原型' }).check();
+  await form.getByRole('checkbox', { name: '评审' }).check();
+  await confirm.click();
+  await expect(page.locator('.message.assistant').filter({ hasText: '收到以下回复' }).last()).toContainText('完成原型');
+  assert.equal(posts.at(-1).sessionId, other);
+  assert.equal(posts.at(-1).prompt, '本周最重要的目标是什么？ 完成原型\n哪些任务要排进去？ 评审');
+  console.log('Chat forms: real Core, CLI Desktop and agentd fixture verified');
+}

@@ -2,6 +2,7 @@ import { Marked, Renderer } from './marked.js';
 import type { Tokens } from './marked.js';
 import { fileReferenceLink } from './file-reference.js';
 import { t } from './locale.js';
+import { parseChatForm, type ChatForm } from './chat-form.js';
 
 const MAX_MARKDOWN_LENGTH = 64 * 1024;
 const MAX_MARKDOWN_LINES = 4096;
@@ -25,13 +26,16 @@ function safeLink(href: string): string | undefined {
 }
 
 class ChatRenderer extends Renderer {
+  form?: { token: Tokens.Code; html: string };
   constructor(private readonly workId?: string) { super(); }
 
   override html({ text }: Tokens.HTML | Tokens.Tag): string {
     return escapeHTML(text);
   }
 
-  override code({ text, lang }: Tokens.Code): string {
+  override code(token: Tokens.Code): string {
+    if (token === this.form?.token) return this.form.html;
+    const { text, lang } = token;
     const language = (lang || '').split(/\s/, 1)[0];
     const label = language
       ? ` aria-label="${escapeHTML(t('d.chat.codeLabelLanguage', { language }))}"`
@@ -66,7 +70,7 @@ class ChatRenderer extends Renderer {
  * Oversized/malformed input remains complete, escaped plain text. No message
  * contents are cached across renders, conversations, or authenticated identities.
  */
-export function renderChatMarkdown(text: string, context?: { workId?: string }): string {
+export function renderChatMarkdown(text: string, context?: { workId?: string; form?: (fields: ChatForm) => string }): string {
   const plain = () => `<div class="chat-markdown-plain">${escapeHTML(text)}</div>`;
   if (!text) return '';
   if (text.length > MAX_MARKDOWN_LENGTH || text.split('\n', MAX_MARKDOWN_LINES + 1).length > MAX_MARKDOWN_LINES) return plain();
@@ -80,8 +84,22 @@ export function renderChatMarkdown(text: string, context?: { workId?: string }):
     // setOptions preserves the renderer prototype; extension registration via
     // the constructor only copies own methods and would discard our overrides.
     const markdown = new Marked();
-    markdown.setOptions({ gfm: true, breaks: true, async: false, renderer: new ChatRenderer(context?.workId) });
-    return markdown.parse(text, { async: false });
+    const renderer = new ChatRenderer(context?.workId);
+    markdown.setOptions({ gfm: true, breaks: true, async: false, renderer });
+    if (!context?.form || !text.includes('piwork-form')) return markdown.parse(text, { async: false });
+    const tokens = markdown.lexer(text);
+    const declarations = tokens.filter((token): token is Tokens.Code => token.type === 'code' && token.lang === 'piwork-form');
+    const token = declarations[0];
+    if (declarations.length === 1 && token === tokens.findLast(item => item.type !== 'space')) {
+      const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*piwork-form[ \t]*\n/.exec(token.raw)?.[1];
+      const closing = token.raw.trimEnd().split('\n').at(-1)?.trimStart();
+      // Marked also returns a Code token for an unclosed fence.
+      if (opening && closing && closing.length >= opening.length && [...closing].every(character => character === opening[0])) {
+        const fields = parseChatForm(token.text);
+        if (fields) renderer.form = { token, html: context.form(fields) };
+      }
+    }
+    return markdown.parser(tokens);
   } catch {
     // A partial/malformed message must never take down the rest of Chat.
     return plain();

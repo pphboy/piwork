@@ -239,6 +239,23 @@ function streamDeterministic(
       emitText(stream, output, `file-delivery-guidance:${systemPrompt.includes("piwork-file:/relative/path")}:${systemPrompt.includes("/var/data/workspace/")}:${systemPrompt.includes("Piwork workstation cognition") ? "brain" : "plain"}`);
       return;
     }
+    if (prompt.trim() === "帮我安排本周工作。需要我补充什么就直接问。") {
+      if (!systemPrompt.includes("use a form by default") || !systemPrompt.includes("```piwork-form")) {
+        emitText(stream, output, "Form guidance unavailable.");
+        return;
+      }
+      const fields = [
+        { type: "single", label: "本周最重要的目标是什么？", options: ["完成原型", "整理方案"], required: true },
+        { type: "multi", label: "哪些任务要排进去？", options: ["访谈", "评审", "写文档"], required: true },
+        { type: "text", label: "还有什么时间限制？" },
+      ];
+      emitText(stream, output, ["请填写本周的计划。", "", "```piwork-form", JSON.stringify({ fields }), "```"].join("\n"));
+      return;
+    }
+    if (prompt.startsWith("本周最重要的目标是什么？") || prompt === "计划改了，先只安排周一") {
+      emitText(stream, output, `收到以下回复：\n\n${prompt}`);
+      return;
+    }
     if (prompt.trim() === "deliver workspace file fixture") {
       const write = toolResults.find(result => result.toolName === "write");
       if (!write) { emitToolCall(stream, output, "file-delivery-write", "write", { path: "output/报告.txt", content: "交付文件\n" }); return; }

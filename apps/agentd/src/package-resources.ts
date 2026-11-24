@@ -41,6 +41,17 @@ The shared workspace root is /var/data/workspace/. After an allowed tool confirm
 Use this only for a file you verified with an allowed tool. If you cannot verify that the file exists, say what is missing; never claim a file was created, saved, or downloaded based on link text alone. The link opens the current file at that path in this Work's Files, not a saved copy from this reply. Do not use Work IDs, other schemes, absolute container or host paths, directory targets, query strings or fragments.`;
 }
 
+function chatFormPrompt(): string {
+  return [
+    '## Collecting input in Chat',
+    'When you need the user to answer a question before you can continue in Piwork Chat, use a form by default, even for one question. Put the questions in the form itself. Add a brief lead-in if useful. Put one top-level, closed `piwork-form` Markdown fence at the end of your reply. The fence contains JSON, for example:',
+    '```piwork-form',
+    '{"fields":[{"type":"single","label":"What is the main goal?","options":["Prototype","Research"],"required":true},{"type":"multi","label":"Which tasks should we include?","options":["Interview","Review"]},{"type":"text","label":"Any time constraints?"}]}',
+    '```',
+    'Use only the fields needed. Use distinct plain-text labels and options, in the user’s language. Use `required: true` for a question that needs an answer. Honor an explicit request for plain-text questions. End your turn after asking and wait for the reply. The user can confirm the form or type a reply. Either arrives as an ordinary user message in this conversation.',
+  ].join('\n');
+}
+
 export function serviceViewPrompt(): string {
   return `## Displaying Work Services
 When the user's task calls for showing an application, use an available service_select tool with its exact serviceId and optional declared Web port. Obtain the ID through an allowed Service directory tool or verified user context; never guess another target. Select shows the Service in the initiating browser page's normal Services area and does not reload an already displayed target.
@@ -96,6 +107,7 @@ export async function createPackageResourceLoader(input: {
       ...base,
       ...(cognition === undefined ? [] : brainPrompt(cognition, input.experience, input.memorySelection)),
       fileDeliveryPrompt(),
+      chatFormPrompt(),
       serviceViewPrompt(),
     ],
   });

@@ -173,7 +173,10 @@ try {
   await page.locator('.works-page').waitFor();
   await page.screenshot({ path: join(screenshotDir, '01-empty-work-list.png'), fullPage: true });
   const runChatControls=async()=>{const {chatControlsAcceptance}=await import('./chat-controls-real-core.mjs');await chatControlsAcceptance({page,coreUrl,token,api,waitFor,cliBinary,clientConfig:join(root,'client.json'),repositoryRoot,image,screenshotDir,fixtureRoot:root});};
-  if (process.env.PIWORK_TEST_SERVICE_VIEW === 'only') {
+  if (process.env.PIWORK_TEST_CHAT_FORMS === 'only') {
+    const { chatFormsAcceptance } = await import('./chat-forms-real-core.mjs');
+    await chatFormsAcceptance({ page, coreUrl, token, api, waitFor });
+  } else if (process.env.PIWORK_TEST_SERVICE_VIEW === 'only') {
     const { serviceViewAcceptance } = await import('./service-view-real-core.mjs');
     await serviceViewAcceptance({ page, coreUrl, uiUrl: `http://127.0.0.1:${uiPort}`, token, api, waitFor, image });
   } else if (process.env.PIWORK_TEST_CHAT_LEGACY_RECOVERY === 'only') {

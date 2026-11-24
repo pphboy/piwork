@@ -26,6 +26,11 @@ test("platform file guidance reaches the actual SDK context without packages and
     try {
       assert.match(session.systemPrompt, /piwork-file:\/relative\/path/);
       assert.match(session.systemPrompt, /\/var\/data\/workspace\//);
+      const formExample = /```piwork-form\n([^\n]+)\n```/.exec(session.systemPrompt);
+      assert.ok(formExample);
+      assert.match(session.systemPrompt, /use a form by default, even for one question/);
+      assert.match(session.systemPrompt, /End your turn after asking and wait for the reply/);
+      assert.deepEqual(JSON.parse(formExample[1]!).fields.map((field: { type: string }) => field.type), ['single', 'multi', 'text']);
       assert.doesNotMatch(session.systemPrompt, /Piwork workstation cognition/);
       assert.deepEqual(session.getActiveToolNames().sort(), ["bash", "write"]);
       await session.prompt("inspect file delivery guidance");

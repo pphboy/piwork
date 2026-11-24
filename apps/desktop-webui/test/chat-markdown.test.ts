@@ -1,6 +1,58 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const { renderChatMarkdown } = await import(new URL('../browser/chat-markdown.js', import.meta.url).href);
+const { chatFormMessage, parseChatForm, renderChatForm } = await import(new URL('../browser/chat-form.js', import.meta.url).href);
+
+test('only one complete top-level form at the end of assistant Markdown is interpreted', () => {
+  const fields = '{"fields":[{"type":"text","label":"Your answer"}]}';
+  const fence = '```piwork-form\n' + fields + '\n```';
+  const context = { form: () => '<form></form>' };
+  assert.match(renderChatMarkdown('Please answer.\n\n' + fence, context), /<p>Please answer\.<\/p>\s*<form>/);
+  for (const text of [fence.slice(0, -3), `${fence}\n\nMore text`, `${fence}\n\n${fence}`,
+    fence.split('\n').map(line => '> ' + line).join('\n'), '````markdown\n' + fence + '\n````',
+    fence.replace('"text"', '"date"'), fence.replace(fields, '{'), '```text\n' + fields + '\n```']) {
+    assert.doesNotMatch(renderChatMarkdown(text, context), /<form>/);
+    assert.match(renderChatMarkdown(text, context), /<code>/);
+  }
+  assert.doesNotMatch(renderChatMarkdown(fence), /<form>/);
+});
+
+test('form labels and answers are literal, validated and serialized in declaration order', () => {
+  const fields = parseChatForm(JSON.stringify({ fields: [
+    { type: 'single', label: 'Goal?', options: ['Ship', 'Review'], required: true },
+    { type: 'multi', label: '<img src=x onerror=alert(1)>', options: ['a', 'b'] },
+    { type: 'text', label: 'Note?' },
+  ] }));
+  assert.ok(fields);
+  assert.deepEqual(chatFormMessage(fields, [[], ['1'], []]), { missing: 0 });
+  assert.deepEqual(chatFormMessage(fields, [['0'], ['1', '0'], [' /model ']]), {
+    text: 'Goal? Ship\n<img src=x onerror=alert(1)> a, b\nNote? /model',
+  });
+  const escape = (text: string) => text.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  const html = renderChatForm(fields, escape, { id: 'form', canSend: true, answers: [[], [], ['<script>']] });
+  assert.match(html, /type="radio"/);
+  assert.match(html, /type="checkbox"/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.doesNotMatch(html, /<(?:img|script)\b/);
+});
+
+test('choice values survive HTML newline normalization and send the original option text', () => {
+  const multiline = '周一\r\n上午';
+  const fields = parseChatForm(JSON.stringify({ fields: [
+    { type: 'single', label: '开始时间', options: [multiline, '周二'], required: true },
+    { type: 'multi', label: '安排时间', options: [multiline, '周二'], required: true },
+  ] }));
+  assert.ok(fields);
+  const answers = [['0'], ['1', '0']];
+  const html = renderChatForm(fields, (text: string) => text, { id: 'form', canSend: true, answers });
+  assert.match(html, /name="field-0" value="0" checked required/);
+  assert.match(html, /name="field-1" value="0" checked/);
+  assert.match(html, /name="field-1" value="1" checked/);
+  assert.ok(html.includes(`<span>${multiline}</span>`));
+  assert.deepEqual(chatFormMessage(fields, answers), {
+    text: `开始时间 ${multiline}\n安排时间 ${multiline}, 周二`,
+  });
+});
 
 test('assistant Markdown supports headings, emphasis, quotes, nested lists and GFM tables', () => {
   const result = renderChatMarkdown('# Heading\n\n**bold** and *emphasis* and ~~old~~\n\n> Quote\n\n1. First\n   - Nested\n   - Next\n2. Second\n\n| Name | Value |\n| :--- | ---: |\n| A | `b` |');

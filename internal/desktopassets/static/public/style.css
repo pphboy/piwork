@@ -4339,6 +4339,79 @@ a.button.primary { color:var(--on-accent,#fff); }
 .chat-markdown hr { border:0;border-top:1px solid var(--border);margin:16px 0; }
 .chat-markdown .chat-markdown-plain { white-space:pre-wrap;overflow-wrap:anywhere; }
 .chat-markdown-image { color:var(--muted); }
+.chat-form {
+  display: grid;
+  gap: 12px;
+  max-inline-size: 30.625rem;
+  padding-inline-start: 13px;
+  border-inline-start: 2px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.chat-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.chat-form legend, .chat-form label[for] {
+  display: block;
+  max-inline-size: 100%;
+  margin-block-end: 4px;
+  padding: 0;
+  font-weight: 600;
+}
+.chat-form .muted {
+  font-size: 12px;
+  font-weight: normal;
+}
+.chat-form-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-form-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-inline-size: 100%;
+  min-block-size: 32px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.chat-form-option:hover { border-color: var(--control-border); }
+.chat-form-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: var(--accent-soft);
+}
+.chat-form-option:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.chat-form-option input {
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.chat-form-option:has(input:focus-visible) input { outline: none; }
+.chat-form-option span { min-inline-size: 0; }
+.chat-form textarea {
+  display: block;
+  inline-size: 100%;
+  min-block-size: 48px;
+  padding: 6px 9px;
+  border: 1px solid var(--control-border);
+  border-radius: 7px;
+  background: var(--surface);
+  resize: vertical;
+}
+.chat-form > .button.small {
+  justify-self: end;
+  font-size: 13px;
+}
+.chat-form ul { margin-bottom: 0; }
 
 .service-viewport { position:relative;display:flex;flex:1;min-height:0;overflow:hidden; }
 .service-viewport > .real-service-frame { min-height:0;width:100%;height:100%; }

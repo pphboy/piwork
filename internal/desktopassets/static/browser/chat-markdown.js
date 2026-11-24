@@ -1,6 +1,7 @@
 import { Marked, Renderer } from './marked.js';
 import { fileReferenceLink } from './file-reference.js';
 import { t } from './locale.js';
+import { parseChatForm } from './chat-form.js';
 const MAX_MARKDOWN_LENGTH = 64 * 1024;
 const MAX_MARKDOWN_LINES = 4096;
 const MAX_MARKDOWN_MARKERS = 4096;
@@ -26,6 +27,7 @@ function safeLink(href) {
 }
 class ChatRenderer extends Renderer {
     workId;
+    form;
     constructor(workId) {
         super();
         this.workId = workId;
@@ -33,7 +35,10 @@ class ChatRenderer extends Renderer {
     html({ text }) {
         return escapeHTML(text);
     }
-    code({ text, lang }) {
+    code(token) {
+        if (token === this.form?.token)
+            return this.form.html;
+        const { text, lang } = token;
         const language = (lang || '').split(/\s/, 1)[0];
         const label = language
             ? ` aria-label="${escapeHTML(t('d.chat.codeLabelLanguage', { language }))}"`
@@ -83,8 +88,24 @@ export function renderChatMarkdown(text, context) {
         // setOptions preserves the renderer prototype; extension registration via
         // the constructor only copies own methods and would discard our overrides.
         const markdown = new Marked();
-        markdown.setOptions({ gfm: true, breaks: true, async: false, renderer: new ChatRenderer(context?.workId) });
-        return markdown.parse(text, { async: false });
+        const renderer = new ChatRenderer(context?.workId);
+        markdown.setOptions({ gfm: true, breaks: true, async: false, renderer });
+        if (!context?.form || !text.includes('piwork-form'))
+            return markdown.parse(text, { async: false });
+        const tokens = markdown.lexer(text);
+        const declarations = tokens.filter((token) => token.type === 'code' && token.lang === 'piwork-form');
+        const token = declarations[0];
+        if (declarations.length === 1 && token === tokens.findLast(item => item.type !== 'space')) {
+            const opening = /^ {0,3}(`{3,}|~{3,})[ \t]*piwork-form[ \t]*\n/.exec(token.raw)?.[1];
+            const closing = token.raw.trimEnd().split('\n').at(-1)?.trimStart();
+            // Marked also returns a Code token for an unclosed fence.
+            if (opening && closing && closing.length >= opening.length && [...closing].every(character => character === opening[0])) {
+                const fields = parseChatForm(token.text);
+                if (fields)
+                    renderer.form = { token, html: context.form(fields) };
+            }
+        }
+        return markdown.parser(tokens);
     }
     catch {
         // A partial/malformed message must never take down the rest of Chat.
