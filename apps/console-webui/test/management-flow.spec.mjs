@@ -96,6 +96,12 @@ for (const width of [1440, 360]) test(`S08 reviewed Overview composition preserv
   await expect(cards).toHaveCount(4);
   await expect(page.locator('.nav a > svg')).toHaveCount(4);
   expect(await page.locator('.topbar').evaluate(node => node.getBoundingClientRect().height)).toBe(width === 1440 ? 52 : 88);
+  const accountRightGap = await page.locator('#account-trigger').evaluate(account => {
+    const header = account.closest('.topbar-inner');
+    const contentRight = header.getBoundingClientRect().right - parseFloat(getComputedStyle(header).paddingRight);
+    return contentRight - account.getBoundingClientRect().right;
+  });
+  expect(accountRightGap).toBeCloseTo(0, 1);
   expect(await page.locator('.nav a > svg').evaluateAll(nodes => nodes.every(node => node.getAttribute('width') === '18'))).toBe(true);
   expect(await cards.evaluateAll(nodes => nodes.map(node => node.getAttribute('href')))).toEqual(['/admin/users', '/admin/default-work', '/admin/models', '/admin/runtime']);
   await expect(cards.locator('strong')).toHaveText(['Users', 'Setup', 'Models', 'Runtime']);
