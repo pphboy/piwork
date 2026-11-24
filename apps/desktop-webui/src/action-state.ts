@@ -107,10 +107,19 @@ export class ActionState {
     }
     this.changed();
   }
-  review(record: ActionRecord) {
+  review(record: ActionRecord, observed?: ActionMessage) {
     if (!this.current(record) || !record.blocked) return;
     record.blocked = false;
-    record.phase = new LocalizedMessage('d.action.previousUnknown');
+    record.phase = observed ?? new LocalizedMessage('d.action.previousUnknown');
+    if (observed !== undefined) {
+      // The feature owner has verified its original targets with a read. This
+      // confirms current observed state, not an invented write response.
+      record.error = undefined;
+      record.errorMessage = undefined;
+      record.result = observed;
+      record.resultTone = 'success';
+      record.visibleUntil = this.now() + 3000;
+    }
     record.checkedAt = new Date(this.now()).toISOString(); this.changed();
   }
   /** A detached read is not a confirmation; mutation/unknown owners cannot use this. */

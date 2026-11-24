@@ -1967,6 +1967,60 @@ type WorkRuntimeIdentity struct {
 	Generation     int64      `json:"generation"`
 }
 
+type WorkSettingsFacts struct {
+	Skills   WorkSettingsSkillSelection `json:"skills"`
+	Packages PiPackageSelection         `json:"packages"`
+	AgentsMd string                     `json:"agentsMd"`
+}
+
+type WorkSettingsFileText struct {
+	SkillName string `json:"skillName"`
+	Path      string `json:"path"`
+	Text      string `json:"text"`
+}
+
+type WorkSettingsPatch struct {
+	AddSkills    Field[WorkSettingsSkillSelection] `json:"addSkills,omitzero"`
+	RemoveSkills Field[WorkSettingsSkillSelection] `json:"removeSkills,omitzero"`
+	SkillFiles   Field[[]WorkSettingsFileText]     `json:"skillFiles,omitzero"`
+	AgentsMd     Field[string]                     `json:"agentsMd,omitzero"`
+	PackageFlags Field[PiPackageSelection]         `json:"packageFlags,omitzero"`
+}
+
+type WorkSettingsReadRequest struct {
+	SkillName Field[string] `json:"skillName,omitzero"`
+	Files     Field[[]struct {
+		SkillName string `json:"skillName"`
+		Path      string `json:"path"`
+	}] `json:"files,omitzero"`
+}
+
+type WorkSettingsReadResponse struct {
+	WorkId       ResourceId              `json:"workId"`
+	Desired      WorkSettingsFacts       `json:"desired"`
+	Active       json.RawMessage         `json:"active"`
+	PendingApply bool                    `json:"pendingApply"`
+	SkillFiles   []WorkSettingsSkillFile `json:"skillFiles"`
+	Files        []WorkSettingsFileText  `json:"files"`
+}
+
+type WorkSettingsSkillFile struct {
+	SkillName string          `json:"skillName"`
+	Path      string          `json:"path"`
+	Size      int64           `json:"size"`
+	Editable  bool            `json:"editable"`
+	Reason    json.RawMessage `json:"reason"`
+}
+
+type WorkSettingsSkillSelection []string
+
+type WorkSettingsState struct {
+	WorkId       ResourceId        `json:"workId"`
+	Desired      WorkSettingsFacts `json:"desired"`
+	Active       json.RawMessage   `json:"active"`
+	PendingApply bool              `json:"pendingApply"`
+}
+
 type WorkSkillState struct {
 	Desired      SkillSelection    `json:"desired"`
 	Active       SkillSelection    `json:"active"`

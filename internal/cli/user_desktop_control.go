@@ -391,6 +391,22 @@ func planDesktopControl(r *http.Request) (desktopControl, bool, error) {
 				return create(method, path, input, 200)
 			}
 		}
+		if len(parts) == 4 && parts[3] == "editor" && method == http.MethodPatch {
+			input, err := desktopControlInputLimit(r, 2<<20, "addSkills", "removeSkills", "skillFiles", "agentsMd", "packageFlags")
+			if err != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/editor", input, 200)
+		}
+		if len(parts) == 5 && parts[3] == "editor" && parts[4] == "read" && method == http.MethodPost {
+			// Content lookup is read-only even though it uses POST for a bounded
+			// path list; it never creates an Operation or a mutation key.
+			input, err := desktopControlInputLimit(r, 2<<20, "skillName", "files")
+			if err != nil {
+				return desktopControl{}, true, errors.New("INVALID_INPUT")
+			}
+			return create(method, path+"/editor/read", input, 200)
+		}
 		if len(parts) == 4 {
 			switch parts[3] {
 			case "apply":

@@ -88,11 +88,20 @@ export class ActionState {
         }
         this.changed();
     }
-    review(record) {
+    review(record, observed) {
         if (!this.current(record) || !record.blocked)
             return;
         record.blocked = false;
-        record.phase = new LocalizedMessage('d.action.previousUnknown');
+        record.phase = observed ?? new LocalizedMessage('d.action.previousUnknown');
+        if (observed !== undefined) {
+            // The feature owner has verified its original targets with a read. This
+            // confirms current observed state, not an invented write response.
+            record.error = undefined;
+            record.errorMessage = undefined;
+            record.result = observed;
+            record.resultTone = 'success';
+            record.visibleUntil = this.now() + 3000;
+        }
         record.checkedAt = new Date(this.now()).toISOString();
         this.changed();
     }

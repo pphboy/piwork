@@ -4,6 +4,7 @@ export * from "./agent.js";
 export * from "./work-services.js";
 export * from "./harness.js";
 export * from "./work-feedback.js";
+export * from "./work-settings.js";
 export * from "./chat-controls.js";
 export * from "./chat-images.js";
 export * from "./session-history.js";

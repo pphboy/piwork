@@ -50046,6 +50046,1266 @@
     "valid": true
   },
   {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "baseline",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unknown-field",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\",\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "absent-skills",
+    "json": "{\"packages\":[],\"agentsMd\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "null-skills",
+    "json": "{\"skills\":null,\"packages\":[],\"agentsMd\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "empty-skills",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "absent-packages",
+    "json": "{\"skills\":[],\"agentsMd\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "null-packages",
+    "json": "{\"skills\":[],\"packages\":null,\"agentsMd\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "empty-packages",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "absent-agentsMd",
+    "json": "{\"skills\":[],\"packages\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "null-agentsMd",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "empty-agentsMd",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8355",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"中文\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8356",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"😀\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8357",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"é\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8358",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"e\\\\u0301\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8359",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\" \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8360",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\\n\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8361",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"a \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFactsSchema",
+    "case": "unicode-agentsMd-8362",
+    "json": "{\"skills\":[],\"packages\":[],\"agentsMd\":\"\\u0000\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "baseline",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unknown-field",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"a\",\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "absent-skillName",
+    "json": "{\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "null-skillName",
+    "json": "{\"skillName\":null,\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "empty-skillName",
+    "json": "{\"skillName\":\"\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8371",
+    "json": "{\"skillName\":\"中文\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8372",
+    "json": "{\"skillName\":\"😀\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8373",
+    "json": "{\"skillName\":\"é\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8374",
+    "json": "{\"skillName\":\"e\\\\u0301\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8375",
+    "json": "{\"skillName\":\" \",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8376",
+    "json": "{\"skillName\":\"a\\n\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8377",
+    "json": "{\"skillName\":\"a \",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-skillName-8378",
+    "json": "{\"skillName\":\"\\u0000\",\"path\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "absent-path",
+    "json": "{\"skillName\":\"a\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "null-path",
+    "json": "{\"skillName\":\"a\",\"path\":null,\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "empty-path",
+    "json": "{\"skillName\":\"a\",\"path\":\"\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8382",
+    "json": "{\"skillName\":\"a\",\"path\":\"中文\",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8383",
+    "json": "{\"skillName\":\"a\",\"path\":\"😀\",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8384",
+    "json": "{\"skillName\":\"a\",\"path\":\"é\",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8385",
+    "json": "{\"skillName\":\"a\",\"path\":\"e\\\\u0301\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8386",
+    "json": "{\"skillName\":\"a\",\"path\":\" \",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8387",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\\n\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8388",
+    "json": "{\"skillName\":\"a\",\"path\":\"a \",\"text\":\"a\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-path-8389",
+    "json": "{\"skillName\":\"a\",\"path\":\"\\u0000\",\"text\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "absent-text",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "null-text",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "empty-text",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8393",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"中文\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8394",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"😀\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8395",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"é\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8396",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"e\\\\u0301\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8397",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\" \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8398",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"a\\n\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8399",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"a \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsFileTextSchema",
+    "case": "unicode-text-8400",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"text\":\"\\u0000\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "baseline",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unknown-field",
+    "json": "{\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "absent-addSkills",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null-addSkills",
+    "json": "{\"addSkills\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-addSkills",
+    "json": "{\"addSkills\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "absent-removeSkills",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null-removeSkills",
+    "json": "{\"removeSkills\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-removeSkills",
+    "json": "{\"removeSkills\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "absent-skillFiles",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null-skillFiles",
+    "json": "{\"skillFiles\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-skillFiles",
+    "json": "{\"skillFiles\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "absent-agentsMd",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null-agentsMd",
+    "json": "{\"agentsMd\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-agentsMd",
+    "json": "{\"agentsMd\":\"\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8418",
+    "json": "{\"agentsMd\":\"中文\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8419",
+    "json": "{\"agentsMd\":\"😀\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8420",
+    "json": "{\"agentsMd\":\"é\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8421",
+    "json": "{\"agentsMd\":\"e\\\\u0301\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8422",
+    "json": "{\"agentsMd\":\" \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8423",
+    "json": "{\"agentsMd\":\"a\\n\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8424",
+    "json": "{\"agentsMd\":\"a \"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "unicode-agentsMd-8425",
+    "json": "{\"agentsMd\":\"\\u0000\"}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "absent-packageFlags",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "null-packageFlags",
+    "json": "{\"packageFlags\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsPatchSchema",
+    "case": "empty-packageFlags",
+    "json": "{\"packageFlags\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "baseline",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unknown-field",
+    "json": "{\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "absent-skillName",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "null-skillName",
+    "json": "{\"skillName\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "empty-skillName",
+    "json": "{\"skillName\":\"\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8437",
+    "json": "{\"skillName\":\"中文\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8438",
+    "json": "{\"skillName\":\"😀\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8439",
+    "json": "{\"skillName\":\"é\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8440",
+    "json": "{\"skillName\":\"e\\\\u0301\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8441",
+    "json": "{\"skillName\":\" \"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8442",
+    "json": "{\"skillName\":\"a\\n\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8443",
+    "json": "{\"skillName\":\"a \"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "unicode-skillName-8444",
+    "json": "{\"skillName\":\"\\u0000\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "absent-files",
+    "json": "{}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "null-files",
+    "json": "{\"files\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadRequestSchema",
+    "case": "empty-files",
+    "json": "{\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "baseline",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unknown-field",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[],\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-workId",
+    "json": "{\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-workId",
+    "json": "{\"workId\":null,\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-workId",
+    "json": "{\"workId\":\"\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8456",
+    "json": "{\"workId\":\"中文\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8457",
+    "json": "{\"workId\":\"😀\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8458",
+    "json": "{\"workId\":\"é\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8459",
+    "json": "{\"workId\":\"e\\\\u0301\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8460",
+    "json": "{\"workId\":\" \",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8461",
+    "json": "{\"workId\":\"a\\n\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8462",
+    "json": "{\"workId\":\"a \",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "unicode-workId-8463",
+    "json": "{\"workId\":\"\\u0000\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":null,\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":\"\",\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":null,\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":\"\",\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":null,\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":\"\",\"skillFiles\":[],\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "false-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-skillFiles",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-skillFiles",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":null,\"files\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-skillFiles",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "absent-files",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[]}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "null-files",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsReadResponseSchema",
+    "case": "empty-files",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"skillFiles\":[],\"files\":[]}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "baseline",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unknown-field",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null,\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "absent-skillName",
+    "json": "{\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null-skillName",
+    "json": "{\"skillName\":null,\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-skillName",
+    "json": "{\"skillName\":\"\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8488",
+    "json": "{\"skillName\":\"中文\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8489",
+    "json": "{\"skillName\":\"😀\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8490",
+    "json": "{\"skillName\":\"é\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8491",
+    "json": "{\"skillName\":\"e\\\\u0301\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8492",
+    "json": "{\"skillName\":\" \",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8493",
+    "json": "{\"skillName\":\"a\\n\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8494",
+    "json": "{\"skillName\":\"a \",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-skillName-8495",
+    "json": "{\"skillName\":\"\\u0000\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "absent-path",
+    "json": "{\"skillName\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null-path",
+    "json": "{\"skillName\":\"a\",\"path\":null,\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-path",
+    "json": "{\"skillName\":\"a\",\"path\":\"\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8499",
+    "json": "{\"skillName\":\"a\",\"path\":\"中文\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8500",
+    "json": "{\"skillName\":\"a\",\"path\":\"😀\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8501",
+    "json": "{\"skillName\":\"a\",\"path\":\"é\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8502",
+    "json": "{\"skillName\":\"a\",\"path\":\"e\\\\u0301\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8503",
+    "json": "{\"skillName\":\"a\",\"path\":\" \",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8504",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\\n\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8505",
+    "json": "{\"skillName\":\"a\",\"path\":\"a \",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "unicode-path-8506",
+    "json": "{\"skillName\":\"a\",\"path\":\"\\u0000\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "absent-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":null,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":\"\",\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "zero-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "minimum-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "below-minimum-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":-1,\"editable\":false,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "maximum-size",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":8388608,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "absent-editable",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null-editable",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":null,\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-editable",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":\"\",\"reason\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "false-editable",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "absent-reason",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "null-reason",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":null}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillFileSchema",
+    "case": "empty-reason",
+    "json": "{\"skillName\":\"a\",\"path\":\"a\",\"size\":0,\"editable\":false,\"reason\":\"\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillSelectionSchema",
+    "case": "baseline",
+    "json": "[]",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsSkillSelectionSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillSelectionSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsSkillSelectionSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "baseline",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "null",
+    "json": "null",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-object",
+    "json": "{}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-array",
+    "json": "[]",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unknown-field",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false,\"unexpected\":\"private-test-value\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "absent-workId",
+    "json": "{\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "null-workId",
+    "json": "{\"workId\":null,\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-workId",
+    "json": "{\"workId\":\"\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8533",
+    "json": "{\"workId\":\"中文\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8534",
+    "json": "{\"workId\":\"😀\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8535",
+    "json": "{\"workId\":\"é\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8536",
+    "json": "{\"workId\":\"e\\\\u0301\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8537",
+    "json": "{\"workId\":\" \",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8538",
+    "json": "{\"workId\":\"a\\n\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8539",
+    "json": "{\"workId\":\"a \",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "unicode-workId-8540",
+    "json": "{\"workId\":\"\\u0000\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "absent-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "null-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":null,\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-desired",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":\"\",\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "absent-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "null-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":null,\"pendingApply\":false}",
+    "valid": true
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-active",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":\"\",\"pendingApply\":false}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "absent-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"}}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "null-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":null}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "empty-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":\"\"}",
+    "valid": false
+  },
+  {
+    "schema": "WorkSettingsStateSchema",
+    "case": "false-pendingApply",
+    "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"desired\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"active\":{\"skills\":[],\"packages\":[],\"agentsMd\":\"a\"},\"pendingApply\":false}",
+    "valid": true
+  },
+  {
     "schema": "WorkSkillStateSchema",
     "case": "baseline",
     "json": "{\"desired\":[],\"active\":[],\"pendingApply\":false,\"runtime\":{\"state\":\"ready\",\"checkedAt\":\"2026-09-30T00:00:00Z\",\"skills\":[]}}",
@@ -50203,49 +51463,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8367",
+    "case": "unicode-code-8577",
     "json": "{\"code\":\"中文\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8368",
+    "case": "unicode-code-8578",
     "json": "{\"code\":\"😀\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8369",
+    "case": "unicode-code-8579",
     "json": "{\"code\":\"é\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8370",
+    "case": "unicode-code-8580",
     "json": "{\"code\":\"e\\\\u0301\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8371",
+    "case": "unicode-code-8581",
     "json": "{\"code\":\" \",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8372",
+    "case": "unicode-code-8582",
     "json": "{\"code\":\"a\\n\",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8373",
+    "case": "unicode-code-8583",
     "json": "{\"code\":\"a \",\"message\":\"a\"}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-code-8374",
+    "case": "unicode-code-8584",
     "json": "{\"code\":\"\\u0000\",\"message\":\"a\"}",
     "valid": false
   },
@@ -50269,49 +51529,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8378",
+    "case": "unicode-message-8588",
     "json": "{\"code\":\"OK\",\"message\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8379",
+    "case": "unicode-message-8589",
     "json": "{\"code\":\"OK\",\"message\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8380",
+    "case": "unicode-message-8590",
     "json": "{\"code\":\"OK\",\"message\":\"é\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8381",
+    "case": "unicode-message-8591",
     "json": "{\"code\":\"OK\",\"message\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8382",
+    "case": "unicode-message-8592",
     "json": "{\"code\":\"OK\",\"message\":\" \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8383",
+    "case": "unicode-message-8593",
     "json": "{\"code\":\"OK\",\"message\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8384",
+    "case": "unicode-message-8594",
     "json": "{\"code\":\"OK\",\"message\":\"a \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-message-8385",
+    "case": "unicode-message-8595",
     "json": "{\"code\":\"OK\",\"message\":\"\\u0000\"}",
     "valid": true
   },
@@ -50335,49 +51595,49 @@
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8389",
+    "case": "unicode-field-8599",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"中文\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8390",
+    "case": "unicode-field-8600",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"😀\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8391",
+    "case": "unicode-field-8601",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"é\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8392",
+    "case": "unicode-field-8602",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"e\\\\u0301\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8393",
+    "case": "unicode-field-8603",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\" \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8394",
+    "case": "unicode-field-8604",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"a\\n\"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8395",
+    "case": "unicode-field-8605",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"a \"}",
     "valid": true
   },
   {
     "schema": "WorkSnapshotErrorSchema",
-    "case": "unicode-field-8396",
+    "case": "unicode-field-8606",
     "json": "{\"code\":\"OK\",\"message\":\"a\",\"field\":\"\\u0000\"}",
     "valid": true
   },
@@ -50431,49 +51691,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8405",
+    "case": "unicode-workId-8615",
     "json": "{\"workId\":\"中文\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8406",
+    "case": "unicode-workId-8616",
     "json": "{\"workId\":\"😀\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8407",
+    "case": "unicode-workId-8617",
     "json": "{\"workId\":\"é\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8408",
+    "case": "unicode-workId-8618",
     "json": "{\"workId\":\"e\\\\u0301\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8409",
+    "case": "unicode-workId-8619",
     "json": "{\"workId\":\" \",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8410",
+    "case": "unicode-workId-8620",
     "json": "{\"workId\":\"a\\n\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8411",
+    "case": "unicode-workId-8621",
     "json": "{\"workId\":\"a \",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-workId-8412",
+    "case": "unicode-workId-8622",
     "json": "{\"workId\":\"\\u0000\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -50497,49 +51757,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8416",
+    "case": "unicode-snapshotId-8626",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"中文\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8417",
+    "case": "unicode-snapshotId-8627",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"😀\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8418",
+    "case": "unicode-snapshotId-8628",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"é\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8419",
+    "case": "unicode-snapshotId-8629",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"e\\\\u0301\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8420",
+    "case": "unicode-snapshotId-8630",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\" \",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8421",
+    "case": "unicode-snapshotId-8631",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"a\\n\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8422",
+    "case": "unicode-snapshotId-8632",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"a \",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-snapshotId-8423",
+    "case": "unicode-snapshotId-8633",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"\\u0000\",\"operationId\":\"aaaaaaaaaaaaaaaa\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -50563,49 +51823,49 @@
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8427",
+    "case": "unicode-operationId-8637",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"中文\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8428",
+    "case": "unicode-operationId-8638",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"😀\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8429",
+    "case": "unicode-operationId-8639",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"é\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8430",
+    "case": "unicode-operationId-8640",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"e\\\\u0301\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8431",
+    "case": "unicode-operationId-8641",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\" \",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8432",
+    "case": "unicode-operationId-8642",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"a\\n\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8433",
+    "case": "unicode-operationId-8643",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"a \",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
   {
     "schema": "WorkSnapshotSchema",
-    "case": "unicode-operationId-8434",
+    "case": "unicode-operationId-8644",
     "json": "{\"workId\":\"aaaaaaaaaaaaaaaa\",\"snapshotId\":\"aaaaaaaaaaaaaaaa\",\"operationId\":\"\\u0000\",\"state\":\"pending\",\"digest\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"size\":0,\"expiresAt\":\"2026-09-30T00:00:00Z\",\"error\":{\"code\":\"OK\",\"message\":\"a\"}}",
     "valid": false
   },
@@ -50767,49 +52027,49 @@
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8461",
+    "case": "unicode-sourceWorkId-8671",
     "json": "{\"version\":1,\"sourceWorkId\":\"中文\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8462",
+    "case": "unicode-sourceWorkId-8672",
     "json": "{\"version\":1,\"sourceWorkId\":\"😀\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8463",
+    "case": "unicode-sourceWorkId-8673",
     "json": "{\"version\":1,\"sourceWorkId\":\"é\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8464",
+    "case": "unicode-sourceWorkId-8674",
     "json": "{\"version\":1,\"sourceWorkId\":\"e\\\\u0301\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8465",
+    "case": "unicode-sourceWorkId-8675",
     "json": "{\"version\":1,\"sourceWorkId\":\" \",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8466",
+    "case": "unicode-sourceWorkId-8676",
     "json": "{\"version\":1,\"sourceWorkId\":\"a\\n\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8467",
+    "case": "unicode-sourceWorkId-8677",
     "json": "{\"version\":1,\"sourceWorkId\":\"a \",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },
   {
     "schema": "WorkSourceIdentityMapSchema",
-    "case": "unicode-sourceWorkId-8468",
+    "case": "unicode-sourceWorkId-8678",
     "json": "{\"version\":1,\"sourceWorkId\":\"\\u0000\",\"contexts\":[],\"services\":[],\"operations\":[]}",
     "valid": false
   },

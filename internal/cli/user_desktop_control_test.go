@@ -178,6 +178,8 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"POST", "/_desktop/api/works/work-1/services/svc-1/stop", "", "/api/v1/works/work-1/services/svc-1/disable"},
 		{"GET", "/_desktop/api/works/work-1/packages/%40example%2Ftools", "", "/api/v1/works/work-1/packages/%40example%2Ftools"},
 		{"PUT", "/_desktop/api/works/work-1/configuration/agents", `{"agentsMd":"# Agent"}`, "/api/v1/works/work-1/configuration/agents"},
+		{"POST", "/_desktop/api/works/work-1/configuration/editor/read", `{"skillName":"code-review","files":[{"skillName":"code-review","path":"SKILL.md"}]}`, "/api/v1/works/work-1/configuration/editor/read"},
+		{"PATCH", "/_desktop/api/works/work-1/configuration/editor", `{"skillFiles":[{"skillName":"code-review","path":"SKILL.md","text":"# Review"}],"agentsMd":"# Agent"}`, "/api/v1/works/work-1/configuration/editor"},
 		{"GET", "/_desktop/api/works/work-1/models", "", "/api/v1/works/work-1/models"},
 		{"GET", "/_desktop/api/works/work-1/chat-capabilities", "", "/api/v1/works/work-1/chat-capabilities"},
 		{"GET", "/_desktop/api/works/work-1/session-management-capabilities", "", "/api/v1/works/work-1/session-management-capabilities"},
@@ -233,7 +235,7 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 				t.Fatalf("original Session operation identity changed: %+v", last.body)
 			}
 		}
-		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") && !strings.HasSuffix(item.path, "/sessions/session-1/delete") && !strings.HasSuffix(item.path, "/sessions/session-1/auto-name") {
+		if item.method == "POST" && item.path != "/_desktop/api/works/work-1/runs" && !strings.Contains(item.path, "/agent-requests/") && !strings.HasSuffix(item.path, "/configuration/editor/read") && !strings.HasSuffix(item.path, "/sessions/session-1/delete") && !strings.HasSuffix(item.path, "/sessions/session-1/auto-name") {
 			if key, _ := last.body["idempotencyKey"].(string); !strings.HasPrefix(key, "desktop-") {
 				t.Fatalf("mutation has no idempotency key: %+v", last)
 			}
@@ -291,6 +293,11 @@ func TestNativeDesktopControlRoutesForwardOnlyAllowedRequests(t *testing.T) {
 		{"GET", "/_desktop/api/works/work-1/agent-requests?unknown=true", "", ""},
 		{"POST", "/_desktop/api/works/work-1/agent-requests/request-1/retry", `{"idempotencyKey":"invented"}`, "csrf"},
 		{"POST", "/_desktop/api/works", `{"name":"bad","idempotencyKey":"attacker"}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/configuration/editor", `{"configuration":{}}`, "csrf"},
+		{"PATCH", "/_desktop/api/works/work-1/configuration/editor", `{"addSkills":["code-review"],"secret":true}`, "csrf"},
+		{"POST", "/_desktop/api/works/work-1/configuration/editor/read", `{"skillName":"code-review","secret":true}`, "csrf"},
+		{"GET", "/_desktop/api/works/work-1/configuration/editor", "", ""},
+		{"POST", "/_desktop/api/works/work-1/configuration/editor", `{}`, "csrf"},
 		{"POST", "/_desktop/api/works/work-1", "", "csrf"},
 		{"GET", "/_desktop/api/works/work-1/services/svc-1/logs?tailLines=201", "", ""},
 		{"GET", "/_desktop/api/works/%2e%2e", "", ""},

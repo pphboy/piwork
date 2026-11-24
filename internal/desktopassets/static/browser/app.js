@@ -12,7 +12,7 @@ import { NoticeStore, createNoticeHost } from './notices.js';
 import { actionNotice, confirmedReadRecovery, noticeMessage } from './feedback-notices.js';
 import { fileReadFeedback, FileReadNoticeOwners, fileReadContextCurrent } from './file-read-feedback.js';
 import { WorkReadFeedback, workReadMatches } from './work-read-feedback.js';
-import { SettingsReadFeedback, SettingsSaveReadback, configurationReadAllowsApply, settingsReadMatches } from './settings-read-feedback.js';
+import { SettingsReadFeedback, SettingsSaveReadback, configurationReadAllowsApply, settingsReadMatches, settingsStatus, settingsApplyFailureResolved } from './settings-read-feedback.js';
 import { ServiceReadFeedback, serviceReadMatches, serviceLogReadIdentity } from './service-read-feedback.js';
 import { acceptedChatSubmissionOwns } from './chat-submission-feedback.js';
 import { AboutReadFeedback } from './about-read-feedback.js';
@@ -39,7 +39,7 @@ import { operationKind } from './operation-recovery.js';
 import { operationCauseStatus } from './operation-diagnostics.js';
 import { activityGroups, messageReadingSource, readingFragmentsChanged } from './chat-projection.js';
 import { ImageDrafts } from './images.js';
-import { editAdvanced, synchronizeConfiguration } from './configuration.js';
+import { buildSettingsPatch, confirmSettingsPatch, editSettingsFile, rebaseSettingsDraft, settingsDraftDirty, settingsFileDirty, settingsPatchEmpty, settingsSkillDirty, settingsPatchMatchesRead, settingsPatchTargetsWithdrawn, settingsListedFiles, settingsLoadedText, } from './settings-draft.js';
 import { ActionState, renderActionStates, positionSlowStatus, pruneSlowStatuses } from './action-state.js';
 import { adapter, DesktopError, describeError, fileVersion } from "./adapter.js";
 import { filesDeepLink, filesRouteTarget, isFilesRoute } from "./file-reference.js";
@@ -167,7 +167,15 @@ let view = {
     fileError: "",
     selected: [],
     settingsTab: "Skills",
+    settingsSkill: "",
+    settingsFile: "",
+    skillSearch: "",
+    addSkillSelected: [],
+    addSkillDirectory: undefined,
+    addSkillError: "",
+    addSkillSubmitting: false,
     config: null,
+    configWorkId: "",
     configDirty: false,
     agentOpen: false,
     note: "note-1",
@@ -392,7 +400,7 @@ function orphanTaskList() {
         return '';
     return `<section class="recovery-tasks" aria-label="${esc(t('recovery.pendingTasks'))}">${rows}</section>`;
 }
-function settingsTaskRows(operations) {
+function settingsTaskRows(operations, retired = new Set()) {
     if (!operations.length)
         return '';
     const row = (op) => {
@@ -401,8 +409,8 @@ function settingsTaskRows(operations) {
         const reason = op.observationError || op.error || (op.state === 'failed' ? t('recovery.noCause') : '');
         return `<div class="recovery-task settings-task" data-operation-id="${esc(op.id)}"><div class="recovery-task-copy"><strong>${operationBusy(op) ? pendingStatus(label) : esc(label)}</strong>${reason ? `<small>${esc(reason)}</small>` : ''}${op.localRecordSaved === false ? `<small>${t('recovery.recordNotSaved')}</small>` : ''}</div><div class="actions">${btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(op.id)}"`)}${btn(t('common.details'), 'operation', 'small', `data-id="${esc(op.id)}"`)}</div></div>`;
     };
-    const visible = operations.filter(op => op.localRecordSaved === false || !['succeeded', 'superseded'].includes(op.state));
-    const completed = operations.filter(op => op.localRecordSaved !== false && ['succeeded', 'superseded'].includes(op.state));
+    const visible = operations.filter(op => op.localRecordSaved === false || !retired.has(op.id) && !['succeeded', 'superseded'].includes(op.state));
+    const completed = operations.filter(op => op.localRecordSaved !== false && (retired.has(op.id) || ['succeeded', 'superseded'].includes(op.state)));
     return `<section class="recovery-tasks">${visible.map(row).join('')}${completed.length ? `<details class="related-task-list"><summary>${t('recovery.relatedTasks')}</summary>${completed.map(row).join('')}</details>` : ''}</section>`;
 }
 function operationTechnicalDetails(op, extra = '') {
@@ -633,7 +641,7 @@ const actionLabels = {
     'open-app': 'actions.openingApplication', 'open-window': 'actions.openingApplication', 'retry-service-entry': 'actions.preparingApplication', 'check-preview': 'actions.checkingPreview',
     'refresh-files': 'actions.readingWorkspace', 'file-path': 'actions.readingDirectory', 'open-file': 'actions.readingFile', 'open-source': 'actions.readingFile', 'retry-file-preview': 'actions.readingFile', 'save-file': 'actions.savingFile', 'dirty-save': 'actions.savingFile',
     'confirm-upload-overwrite': 'actions.uploadingFiles', 'confirm-folder': 'actions.creatingFolder', 'retry-selected-files': 'actions.retryingSelectedPaths', 'confirm-transfer': 'actions.transferringFiles', 'confirm-file-delete': 'actions.deletingFiles',
-    'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'refresh-packages': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'confirm-core-skills': 'actions.copyingSkill', 'check-catalog': 'actions.readingCatalog',
+    'open-add-skill': 'settings.addSkill', 'confirm-add-skill': 'settings.addingSkill', 'settings-skill': 'settings.loadingFiles', 'settings-file': 'settings.loadingFiles', 'save-config': 'actions.savingSettings', 'dirty-config-save': 'actions.savingSettings', 'refresh-config': 'actions.readingSettings', 'refresh-packages': 'actions.readingSettings', 'apply-config': 'actions.submittingApply', 'check-catalog': 'actions.readingCatalog',
     'confirm-install': 'actions.submittingPackage', 'confirm-remove-package': 'actions.removingPackage', 'confirm-import': 'actions.submittingImport', 'prepare-export': 'actions.preparingExport',
     'export': 'actions.preparingExport', 'view-snapshot': 'actions.checkingSnapshot', 'save-export-file': 'actions.checkingOriginalDownload', 'check-export-flow': 'actions.checkingExport', 'resume-export-flow': 'actions.resumingExport',
     'download-work': 'actions.preparingDownload', 'check-download': 'actions.checkingTransfer', 'check-operation': 'actions.checkingOperation', 'check-task-operation': 'actions.checkingOperation', 'lookup-snapshot': 'actions.readingSnapshot',
@@ -660,7 +668,7 @@ function actionIntent(el, action = el.dataset.action || '') {
         kind = 'lifecycle';
     else if (['save-file', 'dirty-save', 'confirm-upload-overwrite', 'confirm-folder', 'confirm-transfer', 'confirm-file-delete', 'retry-selected-files', 'upload-input'].includes(action))
         kind = 'files';
-    else if (['save-config', 'dirty-config-save', 'apply-config', 'confirm-core-skills', 'confirm-install', 'confirm-remove-package'].includes(action))
+    else if (['save-config', 'dirty-config-save', 'confirm-add-skill', 'apply-config', 'confirm-install', 'confirm-remove-package'].includes(action))
         kind = 'configuration';
     else if (action === 'service-action' || action === 'confirm-service-control') {
         if (action === 'service-action' && ['stop', 'remove'].includes(el.dataset.control || ''))
@@ -692,7 +700,7 @@ function actionIntent(el, action = el.dataset.action || '') {
     const servicePort = action === 'select-service' ? w?.services.find(service => service.id === serviceId)?.ports[0] : Number(el.dataset.port) || view.port;
     const fallbackResource = ['save-session-name', 'confirm-delete-session', 'auto-name-session', 'check-session-operation'].includes(action) ? `session:${JSON.stringify(el.dataset.session || view.data.sessionId || '')}` : action === 'refresh-temporary-cleanups' ? `cleanup:${el.dataset.kind}:${el.dataset.ref}` : action === 'confirm-import' ? adapter.inspectionTransfer : ['retry-conversation', 'load-earlier-history', 'reload-history', 'check-active-run'].includes(action) ? el.dataset.session || view.session : action === 'refresh-files' ? view.file || view.path : action === 'create-work' ? view.createName.trim() : kind === 'lifecycle' || action === 'settings' ? w?.id : ['cancel-pi-request', 'retry-pi-request'].includes(action) ? `request:${el.dataset.id || view.data.requestId}` : serviceAction ? `service:${serviceId}${kind === 'service' ? '' : `:${servicePort}`}` : el.dataset.path || el.dataset.id || view.data.serviceId || view.data.paths || (action === 'confirm-folder' ? joinPath(view.path, view.formName) : view.file || view.path);
     const logRead = serviceLogReadIdentity(action, w?.id, serviceId);
-    const resource = logRead?.resource ?? fileActionResource(action, view.file, fallbackResource);
+    const resource = ['save-config', 'dirty-config-save', 'apply-config'].includes(action) ? 'configuration' : action === 'confirm-add-skill' ? `skill:${el.dataset.id || view.addSkillSelected.join(',') || view.addSkillDirectory?.name || ''}` : ['settings-skill', 'settings-file'].includes(action) ? `skill:${el.dataset.skill || view.settingsSkill}:${el.dataset.path || ''}` : logRead?.resource ?? fileActionResource(action, view.file, fallbackResource);
     const key = logRead?.key ?? `${kind}:${w?.id || 'local'}:${resource}:${action}`;
     const chatAction = ['new-session', 'send-message', 'retry-chat-submission', 'cancel-run', 'resume-run', 'check-session-model', 'save-model', 'retry-conversation', 'load-earlier-history', 'reload-history'].includes(action);
     const anchor = `${el.closest('#modal') ? '#modal ' : ''}${focusKey(el)}`;
@@ -705,6 +713,9 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     if (el.dataset.menuEpoch && Number(el.dataset.menuEpoch) !== adapter.identityEpoch)
         return;
     if (el.dataset.menuScope === 'work-header' && el.dataset.id !== current()?.id)
+        return;
+    const skillMenu = el.closest('.skill-menu');
+    if (skillMenu && (Number(skillMenu.dataset.menuEpoch) !== adapter.identityEpoch || skillMenu.dataset.menuWork !== current()?.id || skillMenu.dataset.menuSkill !== el.dataset.id))
         return;
     const serviceMenu = el.closest('[data-menu-scope="service"]');
     if (serviceMenu && (Number(serviceMenu.dataset.menuEpoch) !== adapter.identityEpoch ||
@@ -743,8 +754,6 @@ async function dispatchAction(el, perform, intent = actionIntent(el)) {
     try {
         await execute(record);
         actions.finish(record);
-        if (['refresh-config'].includes(action))
-            actions.reviewed(record.work, ['configuration']);
     }
     catch (error) {
         if (!(error instanceof ViewChanged)) {
@@ -1210,6 +1219,12 @@ function syncNotices() {
     for (const record of actions.records.values()) {
         if (!actions.current(record))
             continue;
+        if (record.kind === 'configuration' && settingsFailureWithdrawn(record)) {
+            const previous = actionNotice(record, noticeIdentity(), () => actions.message(record));
+            if (previous)
+                notices.resolve(previous);
+            continue;
+        }
         // The open creation form owns its field/local errors. A closed form keeps
         // the original record eligible for the normal recovery notice.
         if (createFormOwnsFeedback(record))
@@ -1615,7 +1630,7 @@ async function readRequestPage(workId, serviceName, record, more = false) {
     }
     discardStale();
 }
-function openModal(name, data = {}) {
+function openModal(name, data = {}, launcher) {
     if (name === 'import') {
         if (adapter.prepareNewImport()) {
             view.importName = '';
@@ -1629,7 +1644,7 @@ function openModal(name, data = {}) {
     if (name === 'operation' && data.id)
         adapter.resumeImportOperation(data.id);
     fileActionsContext = '';
-    const sourceFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+    const sourceFocus = launcher ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null);
     const existing = root.querySelector('#modal');
     if (!existing?.contains(sourceFocus))
         overlayAnchor = focusKey(sourceFocus) || focusReturn;
@@ -1679,7 +1694,7 @@ function openModal(name, data = {}) {
         panel?.querySelector('[aria-selected=true],button:not([disabled]),input:not([disabled]),summary')?.focus({ preventScroll: true });
 }
 function closeModal(restoreFocus = true) {
-    if (!view.modal)
+    if (!view.modal || (view.modal === 'add-skill' && view.addSkillSubmitting))
         return;
     if (languagePicker.isSubmenu)
         languagePicker.close();
@@ -1715,7 +1730,8 @@ function closeModal(restoreFocus = true) {
     const responseSettings = view.modal === 'chat-response-settings';
     const responseContext = responseSettings && chatSettingsContextCurrent();
     const source = view.data.source, oldFocus = lastFocus;
-    const selector = requestEntry || (responseSettings && responseContext ? source === 'command' ? '#composer' : view.data.entry || '#response-settings-trigger' : focusReturn);
+    const settingsEntry = ['skill-detail', 'add-skill'].includes(view.modal) ? overlayAnchor : '';
+    const selector = requestEntry || settingsEntry || (responseSettings && responseContext ? source === 'command' ? '#composer' : view.data.entry || '#response-settings-trigger' : focusReturn);
     const caret = [Number(view.data.caretStart), Number(view.data.caretEnd)];
     if (responseSettings && pendingWebCommand && ['model', 'thinking'].includes(pendingWebCommand.kind) && !pendingWebCommand.pair)
         pendingWebCommand = undefined;
@@ -2405,7 +2421,11 @@ async function exitWorkspaceFocus() {
     return true;
 }
 function isRequestInspector() { return ['pi-requests', 'pi-request-detail'].includes(view.modal); }
-function nonmodalDialog() { return overlayRole(view.modal) !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900; }
+function nonmodalDialog() {
+    if (view.modal === 'package-detail')
+        return innerWidth >= 900;
+    return overlayRole(view.modal) !== 'modal' || view.modal === 'export' || (isRequestInspector() && innerWidth >= 900);
+}
 function backToRequests() {
     if (!requestNavigationCurrent())
         return;
@@ -2795,7 +2815,7 @@ function settingsPage(w) {
     if (configurationError && !w.resourceChecked?.configuration && !view.configDirty)
         return `<main class="settings-page">${btn(`${icon("arrow", 16)} ${t('settings.backToWork')}`, "back-work", "quiet settings-back")}<h1>${t('settings.title')}</h1>${settingsTaskRows(settingsOperations)}${feedback(esc(configurationError), "warning", btn(t('settings.refreshConfiguration'), "refresh-config", "primary"))}</main>`;
     if (!view.config)
-        view.config = structuredClone(w.config);
+        view.config = settingsConfiguration(w.config);
     const c = view.config, pending = w.config.pendingApply === true;
     const applyRecord = [...actions.records.values()].filter(item => item.work === w.id && item.action === 'apply-config').sort((a, b) => b.token - a.token)[0];
     const applyOperations = settingsOperations.filter(item => operationKind(item.checkedKind || item.kind) === 'apply:configuration');
@@ -2803,14 +2823,28 @@ function settingsPage(w) {
     const applyOperation = applyRecord?.businessId ? applyOperations.find(item => item.id === applyRecord.businessId) : unfinishedApply.length === 1 ? unfinishedApply[0] : undefined;
     const applying = !!applyRecord?.pending || unfinishedApply.some(item => ['accepted', 'pending', 'preparing', 'running'].includes(item.state));
     const applyBusy = !!applyRecord?.pending || unfinishedApply.some(operationBusy);
-    const applyError = applyRecord?.error || (applyOperation?.state === 'failed' ? applyOperation.error || t('settings.applyFailed') : '');
+    const retiredApply = new Set(applyOperations.filter(item => settingsApplyRecovered(w, item.state === 'failed', false, Date.parse(item.updated || item.created || ''))).map(item => item.id));
+    const recordFailureResolved = applyRecord && settingsFailureWithdrawn(applyRecord);
+    const applyError = (!recordFailureResolved && applyRecord?.error) || (applyOperation?.state === 'failed' && !retiredApply.has(applyOperation.id) ? applyOperation.error || t('settings.applyFailed') : '');
     const unknown = !!applyRecord?.blocked || unfinishedApply.some(item => item.state === 'unknown');
-    const attention = view.configDirty || pending || applying || applyError || unknown || configurationError;
-    const stateLabel = view.configDirty ? t('settings.unsavedChanges') : applyRecord?.pending ? t('settings.submittingApply') : applying && !applyBusy ? t('settings.applyPaused') : applying ? t('settings.applying') : unknown ? t('settings.applyNotConfirmed') : applyError ? t('settings.applyFailed') : configurationError ? t('common.notConfirmed') : pending ? t('settings.notApplied') : t('settings.configInUse');
-    const stateBody = (view.configDirty ? t('settings.saveDraftBeforeApply') : applying ? t('settings.usingPrevious') : unknown ? t('settings.checkOriginalApply') : applyError ? esc(applyError) : configurationError ? t('settings.configPreserved') : pending ? t('settings.savedNotActive') : '') + (applyOperation?.localRecordSaved === false ? ` ${t('recovery.recordNotSaved')}` : '');
-    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t('settings.refreshStatus'))}" title="${esc(t('settings.refreshStatus'))}"`)}${applyOperation && (applying || unknown || applyError) ? btn(t('quick.checkStatus'), 'check-task-operation', 'small', `data-id="${esc(applyOperation.id)}"`) + btn(t('common.details'), 'operation', 'small', `data-id="${esc(applyOperation.id)}"`) : ''}${!view.configDirty && pending && !applying && !unknown ? btn(t('settings.applyChanges'), 'apply-config', 'primary', adapter.project(w).usable && configurationReadAllowsApply(configurationError) ? '' : `disabled title="${esc(t(configurationError ? 'common.notConfirmed' : 'settings.applyDisabledTitle'))}"`) : ''}`;
-    const otherApplyTasks = settingsTaskRows(applyOperations.filter(item => item.id !== applyOperation?.id || view.configDirty));
-    return `<main class="settings-page">${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, "warning") : ""}<div class="settings-navigation">${btn(`${icon('arrow', 16)} ${t('settings.backToWork')}`, 'back-work', 'quiet settings-back')}</div><div class="settings-heading"><h1>${t('settings.title')}</h1>${!attention ? `<div class="configuration-compact">${badge(t('settings.configInUse'))}${statusActions}</div>` : ''}</div>${attention ? `<div class="configuration-state"><div><strong>${applyBusy ? pendingStatus(stateLabel, "apply-config") : esc(stateLabel)}</strong><span>${stateBody}</span></div><div class="actions">${statusActions}</div></div>` : ''}${otherApplyTasks}<div class="settings-layout"><nav class="settings-tabs">${["Skills", "Pi Packages", "AGENTS.md", "Advanced"].map((tab) => btn(tab === "Skills" ? t('settings.tabSkills') : tab === "Pi Packages" ? t('settings.tabPackages') : tab === "AGENTS.md" ? t('settings.tabAgents') : t('settings.tabAdvanced'), "settings-section", view.settingsTab === tab ? "tab active" : "tab", `data-tab="${tab}"`)).join("")}</nav><div class="settings-content">${view.settingsTab === "Skills" ? skillsSettings(w, c) : view.settingsTab === "Pi Packages" ? packagesSettings(w, c) : view.settingsTab === "AGENTS.md" ? `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importFile')}`, "import-agents", "small")}</div><div class="config-labels"><span>${w.config.pendingApply ? t('settings.previousActive') : t('settings.configInUse')}</span><span>${t('settings.savedConfiguration')}</span></div><label class="field">${t('settings.desiredAgents')}<textarea id="agents-editor" class="code-editor" rows="13">${textareaContent(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>` : `<div class="section-heading"><div><h2>${t('settings.advancedTitle')}</h2><p>${t('settings.advancedBody')}</p></div>${btn(`${icon("upload", 15)} ${t('settings.importJson')}`, "import-json", "small")}</div><label class="field">${t('settings.configurationJson')}<textarea id="advanced-editor" aria-label="${esc(t('settings.configurationJson'))}" class="code-editor" rows="17" spellcheck="false">${textareaContent(c.advanced)}</textarea></label>${c.validationError ? feedback(esc(c.validationError), "warning") : ""}<p class="muted">${t('settings.advancedHelp')}</p>`}</div></div>${view.configDirty ? `<div class="settings-savebar"><span>${t('settings.unsavedBar')}</span><div class="actions">${btn(t('settings.discardChanges'), "discard-config")}${btn(t('settings.saveChanges'), "save-config", "primary")}</div></div>` : ""}</main>`;
+    const writes = settingsWriteRecords(w.id);
+    const saving = writes.some(item => item.pending);
+    const saveUnknown = writes.some(item => item.blocked);
+    const status = settingsStatus({ dirty: view.configDirty, confirmed: !!w.resourceChecked?.configuration,
+        configurationError: !!configurationError, pendingApply: w.config.pendingApply, activeNull: w.config.active === null,
+        saving, saveUnknown, applying, applyWaiting: applying && !applyBusy, applyUnknown: unknown,
+        applyFailed: !!applyError, runtimeFailed: w.status === 'Failed' });
+    const saveLabel = t(status.save === 'unknown' ? 'settings.saveNotConfirmed' : status.save === 'saving' ? 'actions.savingSettings' : status.save === 'unsaved' ? 'settings.unsavedChanges' : 'settings.fileSaved');
+    const applicationLabel = t(status.application === 'unknown' ? 'settings.applyNotConfirmed' : status.application === 'waiting' ? 'settings.applyPaused' : status.application === 'applying' ? 'settings.applying' : status.application === 'unconfirmed' ? 'common.notConfirmed' : status.application === 'never-applied' ? 'settings.neverApplied' : status.application === 'pending' ? 'settings.savedNotApplied' : 'settings.configInUse');
+    const projection = adapter.project(w);
+    const failedSettled = w.status === 'Failed' && !w.statusError && !w.accessRevoked && projection.operationIds.every(id => ['succeeded', 'failed', 'superseded'].includes(adapter.getOperation(id)?.state ?? 'unknown'));
+    const canApply = status.canApply && (projection.usable || projection.exportable || failedSettled);
+    const statusActions = `${btn(icon('refresh', 15), 'refresh-config', 'icon-button quiet', `aria-label="${esc(t(saveUnknown ? 'settings.checkSavedState' : 'settings.refreshStatus'))}" title="${esc(t(saveUnknown ? 'settings.checkSavedState' : 'settings.refreshStatus'))}"`)}${btn(t('settings.discardChanges'), 'discard-config', 'small quiet', view.configDirty && !saving && !saveUnknown ? '' : 'disabled')}${btn(t('settings.saveChanges'), 'save-config', 'small primary', view.configDirty && !saving && !saveUnknown ? '' : 'disabled')}${btn(t('settings.applyChanges'), 'apply-config', 'small', canApply ? '' : `disabled title="${esc(t(view.configDirty ? 'settings.saveDraftBeforeApply' : saveUnknown ? 'settings.checkOriginalSave' : 'settings.applyDisabledTitle'))}"`)}`;
+    const originalApply = applyOperation && (applying || unknown || applyError) ? `<div class="settings-operation-link">${btn(t('quick.checkStatus'), 'check-task-operation', 'quiet small', `data-id="${esc(applyOperation.id)}"`)}${btn(t('common.details'), 'operation', 'quiet small', `data-id="${esc(applyOperation.id)}"`)}</div>` : '';
+    const otherApplyTasks = settingsTaskRows(applyOperations.filter(item => item.id !== applyOperation?.id), retiredApply);
+    const agentsDirty = c.agents !== w.config.agents;
+    const agentsEditor = `<div class="section-heading"><div><h2>${t('settings.agentsTitle')}</h2><p>${t('settings.agentsBody')}</p></div>${btn(`${icon('upload', 15)} ${t('settings.importFile')}`, 'import-agents', 'small')}</div><div class="settings-file-toolbar"><span class="mono">${t('settings.tabAgents')}</span><span class="settings-file-state" data-file-state="${agentsDirty ? 'unsaved' : 'saved'}">${t(agentsDirty ? 'settings.unsavedChanges' : 'settings.fileSaved')}</span></div><label class="field"><span class="sr-only">${t('settings.tabAgents')}</span><textarea id="agents-editor" class="code-editor" rows="16">${textareaContent(c.agents)}</textarea></label><details class="details-box"><summary>${t('settings.currentActiveContent')}</summary><pre>${esc(w.config.active?.agentsMd ?? t('settings.noActiveConfig'))}</pre></details>`;
+    return `<main class="settings-page"><div class="settings-heading">${btn(`${icon('arrow', 16)} <span class="sr-only">${t('settings.backToWork')}</span>`, 'back-work', 'quiet icon-button settings-back')}<h1>${t('settings.title')}</h1><div class="settings-savebar">${statusActions}</div></div><div class="settings-status ${status.steady ? 'configuration-compact' : 'configuration-state'}" data-save-state="${status.save}" data-application-state="${status.application}"><div class="settings-status-facts"><span>${esc(saveLabel)}</span><span>${esc(applicationLabel)}</span>${applyError ? `<span class="settings-status-error">${t('settings.applyFailed')}</span>` : ''}</div>${originalApply}</div>${configurationError ? feedback(`${esc(configurationError)} ${t('settings.configPreserved')}`, 'warning') : ''}${applyOperation?.localRecordSaved === false ? `<p class="settings-record-warning" role="status">${t('recovery.recordNotSaved')}</p>` : ''}${otherApplyTasks}<div class="settings-layout"><nav class="settings-tabs" aria-label="${esc(t('settings.title'))}">${['Skills', 'Pi Packages', 'AGENTS.md'].map(tab => btn(tab === 'Skills' ? t('settings.tabSkills') : tab === 'Pi Packages' ? t('settings.tabPackages') : t('settings.tabAgents'), 'settings-section', view.settingsTab === tab ? 'tab active' : 'tab', `data-tab="${tab}" ${view.settingsTab === tab ? 'aria-current="page"' : ''}`)).join('')}</nav><div class="settings-content">${view.settingsTab === 'Skills' ? skillsSettings(w, c) : view.settingsTab === 'Pi Packages' ? packagesSettings(w, c) : agentsEditor}</div></div></main>`;
 }
 /** The catalog check's own trigger owns the wait; only a real failure stays local. */
 function catalogButton() {
@@ -2824,17 +2858,90 @@ function catalogFeedback(name) {
     const status = adapter.catalog[name];
     return status.error ? feedback(`${esc(status.error)} ${t('settings.catalogPreserved')}`, 'warning') : '';
 }
+function settingsSkillName(c) {
+    if (view.settingsSkill && c.skills.includes(view.settingsSkill))
+        return view.settingsSkill;
+    return c.skills[0] ?? "";
+}
+function settingsFilePath(c, skillName) {
+    const info = settingsListedFiles(c, skillName) ?? [];
+    if (view.settingsFile && info.some((file) => file.path === view.settingsFile))
+        return view.settingsFile;
+    return info.find((file) => file.editable)?.path ?? info[0]?.path ?? "";
+}
+const SKILL_DIRECTORY_FILES = 2048;
+const SKILL_FILE_BYTES = 8 * 1024 * 1024;
+const SKILL_DIRECTORY_BYTES = 32 * 1024 * 1024;
+/** Browser preflight for WCFG-EDIT-009 / SKM-004. Core repeats every check. */
+function skillDirectorySelection(files) {
+    if (!files.length)
+        return {};
+    const roots = new Set(files.map(file => (file.webkitRelativePath || '').split('/')[0]));
+    if (roots.size !== 1)
+        return { problem: 'path' };
+    const name = [...roots][0];
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name))
+        return { problem: 'name' };
+    let total = 0;
+    const entries = [];
+    const seen = new Set();
+    for (const file of files) {
+        const relative = (file.webkitRelativePath || '').slice(name.length + 1);
+        if (!relative || relative.startsWith('/') || relative.includes('\\') || relative.length > 4096 || relative.split('/').length > 64)
+            return { problem: 'path' };
+        if (relative.split('/').some(part => !part || part === '.' || part === '..') || [...relative].some(char => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f))
+            return { problem: 'path' };
+        if (seen.has(relative))
+            return { problem: 'path' };
+        seen.add(relative);
+        total += file.size;
+        entries.push({ file, path: relative });
+    }
+    if (entries.length > SKILL_DIRECTORY_FILES || entries.some(entry => entry.file.size > SKILL_FILE_BYTES) || total > SKILL_DIRECTORY_BYTES)
+        return { problem: 'limit' };
+    if (!seen.has('SKILL.md'))
+        return { problem: 'manifest' };
+    entries.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    return { directory: { name, files: entries, size: total } };
+}
+function coreSkillCandidates(c) {
+    const installed = new Set(c.skills);
+    return adapter.getCoreSkills().filter(entry => !installed.has(entry.id));
+}
 function skillsSettings(w, c) {
-    return `<div class="section-heading"><div><h2>${t('settings.skillsTitle')}</h2><p>${t('settings.skillsBody')}</p></div>${catalogButton()}${btn(t('settings.clearSelection'), "clear-skills", "quiet small")}</div>${catalogFeedback("skills")}<div class="selection-note">${icon("info", 15)} ${t('settings.skillsNote')}</div><div class="capability-list">${adapter
-        .getSkills()
-        .map((s) => `<article class="capability"><label class="capability-check"><input type="checkbox" data-skill="${esc(s.id)}" ${c.skills.includes(s.id) ? "checked" : ""}><span class="capability-icon">${icon(s.id === "data-analysis" ? "counter" : s.id === "web-tools" ? "grid" : "note", 20)}</span><span><strong>${esc(s.name)}</strong><small>${esc(s.description === 'Saved Work copy; unavailable in current Core catalog' ? t('settings.savedCopyUnavailable') : s.description || t('settings.descriptionNotProvided'))}</small></span></label><div class="capability-meta"><span>${s.version ? `v${s.version}` : t('settings.versionNotProvided')}</span>${btn(t('common.details'), "skill-detail", "text-button", `data-id="${s.id}"`)}</div><div class="capability-status"><span>${c.skills.includes(s.id) ? t('settings.selectedWorkCopy') : t('settings.notSelected')}</span>${w.config.skills.includes(s.id) ? `<span>${skillState(w, s.id, "loaded")}</span><span>${skillState(w, s.id, "modelVisible")}</span>` : ""}${btn(t('settings.useCoreCopy'), "core-skill-copy", "text-button", `data-id="${s.id}" ${adapter.catalog.skills.error || !adapter.catalog.skills.confirmed || !adapter.getSkills().some(entry => entry.id === s.id && entry.description !== "Saved Work copy; unavailable in current Core catalog") ? "disabled" : ""}`)}</div></article>`)
-        .join("")}</div>`;
+    const skillName = settingsSkillName(c);
+    const info = settingsListedFiles(c, skillName) ?? [];
+    const path = settingsFilePath(c, skillName);
+    const file = info.find(item => item.path === path);
+    const text = settingsLoadedText(c, skillName, path);
+    const writeBlocked = settingsWriteRecords(w.id).some(item => item.pending || item.blocked);
+    const canUndo = lastRemovedWorkId === w.id && w.config.skills.includes(lastRemovedSkill) && !c.skills.includes(lastRemovedSkill);
+    const removalSaving = settingsRemovalSaving(w.id, lastRemovedSkill);
+    const fileDirty = !!file && settingsFileDirty(settingsDraft(c), skillName, path);
+    const saveUnknown = settingsWriteRecords(w.id).some(item => item.blocked && settingsSaveEvidence.get(item)?.patch.skillFiles?.some(target => target.skillName === skillName && target.path === path));
+    const fileState = saveUnknown ? 'unknown' : fileDirty ? 'unsaved' : 'saved';
+    const query = view.skillSearch.trim().toLowerCase();
+    const visibleSkills = c.skills.filter(name => !query || name.toLowerCase().includes(query));
+    const objects = visibleSkills.map(name => btn(`<span>${esc(name)}</span>${settingsSkillDirty(settingsDraft(c), name) ? `<span class="dirty-dot" aria-label="${esc(t('settings.unsavedChanges'))}"></span>` : ''}`, 'settings-skill', `object-item ${name === skillName ? 'active' : ''}`, `data-skill="${esc(name)}" data-skill-name="${esc(name)}" ${name === skillName ? 'aria-current="true"' : ''}`)).join('');
+    const emptyList = c.skills.length
+        ? `<p class="muted settings-no-match" data-skill-no-match role="status">${t('settings.skillSearchNoMatch')}</p>`
+        : `<p class="muted">${t('settings.noSkillsTitle')}</p>`;
+    const menu = `<details class="skill-menu" data-menu-work="${esc(w.id)}" data-menu-skill="${esc(skillName)}" data-menu-epoch="${adapter.identityEpoch}"><summary id="settings-skill-actions" aria-haspopup="menu" aria-expanded="false">${t('settings.skillActions')} ${icon('more', 14)}</summary><div class="menu-list" role="menu" aria-label="${esc(t('settings.skillActions'))}"><div class="settings-menu-target"><strong>${esc(skillName)}</strong><span>${esc(w.name)}</span></div>${btn(t('common.details'), 'skill-detail', 'menu-item', `role="menuitem" tabindex="-1" data-id="${esc(skillName)}"`)}${btn(t('settings.removeFromWork'), 'remove-skill', 'menu-item danger', `role="menuitem" tabindex="-1" data-id="${esc(skillName)}"`)}</div></details>`;
+    const fileSelector = `<div class="settings-file-toolbar"><label for="settings-file-selector" class="sr-only">${t('settings.file')}</label><select id="settings-file-selector" data-action="settings-file" ${info.length ? '' : 'disabled'}>${info.map(item => `<option value="${esc(item.path)}" ${item.path === path ? 'selected' : ''} ${item.editable ? '' : 'disabled'}>${esc(item.path)}${item.editable ? '' : ` · ${t(`settings.fileNotEditableShort.${item.reason ?? 'binary'}`)}`}</option>`).join('')}</select><span class="settings-file-state" data-file-state="${fileState}">${t(saveUnknown ? 'settings.saveNotConfirmed' : fileDirty ? 'settings.unsavedChanges' : 'settings.fileSaved')}</span></div>`;
+    const editor = file && text !== undefined ? `<label class="field" id="settings-file-${encodeURIComponent(JSON.stringify([w.id, skillName, path]))}"><span class="sr-only">${esc(path)}</span><textarea id="skill-file-editor" class="code-editor" rows="16">${textareaContent(text)}</textarea></label>` : `<div class="settings-file-empty"><p class="muted">${t('settings.fileNotRead')}</p>${btn(t('settings.readFile'), 'settings-file', 'quiet small', `data-path="${esc(path)}"`)}</div>`;
+    const addButton = (style, control) => btn(`${icon('plus', 15)} ${t('settings.add')}`, 'open-add-skill', style, `data-control="${control}" aria-label="${esc(t('settings.addSkill'))}" ${writeBlocked || view.addSkillSubmitting ? 'disabled' : ''}`);
+    const undoMarkup = canUndo ? `<div class="settings-undo"><span>${t('settings.skillRemovedDraft', { name: esc(lastRemovedSkill) })}</span>${btn(t('settings.undoRemove'), 'undo-remove-skill', 'quiet small', removalSaving ? 'disabled' : '')}</div>` : '';
+    const narrow = typeof innerWidth === 'number' && innerWidth <= 700;
+    const mobile = narrow ? `<div class="settings-mobile-objects"><label for="settings-skill-selector">${t('settings.skillsTitle')}</label><select id="settings-skill-selector" data-action="settings-skill" ${c.skills.length ? '' : 'disabled'}>${c.skills.map(name => `<option value="${esc(name)}" ${name === skillName ? 'selected' : ''}>${esc(name)}</option>`).join('')}</select>${addButton('quiet small', 'skill-mobile-add')}${catalogButton()}</div>${catalogFeedback('skills')}${undoMarkup}` : '';
+    const emptyEditor = empty('note', t('settings.noSkillsTitle'), t('settings.noSkillsBody'), btn(`${icon('plus', 15)} ${t('settings.addSkill')}`, 'open-add-skill', 'primary', `data-control="skill-empty-add" ${writeBlocked || view.addSkillSubmitting ? 'disabled' : ''}`));
+    return `<div class="settings-columns"><div class="settings-objects"><div class="section-heading settings-objects-heading"><h2>${t('settings.skillsTitle')}</h2>${addButton('quiet small', 'skill-list-add')}</div><label class="search settings-search">${icon('search', 14)}<input id="settings-skill-search" value="${esc(view.skillSearch)}" placeholder="${esc(t('settings.skillSearchPlaceholder'))}" aria-label="${esc(t('settings.skillSearchPlaceholder'))}"></label><div class="object-list" data-skill-objects>${objects || emptyList}</div>${narrow ? '' : `${catalogFeedback('skills')}<div class="settings-objects-tools">${catalogButton()}</div>`}${narrow ? '' : undoMarkup}</div><div class="settings-editor">${mobile}${skillName ? `<div class="section-heading"><div><h2>${esc(skillName)}</h2><p>${w.config.skills.includes(skillName) ? skillState(w, skillName, 'loaded') : t('settings.savedNotApplied')}</p></div>${menu}</div>${fileSelector}${editor}` : emptyEditor}</div></div>`;
 }
 function packagesSettings(w, c) {
     const packageRead = `${w.resourceErrors?.packages ? feedback(t('package.observationUnavailable', { error: esc(w.resourceErrors.packages) }), 'warning') : ''}${btn(`<span class="button-pending-content${w.resourceLoading?.packages ? ' is-pending' : ''}"><span>${esc(t('settings.refreshPackageStatus'))}</span>${w.resourceLoading?.packages ? `<span class="button-pending-indicator">${pendingDots()}</span>` : ''}</span>`, 'refresh-packages', 'quiet small', w.resourceLoading?.packages ? 'disabled aria-busy="true"' : '')}`;
-    return `${packageRead}<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div>${settingsTaskRows(adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('package:')))}<div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${catalogButton()}${btn(t('settings.clearWorkSelection'), "clear-packages", "quiet small")}</div></div>${adapter
+    return `${packageRead}<div class="section-heading"><div><h2>${t('settings.packagesTitle')}</h2><p>${t('settings.packagesBody')}</p></div>${btn(`${icon("plus", 15)} ${t('settings.installPackage')}`, "install-package", "primary small")}</div>${settingsTaskRows(adapter.state.operations.filter(op => op.workId === w.id && operationKind(op.checkedKind || op.kind).startsWith('package:')))}<div class="capability-list package-list">${c.packages.length ? c.packages.map((p) => `<article class="capability package-capability"><div class="capability-check package-identity"><span class="capability-icon">${icon("grid", 20)}</span><span class="package-copy"><strong>${esc(p.name)}</strong><small>${esc(p.source)}</small></span></div>${btn(t('common.details'), "package-detail", "quiet small package-details", `data-id="${esc(p.name)}"`)}<div class="package-status">${badge(p.enabled ? 'Enabled' : 'Disabled')}<span>${packageStatus(w, p.name)}</span></div><div class="package-actions">${btn(p.enabled ? t('settings.disable') : t('settings.enable'), "toggle-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.updateSource'), "update-package", "quiet small", `data-id="${esc(p.name)}"`)}${btn(t('settings.remove'), "remove-package", "small danger", `data-id="${esc(p.name)}"`)}</div></article>`).join("") : empty("grid", t('settings.noPackagesTitle'), t('settings.noPackagesBody'))}${catalogFeedback("packages")}<div class="catalog-heading"><h3>${t('settings.availableFromCore')}</h3><div class="catalog-actions">${catalogButton()}</div></div>${adapter
         .getPackages()
-        .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong><p>${esc(p.description || t('settings.descriptionNotProvided'))} · ${p.version || t('settings.versionNotProvided')}</p></div>${btn(t('settings.select'), "select-package", "small", `data-id="${esc(p.name)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
+        .filter(p => !c.packages.some(installed => installed.name === p.name))
+        .map((p) => `<div class="catalog-row package-catalog-row"><span class="capability-icon">${icon("grid", 20)}</span><div class="package-copy"><strong>${esc(p.name)}</strong>${p.description || p.version ? `<p>${[p.description, p.version].filter(Boolean).map(value => esc(value)).join(' · ')}</p>` : ''}</div>${btn(t('settings.installPackage'), "install-core-package", "small", `data-id="${esc(p.name)}" data-work-id="${esc(w.id)}" ${adapter.catalog.packages.error || !adapter.catalog.packages.confirmed ? "disabled" : ""}`)}</div>`)
         .join("")}</div>`;
 }
 function requestCancellable(request) { return canCancelPiRequest(request, true) || request.disposition === 'live' && request.state === 'cancelling'; }
@@ -2908,6 +3015,17 @@ function exportPanelInput(target) {
         snapshots: target ? adapter.state.snapshots.filter(value => value.workId === target.id) : [],
         snapshotQuery: view.snapshotQuery,
     };
+}
+function selectedCorePackage() {
+    const name = view.data.updateTarget || view.installName;
+    return adapter.getPackages().some(item => item.name === name) ? name : '';
+}
+function packageSourceReady() {
+    if (view.installType === 'Core')
+        return !!selectedCorePackage();
+    if (view.installType === 'npm' || view.installType === 'Git')
+        return !!view.installSource.trim();
+    return !!view.installSource && packageFiles.length > 0;
 }
 function modalMarkup() {
     const w = adapter.getWork(view.data.workId || view.data.id || route()[1] || "");
@@ -3238,15 +3356,9 @@ function modalMarkup() {
             body = `<p>${t('webdav.note')}</p><ol class="steps"><li>${t('webdav.step1', { command: '<code>piwork-cli proxy</code>' })}</li><li>${t('webdav.step2')}</li><li>${t('webdav.step3')}</li></ol><label class="field">${t('webdav.address')}<code class="copy-field">http://127.0.0.1:&lt;printed-port&gt;/works/${esc(target?.id)}/files/</code></label><p class="muted">${t('webdav.footnote')}</p>`;
             footer = close();
             break;
-        case "refresh-core-skills":
-            title = t('coreSkills.title');
-            body = `<p>${t('coreSkills.body')}</p>`;
-            footer = `${cancel()}${btn(t('coreSkills.refresh'), "confirm-core-skills", "primary", view.configDirty ? "disabled" : "")}`;
-            break;
         case "skill-detail": {
-            const s = adapter.getSkills().find((x) => x.id === view.data.id);
-            title = esc(s?.name || t('term.skill'));
-            body = `<dl><dt>${t('skillDetail.description')}</dt><dd>${esc(s?.description || t('text.notProvided'))}</dd><dt>${t('skillDetail.version')}</dt><dd>${esc(s?.version || t('text.notProvided'))}</dd><dt>${t('skillDetail.loaded')}</dt><dd>${target ? skillState(target, view.data.id, "loaded") : t('text.notProvided')}</dd><dt>${t('skillDetail.visible')}</dt><dd>${target ? skillState(target, view.data.id, "modelVisible") : t('text.notProvided')}</dd></dl><p class="muted">${t('skillDetail.note')}</p>`;
+            title = esc(view.data.id || t('term.skill'));
+            body = `<p class="muted">${esc(target?.name ?? '')}</p><dl><dt>${t('skillDetail.loaded')}</dt><dd>${target ? skillState(target, view.data.id, 'loaded') : t('common.notConfirmed')}</dd><dt>${t('skillDetail.visible')}</dt><dd>${target ? skillState(target, view.data.id, 'modelVisible') : t('common.notConfirmed')}</dd></dl><p class="muted">${t('skillDetail.note')}</p>`;
             footer = close();
             break;
         }
@@ -3263,18 +3375,63 @@ function modalMarkup() {
             footer = `${close()}${target ? btn(t('package.refresh'), "refresh-package-detail", "small") : ""}`;
             break;
         }
-        case "install-package":
+        case "add-skill": {
+            const work = target, config = view.config;
+            if (!work || !config) {
+                body = `<p>${t('common.notConfirmed')}</p>`;
+                footer = close();
+                break;
+            }
+            const status = adapter.catalog.skills;
+            const candidates = coreSkillCandidates(config);
+            const submitting = view.addSkillSubmitting;
+            const disabled = submitting ? 'disabled' : '';
+            const catalogBody = status.error
+                ? `<div class="catalog-error">${feedback(esc(t('settings.addCoreFailed')), 'warning')}<details><summary>${t('common.details')}</summary><p>${esc(status.error)}</p></details>${btn(t('common.retry'), 'retry-catalog', 'small', disabled)}</div>`
+                : status.loading
+                    ? `<p class="muted" role="status" aria-busy="true">${t('settings.checkingSkillsCatalog')}</p>`
+                    : !status.confirmed
+                        ? `<p class="muted">${t('common.notConfirmed')} ${btn(t('common.retry'), 'retry-catalog', 'small', disabled)}</p>`
+                        : candidates.length
+                            ? candidates.map((candidate, index) => `<label class="catalog-row"><input id="add-skill-${esc(candidate.id)}" type="checkbox" data-add-skill="${esc(candidate.id)}" ${view.addSkillSelected.includes(candidate.id) ? 'checked' : ''} ${index === 0 && !submitting ? 'autofocus' : ''} ${disabled}><span><strong>${esc(candidate.name)}</strong></span></label>`).join('')
+                            : `<p class="muted">${esc(t(adapter.getCoreSkills().length ? 'settings.addCoreAllAdded' : 'settings.addCoreEmpty'))}</p>`;
+            const directory = view.addSkillDirectory;
+            const count = view.addSkillSelected.length;
+            const directorySummary = directory ? t(directory.files.length === 1 ? 'settings.skillDirectorySummarySingle' : 'settings.skillDirectorySummary', {
+                name: directory.name, count: String(directory.files.length), size: size(directory.size),
+            }) : '';
+            const error = view.addSkillError ? feedback(esc(view.addSkillError), 'warning') : '';
+            const coreError = count > 0 && !directory;
+            const chooseDirectory = btn(`${icon('upload', 15)} ${t(directory ? 'settings.changeSkillDirectory' : 'settings.chooseSkillDirectory')}`, 'choose-skill-directory', 'small', `${disabled} ${(status.error || status.loading || !status.confirmed || !candidates.length) && !submitting ? 'autofocus' : ''}`);
+            title = t('settings.addSkill');
+            body = `<p class="muted">${t('settings.addSkillBody')}</p>
+        <section class="settings-add-source"><h3>${t('settings.addFromCore')}</h3>${catalogBody}${coreError ? error : ''}</section>
+        <section class="settings-add-source"><h3>${t('settings.addFromComputer')}</h3>
+          <div class="settings-directory-choice">${directorySummary ? `<p>${esc(directorySummary)}</p>` : ''}${chooseDirectory}</div>${coreError ? '' : error}
+        </section>`;
+            const ready = !submitting && !view.addSkillError && !settingsWriteRecords(work.id).some(item => item.blocked) && (!!directory !== (count > 0));
+            const label = directory || count <= 1 ? t('settings.addSkill') : t('settings.addSelectedSkills', { count: String(count) });
+            const upload = directory && adapter.uploadProgress.get(work.id);
+            const waiting = upload && upload.scope === 'skill' ? upload.phase : t('settings.addingSkill');
+            const submitLabel = submitting ? pendingStatus(waiting, 'confirm-add-skill') : esc(label);
+            footer = `${btn(t('common.cancel'), 'close-modal', '', disabled)}
+        ${btn(submitLabel, 'confirm-add-skill', 'primary', `${ready ? '' : 'disabled'} ${submitting ? 'aria-busy="true"' : ''}`)}`;
+            break;
+        }
+        case "install-package": {
+            const coreName = selectedCorePackage();
+            const corePackages = adapter.getPackages().filter(item => !view.data.updateTarget || item.name === view.data.updateTarget);
             title = view.data.update ? t('package.updateTitle') : t('package.installTitle');
             body = `${uploadProgressMarkup()}<p>${t('package.chooseSource')}</p><label class="field">${t('package.sourceType')}<select id="install-type">${["Core", "npm", "Git", "Local directory", "ZIP"].map((option) => `<option ${view.installType === option ? "selected" : ""}>${option}</option>`).join("")}</select></label>${view.installType === "Core"
-                ? `<label class="field">${t('package.currentCoreCopy')}<select id="install-name">${adapter
-                    .getPackages()
-                    .map((p) => `<option ${view.installName === p.name ? "selected" : ""}>${esc(p.name)}</option>`)
+                ? `<label class="field">${t('package.currentCoreCopy')}<select id="install-name" ${corePackages.length ? '' : 'disabled'}>${coreName ? '' : `<option value="" disabled selected>${t(corePackages.length ? 'package.chooseCorePackage' : 'package.noCorePackage')}</option>`}${corePackages
+                    .map((p) => `<option ${coreName === p.name ? "selected" : ""}>${esc(p.name)}</option>`)
                     .join("")}</select></label>`
                 : view.installType === "npm" || view.installType === "Git"
                     ? `<label class="field">${view.installType === "npm" ? t('package.npmReference') : t('package.gitSource')}<input id="install-source" value="${esc(view.installSource)}" placeholder="${view.installType === "npm" ? "@scope/package@version" : esc(t('package.gitPlaceholder'))}"></label>`
                     : `<div class="file-drop">${icon("upload", 26)}<strong>${view.installSource ? esc(view.installSource) : (view.installType === "ZIP" ? t('package.selectZip') : t('package.selectDirectory'))}</strong>${btn(t('package.chooseLocal'), "choose-package-source")}</div>${view.installType === "Local directory" ? feedback(t('package.directoryWarning'), "warning") : ""}`}<p class="muted">${t('package.installNote')}</p>`;
-            footer = `${cancel()}${btn(view.data.update ? t('package.updateButton') : t('settings.installPackage'), "confirm-install", "primary")}`;
+            footer = `${cancel()}${btn(view.data.update ? t('package.updateButton') : t('settings.installPackage'), "confirm-install", "primary", packageSourceReady() ? '' : 'disabled')}`;
             break;
+        }
         case "log-export": {
             title = t('logs.title');
             const state = adapter.logExport;
@@ -3388,7 +3545,7 @@ function modalMarkup() {
         return `<dialog id="modal" tabindex="-1" aria-modal="false" aria-labelledby="modal-title" class="modal anchored-overlay chat-response-settings compact-response-picker ${view.data.expanded === 'thinking' ? 'thinking-options' : 'model-options'}"><div id="modal-title" class="dropdown-title">${title}</div><div class="modal-body">${view.modalError ? feedback(esc(view.modalError), 'warning') : ''}${body}</div></dialog>`;
     }
     const submissionError = view.modal === 'chat-submission' ? target?.sessions.find(s => s.id === view.data.sessionId)?.messages.find(m => m.submission?.key === view.data.submissionKey)?.submission?.error : undefined;
-    return `<dialog id="modal" aria-modal="${role !== 'modal' || view.modal === 'export' || isRequestInspector() && innerWidth >= 900 ? 'false' : 'true'}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${view.modal === 'service-picker' ? 'compact-service-picker' : view.modal === 'service-details' ? 'compact-service-details' : view.modal === 'connection' ? 'compact-info-pop' : ''} ${['chat-submission', 'chat-history-status'].includes(view.modal) ? 'chat-submission-popover' : ''} ${["import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${view.modal === "sessions" ? btn(`${icon("plus", 14)} ${t('sessions.newCompact')}`, "new-session", "session-new-compact", `aria-label="${esc(t('chat.newSession'))}"`) : ""}${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}"`)}</div><div class="modal-body">${view.modalError && view.modalError !== submissionError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
+    return `<dialog id="modal" aria-modal="${!nonmodalDialog()}" aria-labelledby="modal-title" class="modal ${role === 'popover' ? 'anchored-overlay selection-popover' : role === 'drawer' ? 'inspector-drawer' : ''} ${isRequestInspector() ? 'request-inspector' : ''} ${view.modal === 'account' ? 'account-menu' : view.modal === 'export' ? 'export-panel' : view.modal === 'add-skill' || view.modal === 'package-detail' ? 'settings-task-dialog' : ''} ${view.modal === 'new-folder' || view.modal === 'file-transfer' && view.data.transfer === 'rename' ? 'modal-name' : ''} ${view.modal === "new-work" ? "modal-create" : ""} ${view.modal === 'chat-response-settings' ? 'chat-response-settings' : ''} ${view.modal === 'sessions' ? 'session-picker' : ''} ${view.modal === 'service-picker' ? 'compact-service-picker' : view.modal === 'service-details' ? 'compact-service-details' : view.modal === 'connection' ? 'compact-info-pop' : ''} ${['chat-submission', 'chat-history-status'].includes(view.modal) ? 'chat-submission-popover' : ''} ${["import", "manage-services", "operations", "service-details"].includes(view.modal) ? "wide" : ""}"><div class="modal-head">${view.modal === 'pi-request-detail' && requestNavigationCurrent() ? btn(`${icon('arrow', 16)} ${t('pi.back')}`, 'back-pi-requests', 'quiet inspector-back') : ''}<h2 id="modal-title">${title}</h2>${view.modal === "sessions" ? btn(`${icon("plus", 14)} ${t('sessions.newCompact')}`, "new-session", "session-new-compact", `aria-label="${esc(t('chat.newSession'))}"`) : ""}${btn(icon("close", 20), "close-modal", "icon-button quiet", `aria-label="${t('modal.closeDialog')}" ${view.modal === 'add-skill' && view.addSkillSubmitting ? 'disabled' : ''}`)}</div><div class="modal-body">${view.modalError && view.modalError !== submissionError && view.modal !== "new-work" && !(view.modal === 'sessions' && view.modalError === target?.resourceErrors?.agent) ? feedback(esc(view.modalError), "warning") : ""}${body}${["file-transfer", "file-delete", "new-folder", "upload-overwrite"].includes(view.modal) ? fileModalResults() : ""}</div><div class="modal-action-status ${view.modal === "new-work" ? "create-action-status" : ""}" data-action-status-slot>${view.modal === "new-work" && view.modalError ? feedback(esc(view.modalError), "warning") : ""}</div>${footer ? `<div class="modal-footer">${footer}</div>` : ""}</dialog>`;
 }
 function importExitButtons(op) {
     const work = adapter.getWork(op.workId), start = importStarts.get(op.id);
@@ -3460,7 +3617,7 @@ function focusKey(el) {
         return "#" + CSS.escape(el.id);
     const action = el.dataset.action;
     if (action)
-        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}${el.dataset.runId ? `[data-run-id="${CSS.escape(el.dataset.runId)}"]` : ""}${el.dataset.session ? `[data-session="${CSS.escape(el.dataset.session)}"]` : ""}${el.dataset.submissionKey ? `[data-submission-key="${CSS.escape(el.dataset.submissionKey)}"]` : ""}${el.dataset.control ? `[data-control="${CSS.escape(el.dataset.control)}"]` : ""}${el.dataset.optionValue !== undefined ? `[data-option-value="${CSS.escape(el.dataset.optionValue)}"]` : ''}`;
+        return `[data-action="${CSS.escape(action)}"]${el.dataset.id ? `[data-id="${CSS.escape(el.dataset.id)}"]` : ""}${el.dataset.skill ? `[data-skill="${CSS.escape(el.dataset.skill)}"]` : ""}${el.dataset.path ? `[data-path="${CSS.escape(el.dataset.path)}"]` : ""}${el.dataset.runId ? `[data-run-id="${CSS.escape(el.dataset.runId)}"]` : ""}${el.dataset.session ? `[data-session="${CSS.escape(el.dataset.session)}"]` : ""}${el.dataset.submissionKey ? `[data-submission-key="${CSS.escape(el.dataset.submissionKey)}"]` : ""}${el.dataset.control ? `[data-control="${CSS.escape(el.dataset.control)}"]` : ""}${el.dataset.optionValue !== undefined ? `[data-option-value="${CSS.escape(el.dataset.optionValue)}"]` : ''}`;
     return "";
 }
 async function guard(next) {
@@ -3640,46 +3797,200 @@ async function saveFile(record) {
         toast(result.message, result.status === 'unknown' ? 'unknown' : 'error');
     return false;
 }
+function settingsApplyRecovered(work, originalFailed, unknown, originalStarted) {
+    return settingsApplyFailureResolved({ originalFailed, unknown, originalStarted,
+        pendingApply: work.config.pendingApply, configurationError: !!work.resourceErrors?.configuration || !!work.statusError,
+        workFailed: work.status === 'Failed', runtimeReady: work.config.runtime?.state === 'ready',
+        checkedAt: work.resourceChecked?.configuration });
+}
+function settingsFacts(config) {
+    return { skills: config.skills, packages: config.packages.map(({ name, enabled }) => ({ name, enabled })), agentsMd: config.agents };
+}
+function settingsConfiguration(config) {
+    return { ...structuredClone(config), fieldBaseline: structuredClone(settingsFacts(config)) };
+}
+function settingsDraft(config) {
+    return { fieldBaseline: config.fieldBaseline, skills: config.skills, packages: config.packages, agents: config.agents, files: config.files, baselines: config.baselines, fileInfo: config.fileInfo };
+}
+function applySettingsDraft(config, draft) {
+    config.fieldBaseline = draft.fieldBaseline;
+    config.skills = draft.skills;
+    config.packages = draft.packages.map((item) => ({ name: item.name, enabled: item.enabled, source: item.source ?? 'Saved Work copy' })); // i18n-exempt: Pi Package source 协议值
+    config.agents = draft.agents;
+    config.files = draft.files;
+    config.baselines = draft.baselines;
+    config.fileInfo = draft.fileInfo;
+}
+function rebaseSettingsConfiguration(work) {
+    if (!view.config || view.configWorkId !== work.id)
+        return;
+    const draft = rebaseSettingsDraft(settingsDraft(view.config), settingsFacts(work.config));
+    applySettingsDraft(view.config, draft);
+    view.configDirty = settingsDraftDirty(draft, settingsFacts(work.config));
+}
+/** Read only the selected text, retaining every loaded file draft. */
+async function loadSettingsSkill(w, skillName, requestedPath) {
+    const epoch = adapter.identityEpoch;
+    let observedFiles = false;
+    const ownsDraft = () => epoch === adapter.identityEpoch && current()?.id === w.id && view.configWorkId === w.id && !!view.config;
+    if (!ownsDraft())
+        return;
+    if (view.settingsSkill !== skillName)
+        view.settingsFile = '';
+    view.settingsSkill = skillName;
+    if (requestedPath !== undefined)
+        view.settingsFile = requestedPath;
+    // Retire the previous editable DOM before a pending read can yield input.
+    render();
+    if (!settingsListedFiles(view.config, skillName)) {
+        const listing = await adapter.readWorkSkill(w.id, skillName);
+        observedFiles = true;
+        if (!ownsDraft())
+            return;
+        view.config.fileInfo[skillName] = Array.isArray(listing.skillFiles) ? listing.skillFiles : [];
+    }
+    const config = view.config;
+    if (view.settingsSkill !== skillName || !config.skills.includes(skillName))
+        return;
+    const path = requestedPath ?? settingsFilePath(config, skillName);
+    if (view.settingsSkill === skillName)
+        view.settingsFile = path;
+    const file = settingsListedFiles(config, skillName)?.find(item => item.path === path);
+    render();
+    if (file?.editable && settingsLoadedText(config, skillName, path) === undefined) {
+        const texts = await adapter.readWorkSkillTexts(w.id, [{ skillName, path }]);
+        observedFiles = true;
+        if (!ownsDraft())
+            return;
+        const text = texts.find((item) => item.skillName === skillName && item.path === path)?.text;
+        if (typeof text !== 'string')
+            throw new Error(t('settings.fileReadIncomplete'));
+        // A second selection or a late read may not replace an existing draft.
+        if (settingsLoadedText(view.config, skillName, path) === undefined) {
+            view.config.files[skillName] = { ...view.config.files[skillName], [path]: text };
+            view.config.baselines[skillName] = { ...view.config.baselines[skillName], [path]: text };
+        }
+    }
+    if (ownsDraft()) {
+        if (observedFiles)
+            retireAddedSkillReadback(w.id, skillName, epoch);
+        view.configDirty = settingsDraftDirty(settingsDraft(view.config), settingsFacts(w.config));
+        render();
+    }
+}
+function retireAddedSkillReadback(workId, skillName, epoch) {
+    for (const original of settingsWriteRecords(workId)) {
+        const evidence = settingsSaveEvidence.get(original);
+        if (original.action !== 'confirm-add-skill' || !actions.current(original) || !original.result || original.pending || original.blocked || original.error || original.refresh !== 'failed' || evidence?.epoch !== epoch || !evidence.patch.addSkills?.includes(skillName))
+            continue;
+        // Fresh reading of the confirmed Work copy retires only its read failure.
+        const previous = actionNotice(original, noticeIdentity(), () => actions.message(original));
+        if (previous)
+            notices.resolve(previous);
+        actions.retireConfirmedRefresh(original);
+    }
+}
+const settingsSaveEvidence = new WeakMap();
+const withdrawnSettingsFailures = new WeakSet();
+function settingsFailureWithdrawn(record) {
+    if (withdrawnSettingsFailures.has(record))
+        return true;
+    const evidence = settingsSaveEvidence.get(record), w = current();
+    if (record.action === 'apply-config' && w && w.id === record.work && settingsApplyRecovered(w, !!record.error || adapter.getOperation(record.businessId ?? '')?.state === 'failed', !!record.blocked, record.started)) {
+        withdrawnSettingsFailures.add(record);
+        return true;
+    }
+    if (!evidence || evidence.epoch !== adapter.identityEpoch || !['save-config', 'dirty-config-save'].includes(record.action ?? '') || !record.error || record.pending || record.blocked || record.refresh === 'failed' || !w || w.id !== evidence.workId || view.configWorkId !== w.id || !view.config || w.resourceErrors?.configuration)
+        return false;
+    const patch = buildSettingsPatch(settingsDraft(view.config), settingsFacts(w.config));
+    if (!settingsPatchTargetsWithdrawn(evidence.patch, patch))
+        return false;
+    withdrawnSettingsFailures.add(record);
+    return true;
+}
+function settingsWriteRecords(workId) {
+    return [...actions.records.values()].filter(item => item.work === workId && ['save-config', 'dirty-config-save', 'confirm-add-skill'].includes(item.action ?? ''));
+}
+function settingsRemovalSaving(workId, name) {
+    return settingsWriteRecords(workId).some(record => (record.pending || record.blocked) && settingsSaveEvidence.get(record)?.patch.removeSkills?.includes(name));
+}
+async function checkUnknownSettings(w) {
+    const unknown = settingsWriteRecords(w.id).filter(item => item.blocked);
+    if (!unknown.length)
+        return false;
+    for (const original of unknown) {
+        const evidence = settingsSaveEvidence.get(original);
+        if (!evidence || evidence.epoch !== adapter.identityEpoch)
+            throw new Error(t('settings.checkOriginalSave'));
+        const files = (evidence.patch.skillFiles ?? []).map(({ skillName, path }) => ({ skillName, path }));
+        const read = await adapter.readWorkSettings(evidence.workId, files);
+        if (evidence.epoch !== adapter.identityEpoch || current()?.id !== w.id || !actions.current(original))
+            throw new ViewChanged();
+        if (evidence.importedDirectory) {
+            const name = evidence.importedDirectory;
+            const exists = read.desired.skills.includes(name);
+            rebaseSettingsConfiguration(w);
+            toast(new LocalizedMessage(exists ? 'settings.importCheckFound' : 'settings.importCheckNotFound', { name }), 'unknown');
+            continue;
+        }
+        if (!settingsPatchMatchesRead(evidence.patch, read))
+            throw new Error(t('settings.savedStateDifferent'));
+        if (view.config && view.configWorkId === w.id) {
+            if (original.action === 'confirm-add-skill')
+                for (const name of evidence.patch.addSkills ?? []) {
+                    if (!view.config.skills.includes(name))
+                        view.config.skills.push(name);
+                }
+            applySettingsDraft(view.config, confirmSettingsPatch(settingsDraft(view.config), evidence.patch));
+            rebaseSettingsConfiguration(w);
+        }
+        const previous = actionNotice(original, noticeIdentity(), () => actions.message(original));
+        if (previous)
+            notices.resolve(previous);
+        original.successFeedback = 'owner';
+        actions.review(original, new LocalizedMessage('settings.savedStateConfirmed'));
+    }
+    render();
+    return true;
+}
 async function saveConfig(record) {
     const w = current();
     if (!w || !view.config)
         return false;
-    if (!validateConfigDraft())
+    if (settingsWriteRecords(w.id).some(item => item.blocked)) {
+        toast(new LocalizedMessage('settings.checkOriginalSave'), 'unknown');
         return false;
-    const submitted = structuredClone(view.config), version = JSON.stringify(view.config), key = location.hash, epoch = adapter.identityEpoch;
-    await adapter.saveConfiguration(w.id, submitted);
-    if (epoch !== adapter.identityEpoch)
+    }
+    rebaseSettingsConfiguration(w);
+    const patch = buildSettingsPatch(settingsDraft(view.config), settingsFacts(w.config));
+    if (settingsPatchEmpty(patch)) {
+        view.configDirty = false;
+        render();
+        return true;
+    }
+    const key = location.hash, epoch = adapter.identityEpoch;
+    if (record)
+        settingsSaveEvidence.set(record, { workId: w.id, epoch, patch: structuredClone(patch) });
+    await adapter.saveWorkSettings(w.id, patch);
+    if (epoch !== adapter.identityEpoch || current()?.id !== w.id || view.configWorkId !== w.id || !view.config)
         throw new ViewChanged();
+    const draft = confirmSettingsPatch(settingsDraft(view.config), patch);
+    applySettingsDraft(view.config, draft);
+    rebaseSettingsConfiguration(w);
     if (record) {
+        record.successFeedback = 'owner';
         actions.confirm(record, new LocalizedMessage('save.settingsSaved'));
         settingsSaveReadback.bind(record, { identity: noticeIdentity(), workId: w.id, source: 'configuration', reading: false, checkedAt: w.resourceChecked?.configuration });
         void actions.refresh(record, () => adapter.loadConfiguration(w.id));
     }
     if (key !== location.hash)
         throw new ViewChanged();
-    if (JSON.stringify(view.config) === version) {
-        view.config = structuredClone(submitted);
-        view.configDirty = false;
-    }
     if (!record)
         toast(new LocalizedMessage('save.changesSaved'));
     return true;
 }
 function validateConfigDraft() {
-    if (!view.config)
-        return false;
-    try {
-        synchronizeConfiguration(view.config);
-        return true;
-    }
-    catch (error) {
-        view.config.validationError = String(error.message);
-        view.settingsTab = "Advanced";
-        render();
-        root.querySelector("#advanced-editor")?.focus();
-        toast(new LocalizedMessage('save.fixJson'), 'error');
-        return false;
-    }
+    return !!view.config;
 }
 function downloadBlob(name, contents, type = "text/plain") {
     const url = URL.createObjectURL(new Blob([contents], { type }));
@@ -4552,11 +4863,17 @@ async function handleAction(action, el, record, requestEntry) {
                         record.view = location.hash;
                     render();
                     await stay(adapter.loadConfiguration(w.id));
-                    view.config = structuredClone(w.config);
+                    view.config = settingsConfiguration(w.config);
+                    view.configWorkId = w.id;
                     view.configDirty = false;
                     consumeWebSelection("settings");
+                    view.settingsSkill = w.config.skills?.[0] ?? "";
+                    view.settingsFile = "";
+                    lastRemovedSkill = "";
                     view.modal = "";
                     location.hash = `/work/${w.id}/settings`;
+                    if (view.settingsSkill)
+                        await loadSettingsSkill(w, view.settingsSkill);
                     render();
                 });
             }
@@ -5390,14 +5707,122 @@ async function handleAction(action, el, record, requestEntry) {
             view.settingsTab = el.dataset.tab;
             render();
             break;
+        case "settings-skill":
+            if (currentWork)
+                await stay(loadSettingsSkill(currentWork, el.dataset.skill));
+            break;
+        case "settings-file":
+            if (currentWork && view.config)
+                await stay(loadSettingsSkill(currentWork, settingsSkillName(view.config), el.dataset.path || undefined));
+            break;
+        case "open-add-skill": {
+            const work = current();
+            if (!work || !view.config)
+                break;
+            view.addSkillSelected = [];
+            view.addSkillDirectory = undefined;
+            view.addSkillError = '';
+            view.addSkillSubmitting = false;
+            openModal("add-skill", { workId: work.id }, root.querySelector(focusKey(el)) ?? undefined);
+            if (!adapter.catalog.skills.confirmed && !adapter.catalog.skills.loading)
+                void adapter.checkCatalog().catch(() => undefined);
+            break;
+        }
+        case "retry-catalog":
+            await stay(adapter.checkCatalog());
+            render();
+            break;
+        case "choose-skill-directory":
+            root.querySelector("#skill-directory-input")?.click();
+            break;
+        case "confirm-add-skill": {
+            const work = current();
+            if (!work || !view.config || view.addSkillSubmitting)
+                break;
+            if (settingsWriteRecords(work.id).some(item => item.blocked && item !== record))
+                throw new Error(t('settings.checkOriginalSave'));
+            const directory = view.addSkillDirectory;
+            const names = directory ? [directory.name] : view.addSkillSelected.slice();
+            if (!names.length || (directory && view.addSkillError) || (directory && view.addSkillSelected.length))
+                throw new Error(t('settings.skillDirectoryMixed'));
+            if (record)
+                settingsSaveEvidence.set(record, { workId: work.id, epoch: adapter.identityEpoch, patch: { addSkills: names }, importedDirectory: directory?.name });
+            view.addSkillSubmitting = true;
+            render();
+            try {
+                if (directory)
+                    await stay(adapter.importWorkSkill(work.id, directory));
+                else
+                    await stay(adapter.addWorkSkills(work.id, names));
+            }
+            catch (error) {
+                if (error instanceof ViewChanged)
+                    throw error;
+                const unknown = error instanceof DesktopError && ['RESULT_UNKNOWN', 'INVALID_RESPONSE'].includes(error.code);
+                view.addSkillError = unknown ? t('settings.addSkillUnknown') : error instanceof Error ? error.message : String(error);
+                throw error;
+            }
+            finally {
+                view.addSkillSubmitting = false;
+            }
+            if (record) {
+                record.successFeedback = 'owner';
+                actions.confirm(record, new LocalizedMessage('settings.savedStateConfirmed'));
+                // The dialog closes on confirmation; the surviving add control owns
+                // any follow-up file-read failure.
+                const addOwner = root.querySelector('[data-action="open-add-skill"]');
+                if (addOwner) {
+                    record.owner = addOwner;
+                    record.anchor = focusKey(addOwner);
+                }
+            }
+            for (const name of names)
+                if (!view.config.skills.includes(name))
+                    view.config.skills.push(name);
+            applySettingsDraft(view.config, confirmSettingsPatch(settingsDraft(view.config), { addSkills: names }));
+            rebaseSettingsConfiguration(work);
+            view.addSkillSelected = [];
+            view.addSkillDirectory = undefined;
+            view.addSkillError = '';
+            closeModal();
+            if (record)
+                await actions.refresh(record, () => loadSettingsSkill(work, names[0], 'SKILL.md'));
+            else
+                await loadSettingsSkill(work, names[0], 'SKILL.md');
+            break;
+        }
+        case "remove-skill":
+            if (view.config) {
+                lastRemovedSkill = el.dataset.id;
+                lastRemovedWorkId = currentWork?.id ?? '';
+                view.config.skills = view.config.skills.filter((name) => name !== lastRemovedSkill);
+                view.configDirty = settingsDraftDirty(settingsDraft(view.config), settingsFacts(currentWork?.config ?? view.config));
+                render();
+            }
+            break;
+        case "undo-remove-skill":
+            if (view.config && currentWork && lastRemovedWorkId === currentWork.id && currentWork.config.skills.includes(lastRemovedSkill) && !settingsRemovalSaving(currentWork.id, lastRemovedSkill) && !view.config.skills.includes(lastRemovedSkill)) {
+                view.config.skills.push(lastRemovedSkill);
+                view.configDirty = settingsDraftDirty(settingsDraft(view.config), settingsFacts(currentWork?.config ?? view.config));
+                lastRemovedSkill = "";
+                render();
+            }
+            break;
         case "save-config":
             await stay(saveConfig(record));
             break;
         case "discard-config":
             if (currentWork) {
-                view.config = structuredClone(currentWork.config);
+                view.config = settingsConfiguration(currentWork.config);
+                view.configWorkId = currentWork.id;
                 view.configDirty = false;
-                render();
+                view.settingsSkill = view.config.skills?.[0] ?? "";
+                view.settingsFile = "";
+                lastRemovedSkill = "";
+                if (view.settingsSkill)
+                    await stay(loadSettingsSkill(currentWork, view.settingsSkill));
+                else
+                    render();
             }
             break;
         case "dirty-config-discard":
@@ -5437,9 +5862,20 @@ async function handleAction(action, el, record, requestEntry) {
             break;
         case "refresh-config":
             if (currentWork) {
+                if (await stay(checkUnknownSettings(currentWork)))
+                    break;
                 await stay(adapter.loadConfiguration(currentWork.id));
-                if (!view.configDirty)
-                    view.config = structuredClone(currentWork.config);
+                if (!view.configDirty) {
+                    view.config = settingsConfiguration(currentWork.config);
+                    view.configWorkId = currentWork.id;
+                    view.settingsSkill = view.config.skills?.[0] ?? "";
+                    view.settingsFile = "";
+                    if (view.settingsSkill)
+                        await stay(loadSettingsSkill(currentWork, view.settingsSkill));
+                }
+                else
+                    rebaseSettingsConfiguration(currentWork);
+                render();
             }
             break;
         case "clear-skills":
@@ -5449,36 +5885,21 @@ async function handleAction(action, el, record, requestEntry) {
                 render();
             }
             break;
-        case "core-skill-copy":
-            if (view.config && currentWork) {
-                openModal("refresh-core-skills", { id: el.dataset.id });
-                break;
-            }
-            break;
-        case "confirm-core-skills":
-            if (currentWork) {
-                const draft = JSON.stringify(view.config);
-                await stay(adapter.replaceSkill(currentWork.id, view.data.id));
-                if (JSON.stringify(view.config) === draft) {
-                    view.config = structuredClone(currentWork.config);
-                    view.configDirty = false;
-                }
-                if (record) {
-                    actions.confirm(record, new LocalizedMessage('action.skillCopySaved'));
-                    void actions.refresh(record, () => adapter.loadConfiguration(currentWork.id));
-                }
-                closeModal();
-                if (!record)
-                    toast(new LocalizedMessage('action.coreCopiesSaved'));
-            }
-            break;
         case "check-catalog":
             const available = await stay(adapter.checkCatalog());
             if (available)
                 toast(new LocalizedMessage('action.catalogsConfirmed'));
             // Each actual failed catalog retains its own read notice and local recovery.
             break;
-        case "skill-detail":
+        case "skill-detail": {
+            const trigger = root.querySelector('#settings-skill-actions');
+            const menu = trigger?.closest('details');
+            if (!trigger || !menu)
+                break;
+            menu.open = false;
+            openModal(action, { id: el.dataset.id }, trigger);
+            break;
+        }
         case "package-detail":
             openModal(action, { id: el.dataset.id });
             break;
@@ -5486,15 +5907,23 @@ async function handleAction(action, el, record, requestEntry) {
             if (currentWork)
                 await stay(adapter.loadPackages(currentWork.id));
             break;
-        case "install-package":
+        case "install-core-package":
+        case "install-package": {
+            const work = current();
+            if (!work || action === 'install-core-package' && el.dataset.workId !== work.id)
+                break;
             view.installSource = "";
-            view.installName = adapter.getPackages()[0]?.name ?? "";
+            if (action === 'install-core-package')
+                view.installType = 'Core';
+            view.installName = action === 'install-core-package' ? el.dataset.id : adapter.getPackages()[0]?.name ?? "";
             packageFiles = [];
-            openModal("install-package");
+            openModal("install-package", { workId: work.id });
             break;
+        }
         case "update-package":
             view.installName = el.dataset.id;
             view.installSource = "";
+            packageFiles = [];
             openModal("install-package", {
                 update: "true",
                 updateTarget: el.dataset.id,
@@ -5520,32 +5949,6 @@ async function handleAction(action, el, record, requestEntry) {
                 closeModal();
             }
             break;
-        case "unselect-package":
-            if (view.config) {
-                view.config.packages = view.config.packages.filter((p) => p.name !== el.dataset.id);
-                view.configDirty = true;
-                render();
-            }
-            break;
-        case "clear-packages":
-            if (view.config) {
-                view.config.packages = [];
-                view.configDirty = true;
-                render();
-            }
-            break;
-        case "select-package":
-            if (view.config) {
-                if (!view.config.packages.some((p) => p.name === el.dataset.id))
-                    view.config.packages.push({
-                        name: el.dataset.id,
-                        enabled: true,
-                        source: "Current Core copy",
-                    });
-                view.configDirty = true;
-                render();
-            }
-            break;
         case "choose-package-source":
             root
                 .querySelector(view.installType === "ZIP"
@@ -5555,10 +5958,9 @@ async function handleAction(action, el, record, requestEntry) {
             break;
         case "confirm-install":
             if (currentWork) {
-                if (view.installType !== "Core" && !view.installSource)
+                if (!packageSourceReady())
                     throw Error(t('package.chooseSourceError'));
-                const name = view.data.updateTarget ||
-                    (view.installType === "Core" ? view.installName : view.installSource);
+                const name = view.data.updateTarget || (view.installType === 'Core' ? selectedCorePackage() : view.installSource);
                 accept(await stay(adapter.installPackage(currentWork.id, name, `${view.installType}: ${view.installType === "Core" ? "current Core copy" : view.installSource}`, packageFiles, view.data.updateTarget)));
                 if (!view.configDirty)
                     view.config = null;
@@ -5566,14 +5968,9 @@ async function handleAction(action, el, record, requestEntry) {
             }
             break;
         case "import-agents":
-        case "import-json":
         case "create-import-agents":
             root
-                .querySelector(action === "import-json"
-                ? "#json-input"
-                : action === "create-import-agents"
-                    ? "#create-agents-input"
-                    : "#agents-input")
+                .querySelector(action === "create-import-agents" ? "#create-agents-input" : "#agents-input")
                 ?.click();
             break;
         case "choose-work-file":
@@ -5901,6 +6298,12 @@ function createFormOwnsFeedback(record) {
         !!record.owner?.isConnected && !!record.owner.closest('#modal.modal-create');
 }
 function visibleActionRecord(record) {
+    if (view.modal === 'add-skill' && view.addSkillError && record.action === 'confirm-add-skill' && record.work === view.data.workId)
+        return false;
+    if (record.kind === 'configuration' && settingsFailureWithdrawn(record))
+        return false;
+    if (['save-config', 'dirty-config-save'].includes(record.action ?? '') && record.successFeedback === 'owner' && !record.pending && !record.error && !record.blocked && record.refresh !== 'failed')
+        return false;
     if (!record.pending && createFormOwnsFeedback(record) && (view.modalError || currentNameError()))
         return false;
     if (!signInActionFeedbackVisible(record, adapter.signInUnknown))
@@ -5958,6 +6361,8 @@ function observeCurrentPage() {
     adapter.observePage(id || '', document.visibilityState === 'visible', showChat, showService && w ? activeService(w)?.name || '' : '', view.modal === 'pi-request-detail' ? view.data.requestId || '' : '', view.modal === 'pi-requests', view.modal === 'pi-requests' ? view.data.serviceName || '' : '', area === 'works');
 }
 let fileActionsContext = '';
+let lastRemovedSkill = '';
+let lastRemovedWorkId = '';
 function fileActionsKey() { return `${adapter.identityEpoch}:${location.hash}:${view.tab}:${view.path}`; }
 function closeFileActions(restore = false) {
     if (!fileActionsContext)
@@ -5973,8 +6378,6 @@ function render() {
     if (current()?.id === selectionWorkId)
         rememberWork();
     observeCurrentPage();
-    if (view.config && !view.config.advancedDirty)
-        synchronizeConfiguration(view.config);
     const active = document.activeElement;
     const activeKey = focusKey(active);
     const settingsFocusChoice = chatSettingsContextCurrent() && active?.closest('#modal') ? modalChoice : undefined;
@@ -6055,7 +6458,7 @@ function render() {
     // The Import dialog renders its own cleanup retries so they stay actionable
     // above the modal backdrop; the page-level banner covers every other view.
     const pageCleanup = view.modal === 'import' ? '' : [...adapter.cleanupPending].map(([id, pending]) => feedback(`${esc(pending.message)} <code>${esc(id)}</code>`, "warning", btn(t('standalone.retryCleanup'), "retry-inspection-cleanup", "small", `data-id="${esc(id)}"`))).join('');
-    reconcileHTML(root, `${html}${pageCleanup}${view.modal && (!gate.blocked || ["account", "connection", "switch-core", "operation", "operations", "log-export", "dirty-file", "dirty-settings", "about-piwork"].includes(view.modal)) ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="json-input" accept=".json" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden>`);
+    reconcileHTML(root, `${html}${pageCleanup}${view.modal && (!gate.blocked || ["account", "connection", "switch-core", "operation", "operations", "log-export", "dirty-file", "dirty-settings", "about-piwork"].includes(view.modal)) ? modalMarkup() : ""}<input type="file" id="chat-image-input" accept="image/png,image/jpeg,image/webp" multiple hidden><input type="file" id="upload-input" multiple hidden><input type="file" id="agents-input" accept=".md,.txt" hidden><input type="file" id="create-agents-input" accept=".md,.txt" hidden><input type="file" id="work-file-input" accept=".work" hidden><input type="file" id="package-zip-input" accept=".zip" hidden><input type="file" id="package-directory-input" webkitdirectory multiple hidden><input type="file" id="skill-directory-input" webkitdirectory multiple hidden>`);
     syncFileDropOverlay();
     for (const child of [...root.children])
         if (child instanceof HTMLElement && !['modal', 'toast', 'core-recovery-banner'].includes(child.id))
@@ -6365,6 +6768,53 @@ root.addEventListener('keydown', event => {
         options[event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length]?.focus();
     }
 });
+root.addEventListener('keydown', event => {
+    const target = event.target;
+    const menu = target.closest('.skill-menu');
+    if (!menu)
+        return;
+    const summary = menu.querySelector('summary');
+    const items = [...menu.querySelectorAll('[role=menuitem]')].filter(item => !item.hasAttribute('disabled'));
+    const focus = (node) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        node?.focus();
+    };
+    if (target === summary) {
+        if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+            menu.open = true;
+            focus(items[0]);
+        }
+        else if (event.key === 'ArrowUp') {
+            menu.open = true;
+            focus(items.at(-1));
+        }
+        else if (event.key === 'Escape' && menu.open) {
+            menu.open = false;
+            focus(summary);
+        }
+        return;
+    }
+    if (!target.matches('[role=menuitem]'))
+        return;
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        const index = items.indexOf(target);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        focus(items[next]);
+    }
+    else if (event.key === 'Escape') {
+        menu.open = false;
+        focus(summary);
+    }
+    else if (event.key === 'Tab') {
+        menu.open = false;
+    }
+});
+root.addEventListener('toggle', event => {
+    const menu = event.target;
+    if (menu.matches?.('.skill-menu'))
+        menu.querySelector('summary')?.setAttribute('aria-expanded', String(menu.open));
+}, true);
 root.addEventListener("click", (e) => {
     const el = e.target.closest("[data-action]");
     if (!el || el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true" || el.closest('[inert]'))
@@ -6405,6 +6855,8 @@ root.addEventListener("click", (e) => {
         if (error instanceof ViewChanged || origin !== viewKey())
             return;
         menuFailed = menuCommand;
+        if (view.modal === 'add-skill' && el.dataset.action === 'confirm-add-skill' && view.addSkillError)
+            return;
         if (view.modal) {
             const nameConflict = submittedName !== undefined && error instanceof DesktopError && error.code === 'WORK_NAME_CONFLICT';
             view.modalNameError = nameConflict ? { name: submittedName, message: error.message } : null;
@@ -6440,6 +6892,10 @@ root.addEventListener("input", (e) => {
     switch (input.id) {
         case "search":
             view.search = value;
+            render();
+            break;
+        case "settings-skill-search":
+            view.skillSearch = value;
             render();
             break;
         case "auth-core":
@@ -6489,20 +6945,21 @@ root.addEventListener("input", (e) => {
         case "agents-editor":
             if (view.config) {
                 view.config.agents = value;
-                synchronizeConfiguration(view.config);
-                view.configDirty = true;
+                view.configDirty = settingsDraftDirty(settingsDraft(view.config), settingsFacts(current()?.config ?? view.config));
                 render();
             }
             break;
-        case "advanced-editor":
+        case "skill-file-editor":
             if (view.config) {
-                editAdvanced(view.config, value);
-                view.configDirty = true;
+                const skillName = settingsSkillName(view.config), path = settingsFilePath(view.config, skillName);
+                applySettingsDraft(view.config, editSettingsFile(settingsDraft(view.config), skillName, path, value));
+                view.configDirty = settingsDraftDirty(settingsDraft(view.config), settingsFacts(current()?.config ?? view.config));
                 render();
             }
             break;
         case "install-source":
             view.installSource = value;
+            render();
             break;
         case "import-name":
             view.importName = value;
@@ -6530,6 +6987,26 @@ root.addEventListener("change", (e) => {
         render();
     }
     const w = current();
+    if (input.id === 'settings-file-selector' && w && view.config) {
+        input.dataset.path = value;
+        void dispatchAction(input, () => loadSettingsSkill(w, settingsSkillName(view.config), value), actionIntent(input, 'settings-file')).catch(() => undefined);
+        return;
+    }
+    if (input.id === 'settings-skill-selector' && w && view.config) {
+        input.dataset.skill = value;
+        void dispatchAction(input, () => loadSettingsSkill(w, value), actionIntent(input, 'settings-skill')).catch(() => undefined);
+        return;
+    }
+    if (input.dataset.addSkill) {
+        const name = input.dataset.addSkill;
+        view.addSkillSelected = checked ? [...new Set([...view.addSkillSelected, name])] : view.addSkillSelected.filter(item => item !== name);
+        if (checked) {
+            view.addSkillDirectory = undefined;
+            view.addSkillError = '';
+        }
+        render();
+        return;
+    }
     if (input.id === 'pi-service-filter' && w) {
         view.data.serviceName = value;
         if (requestNavigationCurrent())
@@ -6611,10 +7088,12 @@ root.addEventListener("change", (e) => {
         case "install-type":
             view.installType = value;
             view.installSource = "";
+            packageFiles = [];
             render();
             break;
         case "install-name":
             view.installName = value;
+            render();
             break;
         case "delete-confirm": {
             view.deleteConfirmed = checked;
@@ -6694,6 +7173,15 @@ async function handleFiles(input, record) {
         view.inspectActual = true;
         render();
     }
+    else if (input.id === "skill-directory-input") {
+        if (!valid())
+            throw new ViewChanged();
+        const selection = skillDirectorySelection(files);
+        view.addSkillDirectory = selection.directory;
+        view.addSkillSelected = [];
+        view.addSkillError = selection.problem ? t(`settings.skillDirectoryProblem.${selection.problem}`) : '';
+        render();
+    }
     else if (input.id === "package-zip-input" ||
         input.id === "package-directory-input") {
         packageFiles = files;
@@ -6722,14 +7210,7 @@ async function handleFiles(input, record) {
             view.createAgents = text;
         }
         else if (view.config) {
-            if (input.id === "json-input") {
-                editAdvanced(view.config, text);
-                view.settingsTab = "Advanced";
-            }
-            else {
-                view.config.agents = text;
-                synchronizeConfiguration(view.config);
-            }
+            view.config.agents = text;
             view.configDirty = true;
         }
         render();
@@ -7243,8 +7724,10 @@ async function loadRoute() {
         }
         else if (entering && r[0] === 'work' && r[2] !== 'settings' && choices.area === areaChoice && choices.modal === modalChoice)
             view.tab = initialWorkArea(savedSelection, work, adapter.project(work).usable, adapter.modelReady(work.id, view.session));
-        if (r[2] === 'settings' && !view.configDirty)
-            view.config = structuredClone(work.config);
+        if (r[2] === 'settings' && view.configWorkId !== work.id && !view.configDirty) {
+            view.config = settingsConfiguration(work.config);
+            view.configWorkId = work.id;
+        }
         if (!filesRoute && entering && r[0] !== 'app' && r[2] !== 'settings' && choices.area === areaChoice && choices.file === fileChoice && view.tab === 'Files' && adapter.project(work).usable)
             await restoreFiles(work, previous, valid);
         if (!valid())
@@ -7285,7 +7768,7 @@ function reconcileHTML(parent, html) {
             return `id:${node.id}`;
         // Removing Cancel must not turn the original Check status node into Close.
         if (node.matches('button[data-action]'))
-            return `action:${['action', 'id', 'path', 'run-id', 'cancel-run-id', 'run', 'session', 'index', 'tab', 'control', 'kind', 'option-value', 'command', 'copy'].map(name => node.getAttribute(`data-${name}`) ?? '').join(':')}`;
+            return `action:${['action', 'id', 'skill', 'path', 'run-id', 'cancel-run-id', 'run', 'session', 'index', 'tab', 'control', 'kind', 'option-value', 'command', 'copy'].map(name => node.getAttribute(`data-${name}`) ?? '').join(':')}`;
         return `${node.tagName}:${node.getAttribute('class')?.split(' ')[0] ?? ''}`;
     };
     const patch = (target, incoming) => {
@@ -7372,7 +7855,16 @@ function reconcileHTML(parent, html) {
     };
     children(parent, template.content);
 }
-function skillState(work, name, field) { const runtime = work.config.runtime?.skills?.find((s) => s.name === name); const value = runtime?.[field]; return value === undefined ? t('text.notProvided') : field === "loaded" ? value ? t('runtimeSkill.loaded') : t('runtimeSkill.notLoaded') : value ? t('runtimeSkill.visible') : t('runtimeSkill.notVisible'); }
+function skillState(work, name, field) {
+    if (work.status === 'Stopped')
+        return t('runtimeSkill.workStopped');
+    const runtime = work.config.runtime?.skills?.find((item) => item.name === name);
+    const verified = ['Ready', 'Degraded'].includes(work.status) && !work.statusError && work.config.runtime?.state === 'ready';
+    const value = verified ? runtime?.[field] ?? (work.config.active && !work.config.active.skills.includes(name) ? false : undefined) : undefined;
+    return typeof value !== 'boolean' ? t('packageStatus.loadingUnconfirmed') : field === 'loaded'
+        ? t(value ? 'runtimeSkill.loaded' : 'runtimeSkill.notLoaded')
+        : t(value ? 'runtimeSkill.visible' : 'runtimeSkill.notVisible');
+}
 function brainBehavior(adoption) {
     return adoption === "verified" ? t('brain.verified') : adoption === "failed" ? t('brain.failed') : adoption === "not-confirmed" ? t('brain.notConfirmed') : t('brain.unavailable');
 }

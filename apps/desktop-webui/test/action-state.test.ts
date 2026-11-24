@@ -265,3 +265,18 @@ test('readback suppression never hides an unknown, partial failure, or a pending
     }
   } finally { Object.assign(globalThis, { document: oldDocument, getComputedStyle: oldStyle, window: oldWindow }); }
 });
+
+test('owner-confirmed current state retires only the checked unknown action', () => {
+  const actions = new ActionState();
+  const original = actions.begin(intent('save', 'configuration', 'one'));
+  actions.fail(original, Object.assign(new Error('response lost'), { code: 'RESULT_UNKNOWN' }));
+  const unrelated = actions.begin(intent('other', 'configuration', 'two'));
+  actions.fail(unrelated, Object.assign(new Error('another response lost'), { code: 'RESULT_UNKNOWN' }));
+  actions.review(original, 'Current saved contents confirmed');
+  assert.equal(original.blocked, false);
+  assert.equal(original.error, undefined);
+  assert.equal(original.result, 'Current saved contents confirmed');
+  assert.equal(unrelated.blocked, true);
+  assert.equal(unrelated.error, 'another response lost');
+  actions.clear();
+});

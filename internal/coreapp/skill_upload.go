@@ -87,82 +87,12 @@ func (a *Application) adminSkillUpload(w http.ResponseWriter, r *http.Request, a
 		return contracts.NewError("SKILL_UPLOAD_BUSY", "").WithRetryAfter(1000)
 	}
 	defer a.skillUploads.Add(-1)
-	contentType := r.Header.Get("Content-Type")
-	mediaType, params, err := mime.ParseMediaType(contentType)
-	if err != nil || mediaType != "multipart/form-data" || len(params) != 1 || params["boundary"] == "" || len(params["boundary"]) > 70 {
-		return contracts.NewError("UNSUPPORTED_MEDIA_TYPE", "")
+	name, files, err := readSkillUploadParts(w, r)
+	if err != nil {
+		return err
 	}
-	now := time.Now()
-	reader := &skillUploadReader{source: r.Body, control: http.NewResponseController(w), deadline: now.Add(30 * time.Minute), progress: now}
-	parser := multipart.NewReader(reader, params["boundary"])
-	var name string
-	var files []skillartifact.File
-	var contentBytes int64
-	seenFiles := make(map[string]struct{})
-	seenDirectories := make(map[string]struct{})
-	for index := 0; ; index++ {
-		part, err := parser.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return skillUploadReadError(err)
-		}
-		if index > skillUploadMaxFiles || len(part.Header) > 64 {
-			return contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
-		}
-		_, disposition, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
-		if err != nil {
-			return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-		}
-		if index == 0 {
-			if disposition["name"] != "directoryName" {
-				return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-			}
-			if _, hasFilename := disposition["filename"]; hasFilename {
-				return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-			}
-			data, readErr := io.ReadAll(io.LimitReader(part, 65))
-			if readErr != nil {
-				return skillUploadReadError(readErr)
-			}
-			if len(data) > 64 {
-				return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-			}
-			part.Close()
-			name = string(data)
-			if !uploadSkillName.MatchString(name) {
-				return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-			}
-			if update && name != expectedName {
-				return contracts.NewError("SKILL_NAME_MISMATCH", "")
-			}
-			continue
-		}
-		encoded, hasFilename := disposition["filename"]
-		if disposition["name"] != "files" || !hasFilename || len(files) >= skillUploadMaxFiles {
-			if len(files) >= skillUploadMaxFiles {
-				return contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
-			}
-			return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-		}
-		relative, err := decodeSkillUploadPath(encoded)
-		if err != nil || !recordSkillUploadPath(relative, seenFiles, seenDirectories) {
-			return contracts.NewError("SKILL_UPLOAD_INVALID", "")
-		}
-		data, readErr := io.ReadAll(io.LimitReader(part, skillUploadMaxFile+1))
-		if readErr != nil {
-			return skillUploadReadError(readErr)
-		}
-		contentBytes += int64(len(data))
-		if len(data) > skillUploadMaxFile || contentBytes > skillUploadMaxContent {
-			return contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
-		}
-		part.Close()
-		files = append(files, skillartifact.File{Path: relative, Data: data})
-	}
-	if name == "" || len(files) == 0 {
-		return contracts.NewError("SKILL_UPLOAD_INVALID", "")
+	if update && name != expectedName {
+		return contracts.NewError("SKILL_NAME_MISMATCH", "")
 	}
 	snapshot, err := skillartifact.FromFiles(name, files)
 	if err != nil {
@@ -190,6 +120,86 @@ func (a *Application) adminSkillUpload(w http.ResponseWriter, r *http.Request, a
 		send(w, http.StatusCreated, skill)
 	}
 	return nil
+}
+
+// readSkillUploadParts consumes the existing bounded SKM-004 multipart tree.
+// Callers authorize the target before this reads the request body.
+func readSkillUploadParts(w http.ResponseWriter, r *http.Request) (string, []skillartifact.File, error) {
+	contentType := r.Header.Get("Content-Type")
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "multipart/form-data" || len(params) != 1 || params["boundary"] == "" || len(params["boundary"]) > 70 {
+		return "", nil, contracts.NewError("UNSUPPORTED_MEDIA_TYPE", "")
+	}
+	now := time.Now()
+	reader := &skillUploadReader{source: r.Body, control: http.NewResponseController(w), deadline: now.Add(30 * time.Minute), progress: now}
+	parser := multipart.NewReader(reader, params["boundary"])
+	var name string
+	var files []skillartifact.File
+	var contentBytes int64
+	seenFiles := make(map[string]struct{})
+	seenDirectories := make(map[string]struct{})
+	for index := 0; ; index++ {
+		part, err := parser.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", nil, skillUploadReadError(err)
+		}
+		if index > skillUploadMaxFiles || len(part.Header) > 64 {
+			return "", nil, contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
+		}
+		_, disposition, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
+		if err != nil {
+			return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+		}
+		if index == 0 {
+			if disposition["name"] != "directoryName" {
+				return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+			}
+			if _, hasFilename := disposition["filename"]; hasFilename {
+				return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+			}
+			data, readErr := io.ReadAll(io.LimitReader(part, 65))
+			if readErr != nil {
+				return "", nil, skillUploadReadError(readErr)
+			}
+			if len(data) > 64 {
+				return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+			}
+			part.Close()
+			name = string(data)
+			if !uploadSkillName.MatchString(name) {
+				return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+			}
+			continue
+		}
+		encoded, hasFilename := disposition["filename"]
+		if disposition["name"] != "files" || !hasFilename || len(files) >= skillUploadMaxFiles {
+			if len(files) >= skillUploadMaxFiles {
+				return "", nil, contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
+			}
+			return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+		}
+		relative, err := decodeSkillUploadPath(encoded)
+		if err != nil || !recordSkillUploadPath(relative, seenFiles, seenDirectories) {
+			return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+		}
+		data, readErr := io.ReadAll(io.LimitReader(part, skillUploadMaxFile+1))
+		if readErr != nil {
+			return "", nil, skillUploadReadError(readErr)
+		}
+		contentBytes += int64(len(data))
+		if len(data) > skillUploadMaxFile || contentBytes > skillUploadMaxContent {
+			return "", nil, contracts.NewError("SKILL_UPLOAD_LIMIT_EXCEEDED", "")
+		}
+		part.Close()
+		files = append(files, skillartifact.File{Path: relative, Data: data})
+	}
+	if name == "" || len(files) == 0 {
+		return "", nil, contracts.NewError("SKILL_UPLOAD_INVALID", "")
+	}
+	return name, files, nil
 }
 
 func skillUploadReadError(err error) error {

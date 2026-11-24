@@ -15,6 +15,7 @@ import (
 	"piwork/internal/contracts"
 	"piwork/internal/corestore"
 	"piwork/internal/identity"
+	"piwork/internal/skillartifact"
 	"piwork/internal/workaccess"
 	"piwork/internal/workcontext"
 )
@@ -104,7 +105,7 @@ func (a *Application) workConfigurationSave(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
-	view, err := a.saveBasicWorkConfiguration(r.Context(), actor, id, work.OwnerUserID, field && parts[2] == "skills", full, update)
+	view, err := a.saveBasicWorkConfiguration(r.Context(), actor, id, work.OwnerUserID, field && parts[2] == "skills", full, update, nil, nil)
 	if err != nil {
 		return true, err
 	}
@@ -112,7 +113,7 @@ func (a *Application) workConfigurationSave(w http.ResponseWriter, r *http.Reque
 	return true, nil
 }
 
-func (a *Application) saveBasicWorkConfiguration(ctx context.Context, actor identity.Principal, workID, ownerID string, reselectSkills, full bool, update func(contracts.WorkConfig) (contracts.WorkConfig, error), gates ...func(*sql.Tx) error) (contracts.WorkConfigurationView, error) {
+func (a *Application) saveBasicWorkConfiguration(ctx context.Context, actor identity.Principal, workID, ownerID string, reselectSkills, full bool, update func(contracts.WorkConfig) (contracts.WorkConfig, error), edits []workcontext.SkillEdit, imports map[string]skillartifact.Snapshot, gates ...func(*sql.Tx) error) (contracts.WorkConfigurationView, error) {
 	if a.ctx.Err() != nil {
 		return contracts.WorkConfigurationView{}, contracts.NewError("RUNTIME_UNAVAILABLE", "")
 	}
@@ -170,7 +171,7 @@ func (a *Application) saveBasicWorkConfiguration(ctx context.Context, actor iden
 		}
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		a.skillMu.Lock()
-		published, err := a.buildWorkContext(ctx, workID, *state.DesiredContextID, reselectSkills, config, imageID, now, nil)
+		published, err := a.buildWorkContext(ctx, workID, *state.DesiredContextID, reselectSkills, config, imageID, now, nil, edits, imports)
 		if err != nil {
 			a.skillMu.Unlock()
 			return contracts.WorkConfigurationView{}, packagePublicError(err)

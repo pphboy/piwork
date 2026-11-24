@@ -131,7 +131,8 @@ function filesFixture(r: RequestRecord): Reply | undefined {
 }
 const businessWrites = (requests: RequestRecord[]) => requests.filter(r =>
   ['POST', 'PUT', 'PATCH', 'DELETE', 'MKCOL', 'MOVE', 'COPY'].includes(r.method) &&
-  !['service-entries', 'login', 'logout', 'connection'].includes(r.path));
+  !['service-entries', 'login', 'logout', 'connection'].includes(r.path) &&
+  !r.path.endsWith('/configuration/editor/read'));
 async function visible(page: Page, state: 'visible' | 'hidden') {
   await page.evaluate(state => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });

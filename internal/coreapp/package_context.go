@@ -12,10 +12,11 @@ import (
 	"piwork/internal/corestore"
 	"piwork/internal/diagnostics"
 	"piwork/internal/pipackage"
+	"piwork/internal/skillartifact"
 	"piwork/internal/workcontext"
 )
 
-func (a *Application) buildWorkContext(ctx context.Context, workID, priorID string, reselectSkills bool, config contracts.WorkConfig, imageID, now string, override *workcontext.PackageSource) (published workcontext.Published, returned error) {
+func (a *Application) buildWorkContext(ctx context.Context, workID, priorID string, reselectSkills bool, config contracts.WorkConfig, imageID, now string, override *workcontext.PackageSource, edits []workcontext.SkillEdit, imports map[string]skillartifact.Snapshot) (published workcontext.Published, returned error) {
 	if trace := traceFrom(ctx); trace != nil {
 		if err := trace.observe(ctx, diagnostics.Event{Component: "core", Stage: "context-copy", Outcome: "started", Code: "CONTEXT_COPY_FAILED"}); err != nil {
 			return published, err
@@ -123,6 +124,9 @@ func (a *Application) buildWorkContext(ctx context.Context, workID, priorID stri
 		if err := pipackage.AssertEnvironment(source.Metadata.PreparedEnvironment, *environment); err != nil {
 			return published, contracts.NewError("PI_PACKAGE_ENVIRONMENT_MISMATCH", "packages")
 		}
+	}
+	if edits != nil || imports != nil {
+		return workcontext.BuildWithPackagesAndEdits(a.Store, a.options.DataDirectory, workID, priorID, config, edits, imports, imageID, now, ordered)
 	}
 	return workcontext.BuildWithPackages(a.Store, a.options.DataDirectory, workID, priorID, reselectSkills, config, imageID, now, ordered)
 }

@@ -124,8 +124,7 @@ export async function serviceViewAcceptance({ page, coreUrl, uiUrl, token, api, 
     const savedAgents = await agents.inputValue();
     const draftAgents = savedAgents + '\nUI verification draft.\n';
     await agents.fill(draftAgents);
-    await target.locator('[data-action=settings-section][data-tab=Advanced]').click();
-    await expect(target.locator('#advanced-editor')).toHaveValue(/UI verification draft\./);
+    await target.locator('[data-action=settings-section][data-tab="Skills"]').click();
     await target.locator('[data-action=settings-section][data-tab="AGENTS.md"]').click();
     await expect(agents).toHaveValue(draftAgents);
     await target.locator('[data-action=back-work]').click();

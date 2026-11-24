@@ -136,7 +136,33 @@ func TestNativeSkillsUseIndependentCopiesAndExplicitReselection(t *testing.T) {
 	}
 	read(workA, "read-reselected", "CORE_CURRENT")
 	read(workB, "read-B-still-owned", "COPY_B")
+
+	// Editor saves preserve the Work owned copy, leave active unchanged until
+	// its own Apply, and a later save remains pending for the next Apply.
+	selectSkills(workA, []string{"owned-skill"})
+	mutate(workA, "configuration/apply", "apply-editor-base")
+	editorPath := "/api/v1/works/" + workA + "/configuration/editor"
+	status, editorRead := packageHTTPCall(t, base, editorPath+"/read", "POST", auth, map[string]any{"skillName": "owned-skill", "files": []map[string]string{{"skillName": "owned-skill", "path": "support.txt"}}})
+	if status != 200 || editorRead["files"].([]any)[0].(map[string]any)["text"] != "CORE_CURRENT" {
+		t.Fatal("editor read did not return the owned text", status, editorRead)
+	}
+	status, saved := packageHTTPCall(t, base, editorPath, "PATCH", auth, map[string]any{"skillFiles": []map[string]string{{"skillName": "owned-skill", "path": "support.txt", "text": "EDITOR_ONE"}}})
+	if status != 200 || saved["pendingApply"] != true {
+		t.Fatal("editor save did not stay pending", status, saved)
+	}
+	read(workA, "read-before-editor-apply", "CORE_CURRENT")
+	mutate(workA, "configuration/apply", "apply-editor-one")
+	read(workA, "read-editor-one", "EDITOR_ONE")
+	status, saved = packageHTTPCall(t, base, editorPath, "PATCH", auth, map[string]any{"skillFiles": []map[string]string{{"skillName": "owned-skill", "path": "support.txt", "text": "EDITOR_TWO"}}})
+	if status != 200 || saved["pendingApply"] != true {
+		t.Fatal("late editor save did not remain pending", status, saved)
+	}
+	read(workA, "read-late-save-pending", "EDITOR_ONE")
+	mutate(workA, "configuration/apply", "apply-editor-two")
+	read(workA, "read-editor-two", "EDITOR_TWO")
+
+	selectSkills(workA, []string{})
 	mutate(workA, "configuration/apply", "apply-empty")
 	read(workA, "read-removed", "")
-	t.Log("same-name Work A/B/Core copies distinguished by actual SDK read results; restart isolation, explicit reselect, later pending selection and removal verified")
+	t.Log("same-name Work A/B/Core copies distinguished by actual SDK read results; restart isolation, explicit reselect, later pending selection, editor content Apply and removal verified")
 }

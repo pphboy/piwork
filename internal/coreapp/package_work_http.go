@@ -136,7 +136,7 @@ func (a *Application) workPackageHTTP(w http.ResponseWriter, r *http.Request, ac
 			}
 			config.Packages = selection
 			return config, nil
-		}, func(tx *sql.Tx) error { return assertPackageScopeIdleTx(tx, workID) })
+		}, nil, nil, func(tx *sql.Tx) error { return assertPackageScopeIdleTx(tx, workID) })
 		if err != nil {
 			return true, err
 		}

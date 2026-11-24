@@ -2088,6 +2088,93 @@ pre,
 .settings-content {
   padding: 26px 0;
 }
+.settings-columns {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.settings-objects,
+.settings-editor {
+  min-width: 0;
+}
+.object-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 4px;
+}
+.object-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 12px;
+}
+.object-item:hover {
+  background: var(--accent-soft);
+}
+.object-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.object-item.add {
+  color: var(--muted);
+}
+.dirty-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warning, #b7791f);
+  flex: 0 0 auto;
+}
+.skill-menu {
+  position: relative;
+}
+.skill-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 5px 8px;
+  border-radius: 5px;
+}
+.skill-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.skill-menu .menu-list {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  min-width: 180px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.skill-menu .menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+.settings-content #skill-file-editor {
+  width: 100%;
+  min-height: 320px;
+}
+@media (max-width: 700px) {
+  .settings-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .section-heading {
   display: flex;
   align-items: center;
@@ -5251,4 +5338,275 @@ form and confirmation dialogs keep their density. */ .modal.anchored-overlay.com
   width: 18px;
   height: 12px;
   border-radius: 3px;
+}
+
+/* Work settings: a stable toolbar, category navigation, then the owned files. */
+.settings-page {
+  max-width: 1240px;
+  padding: 20px 28px 40px;
+}
+.settings-page .settings-heading {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 10px;
+  margin: 0;
+  min-height: 44px;
+}
+.settings-page .settings-heading h1 {
+  font-size: 20px;
+  white-space: nowrap;
+}
+.settings-heading .settings-savebar {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-status.configuration-state,
+.settings-status.configuration-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  margin: 0;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.settings-status-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.settings-status-facts > span {
+  display: inline;
+  margin: 0;
+  font-size: inherit;
+}
+.settings-status-facts .settings-status-error {
+  color: var(--danger);
+}
+.settings-operation-link {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.settings-page .settings-layout {
+  grid-template-columns: 136px minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 16px;
+}
+.settings-page .settings-columns {
+  grid-template-columns: minmax(160px, 210px) minmax(0, 1fr);
+  gap: 20px;
+}
+.settings-page .section-heading {
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+.settings-page .section-heading h2 {
+  font-size: 15px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.settings-page .section-heading p {
+  font-size: 11px;
+  margin: 5px 0 0;
+}
+.settings-page .catalog-heading {
+  margin-top: 18px;
+}
+.settings-page .object-list {
+  max-height: 32vh;
+  overflow: auto;
+}
+.settings-page .object-item > span:first-child {
+  overflow-wrap: anywhere;
+}
+.settings-page .object-list > .muted {
+  padding: 6px;
+  margin: 0;
+  font-size: 12px;
+}
+.settings-file-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  min-height: 34px;
+}
+.settings-file-toolbar select {
+  min-width: 0;
+  width: min(100%, 340px);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.settings-file-state {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.settings-file-state[data-file-state="unsaved"] {
+  color: var(--text);
+}
+.settings-page .code-editor {
+  min-height: min(48vh, 420px);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.settings-page .skill-menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-menu-target {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 260px;
+  padding: 7px 9px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.settings-menu-target > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.settings-undo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  margin-top: 5px;
+}
+@media (max-width: 899px) {
+  .settings-page .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}
+@media (max-width: 700px) {
+  .settings-page { padding: 12px; }
+  .settings-page .settings-heading { flex-wrap: wrap; }
+  .settings-heading .settings-savebar {
+    flex: 1 0 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+  .settings-savebar .button { flex: 0 1 auto; }
+  .settings-page .settings-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .settings-page .object-list { max-height: 160px; }
+  .settings-status-facts { gap: 4px 10px; }
+  .settings-status .settings-operation-link .button { padding-inline: 6px; }
+  .settings-menu-target { max-width: 230px; }
+}
+
+.settings-objects-heading { gap: 8px; }
+.settings-objects-heading h2 {
+  flex: 1;
+  min-width: 0;
+}
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 0 8px;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+}
+.settings-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 6px 0;
+  outline: none;
+}
+.settings-no-match {
+  padding: 6px;
+  margin: 0;
+  font-size: 12px;
+}
+.settings-mobile-objects { display: none; }
+.settings-add-source { margin-top: 14px; }
+.settings-add-source h3 {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.settings-add-source .catalog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+}
+.settings-add-source .catalog-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.settings-directory-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.settings-directory-choice p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+html:has(.settings-task-dialog:modal) {
+  overflow: hidden;
+}
+@media (max-width: 899px) {
+  .settings-task-dialog.inspector-drawer {
+    width: 100%;
+    max-width: none;
+  }
+}
+@media (max-width: 700px) {
+  .settings-page .settings-objects { display: none; }
+  .settings-mobile-objects {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .settings-mobile-objects label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .settings-mobile-objects select {
+    flex: 1 1 140px;
+    min-width: 0;
+  }
 }

@@ -44,4 +44,24 @@ export class SettingsSaveReadback {
 export function configurationReadAllowsApply(error) {
     return !error;
 }
+/** Independent presentation facts. This never updates requests, locks or the
+ * Core's pendingApply; equal JSON is deliberately not an input. */
+export function settingsStatus(facts) {
+    const confirmed = facts.confirmed && !facts.configurationError;
+    const save = facts.saveUnknown ? 'unknown' : facts.saving ? 'saving' : facts.dirty ? 'unsaved' : 'saved';
+    const application = facts.applyUnknown ? 'unknown' : facts.applying ? (facts.applyWaiting ? 'waiting' : 'applying')
+        : !confirmed ? 'unconfirmed' : facts.activeNull ? 'never-applied'
+            : facts.pendingApply === true ? 'pending' : facts.pendingApply === false ? 'applied' : 'unconfirmed';
+    return {
+        save, application,
+        steady: confirmed && save === 'saved' && application === 'applied' && !facts.applyFailed && !facts.runtimeFailed,
+        canApply: confirmed && facts.pendingApply === true && !facts.dirty && !facts.saving && !facts.saveUnknown && !facts.applying && !facts.applyUnknown,
+    };
+}
+/** A known historical Apply failure may retire only after fresh configured
+ * and verified running facts. Unknown writes and failed recovery remain. */
+export function settingsApplyFailureResolved(facts) {
+    return facts.originalFailed && !facts.unknown && facts.pendingApply === false && !facts.configurationError &&
+        !facts.workFailed && facts.runtimeReady && !!facts.checkedAt && Date.parse(facts.checkedAt) > facts.originalStarted;
+}
 //# sourceMappingURL=settings-read-feedback.js.map

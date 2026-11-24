@@ -309,6 +309,15 @@ func (a *Application) handle(w http.ResponseWriter, r *http.Request) error {
 	if handled, err := a.workConfigurationRead(w, r, session.Principal()); handled {
 		return err
 	}
+	if handled, err := a.workConfigurationEditorRead(w, r, session.Principal()); handled {
+		return err
+	}
+	if handled, err := a.workConfigurationEditorSave(w, r, session.Principal()); handled {
+		return err
+	}
+	if handled, err := a.workSkillImport(w, r, session.Principal()); handled {
+		return err
+	}
 	if handled, err := a.workConfigurationApplyHTTP(w, r, session.Principal()); handled {
 		return err
 	}
