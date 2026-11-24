@@ -19,7 +19,7 @@ async function freePort() {
   return port;
 }
 test.use({ viewport: { width: 1440, height: 900 } });
-let root, core, origin, coreOrigin;
+let root, core, origin, coreOrigin, coreArgs, coreEnvironment;
 let nativeCoreOutput = "";
 function captureProcessOutput(child, append) {
   child.stdout?.on("data", (chunk) => append(chunk.toString()));
@@ -30,14 +30,9 @@ test.beforeAll(async () => {
   if(!process.env.PIWORK_TEST_NATIVE_CORE)nativeCore=buildNativeTestServer(join(root,'bin'),{agent:process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE||'piwork-agentd:go-migration-acceptance',packageHelper:process.env.PIWORK_TEST_NATIVE_AGENT_IMAGE||'piwork-agentd:go-migration-acceptance',fileHelper:process.env.PIWORK_TEST_NATIVE_FILE_HELPER_IMAGE||'piwork-file-helper:go-migration-acceptance',snapshotHelper:process.env.PIWORK_TEST_NATIVE_SNAPSHOT_HELPER_IMAGE||'piwork-snapshot-helper:go-migration-acceptance'});
   const [corePort,uiPort]=await Promise.all([freePort(),freePort()]);
   coreOrigin=`http://127.0.0.1:${corePort}`;origin=`http://127.0.0.1:${uiPort}`;
-  core=spawn(nativeCore,['--data-dir',join(root,'core'),'--ui-port',String(uiPort),'--core-port',String(corePort)],{stdio:['ignore','pipe','pipe'],env:{...process.env,DISPLAY:'',WAYLAND_DISPLAY:'',PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'correct horse battery'}});
-  captureProcessOutput(core,chunk=>{nativeCoreOutput+=chunk;});
-  let ready=false;
-  for(let i=0;i<100;i++){
-   try{if((await fetch(origin+'/healthz')).ok){ready=true;break;}}catch{}
-   await new Promise(done=>setTimeout(done,100));
-  }
-  assert(ready,'Core UI did not start');
+  coreArgs=['--data-dir',join(root,'core'),'--ui-port',String(uiPort),'--core-port',String(corePort)];
+  coreEnvironment={...process.env,DISPLAY:'',WAYLAND_DISPLAY:'',PIWORK_ADMIN_ACCOUNT:'admin',PIWORK_ADMIN_PASSWORD:'correct horse battery'};
+  await startCore();
 });
 test.afterAll(async () => {
   if (core && core.exitCode === null) { core.kill("SIGTERM"); await new Promise((done) => core.once("exit", done)); }
@@ -49,6 +44,20 @@ test.afterEach(async ({}, testInfo) => {
   }
 });
 
+async function startCore() {
+  nativeCoreOutput = "";
+  core = spawn(nativeCore, coreArgs, { stdio: ["ignore", "pipe", "pipe"], env: coreEnvironment });
+  captureProcessOutput(core, chunk => { nativeCoreOutput += chunk; });
+  for (let i = 0; i < 200; i++) {
+    try { if ((await fetch(origin + '/healthz')).ok) return; } catch {}
+    await new Promise(done => setTimeout(done, 100));
+  }
+  throw new Error('Core UI did not start: ' + nativeCoreOutput.slice(-2000));
+}
+async function restartCore() {
+  if (core && core.exitCode === null) { core.kill('SIGTERM'); await new Promise(done => core.once('exit', done)); }
+  await startCore();
+}
 async function login(page) {
   await page.goto(`${origin}/login`);
   await page.getByLabel('Account', { exact: true }).fill('admin');
@@ -215,11 +224,11 @@ test('delivered Core UI uses real administrator users, revocation, and browser S
   await expect(user).toBeVisible();
   const skillDirectory = join(root,'real-skill'); await mkdir(skillDirectory); await writeFile(join(skillDirectory,'SKILL.md'),'# Real Skill\n');
   await page.getByRole('link',{name:'Setup',exact:true}).click();
-  await page.getByRole('link',{name:'Skills',exact:true}).click();
+  await page.getByRole('link',{name:'Library',exact:true}).click();
   await page.getByRole('button',{name:'Add Skill',exact:true}).click();
   await page.getByLabel('Choose Skill directory').setInputFiles(skillDirectory);
   await page.getByRole('button',{name:'Upload Skill',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'real-skill',exact:true})).toBeVisible();
+  await expect(page.locator('#detail-title')).toContainText('real-skill');
   expect(JSON.stringify(await page.context().cookies())).not.toContain('Bearer ');
 });
 async function saveFixtureRuntime(page) {
@@ -255,20 +264,29 @@ test('real Core runtime and starting point distinguish saved changes from existi
   await page.locator('[data-action="edit-defaults"][data-section="agentsMd"]').click();
   await expect(page.locator('#agentsMd')).toHaveValue('# Console native default\n');
 });
-test('real browser Package directory installs asynchronously and operation deep link recovers', async ({page}) => {
-  test.setTimeout(120000); const directory = join(root,'native-console-package'); await mkdir(directory);
-  await writeFile(join(directory,'package.json'),'{"name":"native-console-package","version":"1.0.0","pi":{"prompts":["review.md"]}}'); await writeFile(join(directory,'review.md'),'# Review\n');
-  await login(page); await saveFixtureRuntime(page); await page.goto(`${origin}/admin/packages`);
-  await page.getByRole('button',{name:'Install Package',exact:true}).click();
-  await page.getByRole('button',{name:'Local directory',exact:true}).click();
+async function installFixturePackage(page, name) {
+  const directory = join(root, name);
+  await mkdir(directory);
+  await writeFile(join(directory, 'package.json'), JSON.stringify({ name, version: '1.0.0', pi: { prompts: ['review.md'] } }));
+  await writeFile(join(directory, 'review.md'), '# Review\n');
+  await page.goto(`${origin}/admin/packages`);
+  await page.getByRole('button', { name: 'Install Package', exact: true }).click();
+  await page.getByRole('button', { name: 'Local directory', exact: true }).click();
   await page.getByLabel('Choose Package directory').setInputFiles(directory);
   await page.locator('#dialog-submit').click();
-  await expect(page.getByRole('heading',{name:'Package operation',exact:true})).toBeVisible({timeout:30000});
-  await expect(page.getByText(/^succeeded$/i).first()).toBeVisible({timeout:90000});
+  await expect(page.getByRole('heading', { name: 'Package operation', exact: true })).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText(/^succeeded$/i).first()).toBeVisible({ timeout: 90000 });
+}
+
+test('real browser Package directory installs asynchronously and operation deep link recovers', async ({page}) => {
+  test.setTimeout(120000);
+  await login(page);
+  await saveFixtureRuntime(page);
+  await installFixturePackage(page, 'native-console-package');
   const operationURL = page.url(); await page.reload();
   await expect(page.getByText(/^succeeded$/i).first()).toBeVisible(); expect(page.url()).toBe(operationURL);
   await page.goto(`${origin}/admin/packages`);
-  await expect(page.getByRole('link',{name:'native-console-package',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'native-console-package',exact:true})).toBeVisible();
 });
 
 test('real flat long model names round-trip through Console and Go Core without truncation',async({page})=>{
@@ -276,4 +294,88 @@ test('real flat long model names round-trip through Console and Go Core without 
  await page.getByLabel('Model ID',{exact:true}).fill(model);await page.getByLabel('API type',{exact:true}).selectOption('anthropic-messages');await page.getByLabel('Base URL',{exact:true}).fill('http://127.0.0.1:1');await page.getByLabel('API Key',{exact:true}).fill('synthetic-long-model-key');await page.getByRole('button',{name:'Add model',exact:true}).click();await expect(page.getByRole('link',{name:model,exact:true})).toBeVisible();await page.getByRole('link',{name:model,exact:true}).click();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(model);
  await page.getByLabel('Display name (optional)',{exact:true}).fill(name);await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByRole('heading',{name,exact:true})).toBeVisible();await page.reload();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(name);await expect(page.getByLabel('API Key',{exact:true})).toHaveValue('');
  await page.getByLabel('Display name (optional)',{exact:true}).fill('');await page.getByRole('button',{name:'Save model',exact:true}).click();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue('');await page.reload();await expect(page.getByLabel('Display name (optional)',{exact:true})).toHaveValue(model);expect(await page.content()).not.toContain('synthetic-long-model-key');
+});
+
+test('real Core Skill content edit, defaults and embedded assets survive a restart', async ({ page, browser }) => {
+  test.setTimeout(180000);
+  const directory = join(root, 'content-skill');
+  await mkdir(join(directory, 'references'), { recursive: true });
+  await mkdir(join(directory, 'assets'), { recursive: true });
+  await writeFile(join(directory, 'SKILL.md'), '# Content Skill\n');
+  await writeFile(join(directory, 'references', 'rules.md'), '# Rules\n');
+  await writeFile(join(directory, 'assets', 'blob.bin'), Buffer.from([0xff, 0x00, 0xfe]));
+  await login(page);
+  await saveFixtureRuntime(page);
+  await page.goto(origin + '/admin/skills');
+  await page.getByRole('button', { name: 'Add Skill', exact: true }).click();
+  await page.getByLabel('Choose Skill directory').setInputFiles(directory);
+  await page.getByRole('button', { name: 'Upload Skill', exact: true }).click();
+  await expect(page.locator('#detail-title')).toContainText('content-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('# Content Skill\n');
+  await page.locator('#file-editor').fill('# Edited content\n');
+  await page.locator('[data-action="save-file"]').click();
+  await expect(page.locator('#editor-save-state')).toHaveText('Saved');
+  await page.goto(origin + '/admin/skills/content-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('# Edited content\n');
+  await page.getByRole('button', { name: /assets/ }).click();
+  await page.getByRole('button', { name: 'blob.bin' }).click();
+  await expect(page.getByRole('heading', { name: 'This file cannot be edited as text' })).toBeVisible();
+  const bundle = await page.request.get(origin + '/admin/browser/app.js');
+  expect(bundle.ok()).toBe(true);
+  expect(await bundle.text()).toContain("t('library.title')");
+  await page.goto(origin + '/admin/default-work');
+  await page.locator('[data-action="edit-defaults"][data-section="skills"]').click();
+  await page.locator('[data-default-skill="content-skill"]').check();
+  const defaultsSaved = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/console/api/admin/default-work' && response.request().method() === 'PATCH');
+  await page.locator('[data-action="save-defaults"]').click();
+  const savedResponse = await defaultsSaved;
+  expect(savedResponse.ok()).toBe(true);
+  expect(savedResponse.request().postDataJSON()).toEqual({ skills: ['content-skill'] });
+  expect((await savedResponse.json()).configuration.skills).toEqual(['content-skill']);
+  await expect(page.getByText(/Saved.*confirmed|Starting point saved|Defaults saved/).first()).toBeVisible();
+
+  const packageName = 'console-ordered-default';
+  await installFixturePackage(page, packageName);
+  await page.goto(origin + '/admin/default-work');
+  const packagesBefore = await page.request.get(origin + '/console/api/admin/default-work');
+  expect(packagesBefore.ok()).toBe(true);
+  const previousPackageNames = (await packagesBefore.json()).configuration.packages.map(entry => entry.name);
+  expect(previousPackageNames.length).toBeGreaterThan(0);
+  await page.locator('[data-action="edit-defaults"][data-section="packages"]').click();
+  await page.locator(`[data-default-package="${packageName}"]`).check();
+  await page.locator('[data-action="save-defaults"]').click();
+  const packageSummary = page.locator('[data-testid="default-summary-packages"] .summary-token');
+  await expect(packageSummary).toHaveText([...previousPackageNames, packageName]);
+  await page.locator('[data-action="edit-defaults"][data-section="packages"]').click();
+  await page.locator(`[data-action="move-package"][data-name="${packageName}"][data-direction="up"]`).click();
+  const orderedPackageNames = [
+    ...previousPackageNames.slice(0, -1), packageName, previousPackageNames.at(-1),
+  ];
+  const orderSaved = page.waitForResponse(response =>
+    new URL(response.url()).pathname === '/console/api/admin/default-work' && response.request().method() === 'PATCH');
+  await page.locator('[data-action="save-defaults"]').click();
+  const orderResponse = await orderSaved;
+  expect(orderResponse.ok()).toBe(true);
+  expect(orderResponse.request().postDataJSON()).toEqual({ packages: orderedPackageNames });
+  expect((await orderResponse.json()).configuration.packages.map(entry => entry.name)).toEqual(orderedPackageNames);
+  await expect(packageSummary).toHaveText(orderedPackageNames);
+
+  await restartCore();
+  await login(page);
+  await page.goto(origin + '/admin/default-work');
+  const persistedDefaults = await page.request.get(origin + '/console/api/admin/default-work');
+  expect(persistedDefaults.ok()).toBe(true);
+  const persistedConfiguration = (await persistedDefaults.json()).configuration;
+  expect(persistedConfiguration.skills).toEqual(['content-skill']);
+  expect(persistedConfiguration.packages.map(entry => entry.name)).toEqual(orderedPackageNames);
+  await expect(packageSummary).toHaveText(orderedPackageNames);
+  await page.goto(origin + '/admin/skills/content-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('# Edited content\n');
+  await expect(page.locator('.navigator-item[data-name="content-skill"] .row-note')).toHaveText('Default');
+  const anonymous = await browser.newContext();
+  try {
+    const denied = await anonymous.request.get(origin + '/console/api/admin/skills/content-skill/file?path=SKILL.md');
+    expect([401, 403]).toContain(denied.status());
+  } finally { await anonymous.close(); }
 });

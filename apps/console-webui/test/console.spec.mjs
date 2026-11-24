@@ -7,6 +7,7 @@ import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 let root, consoleServer, coreServer, base;
 let nativeConsole;
@@ -25,8 +26,21 @@ async function startNativeConsole(binary, args) {
 }
 const users = [{ id: "user-admin-00000001", account: "admin", role: "admin", enabled: true }];
 const skillUploads = [];
+const skillSaves = [];
 let managedSkillExists = false, managedSkillEnabled = true;
 let extraSkills = [];
+const skillFiles = new Map();
+function fileVersion(content) { return "file-sha256:" + createHash("sha256").update(content).digest("hex"); }
+function seedSkill(name, files, enabled = true) {
+  skillFiles.set(name, new Map(Object.entries(files)));
+  const bytes = Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0);
+  extraSkills.push({ name, enabled, fileCount: Object.keys(files).length, totalBytes: bytes, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" });
+}
+function skillEntry(name, enabled) {
+  const files = skillFiles.get(name) || new Map();
+  const bytes = [...files.values()].reduce((sum, text) => sum + Buffer.byteLength(text), 0);
+  return { name, enabled, fileCount: files.size, totalBytes: bytes, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" };
+}
 const packageUploads = [];
 const packageAccepts = [];
 const packageUpdates = [];
@@ -114,8 +128,50 @@ test.beforeAll(async () => {
       res.end(JSON.stringify({ userId: id, enabled })); return; }
     if (req.url === "/api/v1/admin/skills") { if (req.method === "POST") { skillUploads.push({ raw, type: req.headers["content-type"], authorization: req.headers.authorization });
         managedSkillExists = true; managedSkillEnabled = true;
-        res.statusCode = 201; res.end(JSON.stringify({ name: "code-review", enabled: true, fileCount: 2, totalBytes: 12 })); }
-      else res.end(JSON.stringify({ skills: [...extraSkills, ...(managedSkillExists ? [{ name: "code-review", enabled: managedSkillEnabled, fileCount: 2, totalBytes: 12 }] : [])] })); return; }
+        skillFiles.set("code-review", new Map([["SKILL.md", "# Browser Skill\n"], ["reference.md", "reference-bytes"]]));
+        res.statusCode = 201; res.end(JSON.stringify(skillEntry("code-review", true))); }
+      else res.end(JSON.stringify({ skills: [...extraSkills, ...(managedSkillExists ? [skillEntry("code-review", managedSkillEnabled)] : [])] })); return; }
+    const skillFileMatch = req.url?.match(/^\/api\/v1\/admin\/skills\/([^/]+)\/(files|file)(\?.*)?$/);
+    if (skillFileMatch) {
+      const [, encodedName, resource] = skillFileMatch;
+      const name = decodeURIComponent(encodedName);
+      const files = skillFiles.get(name) || (name === "code-review" && managedSkillExists ? skillFiles.get("code-review") : null);
+      if (!files) { res.statusCode = 404; res.end('{"code":"SKILL_UNAVAILABLE"}'); return; }
+      if (resource === "files") {
+        res.end(JSON.stringify({ files: [...files.entries()].map(([path, content]) => ({ path, size: Buffer.byteLength(content) })) })); return;
+      }
+      const query = new URL(req.url, "http://fixture.invalid").searchParams;
+      const target = query.get("path");
+      if (req.method === "GET") {
+        if (!target || !files.has(target)) { res.statusCode = 404; res.end('{"code":"SKILL_FILE_NOT_FOUND"}'); return; }
+        const content = files.get(target);
+        if (content.includes("\u0000") || content.includes("\ufffd")) { res.statusCode = 415; res.end('{"code":"SKILL_FILE_NOT_TEXT"}'); return; }
+        res.end(JSON.stringify({ path: target, content, version: fileVersion(content) })); return;
+      }
+      if (req.method === "PUT") {
+        if (!files.has(body.path)) { res.statusCode = 404; res.end('{"code":"SKILL_FILE_NOT_FOUND"}'); return; }
+        if (fileVersion(files.get(body.path)) !== body.expectedVersion) { res.statusCode = 409; res.end('{"code":"SKILL_FILE_CONFLICT"}'); return; }
+        files.set(body.path, body.content);
+        skillSaves.push({ name, path: body.path, content: body.content, expectedVersion: body.expectedVersion });
+        res.end(JSON.stringify({ path: body.path, version: fileVersion(body.content) })); return;
+      }
+    }
+    const skillToggle = req.url?.match(/^\/api\/v1\/admin\/skills\/([^/]+)\/(enable|disable)$/);
+    if (skillToggle) {
+      const name = decodeURIComponent(skillToggle[1]);
+      const enabled = skillToggle[2] === "enable";
+      if (!enabled && defaultSkills.includes(name)) { res.statusCode = 409; res.end('{"code":"CONFLICT","field":"skills"}'); return; }
+      if (name === "code-review") managedSkillEnabled = enabled;
+      else { const entry = extraSkills.find(item => item.name === name); if (entry) entry.enabled = enabled; }
+      res.end(JSON.stringify(skillEntry(name, enabled))); return;
+    }
+    const skillObject = req.url?.match(/^\/api\/v1\/admin\/skills\/([^/]+)$/);
+    if (skillObject && req.method === "DELETE") {
+      const name = decodeURIComponent(skillObject[1]);
+      if (name === "code-review") managedSkillExists = false;
+      else { const index = extraSkills.findIndex(item => item.name === name); if (index >= 0) extraSkills.splice(index, 1); }
+      skillFiles.delete(name); res.statusCode = 204; res.end(); return;
+    }
     if (req.url === "/api/v1/admin/skills/code-review") {
       if (!managedSkillExists) { res.statusCode = 404; res.end('{"code":"SKILL_UNAVAILABLE"}'); return; }
       if (req.method === "DELETE") { managedSkillExists = false; res.statusCode = 204; res.end(); return; }
@@ -129,7 +185,7 @@ test.beforeAll(async () => {
     if (req.url === "/api/v1/admin/packages") { if (req.method === "POST") { packageAccepts.push(body); res.statusCode = 202;
         res.end(JSON.stringify({ operationId: "operation-0199e6d8abcd", workId: null, correlationId: "correlation-0199e6d8abcd",
           reused: false, scope: "core", kind: "pi-package-install", name: "tools" })); }
-      else res.end(JSON.stringify({ packages: packageCatalog })); return; }
+      else res.end(JSON.stringify({ packages: [...(packageDetailExists ? [{ name: "tools", version: null, enabled: packageDetailEnabled, isDefault: packageDetailDefault, sourceKind: "npm", resolvedSource: "npm:tools@1.0.0", updatedAt: "2026-01-01T00:00:00Z" }] : []), ...packageCatalog] })); return; }
     if (req.url === "/api/v1/admin/packages/tools") {
       if (!packageDetailExists) { res.statusCode = 404; res.end('{"code":"PI_PACKAGE_NOT_FOUND"}'); return; }
       if (req.method === "DELETE") { if (packageDetailDefault) { res.statusCode = 409;
@@ -268,10 +324,11 @@ test('runtime references a configured model without sending credentials and sepa
 });
 test('Skill directory preflight, actual multipart bytes, immutable identity, and 204 removal',async({page})=>{
   const dir=join(root,'code-review');await mkdir(dir,{recursive:true});await writeFile(join(dir,'SKILL.md'),'# Browser Skill\n');await writeFile(join(dir,'reference.md'),'reference-bytes');
-  await login(page);await page.goto(base+'/skills');await page.getByRole('button',{name:'Add Skill',exact:true}).click();await page.getByLabel('Choose Skill directory').setInputFiles(dir);await page.getByRole('button',{name:'Upload Skill',exact:true}).click();await expect(page.getByRole('heading',{name:'code-review',exact:true})).toBeVisible();
+  await login(page);await page.goto(base+'/skills');await page.getByRole('button',{name:'Add Skill',exact:true}).click();await page.getByLabel('Choose Skill directory').setInputFiles(dir);await page.getByRole('button',{name:'Upload Skill',exact:true}).click();await expect(page.locator('#detail-title')).toContainText('code-review');
   expect(skillUploads.at(-1).raw).toContain('reference-bytes');expect(skillUploads.at(-1).authorization).toBe('Bearer core-secret-bearer');
-  await page.getByRole('button',{name:'Disable Skill',exact:true}).click();await page.locator('#dialog-submit').click();await expect(page.getByRole('button',{name:'Enable Skill',exact:true})).toBeVisible();
-  await page.getByRole('button',{name:'Remove Skill',exact:true}).click();await page.getByLabel('Type the name to confirm').fill('code-review');await page.locator('#dialog-submit').click();await expect(page.getByRole('heading',{name:'Add capabilities with Skills',exact:true})).toBeVisible();expect(managedSkillExists).toBe(false);
+  await page.locator('[data-action="catalog-more"][data-name="code-review"]').click();await page.getByRole('menuitem',{name:'Disable Skill'}).click();await page.locator('#dialog-submit').click();await expect(page.locator('.navigator-item[data-name="code-review"] .row-note')).toHaveText('Disabled');
+  await page.locator('[data-action="catalog-more"][data-name="code-review"]').click();await page.getByRole('menuitem',{name:'Enable Skill'}).click();await page.locator('#dialog-submit').click();await expect.poll(()=>managedSkillEnabled).toBe(true);
+  await page.locator('[data-action="catalog-more"][data-name="code-review"]').click();await page.getByRole('menuitem',{name:'Remove Skill'}).click();await page.getByLabel('Type the name to confirm').fill('code-review');await page.locator('#dialog-submit').click();await expect(page.getByRole('heading',{name:'Capability library',exact:true})).toBeVisible();expect(managedSkillExists).toBe(false);
 });
 for(const kind of ['npm','Git','Local directory','ZIP']) test(`Package ${kind} uses real source, stable acceptance, and recoverable Operation`,async({page})=>{
   await login(page);await page.goto(base+'/packages');await page.getByRole('button',{name:'Install Package',exact:true}).click();
@@ -358,7 +415,8 @@ test('catalog lost response stays unknown after dialog close and Details cannot 
     writes++;
     await route.abort('failed');
   });
-  await page.locator('[data-action="catalog-toggle"]').click();
+  await page.locator('[data-action="catalog-more"][data-name="tools"]').click();
+  await page.getByRole('menuitem',{name:'Disable Package'}).click();
   await page.locator('#dialog-submit').click();
   await expect(page.locator('.notice-unknown')).toHaveCount(1);
   await page.locator('dialog [data-action="close-dialog"]').first().click();
@@ -368,4 +426,193 @@ test('catalog lost response stays unknown after dialog close and Details cannot 
   await expect(page.locator('.notice-unknown')).toHaveCount(1);
   expect(writes).toBe(1);
   expect(packageDetailEnabled).toBe(true);
+});
+
+test('capability library edits only the current Skill file and keeps drafts across search', async ({ page }) => {
+  seedSkill('z-editor-skill', { 'SKILL.md': '# Original\n', 'references/checklist.md': '# Checklist\n', 'assets/raw.bin': 'binary\u0000data' });
+  await login(page);
+  await page.goto(base + '/skills/z-editor-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('# Original\n');
+  await expect(page.locator('#editor-save-state')).toHaveText('Saved');
+  await page.locator('#file-editor').fill('# Changed\nsecond line');
+  await expect(page.locator('#editor-save-state')).toHaveText('Unsaved');
+  await expect(page.locator('#line-numbers')).toHaveText('1\n2');
+  await page.locator('#catalog-search').fill('z-editor');
+  await page.locator('#catalog-search').fill('');
+  await expect(page.locator('#file-editor')).toHaveValue('# Changed\nsecond line');
+  const before = skillSaves.length, beforeDefaults = defaultPatches.length;
+  await page.locator('#file-editor').press('Control+s');
+  await expect.poll(() => skillSaves.length).toBe(before + 1);
+  expect(skillSaves.at(-1)).toMatchObject({ name: 'z-editor-skill', path: 'SKILL.md', content: '# Changed\nsecond line' });
+  await expect(page.locator('#editor-save-state')).toHaveText('Saved');
+  expect(defaultPatches.length).toBe(beforeDefaults);
+  await page.getByRole('button', { name: /references/ }).click();
+  await page.getByRole('button', { name: 'checklist.md' }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('# Checklist\n');
+  await page.locator('#file-editor').click();
+  await page.keyboard.press('End');
+  await expect(page.locator('#editor-cursor')).toHaveText(/Line 2, column 1/);
+});
+
+test('unsaved Skill edits offer save, discard and continue before switching files', async ({ page }) => {
+  seedSkill('z-choice-skill', { 'SKILL.md': '# Base\n', 'notes.md': 'notes\n' });
+  await login(page);
+  await page.goto(base + '/skills/z-choice-skill');
+  await page.locator('#file-editor').fill('# Draft\n');
+  await page.getByRole('button', { name: 'notes.md' }).click();
+  await expect(page.getByRole('heading', { name: 'Unsaved changes' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue editing', exact: true }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('# Draft\n');
+  await page.getByRole('button', { name: 'notes.md' }).click();
+  await page.getByRole('button', { name: 'Discard changes' }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('notes\n');
+});
+
+test('non-text Skill files stay read-only and point to folder update', async ({ page }) => {
+  seedSkill('z-binary-skill', { 'SKILL.md': '# B\n', 'blob.bin': 'binary\u0000data' });
+  await login(page);
+  await page.goto(base + '/skills/z-binary-skill');
+  await page.getByRole('button', { name: 'blob.bin' }).click();
+  await expect(page.getByRole('heading', { name: 'This file cannot be edited as text' })).toBeVisible();
+  await expect(page.locator('#file-editor')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Update folder', exact: true })).toBeVisible();
+});
+
+test('row menu actions target their row without changing the open Skill draft', async ({ page }) => {
+  seedSkill('z-menu-a', { 'SKILL.md': '# A\n' });
+  seedSkill('z-menu-b', { 'SKILL.md': '# B\n' });
+  await login(page);
+  await page.goto(base + '/skills/z-menu-a');
+  await page.locator('#file-editor').fill('# A draft\n');
+  await page.locator('[data-action="catalog-more"][data-name="z-menu-b"]').click();
+  await page.getByRole('menuitem', { name: 'Skill information' }).click();
+  const modal = page.locator('dialog');
+  await expect(modal).toContainText('z-menu-b');
+  await modal.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('#file-editor')).toHaveValue('# A draft\n');
+  await expect(page.locator('#detail-title')).toContainText('z-menu-a');
+  await page.locator('[data-action="catalog-more"][data-name="z-menu-b"]').click();
+  await page.getByRole('menuitem', { name: 'Disable Skill' }).click();
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('.navigator-item[data-name="z-menu-b"] .row-note')).toHaveText('Disabled');
+  await expect(page.locator('#file-editor')).toHaveValue('# A draft\n');
+  await page.locator('[data-action="catalog-more"][data-name="z-menu-b"]').click();
+  await page.getByRole('menuitem', { name: 'Remove Skill' }).click();
+  await page.getByLabel('Type the name to confirm').fill('z-menu-b');
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('.navigator-item[data-name="z-menu-b"]')).toHaveCount(0);
+  await expect(page.locator('#file-editor')).toHaveValue('# A draft\n');
+  await expect(page.locator('#detail-title')).toContainText('z-menu-a');
+});
+
+test('default Package ordering saves only the packages field', async ({ page }) => {
+  packageCatalog = ['pkg-a', 'pkg-b', 'pkg-c'].map((name) => ({ name, version: '1.0.0', enabled: true, sourceKind: 'npm', resolvedSource: `npm:${name}@1.0.0` }));
+  defaultPackages = ['pkg-a', 'pkg-b', 'pkg-c'];
+  defaultPatches.length = 0;
+  await login(page);
+  await page.goto(base + '/default-work');
+  await page.locator('[data-action=edit-defaults][data-section=packages]').click();
+  await page.locator('[data-action="move-package"][data-name="pkg-c"][data-direction="up"]').click();
+  await expect(page.locator('[data-action="move-package"][data-name="pkg-a"][data-direction="up"]')).toBeDisabled();
+  await expect(page.locator('[data-action="move-package"][data-name="pkg-b"][data-direction="down"]')).toBeDisabled();
+  await page.locator('[data-action="save-defaults"]').click();
+  await expect.poll(() => defaultPatches.length).toBeGreaterThan(0);
+  expect(defaultPatches.at(-1)).toEqual({ packages: ['pkg-a', 'pkg-c', 'pkg-b'] });
+  await page.reload();
+  await expect(page.locator('[data-testid="default-summary-packages"] .summary-token').nth(1)).toHaveText('pkg-c');
+});
+
+test('Skill content is shown as text and the library marks default selections', async ({ page }) => {
+  seedSkill('z-text-skill', { 'SKILL.md': '<script>window.pwned=1</script>\n<img src=x onerror=window.pwned=2>\n' });
+  defaultSkills = [];
+  await login(page);
+  await page.goto(base + '/default-work');
+  await page.locator('[data-action=edit-defaults][data-section=skills]').click();
+  await page.locator('[data-default-skill="z-text-skill"]').check();
+  await page.locator('[data-action="save-defaults"]').click();
+  await expect.poll(() => defaultSkills).toContain('z-text-skill');
+  await page.goto(base + '/skills/z-text-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('<script>window.pwned=1</script>\n<img src=x onerror=window.pwned=2>\n');
+  expect(await page.evaluate(() => window.pwned)).toBeUndefined();
+  await expect(page.locator('.navigator-item[data-name="z-text-skill"] .row-note')).toHaveText('Default');
+});
+
+test('360px Skill library switches between the file list and content', async ({ page }) => {
+  seedSkill('z-mobile-skill', { 'SKILL.md': '# M\n', 'notes.md': 'mobile\n' });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await login(page);
+  await page.goto(base + '/skills/z-mobile-skill');
+  await expect(page.locator('.navigator')).toBeVisible();
+  await page.getByRole('button', { name: 'notes.md' }).click();
+  await expect(page.locator('.inspector-layout')).toHaveClass(/mobile-inspecting/);
+  await expect(page.locator('#file-editor')).toHaveValue('mobile\n');
+  await page.getByRole('button', { name: 'Files' }).click();
+  await expect(page.locator('.navigator')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('same-page refresh keeps the Skill draft and editor scroll', async ({ page }) => {
+  const body = Array.from({ length: 120 }, (_, index) => `line ${index + 1}`).join("\n");
+  seedSkill('z-refresh-skill', { 'SKILL.md': body });
+  await login(page);
+  await page.goto(base + '/skills/z-refresh-skill');
+  const draft = '# Draft\n' + body;
+  await page.locator('#file-editor').fill(draft);
+  await page.locator('#file-editor').evaluate(node => { node.scrollTop = 140; });
+  const scroll = await page.locator('#file-editor').evaluate(node => node.scrollTop);
+  expect(scroll).toBeGreaterThan(0);
+  await page.locator('[data-action="refresh"]').first().click();
+  await expect(page.locator('#file-editor')).toHaveValue(draft);
+  expect(await page.locator('#file-editor').evaluate(node => node.scrollTop)).toBe(scroll);
+});
+
+test('library row menu supports keyboard, Escape and narrow placement', async ({ page }) => {
+  seedSkill('z-menu-kbd', { 'SKILL.md': '# K\n' });
+  await page.setViewportSize({ width: 360, height: 800 });
+  await login(page);
+  await page.goto(base + '/skills/z-menu-kbd');
+  const trigger = page.locator('[data-action="catalog-more"][data-name="z-menu-kbd"]');
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await expect(page.getByRole('menuitem').first()).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#catalog-menu')).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  const box = await page.locator('#catalog-menu').boundingBox();
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(360);
+});
+
+test('default reference protection from the row menu keeps the draft', async ({ page }) => {
+  seedSkill('z-protected-skill', { 'SKILL.md': '# P\n' });
+  defaultSkills = ['z-protected-skill'];
+  await login(page);
+  await page.goto(base + '/skills/z-protected-skill');
+  await page.locator('#file-editor').fill('# P draft\n');
+  await page.locator('[data-action="catalog-more"][data-name="z-protected-skill"]').click();
+  await page.getByRole('menuitem', { name: 'Disable Skill' }).click();
+  await page.locator('#dialog-submit').click();
+  await expect(page.locator('#dialog-feedback')).toContainText('Remove this resource from Default Work');
+  await expect(page.locator('#dialog-feedback').getByRole('button', { name: 'Review default reference' })).toBeVisible();
+  await page.locator('dialog [data-action="close-dialog"]').first().click();
+  await expect(page.locator('#file-editor')).toHaveValue('# P draft\n');
+});
+
+test('browser back with an unsaved Skill draft offers the three choices', async ({ page }) => {
+  seedSkill('z-history-other', { 'SKILL.md': '# O\n' });
+  seedSkill('z-history-skill', { 'SKILL.md': '# H\n' });
+  await login(page);
+  await page.goto(base + '/skills');
+  await expect(page.locator('.console-read-skeleton')).toHaveCount(0);
+  await page.locator('[data-action="library-select"][data-name="z-history-skill"]').click();
+  await expect(page.locator('#file-editor')).toHaveValue('# H\n');
+  await page.locator('#file-editor').fill('# H draft\n');
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Unsaved changes' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue editing', exact: true }).click();
+  await expect(page).toHaveURL(base + '/skills/z-history-skill');
+  await expect(page.locator('#file-editor')).toHaveValue('# H draft\n');
 });

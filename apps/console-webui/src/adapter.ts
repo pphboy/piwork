@@ -52,10 +52,11 @@ const invalidFields: Record<string,LocalizedMessage> = {
 
 function errorFrom(value: Data, status: number, write: boolean, login = false): ConsoleError {
   const raw = String(value.code ?? value.error?.code ?? "REQUEST_FAILED");
-  const code = status === 401 && !login ? "SESSION_EXPIRED" : codeAliases[raw] ?? raw;
+  const field=typeof value.field==='string'?value.field:typeof value.error?.field==='string'?value.error.field:'';
+  // Core reports default-reference protection as a field conflict for Skills.
+  const code = status === 401 && !login ? "SESSION_EXPIRED" : raw === "CONFLICT" && field === "skills" ? "DEFAULT_REFERENCE" : codeAliases[raw] ?? raw;
   // CORE_UNAVAILABLE can follow a committed Core write whose reply was lost.
   const uncertain = write && status >= 500 && raw !== "CORE_ADMIN_API_UNAVAILABLE";
-  const field=typeof value.field==='string'?value.field:typeof value.error?.field==='string'?value.error.field:'';
   const fieldMessage=code==='INVALID_REQUEST'?invalidFields[field.split('.')[0]]:undefined;
   const fallback:Feedback=uncertain ? new LocalizedMessage('adapter.error.resultUnknown')
       : fieldMessage ?? (code==='INVALID_REQUEST'?new LocalizedMessage('adapter.error.invalidRequest'):undefined) ?? explanations[code] ?? new LocalizedMessage('adapter.error.unknown',{code});
@@ -87,7 +88,7 @@ function packageView(value: Data): Package {
   return { name: value.name, enabled: value.enabled, version: value.version ?? null,
     sourceKind: source === "git" ? "Git" : source === "local" ? "Local directory" : source === "zip" || source === "upload" ? "ZIP" : "npm",
     resolvedSource: typeof value.resolvedSource === "string" ? value.resolvedSource : value.resolvedSource ? JSON.stringify(value.resolvedSource) : t('ui.notProvided'),
-    updatedAt: value.updatedAt ?? "", resources: value.resourceCounts ? Object.values(value.resourceCounts).reduce<number>((n, x) => n + Number(x), 0) : null };
+    createdAt: value.createdAt ?? "", updatedAt: value.updatedAt ?? "", resources: value.resourceCounts ? Object.values(value.resourceCounts).reduce<number>((n, x) => n + Number(x), 0) : null };
 }
 function operationView(value: Data, intent?: PackageIntent): Operation {
   if (typeof value.operationId !== "string" || typeof value.state !== "string") throw new ConsoleError("INVALID_RESPONSE", new LocalizedMessage("adapter.error.operationInvalid"));
@@ -247,8 +248,29 @@ export class ConsoleAdapter {
   }
   async skills() {
     this.store.skills = (await this.request("admin/skills")).skills.map((s: Data): Skill => ({ name: s.name, enabled: s.enabled,
-      source: s.source ?? t('ui.notProvided'), updatedAt: s.updatedAt ?? "", files: s.fileCount, bytes: s.totalBytes }));
+      source: s.source ?? t('ui.notProvided'), createdAt: s.createdAt ?? "", updatedAt: s.updatedAt ?? "", files: s.fileCount, bytes: s.totalBytes }));
     return this.store.skills;
+  }
+  async skillFiles(name: string) {
+    const value = await this.request(`admin/skills/${encodeURIComponent(name)}/files`);
+    if (!Array.isArray(value.files) || value.files.some((f: Data) => typeof f?.path !== "string" || typeof f?.size !== "number")) {
+      throw new ConsoleError("INVALID_RESPONSE", new LocalizedMessage('adapter.error.invalidResponse'));
+    }
+    return value.files as { path: string; size: number }[];
+  }
+  async skillFile(name: string, path: string) {
+    const value = await this.request(`admin/skills/${encodeURIComponent(name)}/file?path=${encodeURIComponent(path)}`);
+    if (typeof value.path !== "string" || typeof value.content !== "string" || typeof value.version !== "string") {
+      throw new ConsoleError("INVALID_RESPONSE", new LocalizedMessage('adapter.error.invalidResponse'));
+    }
+    return { path: value.path as string, content: value.content as string, version: value.version as string };
+  }
+  async saveSkillFile(name: string, path: string, content: string, expectedVersion: string) {
+    const value = await this.request(`admin/skills/${encodeURIComponent(name)}/file`, "PUT", { path, content, expectedVersion });
+    if (typeof value.path !== "string" || typeof value.version !== "string") {
+      throw new ConsoleError("RESULT_UNKNOWN", new LocalizedMessage('adapter.error.writeLost'));
+    }
+    return { path: value.path as string, version: value.version as string };
   }
   async packages() { this.store.packages = (await this.request("admin/packages")).packages.map(packageView); return this.store.packages; }
   async packageDetails(name: string) { return packageView(await this.request(`admin/packages/${encodeURIComponent(name)}`)); }

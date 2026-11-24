@@ -530,7 +530,10 @@ for(const kind of ['skills','packages'])for(const action of ['disable','enable',
       if(r.path===`admin/${kind}/item${action==='remove'?'':'/'+action}`&&r.method!=='GET'){await post.promise;accepted=true;return{status:204};}
       if(r.path===`admin/packages/item`&&r.method==='GET')return{json:{name:'item',enabled:action!=='enable',source:{kind:'npm',spec:'item'},state:'installed'}};
     },'/'+kind+'/item');
-    await page.locator(`[data-action="${action==='remove'?'catalog-remove':'catalog-toggle'}"]`).click();if(action==='remove')await page.locator('#confirm-name').fill('item');
+    await page.locator('[data-action="catalog-more"][data-name="item"]').click();
+    const noun=kind==='skills'?'Skill':'Package';
+    await page.getByRole('menuitem',{name:`${action==='remove'?'Remove':action==='enable'?'Enable':'Disable'} ${noun}`}).click();
+    if(action==='remove')await page.locator('#confirm-name').fill('item');
     await page.locator('#dialog-submit').click();await expect(page.locator('#dialog-submit [role="status"]')).toContainText('item');post.resolve();
     await expect(page.locator('.notice-host .notice-message').filter({hasText:`item ${action==='remove'?'removed':action==='enable'?'enabled':'disabled'}`})).toBeVisible();
   await expect(page.locator('dialog')).toHaveCount(0);
@@ -666,7 +669,9 @@ for (const update of [false, true]) test(`S04 Skill ${update ? 'update' : 'add'}
       if(r.path===(update?'admin/skills/skill':'admin/skills')&&r.method===(update?'PUT':'POST')){await post.promise;accepted=true;return{json:{name:'skill'}};}
       if(accepted&&r.method==='GET'&&(r.path==='admin/skills'||r.path==='admin/default-work')){await reads.promise;return{status:503,json:{code:'CORE_UNREACHABLE'}};}
     },update?'/skills/skill':'/skills');
-    await page.locator(`[data-action="${update?'update-skill':'add-skill'}"]`).click();await page.locator('#upload-files').setInputFiles(dir);await page.locator('#dialog-submit').click();
+    if(update){await page.locator('[data-action="catalog-more"][data-name="skill"]').click();await page.getByRole('menuitem',{name:'Update folder'}).click();}
+    else await page.locator('[data-action="add-skill"]').click();
+    await page.locator('#upload-files').setInputFiles(dir);await page.locator('#dialog-submit').click();
     await expect(page.locator('#dialog-submit .pending-dots')).toHaveCount(1);
   post.resolve();
   await expect(page.locator('.notice-host .notice-message').filter({hasText:'Skill skill confirmed'})).toBeVisible();

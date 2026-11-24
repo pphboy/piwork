@@ -14,6 +14,7 @@ import { randomUUID } from './browser-crypto.js';
 import { packagePhaseView, packageSteps } from './package-phase.js';
 import { ModelManagement } from './model-management.js';
 import { ActionState, renderActionStates } from './action-state.js';
+import { SkillEditor } from './skill-editor.js';
 import { adapter, ConsoleError, inspectSkillFiles, inspectPackageFiles, } from "./adapter.js";
 import { t, onLocaleChange, chooseLocale, languageChoices, applyDocumentTitle, formatDateTime, formatNumber, } from './locale.js';
 import { esc, icon, Button, NavLink, StatusLabel, Feedback, OwnedFeedback, PageHeader, Section, Field, Input, DataTable, date, bytes, Disclosure, Copy, Empty, UploadProgress, } from "./components.js";
@@ -22,6 +23,12 @@ let noticeHost;
 const notices = new NoticeStore({ onChange: () => noticeHost?.render() });
 noticeHost = createNoticeHost(notices, { document, closeLabel: () => t('common.close') });
 document.body.append(noticeHost.element);
+const catalogMenuElement = document.createElement("div");
+catalogMenuElement.id = "catalog-menu";
+catalogMenuElement.className = "catalog-menu item-menu";
+catalogMenuElement.setAttribute("role", "menu");
+catalogMenuElement.hidden = true;
+document.body.append(catalogMenuElement);
 function syncNotices() {
     notices.setIdentity(String(adapter.identityEpoch));
     const modal = [...document.querySelectorAll('dialog[open]')].at(-1);
@@ -167,6 +174,23 @@ let healthRead = null;
 let operationRead = null;
 let releaseAgentImage = '', runtimeDefaultsError = '';
 let actionIdentity = adapter.identityEpoch;
+// Capability library state. Only the selected Skill exposes files; the editor
+// owns the current path, draft and submitted snapshot.
+const skillEditor = new SkillEditor({
+    identity: () => adapter.identityEpoch,
+    files: name => adapter.skillFiles(name),
+    read: (name, file) => adapter.skillFile(name, file),
+    save: (name, file, content, version) => adapter.saveSkillFile(name, file, content, version),
+});
+let libraryKind = "skills";
+let libraryQuery = "";
+let libraryFiles = null;
+let libraryError = "";
+let openFolders = new Set();
+let mobileDetail = false;
+let libraryMenu = null;
+let transitionDialog = null;
+let pendingTransition = null;
 const manualLabelKeys = { 'save-defaults': 'intent.savingDefaults', refresh: 'intent.readingPage', 'verify-runtime': 'intent.verifyingRuntime', 'refresh-status': 'intent.checkingStatus', 'refresh-operation': 'intent.checkingOperation', 'resume-observation': 'intent.resumingObservation', readback: 'intent.readingConfiguration', 'sign-out': 'intent.signingOut', 'retry-connection': 'intent.checkingConnection' };
 function consoleIntent(button) {
     if (button.closest('#quick-setup'))
@@ -361,7 +385,7 @@ function shell(body) {
         [t('shell.navSetupShort'), "/default-work", workSetup, 'admin-setup'],
         [t('shell.navModelsShort'), "/models", path === '/models' || path.startsWith('/models/'), 'admin-models'],
     ];
-    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown compact-menu" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
+    const html = `<header class="topbar task-shell"><div class="topbar-inner"><a class="brand" href="/" data-nav aria-label="${t('shell.brandOverview')}"><img class="brand-logo" src="/piwork-logo.png" alt="" width="40" height="40"><span class="brand-divider"></span><span class="brand-sub">${t('shell.administration')}</span></a>${login ? `<div class="topbar-right">${languageButtons()}</div>` : `<nav class="nav${navigationOpen ? " open" : ""}" aria-label="${t('shell.mainNavigation')}">${nav.map(([name, url, active, glyph]) => `<a href="${url}" data-nav class="${active ? "active" : ""}" ${active ? 'aria-current="page"' : ""}>${icon(String(glyph), 18)}<span>${name}</span></a>`).join("")}</nav><button class="btn ghost mobile-menu" data-action="menu" aria-label="${t('shell.openNavigation')}" aria-expanded="${navigationOpen}">${t('shell.menu')} ${icon("down", 14)}</button><div class="topbar-account">${hosted ? `<a class="btn ghost small workbench-link" href="/" data-workbench>${icon('grid', 16)}<span>${t('shell.workbench')}</span></a>` : ''}<div class="account-menu"><button type="button" id="account-trigger" class="btn ghost account-button" aria-label="${t('shell.accountMenu')}" aria-haspopup="menu" aria-expanded="${accountOpen}" aria-controls="account-dropdown"><span class="avatar">${esc(adapter.account.slice(0, 2).toUpperCase())}</span>${icon("down", 12)}</button><div id="account-dropdown" class="admin-account-dropdown command-dropdown compact-menu" role="menu" aria-label="${t('shell.accountMenu')}" hidden>${accountMenuContent()}</div></div></div>`}</div></header>${login || path === "/" ? "" : `<div class="context-strip">${icon("server", 15)}<span>${t('term.core')}</span><span class="context-tag">${t('shell.administrator')}</span><span class="context-end">${path === "/setup" && hosted ? t('module.quickSetup') : path === "/runtime" ? t('term.runtime') : path === "/models" || path.startsWith("/models/") ? t('module.models') : workSetup ? t('shell.navWorkSetup') : path === "/users" ? t('shell.navUsers') : path === "/about" ? t('module.about') : path.startsWith("/operations") ? t('shell.contextPackageRecovery') : t('shell.navOverview')}</span></div>`}<main id="main" class="main task-main${path === "/" ? " overview-main" : ""}" tabindex="-1"><div id="page-read-status" class="page-read-status" aria-live="polite"></div>${workSetup ? workSetupNav() : ""}${body}</main><footer class="footer"><span>${icon("shield", 13)} ${t('shell.footerIndependence')}</span><span>${t('shell.footerProduct')} </span></footer>`;
     if (preserve)
         reconcileConsoleHTML(app, html);
     else
@@ -531,6 +555,8 @@ function leaveForWorkbench(href = '/') {
     const leave = () => { dirty = false; disposeQuickSetup(); location.assign(href); };
     if (quickSetup)
         quickSetup.requestLeave(leave);
+    else if (skillEditor.dirty || skillEditor.unknown)
+        requestSkillLeave(leave);
     else if (dirty || dialogDirty)
         confirmDiscard(leave);
     else
@@ -639,6 +665,8 @@ async function guardIdentity() {
         closeAccountMenu();
         disposeQuickSetup();
         dirty = false;
+        skillEditor.reset();
+        libraryFiles = null;
         actions.clear();
         actionIdentity = adapter.identityEpoch;
         void loadPage();
@@ -666,6 +694,10 @@ function isSessionError(e) {
         packageIntent = null;
         intentLocked = false;
         closeDialog(true);
+        cancelTransition();
+        closeLibraryMenu();
+        skillEditor.reset();
+        libraryFiles = null;
         dirty = false;
         if (hosted) {
             location.assign('/login');
@@ -726,6 +758,12 @@ function navigate(next, force = false) {
     const execute = () => {
         disposeQuickSetup();
         clearPolling();
+        skillEditor.reset();
+        libraryFiles = null;
+        libraryError = "";
+        openFolders.clear();
+        mobileDetail = false;
+        closeLibraryMenu();
         dirty = false;
         feedback = "";
         statusError = "";
@@ -744,6 +782,10 @@ function navigate(next, force = false) {
     };
     if (quickSetup && !force) {
         quickSetup.requestLeave(execute);
+        return;
+    }
+    if ((skillEditor.dirty || skillEditor.unknown) && next !== path) {
+        requestSkillLeave(execute);
         return;
     }
     if ((dirty || dialogDirty) && !force) {
@@ -813,6 +855,11 @@ function confirmDiscard(action) {
 window.addEventListener("popstate", () => {
     closeAccountMenu();
     const destination = location.pathname + location.search;
+    if (skillEditor.dirty || skillEditor.unknown) {
+        history.pushState({ path }, "", pageURL);
+        requestSkillLeave(() => navigate(destination, true));
+        return;
+    }
     if (dirty || dialogDirty) {
         history.pushState({ path }, "", pageURL);
         if (quickSetup)
@@ -830,7 +877,7 @@ window.addEventListener("popstate", () => {
     }
 });
 window.addEventListener("beforeunload", (e) => {
-    if (dirty || dialogDirty) {
+    if (dirty || dialogDirty || skillEditor.dirty || skillEditor.unknown) {
         e.preventDefault();
         e.returnValue = "";
     }
@@ -1041,20 +1088,52 @@ async function readPage(preserve, ticket) {
                 defaultEditSection = referenceReturn.kind;
             }
         }
-        else if (path.startsWith("/skills")) {
-            [skills, defaults] = await read(Promise.all([
+        else if (path === "/skills" || path.startsWith("/skills/") || path === "/packages" || path.startsWith("/packages/")) {
+            libraryKind = libraryKindForPath();
+            [skills, packages, defaults] = await read(Promise.all([
                 adapter.skills(),
-                adapter.defaults(),
-            ]));
-        }
-        else if (path.startsWith("/packages")) {
-            [packages, defaults] = await read(Promise.all([
                 adapter.packages(),
                 adapter.defaults(),
             ]));
-            if (path.startsWith("/packages/")) {
-                const detail = await read(adapter.packageDetails(routeId()));
-                packages = [...packages.filter(p => p.name !== detail.name), detail];
+            if (!preserve) {
+                libraryQuery = "";
+                libraryError = "";
+                openFolders.clear();
+                mobileDetail = false;
+                libraryFiles = null;
+                skillEditor.reset();
+            }
+            const selected = librarySelectedName(libraryKind);
+            if (libraryKind === "packages" || !selected || !libraryItems("skills").some(item => item.name === selected)) {
+                if (libraryKind === "packages") {
+                    libraryFiles = null;
+                    skillEditor.reset();
+                }
+                else
+                    skillEditor.reset();
+            }
+            else {
+                libraryError = "";
+                try {
+                    libraryFiles = { skill: selected, files: await read(adapter.skillFiles(selected)) };
+                }
+                catch (error) {
+                    if (error instanceof ConsoleViewChanged || isSessionError(error))
+                        throw error;
+                    libraryError = err(error);
+                    libraryFiles = null;
+                }
+                if (libraryFiles) {
+                    const files = libraryFiles.files;
+                    const keep = preserve && skillEditor.skill === selected && files.some(file => file.path === skillEditor.path);
+                    if (!keep) {
+                        const target = files.some(file => file.path === "SKILL.md") ? "SKILL.md" : files[0]?.path;
+                        if (target)
+                            await skillEditor.open(selected, target);
+                        else
+                            skillEditor.reset();
+                    }
+                }
             }
         }
         else if (path.startsWith("/operations/")) {
@@ -1150,14 +1229,10 @@ function renderPage() {
         body = modelManagement.markup();
     else if (path === "/default-work")
         body = defaultsPage();
-    else if (path === "/skills")
-        body = workSetupTabs() + setupJourneyBanner() + skillsPage();
-    else if (path.startsWith("/skills/"))
-        body = workSetupTabs() + skillDetails();
-    else if (path === "/packages")
-        body = workSetupTabs() + setupJourneyBanner() + packagesPage();
-    else if (path.startsWith("/packages/"))
-        body = workSetupTabs() + packageDetails();
+    else if (path === "/skills" || path.startsWith("/skills/"))
+        body = setupJourneyBanner() + capabilityLibrary("skills");
+    else if (path === "/packages" || path.startsWith("/packages/"))
+        body = setupJourneyBanner() + capabilityLibrary("packages");
     else if (path.startsWith("/operations/"))
         body = operationPage();
     else
@@ -1216,15 +1291,6 @@ function taskRail(steps, context) {
 }
 function taskFrame(rail, body) {
     return `<div class="task-layout">${rail}<div class="task-content">${body}</div></div>`;
-}
-function workSetupTabs() {
-    return `<nav class="context-tabs" aria-label="${t('workSetup.navigation')}">${[
-        [t('workSetup.defaultsTab'), "/default-work"],
-        [t('module.skills'), "/skills"],
-        [t('module.packages'), "/packages"],
-    ]
-        .map(([label, url]) => `<a data-nav href="${url}" class="${path === url || path.startsWith(url + "/") ? "active" : ""}">${label}</a>`)
-        .join("")}</nav>`;
 }
 function taskAction(iconName, title, description, meta, url) {
     return `<a class="task-action" href="${url}" data-nav><span class="task-action-icon">${icon(iconName, 21)}</span><span class="task-action-copy"><strong>${esc(title)}</strong><span>${esc(description)}</span></span><span class="task-action-meta">${esc(meta)}</span>${icon("arrow", 17)}</a>`;
@@ -1335,13 +1401,18 @@ function defaultsSelection(kind, d) {
             .filter((s) => s.enabled)
             .map((s) => `<label class="check-label"><input type="checkbox" data-default-skill="${esc(s.name)}" ${d.skills.includes(s.name) ? "checked" : ""}><span>${esc(s.name)}</span></label>`)
             .join("") || `<p class="help">${t('defaults.noEnabledSkills')}</p>`}</div>`;
-    return `<div class="selection-heading"><span>${t('defaults.selectionPackagesCount', { count: d.packages.length })}</span>${Button(t('defaults.clearAll'), "clear-packages", "ghost small", d.packages.length ? "" : "disabled")}</div><div class="selection-menu" id="package-picker">${packages
+    return `<div class="selection-heading"><span>${t('defaults.selectionPackagesCount', { count: d.packages.length })}</span>${Button(t('defaults.clearAll'), "clear-packages", "ghost small", d.packages.length ? "" : "disabled")}</div><div class="ordered-list">${d.packages.length
+        ? d.packages.map((name, i) => {
+            const item = packages.find((p) => p.name === name);
+            return `<div class="ordered-item"><span class="index">${i + 1}</span><span class="item-name">${esc(name)}${!item ? `<span class="subtext text-danger"> · ${t('defaults.removedFromCatalog')}</span>` : !item.enabled ? `<span class="subtext text-danger"> · ${t('defaults.disabled')}</span>` : ""}</span><div class="ordered-actions">${Button(icon("up", 14), "move-package", "icon-button", `data-name="${esc(name)}" data-direction="up" aria-label="${t('defaults.moveUp', { name: esc(name) })}" ${i === 0 ? "disabled" : ""}`)}${Button(icon("down", 14), "move-package", "icon-button", `data-name="${esc(name)}" data-direction="down" aria-label="${t('defaults.moveDown', { name: esc(name) })}" ${i === d.packages.length - 1 ? "disabled" : ""}`)}${Button(icon("close", 13), "remove-default-package", "icon-button", `data-name="${esc(name)}" aria-label="${t('defaults.remove', { name: esc(name) })}"`)}</div></div>`;
+        }).join("")
+        : `<p class="help">${t('defaults.noPackages')}</p>`}</div><p class="selection-caption">${t('defaults.availablePackages')}</p><div class="selection-menu" id="package-picker">${packages
         .filter((p) => p.enabled || d.packages.includes(p.name))
         .map((p) => `<label class="check-label"><input type="checkbox" data-default-package="${esc(p.name)}" ${d.packages.includes(p.name) ? "checked" : ""}><span>${esc(p.name)}${!p.enabled ? t('defaults.disabledReference') : ""}</span></label>`)
         .join("")}${d.packages
         .filter((n) => !packages.some((p) => p.name === n))
         .map((n) => `<label class="check-label"><input type="checkbox" data-default-package="${esc(n)}" checked><span>${esc(n)}${t('defaults.removedReference')}</span></label>`)
-        .join("")}</div>${!d.packages.length ? `<p class="help">${t('defaults.noPackages')}</p>` : ""}`;
+        .join("")}</div>`;
 }
 function defaultsEditor(section, d) {
     const content = section === "skills"
@@ -1371,7 +1442,6 @@ function referenceContext() {
 function defaultsPage() {
     if (!defaults || !defaultDraft)
         return (PageHeader(t('status.shapeWork'), t('defaults.pageDetail')) +
-            workSetupTabs() +
             feedback +
             Section(t('defaults.notAvailable'), t('defaults.notAvailableDetail'), Empty(t('defaults.configureFirst'), t('defaults.configureFirstDetail'), NavLink(t('runtime.configure'), "/runtime", "btn primary"))));
     const d = defaultDraft, changes = defaultChangedFields(), changed = (key) => changes.includes(key) ? `<span class="draft-tag">${t('defaults.edited')}</span>` : "";
@@ -1424,7 +1494,6 @@ function defaultsPage() {
         ], `<p class="rail-label">${t('defaults.needCapability')}</p>${Button(t('defaults.addUpdateSkill'), "open-capability-library", "ghost", `data-kind="skills"`)}${Button(t('defaults.installUpdatePackage'), "open-capability-library", "ghost", `data-kind="packages"`)}<p class="rail-note">${t('defaults.catalogSeparate')}</p>`);
     const commit = `<div class="draft-commit ${dirty ? "has-changes" : ""}"><div><strong id="dirty-label">${dirty ? t('defaults.fieldsChanged', { count: changes.length }) : t('defaults.noUnsavedChanges')}</strong><p>${t('defaults.commitNote')}</p></div><div>${Button(t('defaults.discardDraft'), "discard-defaults", "secondary", dirty ? "" : "disabled")}${Button(t('defaults.review'), "review-defaults", "ghost", !dirty ? "disabled" : "")}${Button(saving ? t('common.saving') : t('defaults.saveDefaults'), "save-defaults", "primary", !dirty || saving || readbackRequired || defaultConflicts.length > 0 ? "disabled" : "")}</div></div>`;
     return (PageHeader(t('status.shapeWork'), t('defaults.pageDetailFull'), Button(`${icon("refresh", 15)} ${t('common.refresh')}`, "refresh")) +
-        workSetupTabs() +
         feedback +
         referenceContext() +
         defaultConflictNotice() +
@@ -1500,71 +1569,381 @@ function openCapabilityLibrary(kind) {
         };
     navigate("/" + kind, true);
 }
-function capabilityReturn(kind, name) {
-    const alreadySelected = !!defaults?.[kind].includes(name);
-    if (setupJourney)
-        return `<div class="journey-notice"><span>${icon("check", 17)}</span><div><strong>${t('capability.continueTitle')}</strong><p>${alreadySelected ? t('capability.alreadySelected') : t('capability.draftStillHere')}</p></div>${Button(setupJourney.section === "skills" ? t('journey.returnSkills') : t('journey.returnPackages'), "return-to-setup", "primary")}</div>`;
-    const selected = defaults?.[kind].includes(name);
-    if (referenceReturn?.kind === kind &&
-        referenceReturn.name === name &&
-        !selected)
-        return Feedback(t('capability.referenceRemoved', {
-            action: referenceReturn.action === "remove"
-                ? t('reference.verbRemove')
-                : referenceReturn.action === "disable"
-                    ? t('reference.verbDisable')
-                    : t('reference.verbEnable'),
-        }), "info");
-    return `<div class="capability-next"><span>${icon("settings", 16)} ${selected ? t('capability.selectedForWork') : t('capability.availableInLibrary')}</span>${NavLink(selected ? t('capability.reviewStartingPoint') : t('capability.chooseForNewWork'), "/default-work", "text-link")}</div>`;
+function workSetupNav() {
+    const library = path === "/skills" || path.startsWith("/skills/") || path === "/packages" || path.startsWith("/packages/");
+    const defaultsActive = path === "/default-work";
+    return `<nav class="work-view-tabs" aria-label="${t('workSetup.navigation')}">
+    <a data-nav href="/skills" class="work-view-tab ${library ? "active" : ""}" ${library ? 'aria-current="page"' : ""}>${t('workSetup.libraryTab')}</a>
+    <a data-nav href="/default-work" class="work-view-tab ${defaultsActive ? "active" : ""}" ${defaultsActive ? 'aria-current="page"' : ""}>${t('workSetup.defaultsTab')}</a>
+  </nav>`;
 }
-function skillsPage() {
-    return (PageHeader(t('skills.title'), t('skills.detail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh") +
-        Button(icon("plus", 15) + " " + t('skills.add'), "add-skill", "primary")) +
-        feedback +
-        Section(t('skills.allTitle'), t('skills.count', { count: skills.length }), DataTable([t('field.name'), t('field.status'), t('term.defaultWork'), t('field.files'), t('field.updated'), ""], skills.map((s) => `<tr><td class="table-name">${NavLink(esc(s.name), "/skills/" + encodeURIComponent(s.name), "name-link")}<span class="subtext">${esc(s.source)}</span></td><td>${StatusLabel(s.enabled ? t('common.enabled') : t('common.disabled'), s.enabled ? "success" : "neutral")}</td><td>${defaults?.skills.includes(s.name) ? StatusLabel(t('common.default'), "info") : `<span class="muted">${t('common.notSelected')}</span>`}</td><td>${s.files} <span class="muted">· ${bytes(s.bytes)}</span></td><td class="nowrap">${date(s.updatedAt)}</td><td>${NavLink(icon("chevron", 16), "/skills/" + encodeURIComponent(s.name), "btn icon-button")}</td></tr>`), t('skills.empty'))) +
-        `<div class="scope-note">${icon("book", 16)}<span>${t('skills.scopeNote')}</span></div>`);
+function libraryKindForPath() {
+    return path.startsWith("/packages") ? "packages" : "skills";
 }
-function skillDetails() {
-    const s = skills.find((s) => s.name === routeId());
-    if (!s || adapter.scenario === "object-missing")
-        return missingPage("skill", "/skills");
-    return (PageHeader(s.name, t('skills.detailsDetail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh") +
-        Button(icon("upload", 15) + " " + t('skills.updateDirectory'), "update-skill", "primary", `data-name="${esc(s.name)}"`), NavLink(t('module.skills'), "/skills") + " / " + t('common.details')) +
-        feedback +
-        capabilityReturn("skills", s.name) +
-        Section(t('skills.detailsTitle'), "", `<div class="section-body"><div class="metadata-tags">${StatusLabel(s.enabled ? t('common.enabled') : t('common.disabled'), s.enabled ? "success" : "neutral")}${StatusLabel(defaults?.skills.includes(s.name) ? t('common.default') : t('common.notDefault'), defaults?.skills.includes(s.name) ? "info" : "neutral")}</div><dl class="summary-list" data-layout="layout-role-5"><dt>${t('field.name')}</dt><dd class="inline-id"><code>${esc(s.name)}</code>${Copy(s.name)}</dd><dt>${t('field.source')}</dt><dd>${esc(s.source)}</dd><dt>${t('field.files')}</dt><dd>${t('skills.ordinaryFiles', { count: s.files, size: bytes(s.bytes) })}</dd><dt>${t('field.updated')}</dt><dd>${date(s.updatedAt)}</dd></dl></div>`) +
-        Section(t('field.availability'), t('skills.availabilityDetail'), `<div class="section-body danger-row"><div><h3>${s.enabled ? t('skills.enabledForSelection') : t('skills.disabledForSelection')}</h3><p>${t('skills.existingCopiesNote')}</p></div>${Button(s.enabled ? t('skills.disable') : t('skills.enable'), "catalog-toggle", "secondary", `data-kind="skills" data-name="${esc(s.name)}"`)}</div>`) +
-        Section(t('skills.removeTitle'), "", `<div class="section-body danger-row"><p>${t('skills.removeNote')}</p>${Button(t('skills.remove'), "catalog-remove", "danger", `data-kind="skills" data-name="${esc(s.name)}"`)}</div>`, "", "danger-zone"));
+function libraryRouteName(kind) {
+    return path.startsWith("/" + kind + "/") ? routeId() : "";
+}
+function libraryItems(kind) {
+    return kind === "skills" ? skills : packages;
+}
+function librarySelectedName(kind) {
+    const route = libraryRouteName(kind);
+    if (route)
+        return route;
+    const first = [...libraryItems(kind)].sort((a, b) => a.name.localeCompare(b.name))[0];
+    return first?.name || "";
+}
+function librarySelectedItem(kind) {
+    return libraryItems(kind).find(item => item.name === librarySelectedName(kind)) || null;
+}
+function filteredLibraryItems(kind) {
+    const query = libraryQuery.trim().toLowerCase();
+    return [...libraryItems(kind)]
+        .filter(item => !query || item.name.toLowerCase().includes(query))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+function isDefaultSelection(kind, name) {
+    return !!defaults && (kind === "skills" ? defaults.skills : defaults.packages).includes(name);
+}
+function libraryTabButton(kind) {
+    return `<button type="button" role="tab" class="type-tab ${kind === libraryKind ? "active" : ""}" data-action="library-kind" data-kind="${kind}" aria-selected="${kind === libraryKind}" tabindex="${kind === libraryKind ? "0" : "-1"}">${kind === "skills" ? t('module.skills') : t('module.packages')}<span class="count">${libraryItems(kind).length}</span></button>`;
+}
+function libraryRow(kind, item) {
+    const selected = item.name === librarySelectedName(kind);
+    const isSkill = kind === "skills";
+    const note = !item.enabled ? t('common.disabled') : isDefaultSelection(kind, item.name) ? t('common.default') : "";
+    const menuOpen = libraryMenu?.kind === kind && libraryMenu.name === item.name;
+    return `<div class="skill-group"><div class="skill-row-wrap">
+    <button type="button" class="navigator-item ${selected ? "selected" : ""} ${item.enabled ? "" : "item-disabled"}" data-action="library-select" data-kind="${kind}" data-name="${esc(item.name)}" ${isSkill ? `aria-expanded="${selected}"` : `aria-pressed="${selected}"`} title="${esc(item.name)}">
+      ${isSkill ? icon("chevron", 12, selected ? "folder-open" : "") : ""}
+      <span class="kind-icon">${icon(isSkill ? "folder" : "box", 17)}</span>
+      <span class="item-copy"><strong>${esc(item.name)}</strong></span>
+      <span class="row-note">${note}</span>
+    </button>
+    ${Button(icon("more", 15), "catalog-more", "ghost icon-button catalog-more", `data-kind="${kind}" data-name="${esc(item.name)}" aria-label="${t('library.itemActions', { name: esc(item.name) })}" aria-haspopup="menu" aria-expanded="${menuOpen}"`)}
+  </div>${isSkill && selected ? `<ul class="skill-files" aria-label="${t('library.filesAria', { name: esc(item.name) })}">${skillFileRows()}</ul>` : ""}</div>`;
+}
+function libraryEmpty(kind) {
+    const noun = kind === "skills" ? t('catalog.skill') : t('catalog.package');
+    return `<div class="library-empty">${icon(kind === "skills" ? "folder" : "box", 24)}<h3>${libraryQuery ? t('library.noMatches', { kind: noun }) : t('library.empty', { kind: noun })}</h3>${libraryQuery
+        ? Button(t('library.clearSearch'), "library-clear-search", "secondary")
+        : Button(icon("plus", 14) + " " + (kind === "skills" ? t('library.addFirstSkill') : t('library.installFirstPackage')), kind === "skills" ? "add-skill-first" : "install-package-first", "primary")}</div>`;
+}
+function capabilityLibrary(kind) {
+    libraryKind = kind;
+    const routeName = libraryRouteName(kind);
+    if (routeName && !libraryItems(kind).some(item => item.name === routeName))
+        return missingPage(kind === "skills" ? "skill" : "package", "/" + kind);
+    const items = filteredLibraryItems(kind);
+    return `<div class="library-toolbar"><div class="library-heading"><h1>${t('library.title')}</h1><p>${t('library.detail')}</p></div><div class="heading-actions">${Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh")}${Button(icon("plus", 15) + " " + (kind === "skills" ? t('skills.add') : t('packages.install')), kind === "skills" ? "add-skill" : "install-package", "primary")}</div></div>
+    ${feedback}
+    <section class="inspector-layout ${mobileDetail ? "mobile-inspecting" : ""}" aria-label="${t('library.aria')}">
+      <div class="navigator">
+        <div class="type-tabs" role="tablist" aria-label="${t('library.kinds')}">${libraryTabButton("skills")}${libraryTabButton("packages")}</div>
+        <label class="search">${icon("search", 16)}<input id="catalog-search" type="search" aria-label="${t('library.searchAria')}" placeholder="${t('library.searchPlaceholder', { kind: kind === "skills" ? t('catalog.skill') : t('catalog.package') })}" value="${esc(libraryQuery)}"></label>
+        <div class="navigator-list">${items.length ? items.map(item => libraryRow(kind, item)).join("") : libraryEmpty(kind)}</div>
+        <div class="navigator-footer"><span>${t('library.resultCount', { count: items.length })}</span>${Button(icon("refresh", 13), "refresh", "ghost icon-button", `aria-label="${t('library.refreshAria')}"`)}</div>
+      </div>
+      <div class="inspector-content ${kind === "skills" ? "editor-pane" : ""}">${kind === "skills" ? skillWorkspace(librarySelectedItem("skills")) : packageWorkspace(librarySelectedItem("packages"))}</div>
+    </section>`;
+}
+function fileTree(files) {
+    const root = new Map();
+    for (const file of files) {
+        let nodes = root;
+        let current = "";
+        const parts = file.path.split("/");
+        parts.forEach((name, index) => {
+            current += (current ? "/" : "") + name;
+            if (!nodes.has(name))
+                nodes.set(name, { name, path: current, folder: index < parts.length - 1, children: new Map() });
+            nodes = nodes.get(name).children;
+        });
+    }
+    return root;
+}
+function renderFileNodes(nodes, depth = 0) {
+    const sorted = [...nodes.values()].sort((a, b) => a.name === "SKILL.md" ? -1 : b.name === "SKILL.md" ? 1 : Number(b.folder) - Number(a.folder) || a.name.localeCompare(b.name));
+    const level = Math.min(depth, 7);
+    return sorted.map(node => node.folder
+        ? `<li><button type="button" class="skill-folder-row depth-${level}" data-action="library-folder" data-path="${esc(node.path)}" aria-expanded="${openFolders.has(node.path)}">${icon("chevron", 12, openFolders.has(node.path) ? "folder-open" : "")}${icon("folder", 14)}<span>${esc(node.name)}</span></button>${openFolders.has(node.path) ? `<ul>${renderFileNodes(node.children, depth + 1)}</ul>` : ""}</li>`
+        : `<li><button type="button" class="skill-file-row depth-${level} ${skillEditor.path === node.path ? "active-file" : ""}" data-action="library-open-file" data-path="${esc(node.path)}" aria-current="${skillEditor.path === node.path ? "true" : "false"}" title="${esc(node.path)}">${icon("file", 14)}<span>${esc(node.name)}</span><span class="file-dirty" aria-label="${t('editor.unsaved')}" ${skillEditor.dirty && skillEditor.path === node.path ? "" : "hidden"}>•</span></button></li>`).join("");
+}
+function skillFileRows() {
+    const skill = librarySelectedItem("skills");
+    if (!skill)
+        return "";
+    if (libraryError)
+        return `<li class="skill-file-note text-danger">${esc(libraryError)}</li>`;
+    if (!libraryFiles || libraryFiles.skill !== skill.name)
+        return `<li class="skill-file-note">${t('editor.readingFiles')}</li>`;
+    return libraryFiles.files.length ? renderFileNodes(fileTree(libraryFiles.files)) : `<li class="skill-file-note">${t('library.noFiles')}</li>`;
+}
+function fileTypeLabel(filePath) {
+    const extension = filePath.split(".").pop()?.toLowerCase() || "";
+    return { md: "Markdown", sh: "Shell", js: "JavaScript", mjs: "JavaScript", ts: "TypeScript", json: "JSON", yaml: "YAML", yml: "YAML", py: "Python", css: "CSS", html: "HTML", txt: "Text" }[extension] || t('editor.text');
+}
+function lineNumbers(text) {
+    return Array.from({ length: text.split("\n").length }, (_, index) => index + 1).join("\n");
+}
+function editorCursor(input) {
+    const before = input.value.slice(0, input.selectionStart).split("\n");
+    return t('editor.cursor', { line: before.length, column: (before.at(-1) || "").length + 1 });
+}
+function editorStatusLabel() {
+    if (skillEditor.status === "empty" || skillEditor.status === "error")
+        return "";
+    if (skillEditor.status === "loading")
+        return t('editor.reading');
+    if (skillEditor.status === "not-text")
+        return t('editor.notEditable');
+    if (skillEditor.unknown)
+        return t('editor.unknownState');
+    if (skillEditor.saving)
+        return t('editor.saving');
+    return skillEditor.dirty ? t('editor.unsaved') : t('editor.saved');
+}
+function skillWorkspace(skill) {
+    if (!skill)
+        return `<div class="detail-empty">${icon("folder", 24)}<p>${t('library.selectItem', { kind: t('catalog.skill') })}</p></div>`;
+    const ready = skillEditor.status === "ready";
+    const pathLabel = skillEditor.skill === skill.name ? skillEditor.path : "SKILL.md";
+    const editable = ready && !skillEditor.unknown;
+    return `<button type="button" class="mobile-detail-back" data-action="back-to-list">${icon("left", 14)}${t('library.backToFiles')}</button>
+    <div class="file-heading"><h2 id="detail-title"><span class="file-owner">${esc(skill.name)}</span>${icon("chevron", 12)}<span class="file-path">${esc(pathLabel)}</span></h2><div class="inspector-actions">${Button(t('editor.save'), "save-file", "primary", `${editable && skillEditor.dirty ? "" : "disabled"}`)}</div></div>
+    ${skillEditor.unknown ? `<div class="inline-error editor-notice" role="alert">${icon("warning", 16)}<div><span>${t('editor.unknown')}</span><div class="feedback-actions">${Button(t('editor.verify'), "verify-skill-file", "secondary")}</div></div></div>` : ""}
+    ${skillEditor.status === "loading" ? `<div class="editor-placeholder" role="status">${t('editor.reading')}</div>` : skillEditor.status === "not-text" ? `<div class="editor-placeholder">${icon("file", 25)}<h3>${t('editor.notTextTitle')}</h3><p>${t('editor.notTextDetail')}</p>${Button(t('editor.updateFolder'), "library-update", "secondary", `data-kind="skills" data-name="${esc(skill.name)}"`)}</div>` : skillEditor.status === "error" ? `<div class="editor-placeholder">${icon("warning", 25)}<h3>${t('editor.readFailed')}</h3><p>${esc(skillEditor.error)}</p>${Button(t('common.retry'), "library-retry-file", "secondary")}</div>` : skillEditor.status === "ready" ? `<div class="code-editor"><pre id="line-numbers" class="line-numbers" aria-hidden="true">${lineNumbers(skillEditor.draft)}</pre><textarea id="file-editor" aria-label="${t('editor.contentAria')}" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off">${esc(skillEditor.draft)}</textarea></div>` : `<div class="detail-empty">${icon("file", 24)}<p>${t('library.selectFile')}</p></div>`}
+    <div class="editor-footer"><span>${skillEditor.status === "not-text" ? t('editor.binary') : fileTypeLabel(pathLabel)}${ready ? `<span class="editor-encoding">UTF-8</span>` : ""}</span><span><span id="editor-save-state" class="${skillEditor.dirty ? "dirty" : ""}">${editorStatusLabel()}</span>${ready ? `<span id="editor-cursor">${t('editor.cursor', { line: 1, column: 1 })}</span>` : ""}</span></div>`;
+}
+function packageWorkspace(item) {
+    if (!item)
+        return `<div class="detail-empty">${icon("box", 24)}<p>${t('library.selectItem', { kind: t('catalog.package') })}</p></div>`;
+    const resources = item.resources ?? 0;
+    return `<button type="button" class="mobile-detail-back" data-action="back-to-list">${icon("left", 14)}${t('module.packages')}</button>
+    <div class="inspector-heading"><div><h2 id="detail-title">${esc(item.name)}</h2><p>${t('packages.piPackage')}</p></div></div>
+    <dl class="inspector-properties"><dt>${t('field.status')}</dt><dd>${StatusLabel(item.enabled ? t('common.enabled') : t('common.disabled'), item.enabled ? "success" : "neutral")}</dd><dt>${t('term.defaultWork')}</dt><dd>${isDefaultSelection("packages", item.name) ? t('common.default') : t('common.notSelected')}</dd><dt>${t('field.version')}</dt><dd>${esc(item.version || t('packages.notDeclared'))}</dd><dt>${t('field.sourceKind')}</dt><dd>${esc(sourceLabel(item.sourceKind))}</dd><dt>${t('field.resolvedSource')}</dt><dd class="source-address">${esc(item.resolvedSource)}</dd><dt>${t('field.resources')}</dt><dd>${resources}</dd><dt>${t('field.updated')}</dt><dd>${date(item.updatedAt)}</dd></dl>
+    <p class="inspector-footnote">${t('library.packageFootnote')}</p>`;
+}
+function libraryInfoDialog(kind, name) {
+    const item = libraryItems(kind).find(entry => entry.name === name);
+    if (!item)
+        return;
+    const isSkill = kind === "skills";
+    const details = isSkill
+        ? `<dt>${t('field.files')}</dt><dd>${t('skills.ordinaryFiles', { count: item.files, size: bytes(item.bytes) })}</dd><dt>${t('field.created')}</dt><dd>${date(item.createdAt)}</dd><dt>${t('field.updated')}</dt><dd>${date(item.updatedAt)}</dd>`
+        : `<dt>${t('field.version')}</dt><dd>${esc(item.version || t('packages.notDeclared'))}</dd><dt>${t('field.source')}</dt><dd>${esc(item.resolvedSource)}</dd><dt>${t('field.resources')}</dt><dd>${item.resources ?? t('ui.notProvided')}</dd>`;
+    openDialog(t('library.infoTitle', { name }), isSkill ? t('library.skillInfoDetail') : t('library.packageInfoDetail'), `<dl class="inspector-properties"><dt>${t('field.status')}</dt><dd>${StatusLabel(item.enabled ? t('common.enabled') : t('common.disabled'), item.enabled ? "success" : "neutral")}</dd><dt>${t('term.defaultWork')}</dt><dd>${isDefaultSelection(kind, name) ? t('common.default') : t('common.notSelected')}</dd>${details}</dl><p class="detail-note">${t('library.existingCopiesNote')}</p>`, t('common.close'), () => closeDialog(true), "primary", false, true);
+}
+function closeLibraryMenu(restore = false) {
+    const menu = document.querySelector("#catalog-menu");
+    const owner = libraryMenu;
+    if (menu)
+        menu.hidden = true;
+    libraryMenu = null;
+    if (owner)
+        owner.trigger.setAttribute("aria-expanded", "false");
+    if (restore)
+        owner?.trigger.focus({ preventScroll: true });
+}
+function openLibraryMenu(trigger) {
+    const kind = trigger.dataset.kind;
+    const name = trigger.dataset.name || "";
+    const item = libraryItems(kind).find(entry => entry.name === name);
+    const menu = document.querySelector("#catalog-menu");
+    if (!item || !menu)
+        return;
+    if (libraryMenu?.kind === kind && libraryMenu.name === name) {
+        closeLibraryMenu(true);
+        return;
+    }
+    closeLibraryMenu();
+    libraryMenu = { kind, name, trigger };
+    const noun = kind === "skills" ? t('catalog.skill') : t('catalog.package');
+    menu.setAttribute("aria-label", t('library.itemActions', { name }));
+    menu.innerHTML = `<div class="menu-target" role="presentation">${esc(name)}</div>
+    <button type="button" role="menuitem" data-action="library-info" data-kind="${kind}" data-name="${esc(name)}">${t('library.infoAction', { noun })}</button>
+    <button type="button" role="menuitem" data-action="library-update" data-kind="${kind}" data-name="${esc(name)}">${kind === "skills" ? t('library.updateFolder') : t('library.updatePackage')}</button>
+    <button type="button" role="menuitem" data-action="library-toggle" data-kind="${kind}" data-name="${esc(name)}">${item.enabled ? t('catalog.disable') : t('catalog.enable')} ${noun}</button>
+    <button type="button" role="menuitem" class="danger-text" data-action="library-remove" data-kind="${kind}" data-name="${esc(name)}">${t('catalog.remove')} ${noun}</button>`;
+    menu.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    const box = trigger.getBoundingClientRect();
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(box.right - width, innerWidth - width - 8))}px`;
+    menu.style.top = `${box.bottom + height + 5 < innerHeight ? box.bottom + 5 : Math.max(8, box.top - height - 5)}px`;
+    menu.querySelector('[role="menuitem"]')?.focus();
+}
+function requestSkillLeave(next) {
+    if (!skillEditor.dirty && !skillEditor.unknown) {
+        next();
+        return;
+    }
+    openUnsavedDialog(next);
+}
+function openUnsavedDialog(next) {
+    if (transitionDialog)
+        return;
+    pendingTransition = next;
+    const unknown = skillEditor.unknown;
+    const dialogElement = document.createElement("dialog");
+    dialogElement.className = "unsaved-dialog";
+    dialogElement.setAttribute("aria-labelledby", "unsaved-title");
+    dialogElement.innerHTML = `<div class="dialog-heading"><div><h2 id="unsaved-title">${t('editor.unsavedTitle')}</h2><p>${esc(skillEditor.path)}</p></div>${Button(icon("close", 17), "cancel-transition", "icon-button", `aria-label="${t('common.close')}"`)}</div><div class="dialog-body"><p class="confirm-note">${unknown ? t('editor.unknownTransition') : t('editor.unsavedTransition')}</p><div id="unsaved-feedback"></div></div><div class="dialog-footer">${Button(t('editor.continueEditing'), "cancel-transition", "secondary")}${Button(t('editor.discardChanges'), "discard-transition", "danger")}${unknown ? Button(t('editor.verify'), "verify-transition", "primary") : Button(t('editor.saveAndSwitch'), "save-transition", "primary")}</div>`;
+    document.body.append(dialogElement);
+    transitionDialog = dialogElement;
+    dialogElement.addEventListener("cancel", event => { event.preventDefault(); cancelTransition(); });
+    dialogElement.showModal();
+    dialogElement.querySelector('[data-action="cancel-transition"]')?.focus();
+}
+function cancelTransition() {
+    transitionDialog?.close();
+    transitionDialog?.remove();
+    transitionDialog = null;
+    pendingTransition = null;
+}
+async function finishTransition(save) {
+    const next = pendingTransition;
+    if (save) {
+        const outcome = await saveCurrentFile();
+        if (outcome !== "saved" && outcome !== "stale")
+            return;
+    }
+    else if (skillEditor.unknown) {
+        skillEditor.reset();
+    }
+    else {
+        skillEditor.discard();
+    }
+    cancelTransition();
+    next?.();
+}
+async function verifyTransition() {
+    const result = await skillEditor.verify();
+    if (!result)
+        return;
+    const feedbackNode = document.querySelector("#unsaved-feedback");
+    if (feedbackNode)
+        feedbackNode.innerHTML = result.matchesSubmission
+            ? Feedback(t('editor.verifyConfirmed'), "success")
+            : Feedback(t('editor.verifyDifferent'), "warning");
+    if (!result.matchesSubmission)
+        return;
+    const next = pendingTransition;
+    cancelTransition();
+    next?.();
+}
+async function refreshSkillFiles(skill) {
+    if (!skill) {
+        libraryFiles = null;
+        return;
+    }
+    try {
+        const files = await awaitCurrent(adapter.skillFiles(skill));
+        if (skillEditor.skill === skill || !skillEditor.skill)
+            libraryFiles = { skill, files };
+    }
+    catch (error) {
+        if (error instanceof ConsoleViewChanged || isSessionError(error))
+            return;
+        libraryError = err(error);
+    }
+}
+async function openSkillFile(filePath) {
+    const skill = librarySelectedItem("skills");
+    if (!skill)
+        return;
+    mobileDetail = true;
+    await skillEditor.open(skill.name, filePath);
+    renderPage();
+}
+async function saveCurrentFile() {
+    const submitted = skillEditor.draft;
+    const skillName = skillEditor.skill;
+    const filePath = skillEditor.path;
+    const previousSize = libraryFiles?.files.find(file => file.path === filePath)?.size ?? 0;
+    const outcome = await skillEditor.save();
+    if (outcome === "saved" && skillEditor.skill === skillName) {
+        const size = new TextEncoder().encode(submitted).length;
+        if (libraryFiles?.skill === skillName)
+            libraryFiles.files = libraryFiles.files.map(file => file.path === filePath ? { ...file, size } : file);
+        const skill = skills.find(entry => entry.name === skillName);
+        if (skill) {
+            skill.bytes = Math.max(0, skill.bytes + size - previousSize);
+            skill.updatedAt = new Date().toISOString();
+        }
+        feedback = localizedFeedback(() => resultFeedback(t('editor.savedFile', { path: filePath }), "success"));
+    }
+    else if (outcome === "conflict") {
+        feedback = localizedFeedback(() => OwnedFeedback(t('editor.conflict'), "error", Button(t('editor.reload'), "reload-skill-file", "secondary")));
+    }
+    else if (outcome === "unknown") {
+        feedback = localizedFeedback(() => OwnedFeedback(t('editor.unknown'), "warning", Button(t('editor.verify'), "verify-skill-file", "secondary")));
+    }
+    else if (outcome === "failed") {
+        feedback = localizedFeedback(() => resultFeedback(skillEditor.error || t('editor.saveFailed'), "error"));
+    }
+    renderPage();
+    return outcome;
+}
+async function reloadCurrentFile() {
+    const skill = skillEditor.skill;
+    const filePath = skillEditor.path;
+    if (!skill || !filePath)
+        return;
+    await skillEditor.open(skill, filePath);
+    renderPage();
+}
+function confirmReloadFile() {
+    const filePath = skillEditor.path;
+    if (!filePath)
+        return;
+    openDialog(t('editor.reloadTitle'), t('editor.reloadDetail'), `<p class="muted">${esc(filePath)}</p>`, t('editor.reload'), async () => {
+        closeDialog(true);
+        await reloadCurrentFile();
+    }, "primary");
+}
+async function verifyCurrentFile() {
+    const result = await skillEditor.verify();
+    if (!result)
+        return;
+    if (result.matchesSubmission) {
+        feedback = localizedFeedback(() => resultFeedback(t('editor.verifyConfirmed'), "success"));
+        await refreshSkillFiles(skillEditor.skill);
+    }
+    else {
+        feedback = localizedFeedback(() => OwnedFeedback(t('editor.verifyDifferent'), "warning", Button(t('editor.reload'), "reload-skill-file", "secondary")));
+    }
+    renderPage();
+}
+function updateEditorUI() {
+    const save = document.querySelector('[data-action="save-file"]');
+    if (save)
+        save.disabled = !skillEditor.dirty || skillEditor.saving || skillEditor.unknown;
+    const state = document.querySelector("#editor-save-state");
+    if (state) {
+        state.textContent = editorStatusLabel();
+        state.classList.toggle("dirty", skillEditor.dirty);
+    }
+    for (const marker of document.querySelectorAll(".skill-file-row .file-dirty")) {
+        marker.hidden = !(skillEditor.dirty && marker.closest(".skill-file-row")?.getAttribute("data-path") === skillEditor.path);
+    }
+    const input = document.querySelector("#file-editor");
+    if (!input)
+        return;
+    const numbers = document.querySelector("#line-numbers");
+    if (numbers) {
+        const value = lineNumbers(input.value);
+        if (numbers.textContent !== value)
+            numbers.textContent = value;
+        numbers.scrollTop = input.scrollTop;
+    }
+    const cursor = document.querySelector("#editor-cursor");
+    if (cursor)
+        cursor.textContent = editorCursor(input);
 }
 function sourceLabel(kind) {
     return kind === "Local directory" ? t('source.localDirectory') : kind;
-}
-function packagesPage() {
-    return (PageHeader(t('packages.title'), t('packages.detail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh") +
-        Button(icon("plus", 15) + " " + t('packages.install'), "install-package", "primary")) +
-        feedback +
-        Section(t('packages.allTitle'), t('packages.count', { count: packages.length }), DataTable([
-            t('field.name'),
-            t('field.version'),
-            t('field.source'),
-            t('field.status'),
-            t('term.defaultWork'),
-            t('field.resources'),
-            "",
-        ], packages.map((p) => `<tr><td class="table-name">${NavLink(esc(p.name), "/packages/" + encodeURIComponent(p.name), "name-link")}<span class="subtext">${t('packages.updated', { date: date(p.updatedAt) })}</span></td><td class="nowrap">${esc(p.version || t('packages.notDeclared'))}</td><td class="nowrap">${esc(sourceLabel(p.sourceKind))}</td><td>${StatusLabel(p.enabled ? t('common.enabled') : t('common.disabled'), p.enabled ? "success" : "neutral")}</td><td>${defaults?.packages.includes(p.name) ? StatusLabel(t('common.default'), "info") : `<span class="muted">${t('common.notSelected')}</span>`}</td><td>${p.resources ?? t('ui.notProvided')}</td><td>${NavLink(icon("chevron", 16), "/packages/" + encodeURIComponent(p.name), "btn icon-button")}</td></tr>`), t('packages.empty'))) +
-        `<div class="scope-note">${icon("box", 16)}<span>${t('packages.scopeNote')}</span></div>`);
-}
-function packageDetails() {
-    const p = packages.find((p) => p.name === routeId());
-    if (!p || adapter.scenario === "object-missing")
-        return missingPage("package", "/packages");
-    return (PageHeader(p.name, t('packages.detailsDetail'), Button(icon("refresh", 15) + " " + t('common.refresh'), "refresh") +
-        Button(t('packages.update'), "update-package", "primary", `data-name="${esc(p.name)}"`), NavLink(t('module.packages'), "/packages") + " / " + t('common.details')) +
-        feedback +
-        capabilityReturn("packages", p.name) +
-        Section(t('packages.detailsTitle'), "", `<div class="section-body"><div class="metadata-tags">${StatusLabel(p.enabled ? t('common.enabled') : t('common.disabled'), p.enabled ? "success" : "neutral")}${StatusLabel(defaults?.packages.includes(p.name) ? t('common.default') : t('common.notDefault'), defaults?.packages.includes(p.name) ? "info" : "neutral")}</div><dl class="summary-list" data-layout="layout-role-5"><dt>${t('field.name')}</dt><dd class="inline-id"><code>${esc(p.name)}</code>${Copy(p.name)}</dd><dt>${t('field.version')}</dt><dd>${esc(p.version || t('packages.notDeclared'))}</dd><dt>${t('field.sourceKind')}</dt><dd>${esc(sourceLabel(p.sourceKind))}</dd><dt>${t('field.resolvedSource')}</dt><dd class="inline-id"><code>${esc(p.resolvedSource)}</code>${Copy(p.resolvedSource)}</dd><dt>${t('field.resources')}</dt><dd>${p.resources ?? t('ui.notProvided')}</dd><dt>${t('field.updated')}</dt><dd>${date(p.updatedAt)}</dd></dl></div>`) +
-        Section(t('field.availability'), t('packages.availabilityDetail'), `<div class="section-body danger-row"><div><h3>${p.enabled ? t('packages.enabledForSelection') : t('packages.disabledForSelection')}</h3><p>${t('packages.updateNote')}</p></div>${Button(p.enabled ? t('packages.disable') : t('packages.enable'), "catalog-toggle", "secondary", `data-kind="packages" data-name="${esc(p.name)}"`)}</div>`) +
-        Section(t('packages.removeTitle'), "", `<div class="section-body danger-row"><p>${t('packages.removeNote')}</p>${Button(t('packages.remove'), "catalog-remove", "danger", `data-kind="packages" data-name="${esc(p.name)}"`)}</div>`, "", "danger-zone"));
 }
 function missingPage(kind, url) {
     const title = kind === "skill" ? t('missing.skillTitle') : t('missing.packageTitle');
@@ -1899,9 +2278,14 @@ function catalogActionDialog(kind, name, action, recovery) {
                     : t('catalog.outcomeEnabled');
             const message = t('catalog.outcome', { name, outcome });
             confirmedMutation(message);
-            if (action === "remove") {
+            if (action === "remove" && name === librarySelectedName(kind)) {
                 path = "/" + kind;
                 history.pushState({ path }, "", publicPath(path));
+                if (kind === "skills") {
+                    skillEditor.reset();
+                    libraryFiles = null;
+                    openFolders.clear();
+                }
             }
             renderPage();
             void refreshConfirmed(message, async () => { if (kind === "skills")
@@ -2032,7 +2416,17 @@ async function submitSkill() {
         path = "/skills/" + encodeURIComponent(s.name);
         history.pushState({ path }, "", publicPath(path));
         renderPage();
-        void refreshConfirmed(confirmed, async () => { skills = await awaitCurrent(adapter.skills()); defaults = await awaitCurrent(adapter.defaults()); }, path, () => t('upload.skillConfirmed', { name: s.name }));
+        void refreshConfirmed(confirmed, async () => {
+            skills = await awaitCurrent(adapter.skills());
+            defaults = await awaitCurrent(adapter.defaults());
+            if (path === "/skills/" + encodeURIComponent(s.name)) {
+                skillEditor.reset();
+                libraryFiles = null;
+                libraryError = "";
+                openFolders.clear();
+                await loadPage(true);
+            }
+        }, path, () => t('upload.skillConfirmed', { name: s.name }));
     }
     catch (e) {
         if (e instanceof ConsoleViewChanged)
@@ -2509,6 +2903,16 @@ async function importAgents(file, stillCurrent = () => true) {
 }
 document.addEventListener("input", (event) => {
     const el = event.target;
+    if (el.id === "file-editor") {
+        skillEditor.input(el.value);
+        updateEditorUI();
+        return;
+    }
+    if (el.id === "catalog-search") {
+        libraryQuery = el.value;
+        renderPage();
+        return;
+    }
     if (dialog?.contains(el)) {
         dialogDirty = true;
         if (el.id === "package-source")
@@ -2534,6 +2938,43 @@ document.addEventListener("input", (event) => {
             }
         }
     }
+});
+document.addEventListener("keydown", (event) => {
+    const menu = document.querySelector("#catalog-menu");
+    if (menu && !menu.hidden) {
+        if (event.key === "Escape") {
+            event.preventDefault();
+            closeLibraryMenu(true);
+            return;
+        }
+        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            const items = [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')];
+            const index = items.indexOf(document.activeElement);
+            items[event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+            return;
+        }
+        if (event.key === "Tab")
+            closeLibraryMenu(true);
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && (path === "/skills" || path.startsWith("/skills/") || path === "/packages" || path.startsWith("/packages/")) && !dialog && !transitionDialog) {
+        if (skillEditor.status === "ready" && skillEditor.dirty) {
+            event.preventDefault();
+            void saveCurrentFile();
+        }
+    }
+});
+document.addEventListener("scroll", (event) => {
+    const target = event.target;
+    if (target?.id === "file-editor") {
+        const numbers = document.querySelector("#line-numbers");
+        if (numbers)
+            numbers.scrollTop = target.scrollTop;
+    }
+}, true);
+document.addEventListener("keyup", (event) => {
+    if (event.target?.id === "file-editor")
+        updateEditorUI();
 });
 document.addEventListener("change", async (event) => {
     const el = event.target;
@@ -2712,6 +3153,10 @@ document.addEventListener("submit", async (event) => {
 document.addEventListener("click", async (event) => {
     const element = event.target;
     const plain = event.button === 0 && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+    if (element.id === "file-editor")
+        updateEditorUI();
+    if (!element.closest('[data-action="catalog-more"],#catalog-menu'))
+        closeLibraryMenu();
     if (element.closest('#account-trigger')) {
         const menu = document.querySelector('#account-dropdown');
         if (menu?.hidden)
@@ -2757,7 +3202,102 @@ document.addEventListener("click", async (event) => {
 async function handleConsoleAction(button) {
     const action = button.dataset.action;
     const name = button.dataset.name || "";
-    if (action === "review-default-conflicts") {
+    const kind = button.dataset.kind;
+    if (action === "library-kind" && kind) {
+        if (kind !== libraryKind)
+            requestSkillLeave(() => navigate("/" + kind));
+    }
+    else if (action === "library-select" && kind) {
+        if (kind === libraryKind && name === librarySelectedName(kind)) {
+            if (kind === "skills") {
+                mobileDetail = false;
+                renderPage();
+            }
+        }
+        else
+            requestSkillLeave(() => navigate(`/${kind}/${encodeURIComponent(name)}`));
+    }
+    else if (action === "library-folder") {
+        const filePath = button.dataset.path || "";
+        if (openFolders.has(filePath))
+            openFolders.delete(filePath);
+        else
+            openFolders.add(filePath);
+        renderPage();
+        document.querySelector(`[data-action="library-folder"][data-path="${CSS.escape(filePath)}"]`)?.focus();
+    }
+    else if (action === "library-open-file") {
+        const filePath = button.dataset.path || "";
+        if (filePath === skillEditor.path) {
+            mobileDetail = true;
+            renderPage();
+        }
+        else
+            requestSkillLeave(() => void openSkillFile(filePath));
+    }
+    else if (action === "save-file") {
+        await saveCurrentFile();
+    }
+    else if (action === "reload-skill-file") {
+        confirmReloadFile();
+    }
+    else if (action === "verify-skill-file") {
+        await verifyCurrentFile();
+    }
+    else if (action === "library-retry-file") {
+        await reloadCurrentFile();
+    }
+    else if (action === "back-to-list") {
+        mobileDetail = false;
+        renderPage();
+    }
+    else if (action === "catalog-more") {
+        openLibraryMenu(button);
+    }
+    else if (action === "library-info" && kind) {
+        closeLibraryMenu();
+        libraryInfoDialog(kind, name);
+    }
+    else if (action === "library-update" && kind) {
+        closeLibraryMenu();
+        const update = () => uploadChooser(kind === "skills" ? "skill" : "package", name);
+        if (kind === "skills" && name === skillEditor.skill)
+            requestSkillLeave(update);
+        else
+            update();
+    }
+    else if (action === "library-toggle" && kind) {
+        closeLibraryMenu();
+        const item = libraryItems(kind).find(entry => entry.name === name);
+        if (item)
+            catalogActionDialog(kind, name, item.enabled ? "disable" : "enable");
+    }
+    else if (action === "library-remove" && kind) {
+        closeLibraryMenu();
+        const remove = () => catalogActionDialog(kind, name, "remove");
+        if (kind === "skills" && name === skillEditor.skill)
+            requestSkillLeave(remove);
+        else
+            remove();
+    }
+    else if (action === "library-clear-search") {
+        libraryQuery = "";
+        renderPage();
+        document.querySelector("#catalog-search")?.focus();
+    }
+    else if (action === "cancel-transition") {
+        cancelTransition();
+    }
+    else if (action === "discard-transition") {
+        void finishTransition(false);
+    }
+    else if (action === "save-transition") {
+        void finishTransition(true);
+    }
+    else if (action === "verify-transition") {
+        void verifyTransition();
+    }
+    else if (action === "review-default-conflicts") {
         reviewDefaultConflicts();
     }
     else if (action === "resolve-default-conflicts-core") {
@@ -2883,6 +3423,8 @@ async function handleConsoleAction(button) {
                 }
                 upload = null;
                 packageIntent = null;
+                skillEditor.reset();
+                libraryFiles = null;
                 path = "/login";
                 history.pushState({ path }, "", publicPath(path));
                 feedback = localizedFeedback(() => resultFeedback(t('login.signedOut'), "success"));
@@ -2894,6 +3436,8 @@ async function handleConsoleAction(button) {
         };
         if (quickSetup && dirty)
             quickSetup.requestLeave(() => void tracked({ key: `manual:${path}:sign-out`, kind: 'identity', label: t('intent.signingOut'), target: adapter.account, view: path, anchor: '[data-action=sign-out]' }, async () => { await signOut(); }));
+        else if (skillEditor.dirty || skillEditor.unknown)
+            requestSkillLeave(() => void signOut());
         else if (dirty)
             confirmDiscard(() => void signOut());
         else
@@ -2974,11 +3518,25 @@ async function handleConsoleAction(button) {
         dirty = changedDefaults();
         renderPage();
     }
-    else if (action === "add-skill")
+    else if (action === "move-package" && defaultDraft) {
+        const i = defaultDraft.packages.indexOf(name), j = i + (button.dataset.direction === "up" ? -1 : 1);
+        if (i >= 0 && j >= 0 && j < defaultDraft.packages.length) {
+            [defaultDraft.packages[i], defaultDraft.packages[j]] = [defaultDraft.packages[j], defaultDraft.packages[i]];
+            dirty = changedDefaults();
+            renderPage();
+            document.querySelector(`[data-action="move-package"][data-name="${CSS.escape(name)}"][data-direction="${button.dataset.direction}"]`)?.focus();
+        }
+    }
+    else if (action === "remove-default-package" && defaultDraft) {
+        defaultDraft.packages = defaultDraft.packages.filter((p) => p !== name);
+        dirty = changedDefaults();
+        renderPage();
+    }
+    else if (action === "add-skill" || action === "add-skill-first")
         uploadChooser("skill");
     else if (action === "update-skill")
         uploadChooser("skill", name);
-    else if (action === "install-package")
+    else if (action === "install-package" || action === "install-package-first")
         uploadChooser("package");
     else if (action === "update-package")
         uploadChooser("package", name);
@@ -3140,7 +3698,7 @@ app.addEventListener('click', event => { if (event.target.closest('[data-action=
     void startConsole(); });
 document.dispatchEvent(new Event('piwork:boot-ready'));
 void startConsole();
-window.addEventListener('pagehide', () => { startupSequence++; availabilitySequence++; pageRetryCycle++; clearTimeout(startupTimer); clearTimeout(availabilityTimer); clearTimeout(pageRetryTimer); adapter.cancelReads(['session', 'availability']); languagePicker.close(); modelManagement.leave(); disposeQuickSetup(); closeAccountMenu(); actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
+window.addEventListener('pagehide', () => { startupSequence++; availabilitySequence++; pageRetryCycle++; clearTimeout(startupTimer); clearTimeout(availabilityTimer); clearTimeout(pageRetryTimer); adapter.cancelReads(['session', 'availability']); languagePicker.close(); modelManagement.leave(); disposeQuickSetup(); closeAccountMenu(); closeLibraryMenu(); cancelTransition(); skillEditor.reset(); actions.clear(); clearPolling(); selectionVersion++; preflightPending = false; });
 function productInfoPage() {
     const info = productInfo, build = info?.build, notes = info?.releaseNotes;
     const releases = `<a class="btn secondary small" href="https://github.com/pphboy/piwork/releases" target="_blank" rel="noopener noreferrer">${t('about.allReleases')}${icon('external', 15)}</a>`;

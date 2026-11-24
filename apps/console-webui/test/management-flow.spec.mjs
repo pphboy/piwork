@@ -125,8 +125,24 @@ for (const width of [1440, 360]) test(`S08 reviewed Overview composition preserv
   }
   await choices.locator('a[href="/admin/default-work"]').click();
   const setupTabs = page.getByRole('navigation', {name:'Work setup navigation'});
-  await expect(setupTabs.locator('a')).toHaveText(['Defaults', 'Skills', 'Packages']);
-  expect(await setupTabs.evaluate(node => node.getBoundingClientRect().height)).toBe(39);
+  await expect(setupTabs.locator('a')).toHaveText(['Library', 'New Work defaults']);
+  await expect(setupTabs.getByRole('link', {name:'New Work defaults'})).toHaveAttribute('aria-current', 'page');
+  const navAppearance = node => {
+    const style = getComputedStyle(node);
+    const indicator = getComputedStyle(node, '::after');
+    return [style.fontSize, style.fontWeight, style.color, style.backgroundColor, indicator.display, indicator.height];
+  };
+  const setupLink = page.getByRole('navigation', {name:'Main navigation'}).getByRole('link', {name:'Setup', exact:true});
+  expect(await setupTabs.locator('[aria-current="page"]').evaluate(navAppearance)).toEqual(await setupLink.evaluate(navAppearance));
+  const defaultsNav = await setupTabs.boundingBox();
+  expect(defaultsNav.height).toBe(39);
+  expect(defaultsNav.y + defaultsNav.height).toBeLessThan((await page.locator('main h1').boundingBox()).y);
+  await evidence(page, `setup-defaults-nav-${width}`, false);
+  await setupTabs.getByRole('link', {name:'Library', exact:true}).click();
+  await expect(setupTabs.getByRole('link', {name:'Library', exact:true})).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('.library-heading h1')).toBeVisible();
+  expect(await setupTabs.boundingBox()).toEqual(defaultsNav);
+  await evidence(page, `setup-library-nav-${width}`, false);
   expect(requests.filter(request => request.method !== 'GET')).toEqual([]);
 });
 

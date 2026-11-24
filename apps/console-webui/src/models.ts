@@ -11,6 +11,7 @@ export type Skill = {
   name: string;
   enabled: boolean;
   source: string;
+  createdAt: string;
   updatedAt: string;
   files: number;
   bytes: number;
@@ -21,6 +22,7 @@ export type Package = {
   version: string | null;
   sourceKind: "npm" | "Git" | "Local directory" | "ZIP";
   resolvedSource: string;
+  createdAt: string;
   updatedAt: string;
   resources: number | null;
 };
