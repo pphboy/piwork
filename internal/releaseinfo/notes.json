@@ -2,6 +2,42 @@
   "version": 1,
   "releases": [
     {
+      "version": "0.0.20",
+      "component": "core",
+      "title": "Piwork 0.0.20 Preview",
+      "sections": [
+        {
+          "title": "Administration capability library",
+          "items": [
+            "Browse Skills and Packages from Work setup, then choose and order defaults for new Works.",
+            "Edit individual text files in an existing Core Skill with version checks. Existing Works retain the copies they already use."
+          ]
+        },
+        {
+          "title": "Portable Work packages",
+          "items": [
+            "Export compressed Work packages in V2 format and continue importing V1 packages.",
+            "Keep explicit review and Start steps for imported Works."
+          ]
+        }
+      ]
+    },
+    {
+      "version": "0.0.20",
+      "component": "desktop",
+      "title": "Piwork 0.0.20 Preview",
+      "sections": [
+        {
+          "title": "Work Settings",
+          "items": [
+            "Import a local Skill directory straight into a Work or select a Skill from Core.",
+            "Edit Work-owned Skill files and working instructions, then apply the saved changes explicitly.",
+            "Use the simplified Work creation, Service links and file upload flows."
+          ]
+        }
+      ]
+    },
+    {
       "version": "0.0.19",
       "component": "core",
       "title": "Piwork 0.0.19 Preview",
