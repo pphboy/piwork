@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>能力库 · Piwork 原型</title>
+  <link rel="icon" href="/piwork-logo.png">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/prototype.css">
+  <script type="module" src="/prototype.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a href="/admin/packages?v=6" class="brand" aria-label="Piwork 管理原型"><img src="/piwork-logo.png" alt="Piwork" width="32" height="32"><span>管理</span></a>
+      <nav class="main-nav" aria-label="管理导航"><button data-action="scope" data-label="概览">概览</button><button data-action="scope" data-label="用户">用户</button><button class="active" data-action="library">Work 设置</button><button data-action="scope" data-label="模型">模型</button></nav>
+      <div class="topbar-right"><span class="workbench">工作台</span><button class="avatar" data-action="scope" data-label="管理员账号" aria-label="管理员账号">AD</button></div>
+    </div>
+  </header>
+  <main id="app"></main>
+  <footer class="prototype-note"><span>PROTOTYPE — NOT PRODUCTION</span><span>修改仅保存在本页，刷新后重置；不会改动 Core 或本地文件</span></footer>
+  <dialog id="flow-dialog" class="flow-dialog" aria-labelledby="flow-title"></dialog>
+  <dialog id="unsaved-dialog" class="flow-dialog unsaved-dialog" aria-labelledby="unsaved-title"></dialog>
+  <div id="catalog-menu" class="item-menu catalog-menu" role="menu" aria-label="对象操作" hidden></div>
+  <div id="notice" class="notice" role="status" hidden></div>
+</body>
+</html>
